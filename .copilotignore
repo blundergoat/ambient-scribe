@@ -1,0 +1,44 @@
+# =============================================================================
+# .copilotignore — Files excluded from GitHub Copilot context
+# =============================================================================
+# These files are not useful for code suggestions and waste context window.
+
+# PHP dependencies (third-party code)
+vendor/
+
+# Symfony runtime cache/logs
+var/
+
+# Python virtual environment
+strands_agents/**/.venv/
+
+# Lock files (large, machine-generated)
+composer.lock
+
+# Test artifacts
+.phpunit.cache/
+.phpunit.result.cache
+.php-cs-fixer.cache
+.phpstan-cache/
+coverage-html/
+coverage.xml
+.infection/
+infection.log
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Environment (may contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Docker override
+docker-compose.override.yml
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

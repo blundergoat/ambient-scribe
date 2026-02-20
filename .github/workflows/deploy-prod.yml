@@ -1,0 +1,226 @@
+# =============================================================================
+# PRODUCTION DEPLOYMENT WORKFLOW - ambient-scribe Agent
+# =============================================================================
+#
+# Deploys the Python agent to ECS Fargate when pushing to main.
+# No database migration steps (uses DynamoDB, not RDS).
+#
+# FLOW:
+#   1. Checkout code
+#   2. AWS Auth (OIDC)
+#   3. Build & push Docker image to ECR
+#   4. Register new task definition
+#   5. Update ECS service
+#   6. Verify deployment
+#   7. Health check
+#
+# =============================================================================
+
+name: Deploy Prod
+
+on:
+  push:
+    branches: ["main"]
+
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ambient-scribe-agent
+  ECS_CLUSTER: ambient-scribe-cluster
+  ECS_SERVICE: ambient-scribe-agent
+  AGENT_TASK_FAMILY: ambient-scribe-agent
+
+jobs:
+  deploy:
+    name: Deploy to Prod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate required variables
+        run: |
+          set -euo pipefail
+
+          missing=""
+          if [ -z "${AWS_REGION:-}" ]; then missing="${missing} AWS_REGION"; fi
+          if [ -z "${{ vars.AWS_ROLE_ARN }}" ]; then missing="${missing} AWS_ROLE_ARN"; fi
+
+          if [ -n "${missing}" ]; then
+            echo "Error: Missing required repository variables:${missing}"
+            echo "Go to Settings > Secrets and variables > Actions > Variables tab"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
+          IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+
+          docker build -f strands_agents/Dockerfile \
+            -t ${IMAGE_URI} \
+            strands_agents/
+          docker push ${IMAGE_URI}
+
+          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+        id: build
+
+      - name: Register new task definition
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          agent_def=$(aws ecs describe-task-definition --task-definition ${AGENT_TASK_FAMILY})
+          agent_task_def=$(echo "$agent_def" | jq '.taskDefinition |
+            .containerDefinitions |= map(if .name == "agent" then .image = env.IMAGE_URI else . end) |
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          echo "$agent_task_def" > agent-task-def.json
+          agent_task_arn=$(aws ecs register-task-definition --cli-input-json file://agent-task-def.json | jq -r '.taskDefinition.taskDefinitionArn')
+
+          echo "agent_task_arn=${agent_task_arn}" >> $GITHUB_OUTPUT
+        id: taskdef
+
+      - name: Update ECS service
+        env:
+          AGENT_TASK_ARN: ${{ steps.taskdef.outputs.agent_task_arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --task-definition ${AGENT_TASK_ARN} >/dev/null
+
+          echo "Waiting for ECS service to stabilize (timeout: 10 minutes)..."
+
+          aws ecs wait services-stable --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE}
+
+          tg_arn=$(aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} | jq -r '.services[0].loadBalancers[0].targetGroupArn')
+          aws elbv2 describe-target-health --target-group-arn ${tg_arn}
+
+      - name: Verify deployment
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          echo "Verifying deployment..."
+
+          current_task_def=$(aws ecs describe-services \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          running_image=$(aws ecs describe-task-definition \
+            --task-definition "${current_task_def}" \
+            --query "taskDefinition.containerDefinitions[?name=='agent'].image | [0]" \
+            --output text)
+
+          echo "Expected image: ${IMAGE_URI}"
+          echo "Running image:  ${running_image}"
+
+          if [ "${running_image}" != "${IMAGE_URI}" ]; then
+            echo ""
+            echo "::error::DEPLOYMENT VERIFICATION FAILED!"
+            echo "::error::The running image does not match the expected image."
+            echo "::error::ECS may have rolled back due to health check failures."
+            echo ""
+            echo "Debug steps:"
+            echo "1. Check ECS service events: aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE}"
+            echo "2. Check container logs: CloudWatch /ecs/ambient-scribe-prod-agent"
+            exit 1
+          fi
+
+          echo ""
+          echo "Deployment verified! Correct image is running."
+          echo "   Commit: ${GITHUB_SHA::7}"
+          echo "   Image:  ${running_image}"
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+
+          API_URL="https://scribe.blundergoat.com"
+          MAX_RETRIES=5
+          RETRY_DELAY=10
+
+          echo "Checking agent health at ${API_URL}/health..."
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            response=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/health" || echo "000")
+
+            if [ "$response" = "200" ]; then
+              echo "Health check passed! Agent is responding."
+              exit 0
+            fi
+
+            echo "Attempt $i/$MAX_RETRIES: Got HTTP $response, retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+
+          echo "::error::Health check failed after $MAX_RETRIES attempts"
+          echo "The agent may not be running correctly. Check CloudWatch logs."
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          AGENT_TASK_ARN: ${{ steps.taskdef.outputs.agent_task_arn }}
+        run: |
+          current_task_def=$(aws ecs describe-services \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE} \
+            --query 'services[0].taskDefinition' \
+            --output text 2>/dev/null || echo "unknown")
+
+          running_image=$(aws ecs describe-task-definition \
+            --task-definition "${current_task_def}" \
+            --query "taskDefinition.containerDefinitions[?name=='agent'].image | [0]" \
+            --output text 2>/dev/null || echo "unknown")
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Deployment Summary
+
+          | Item | Value |
+          |------|-------|
+          | **Commit** | \`${GITHUB_SHA::7}\` |
+          | **Expected Image** | \`${IMAGE_URI:-not set}\` |
+          | **Running Image** | \`${running_image}\` |
+          | **Task Definition** | \`${current_task_def}\` |
+          | **Cluster** | \`${ECS_CLUSTER}\` |
+          | **Service** | \`${ECS_SERVICE}\` |
+
+          EOF
+
+          if [ "${running_image}" = "${IMAGE_URI}" ]; then
+            echo "### Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Deployment May Have Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The running image does not match the expected image. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          fi

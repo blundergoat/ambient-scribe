@@ -1,0 +1,24 @@
+**/.git
+**/node_modules
+**/__pycache__
+**/.env
+
+# PHP build artifacts
+vendor/
+var/
+coverage-html/
+coverage.xml
+.phpunit.cache/
+.phpstan-cache/
+.php-cs-fixer.cache
+
+# Python
+strands_agents/**/__pycache__/
+strands_agents/**/.venv/
+
+# Infrastructure
+**/.terraform/
+**/.terraform.lock.hcl
+
+# Docs
+**/*.md

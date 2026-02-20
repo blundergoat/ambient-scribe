@@ -1,0 +1,38 @@
+# =============================================================================
+# Mercure Configuration
+# =============================================================================
+#
+# Mercure is a real-time messaging protocol built on Server-Sent Events (SSE).
+# It acts as a hub (relay server) between the PHP backend and the browser:
+#
+#   PHP backend ──(HTTP POST)──► Mercure Hub ──(SSE)──► Browser EventSource
+#
+# WHAT EACH SETTING DOES:
+#
+#   url         - The INTERNAL Mercure hub URL (used by PHP to publish messages).
+#                 In Docker, this is http://mercure:3701/.well-known/mercure
+#                 (the "mercure" hostname resolves to the Mercure container)
+#
+#   public_url  - The PUBLIC Mercure hub URL (used by the browser to subscribe).
+#                 In Docker, this is http://localhost:3701/.well-known/mercure
+#                 (the browser accesses Mercure via the host machine's port mapping)
+#
+#   jwt.secret  - A shared secret for signing JWTs. The PHP app signs publish tokens
+#                 with this secret, and the Mercure hub verifies them. In production,
+#                 use a strong random secret. In dev, we use a simple string.
+#
+#   jwt.publish - ['*'] means PHP can publish to ANY topic. You can restrict this
+#                 to specific topic patterns for security.
+#
+# The %env(...)% syntax reads values from environment variables, which are set
+# in docker-compose.yml for the Docker setup.
+# =============================================================================
+
+mercure:
+    hubs:
+        default:
+            url: '%env(MERCURE_URL)%'
+            public_url: '%env(MERCURE_PUBLIC_URL)%'
+            jwt:
+                secret: '%env(MERCURE_JWT_SECRET)%'
+                publish: ['*']

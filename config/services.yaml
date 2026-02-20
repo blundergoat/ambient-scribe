@@ -1,0 +1,37 @@
+# =============================================================================
+# Symfony Dependency Injection (DI) Configuration
+# =============================================================================
+#
+# This file tells Symfony how to create and wire up your application's services
+# (classes). Symfony's DI container automatically creates instances of your
+# classes and injects their dependencies (constructor arguments).
+#
+# KEY CONCEPTS FOR BEGINNERS:
+#
+#   "autowire: true"      - Symfony looks at constructor type-hints and automatically
+#                            injects the right service. For example, if a constructor
+#                            asks for HubInterface, Symfony injects the Mercure hub.
+#
+#   "autoconfigure: true" - Symfony automatically tags services based on the interfaces
+#                            they implement (e.g., controllers are auto-tagged as
+#                            controllers, event subscribers are auto-tagged, etc.)
+#
+#   "resource: '../src/'" - Registers ALL classes in src/ as services automatically.
+#                            Combined with autowire, this means you just create a class
+#                            with type-hinted constructor params, and Symfony handles the rest.
+#
+#   "exclude: '../src/Kernel.php'" - Don't register the Kernel as a service (it's special).
+#
+# In practice, you rarely need to touch this file. Just create classes in src/
+# with proper type hints, and Symfony wires everything up automatically.
+# =============================================================================
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/Kernel.php'

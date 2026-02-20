@@ -1,0 +1,130 @@
+# =============================================================================
+# Docker Compose — Orchestrates the Ambient Scribe stack
+# =============================================================================
+#
+# Run with: docker compose up --build
+#
+# SERVICES:
+#
+#   nemo-agent  — Python FastAPI + NeMo GPU inference (WebSocket + HTTP)
+#   app         — PHP Symfony web application (UI + session management)
+#   mercure     — Real-time SSE hub for transcript streaming
+#
+# DATA FLOW:
+#
+#   Browser ──(WebSocket audio)──► nemo-agent (NeMo GPU)
+#                                       │
+#                                       ├──(publish segments)──► mercure ──(SSE)──► Browser
+#                                       │
+#   Browser ──(HTTP)──► app (PHP) ──(HTTP)──► nemo-agent (session history)
+#
+# PORTS:
+#   http://localhost:8082  — Scribe UI (PHP app)
+#   http://localhost:8001  — NeMo agent API (for debugging)
+#   http://localhost:3701  — Mercure hub (for SSE subscriptions)
+#
+# GPU REQUIREMENT:
+#   The nemo-agent service requires an NVIDIA GPU with the NVIDIA Container
+#   Toolkit installed. See: https://docs.nvidia.com/datacenter/cloud-native/
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # NEMO-AGENT — Python FastAPI + NeMo GPU Inference
+  # ===========================================================================
+  # Handles:
+  #   - WebSocket audio streaming (/ws/transcribe/{session_id})
+  #   - NeMo multitalker Parakeet transcription (GPU-bound)
+  #   - Batch file transcription (/transcribe/file)
+  #   - Mercure publishing (raw segments + role updates)
+  #
+  # GPU models are loaded once at startup and shared across sessions.
+  # NeMo inference runs in a ThreadPoolExecutor to avoid blocking the
+  # async event loop.
+  nemo-agent:
+    build:
+      context: ./strands_agents
+      dockerfile: ../docker/nemo/Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "8001:8000"
+    environment:
+      # --- NeMo configuration ---
+      - NEMO_MODEL_PROVIDER=${NEMO_MODEL_PROVIDER:-local}
+
+      # --- Mercure publishing ---
+      - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
+      - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
+
+      # --- Role inference agent (uses Bedrock, NOT GPU) ---
+      - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-bedrock}
+      - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-us.anthropic.claude-sonnet-4-20250514-v1:0}
+
+      # --- AWS credentials (for Bedrock role inference) ---
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-southeast-2}
+    volumes:
+      - ./strands_agents:/app/strands_agents  # Hot reload in dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s  # NeMo model loading takes time
+
+  # ===========================================================================
+  # APP — PHP Symfony Web Application
+  # ===========================================================================
+  # Serves the transcript UI and provides session management.
+  # Does NOT touch the live audio hot path.
+  #
+  # Flow: Browser → GET /scribe → Twig template with session config
+  #       Browser → GET /scribe/{id}/history → transcript retrieval
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080"
+    environment:
+      - APP_ENV=dev
+      - APP_DEBUG=1
+      - APP_SECRET=${APP_SECRET:-ambient-scribe-dev-secret-change-me}
+      - AGENT_ENDPOINT=http://nemo-agent:8000
+      - NEMO_WEBSOCKET_URL=ws://localhost:8001
+      - MERCURE_URL=http://mercure:3701/.well-known/mercure
+      - MERCURE_PUBLIC_URL=http://localhost:3701/.well-known/mercure
+      - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
+    depends_on:
+      nemo-agent:
+        condition: service_healthy
+      mercure:
+        condition: service_started
+
+  # ===========================================================================
+  # MERCURE — Real-time SSE Hub
+  # ===========================================================================
+  # Relays transcript segments from the Python agent to the browser.
+  #
+  # Topics:
+  #   scribe/session/{id}/raw    — Raw spk_0/spk_1 segments (immediate)
+  #   scribe/session/{id}/roles  — DOCTOR/PATIENT role updates (async)
+  mercure:
+    image: dunglas/mercure
+    ports:
+      - "3701:3701"
+    environment:
+      MERCURE_PUBLISHER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
+      MERCURE_SUBSCRIBER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
+      SERVER_NAME: ":3701"
+      MERCURE_EXTRA_DIRECTIVES: |
+        anonymous
+        cors_origins http://localhost:8082

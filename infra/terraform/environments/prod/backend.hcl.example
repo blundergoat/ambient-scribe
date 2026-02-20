@@ -1,0 +1,14 @@
+# =============================================================================
+# BACKEND CONFIGURATION - Copy this to backend.hcl
+# =============================================================================
+#
+# Update values to match your bootstrap outputs, then run:
+#   terraform init -backend-config=backend.hcl
+#
+# =============================================================================
+
+bucket         = "the-summit-terraform-state-prod"
+key            = "prod/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "the-summit-terraform-locks-prod"
+encrypt        = true

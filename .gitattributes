@@ -1,0 +1,15 @@
+# Force Linux line endings for all text files
+* text eol=lf
+
+# Keep shell scripts LF on all platforms
+*.sh text eol=lf
+
+# Common binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.phar binary

@@ -1,0 +1,15 @@
+# =============================================================================
+# Twig Template Engine Configuration
+# =============================================================================
+#
+# Twig is the template engine Symfony uses to render HTML.
+#
+#   default_path - Where Twig looks for template files.
+#                  %kernel.project_dir% resolves to the project root directory.
+#                  So templates live in: ambient-scribe/templates/
+#
+# The scribe UI template is at templates/scribe/index.html.twig
+# =============================================================================
+
+twig:
+    default_path: '%kernel.project_dir%/templates'

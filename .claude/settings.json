@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.php$'; then vendor/bin/php-cs-fixer fix --quiet \"$CLAUDE_FILE_PATH\" 2>/dev/null; echo 'formatted'; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; python3 -m py_compile strands_agents/api/server.py 2>&1; python3 -m py_compile strands_agents/agents/__init__.py 2>&1"
+          }
+        ]
+      }
+    ]
+  }
+}

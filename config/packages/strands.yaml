@@ -1,0 +1,28 @@
+# =============================================================================
+# Strands Agent Configuration — Ambient Scribe
+# =============================================================================
+#
+# Configures the StrandsClient for communicating with the Python agent.
+#
+# NOTE: The live transcription flow (audio → NeMo → segments) does NOT use
+# the StrandsClient. It flows directly via WebSocket (browser → Python).
+#
+# The StrandsClient is used for:
+#   - Session history retrieval (GET /scribe/{id}/history via postJson)
+#   - Role inference streaming (POST /session/{id}/roles/stream via streamSse)
+#   - Future: clinical summary generation (Milestone 4)
+#
+# Per-request timeouts override the default where needed:
+#   - History fetch: 10s (just reading stored data)
+#   - Role inference: 15s (LLM inference via Bedrock)
+#   - Default: 120s (safety net for long-running operations)
+# =============================================================================
+
+strands:
+    agents:
+        scribe:
+            endpoint: '%env(AGENT_ENDPOINT)%'
+            timeout: 120
+            connect_timeout: 30
+            auth:
+                driver: 'null'

@@ -1,0 +1,72 @@
+{
+    "name": "blundergoat/ambient-scribe",
+    "description": "Real-time ambient medical scribe — speaker diarization + role attribution. Built with NeMo, Strands Agents, Symfony, and Mercure.",
+    "type": "project",
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/blundergoat/ambient-scribe",
+    "authors": [
+        {
+            "name": "Matthew Hansen",
+            "homepage": "https://www.blundergoat.com/about"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/blundergoat/ambient-scribe/issues",
+        "source": "https://github.com/blundergoat/ambient-scribe"
+    },
+    "require": {
+        "php": ">=8.2",
+        "blundergoat/strands-php-client": "dev-dev",
+        "symfony/framework-bundle": "^6.4",
+        "symfony/mercure": "^0.6",
+        "symfony/mercure-bundle": "^0.3",
+        "symfony/runtime": "^6.4",
+        "symfony/string": "^6.4",
+        "symfony/twig-bundle": "^6.4",
+        "symfony/uid": "^6.4",
+        "symfony/yaml": "^6.4",
+        "twig/twig": "^3.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.0",
+        "infection/infection": "^0.29|^0.32",
+        "phpmd/phpmd": "^2.15",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.0",
+        "symfony/dotenv": "^7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "App\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "symfony/runtime": true,
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-html=coverage-html --coverage-clover=coverage.xml",
+        "analyse": "vendor/bin/phpstan analyse",
+        "analyse:complexity": "php scripts/check-cyclomatic-complexity.php --path=src --max=20",
+        "analyse:messdetector": "vendor/bin/phpmd src text phpmd.xml",
+        "cs:check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+        "cs:fix": "vendor/bin/php-cs-fixer fix",
+        "validate:composer": "@composer validate --strict",
+        "security:audit": "@composer audit",
+        "mutate": "XDEBUG_MODE=coverage vendor/bin/infection --threads=4 --show-mutations=0",
+        "preflight": "./scripts/preflight-checks.sh",
+        "preflight:coverage": "./scripts/preflight-checks.sh --coverage-min=80",
+        "preflight:mutate": "./scripts/preflight-checks.sh --mutate"
+    }
+}

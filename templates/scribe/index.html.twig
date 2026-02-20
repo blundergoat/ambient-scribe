@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ambient Scribe — Medical Transcription</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --color-doctor: #2563eb;
+            --color-doctor-bg: #eff6ff;
+            --color-patient: #16a34a;
+            --color-patient-bg: #f0fdf4;
+            --color-unknown: #9ca3af;
+            --color-unknown-bg: #f9fafb;
+        }
+
+        .dark {
+            --color-doctor-bg: #1e3a5f;
+            --color-patient-bg: #1a3a2a;
+            --color-unknown-bg: #1f2937;
+        }
+
+        .segment {
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .segment--DOCTOR {
+            border-left: 3px solid var(--color-doctor);
+            background: var(--color-doctor-bg);
+        }
+
+        .segment--PATIENT {
+            border-left: 3px solid var(--color-patient);
+            background: var(--color-patient-bg);
+        }
+
+        .segment--UNKNOWN {
+            border-left: 3px solid var(--color-unknown);
+            background: var(--color-unknown-bg);
+            opacity: 0.8;
+        }
+
+        .segment__speaker {
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .segment__time {
+            font-size: 0.7rem;
+            opacity: 0.6;
+            margin-left: 0.5rem;
+        }
+
+        .segment__text {
+            display: block;
+            margin-top: 0.25rem;
+        }
+
+        .recording-pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .confidence-badge {
+            transition: all 0.5s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
+    <div class="max-w-4xl mx-auto px-4 py-8">
+
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
+                Ambient Medical Scribe
+            </h1>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Real-time consultation transcription with speaker identification
+            </p>
+        </div>
+
+        <!-- Controls -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6 flex items-center gap-4">
+            <button
+                id="startBtn"
+                onclick="startRecording()"
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+                Start Consultation
+            </button>
+            <button
+                id="stopBtn"
+                onclick="stopRecording()"
+                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium hidden"
+            >
+                End Consultation
+            </button>
+
+            <!-- Status -->
+            <span id="status" class="text-sm text-gray-500 dark:text-gray-400">
+                Ready
+            </span>
+
+            <!-- Confidence Badge -->
+            <span id="confidenceBadge" class="confidence-badge ml-auto text-xs px-2 py-1 rounded-full hidden">
+            </span>
+
+            <!-- Timer -->
+            <span id="timer" class="text-sm font-mono text-gray-400 hidden">
+                00:00
+            </span>
+        </div>
+
+        <!-- Transcript -->
+        <div
+            id="transcript"
+            class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 min-h-[400px] max-h-[600px] overflow-y-auto"
+        >
+            <p id="emptyState" class="text-center text-gray-400 dark:text-gray-500 py-12">
+                Click "Start Consultation" to begin recording.
+                <br>
+                <span class="text-xs">Ensure microphone access is allowed.</span>
+            </p>
+        </div>
+
+        <!-- Segment Count -->
+        <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 text-right">
+            <span id="segmentCount">0</span> segments
+        </div>
+    </div>
+
+    <script>
+    // =========================================================================
+    // Configuration (injected by Symfony/Twig)
+    // =========================================================================
+    const CONFIG = {
+        sessionId: '{{ session_id }}',
+        wsUrl: '{{ ws_url }}',
+        mercureUrl: '{{ mercure_url }}',
+        topicRaw: '{{ mercure_topic_raw }}',
+        topicRoles: '{{ mercure_topic_roles }}',
+    };
+
+    // =========================================================================
+    // StreamOrchestrator — manages EventSource connections to Mercure
+    // =========================================================================
+    // Based on halaxy-agents-lab stream orchestrator pattern.
+    //
+    // Features:
+    //   - Auto-reconnection with exponential backoff (1s → 2s → 4s, max 30s)
+    //   - Multi-topic management (raw segments + role updates)
+    //   - Connection state tracking with callbacks
+    //   - Graceful teardown on page unload
+    //   - Reconnection counter for observability
+
+    class StreamOrchestrator {
+        constructor(mercureUrl) {
+            this._mercureUrl = mercureUrl;
+            this._streams = new Map();   // topic → { source, handler, retries, backoffMs, timer }
+            this._active = false;
+
+            // Tear down all connections when the page unloads
+            window.addEventListener('beforeunload', () => this.disconnectAll());
+        }
+
+        /**
+         * Subscribe to a Mercure topic with auto-reconnection.
+         * @param {string} topic    - The Mercure topic URI
+         * @param {function} handler - Called with parsed JSON for each message
+         */
+        subscribe(topic, handler) {
+            if (this._streams.has(topic)) {
+                console.warn(`StreamOrchestrator: already subscribed to ${topic}`);
+                return;
+            }
+
+            const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null };
+            this._streams.set(topic, state);
+            this._connect(topic, state);
+            this._active = true;
+        }
+
+        /** Disconnect a single topic. */
+        unsubscribe(topic) {
+            const state = this._streams.get(topic);
+            if (!state) return;
+
+            clearTimeout(state.timer);
+            state.source?.close();
+            this._streams.delete(topic);
+        }
+
+        /** Disconnect all topics and stop reconnection. */
+        disconnectAll() {
+            this._active = false;
+            for (const [topic, state] of this._streams) {
+                clearTimeout(state.timer);
+                state.source?.close();
+            }
+            this._streams.clear();
+        }
+
+        /** @returns {boolean} True if any stream is connected. */
+        get isConnected() {
+            for (const state of this._streams.values()) {
+                if (state.source?.readyState === EventSource.OPEN) return true;
+            }
+            return false;
+        }
+
+        /** @returns {number} Total reconnection attempts across all topics. */
+        get totalRetries() {
+            let total = 0;
+            for (const state of this._streams.values()) total += state.retries;
+            return total;
+        }
+
+        _connect(topic, state) {
+            if (!this._active || !this._mercureUrl) return;
+
+            const url = new URL(this._mercureUrl);
+            url.searchParams.append('topic', topic);
+
+            const source = new EventSource(url);
+            state.source = source;
+
+            source.onmessage = (event) => {
+                // Reset backoff on successful message
+                state.backoffMs = 1000;
+                state.retries = 0;
+
+                try {
+                    state.handler(JSON.parse(event.data));
+                } catch (err) {
+                    console.error(`StreamOrchestrator: parse error on ${topic}`, err);
+                }
+            };
+
+            source.onerror = () => {
+                source.close();
+                if (!this._active) return;
+
+                state.retries++;
+                console.warn(
+                    `StreamOrchestrator: ${topic} disconnected, ` +
+                    `retry #${state.retries} in ${state.backoffMs}ms`
+                );
+
+                state.timer = setTimeout(() => {
+                    this._connect(topic, state);
+                }, state.backoffMs);
+
+                // Exponential backoff: 1s → 2s → 4s → ... → 30s max
+                state.backoffMs = Math.min(state.backoffMs * 2, 30000);
+            };
+
+            source.onopen = () => {
+                console.log(`StreamOrchestrator: connected to ${topic}`);
+            };
+        }
+    }
+
+    // =========================================================================
+    // State
+    // =========================================================================
+    let ws = null;
+    let recorder = null;
+    let mediaStream = null;
+    let timerInterval = null;
+    let startTime = null;
+    let segmentIndex = 0;
+    let roleMapping = {};    // e.g., { "spk_0": "DOCTOR", "spk_1": "PATIENT" }
+    let confidence = 0;
+    let streams = null;      // StreamOrchestrator instance
+
+    // =========================================================================
+    // Recording Controls
+    // =========================================================================
+
+    async function startRecording() {
+        try {
+            // Request microphone access
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: { sampleRate: 16000, channelCount: 1 }
+            });
+
+            // Connect WebSocket to Python agent
+            ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+
+                // Start MediaRecorder — send chunks every 5 seconds
+                recorder = new MediaRecorder(mediaStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+
+                recorder.ondataavailable = (e) => {
+                    if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                        ws.send(e.data);
+                    }
+                };
+
+                recorder.start(5000); // 5-second chunks
+            };
+
+            ws.onclose = () => console.log('WebSocket closed');
+            ws.onerror = (e) => console.error('WebSocket error:', e);
+
+            // Subscribe to Mercure for transcript segments
+            subscribeToMercure();
+
+            // Update UI
+            document.getElementById('startBtn').classList.add('hidden');
+            document.getElementById('stopBtn').classList.remove('hidden');
+            document.getElementById('status').innerHTML =
+                '<span class="recording-pulse text-red-500 font-medium">Recording</span>';
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('timer').classList.remove('hidden');
+
+            // Start timer
+            startTime = Date.now();
+            timerInterval = setInterval(updateTimer, 1000);
+
+        } catch (err) {
+            console.error('Failed to start recording:', err);
+            document.getElementById('status').textContent =
+                err.name === 'NotAllowedError'
+                    ? 'Microphone access denied'
+                    : `Error: ${err.message}`;
+        }
+    }
+
+    function stopRecording() {
+        recorder?.stop();
+        ws?.close();
+        mediaStream?.getTracks().forEach(t => t.stop());
+        streams?.disconnectAll();
+
+        clearInterval(timerInterval);
+
+        document.getElementById('startBtn').classList.remove('hidden');
+        document.getElementById('stopBtn').classList.add('hidden');
+        document.getElementById('status').textContent = 'Consultation ended';
+    }
+
+    // =========================================================================
+    // Mercure SSE Subscription (via StreamOrchestrator)
+    // =========================================================================
+
+    function subscribeToMercure() {
+        if (!CONFIG.mercureUrl) {
+            console.warn('Mercure URL not configured — segments will not appear in real-time');
+            return;
+        }
+
+        streams = new StreamOrchestrator(CONFIG.mercureUrl);
+        streams.subscribe(CONFIG.topicRaw, handleRawSegment);
+        streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
+    }
+
+    // =========================================================================
+    // Segment Rendering
+    // =========================================================================
+
+    function handleRawSegment(data) {
+        if (data.type === 'finalized') {
+            document.getElementById('status').textContent = 'Transcript finalized';
+            return;
+        }
+        if (data.type === 'error') {
+            console.error('Transcription error:', data.message);
+            return;
+        }
+        if (data.type !== 'segment') return;
+
+        const role = roleMapping[data.speaker_id] || 'UNKNOWN';
+        appendSegment(data, role);
+    }
+
+    function appendSegment(segment, role) {
+        const container = document.getElementById('transcript');
+        const el = document.createElement('div');
+        const id = `segment-${segmentIndex++}`;
+
+        el.id = id;
+        el.className = `segment segment--${role}`;
+        el.dataset.speakerId = segment.speaker_id;
+        el.dataset.start = segment.start;
+        el.dataset.end = segment.end;
+
+        const speakerLabel = role === 'UNKNOWN' ? segment.speaker_id : role;
+        const timeStr = formatTime(segment.start);
+
+        el.innerHTML = `
+            <span class="segment__speaker" style="color: ${getRoleColor(role)}">${speakerLabel}</span>
+            <span class="segment__time">${timeStr}</span>
+            <span class="segment__text text-gray-800 dark:text-gray-200">${escapeHtml(segment.text)}</span>
+        `;
+
+        container.appendChild(el);
+
+        // Auto-scroll if near bottom
+        if (container.scrollHeight - container.scrollTop - container.clientHeight < 100) {
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Update count
+        document.getElementById('segmentCount').textContent = segmentIndex;
+    }
+
+    // =========================================================================
+    // Role Updates (from Strands agent)
+    // =========================================================================
+
+    function handleRoleUpdate(data) {
+        if (!data.mapping) return;
+
+        roleMapping = data.mapping;
+        confidence = data.confidence || 0;
+
+        // Update confidence badge
+        const badge = document.getElementById('confidenceBadge');
+        badge.classList.remove('hidden');
+        if (confidence >= 0.8) {
+            badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
+            badge.className = 'confidence-badge ml-auto text-xs px-2 py-1 rounded-full bg-green-100 text-green-800';
+        } else {
+            badge.textContent = 'Identifying speakers...';
+            badge.className = 'confidence-badge ml-auto text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 recording-pulse';
+        }
+
+        // Retroactively relabel existing segments
+        relabelSegments();
+    }
+
+    function relabelSegments() {
+        document.querySelectorAll('.segment').forEach(el => {
+            const speakerId = el.dataset.speakerId;
+            const newRole = roleMapping[speakerId] || 'UNKNOWN';
+
+            // Update CSS class
+            el.className = `segment segment--${newRole}`;
+
+            // Update label
+            const label = el.querySelector('.segment__speaker');
+            if (label) {
+                label.textContent = newRole === 'UNKNOWN' ? speakerId : newRole;
+                label.style.color = getRoleColor(newRole);
+            }
+        });
+    }
+
+    // =========================================================================
+    // Utilities
+    // =========================================================================
+
+    function formatTime(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function updateTimer() {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById('timer').textContent = formatTime(elapsed);
+    }
+
+    function getRoleColor(role) {
+        switch (role) {
+            case 'DOCTOR': return 'var(--color-doctor)';
+            case 'PATIENT': return 'var(--color-patient)';
+            default: return 'var(--color-unknown)';
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    </script>
+</body>
+</html>

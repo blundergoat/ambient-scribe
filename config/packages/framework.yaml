@@ -1,0 +1,18 @@
+# =============================================================================
+# Symfony Framework Configuration — Ambient Scribe
+# =============================================================================
+
+framework:
+    secret: '%env(APP_SECRET)%'
+    router:
+        utf8: true
+
+parameters:
+    # WebSocket URL for the NeMo agent (passed to Twig template)
+    # Browser connects directly to Python via this URL for audio streaming.
+    nemo_websocket_url: '%env(default:nemo_ws_default:NEMO_WEBSOCKET_URL)%'
+    nemo_ws_default: 'ws://localhost:8001'
+
+    # Mercure public URL (passed to Twig template for SSE subscriptions)
+    mercure_url_default: ''
+    mercure_url: '%env(default:mercure_url_default:MERCURE_PUBLIC_URL)%'
