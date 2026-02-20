@@ -116,13 +116,6 @@ else
     fail "not found"
 fi
 
-step "strands-php-client (sibling dir)"
-if [[ -f "$REPO_ROOT/../strands-php-client/composer.json" ]]; then
-    pass "found"
-else
-    fail "not found at ../strands-php-client - required by composer.json path repo"
-fi
-
 if [[ $ERRORS -gt 0 ]]; then
     echo ""
     echo -e "  ${RED}${BOLD}Cannot continue - ${ERRORS} prerequisite(s) missing${RESET}"
@@ -176,6 +169,30 @@ if "$PYTHON_AGENT_DIR/.venv/bin/pip" install -r "$PYTHON_AGENT_DIR/requirements.
     pass
 else
     fail "pip install failed"
+fi
+
+step "pip install yt-dlp"
+if "$PYTHON_AGENT_DIR/.venv/bin/pip" install yt-dlp 2>&1 | tail -1; then
+    pass
+else
+    fail "yt-dlp install failed"
+fi
+
+# ── System packages ──────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}Installing system packages${RESET}"
+echo ""
+
+step "ffmpeg"
+if command -v ffmpeg &>/dev/null; then
+    ffmpeg_version=$(ffmpeg -version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+    pass "already installed v${ffmpeg_version}"
+else
+    if sudo apt-get install -y -qq ffmpeg 2>&1 | tail -1; then
+        pass "installed"
+    else
+        fail "ffmpeg install failed - install manually: sudo apt-get install ffmpeg"
+    fi
 fi
 
 # ── Summary ────────────────────────────────────────────────────────

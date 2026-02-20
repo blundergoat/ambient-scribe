@@ -118,6 +118,14 @@ else
     fail "not found"
 fi
 
+step "ffmpeg"
+if command -v ffmpeg &>/dev/null; then
+    ffmpeg_version=$(ffmpeg -version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+    pass "v${ffmpeg_version}"
+else
+    fail "not found - run: sudo apt-get install ffmpeg"
+fi
+
 step "Docker"
 if command -v docker &>/dev/null; then
     docker_version=$(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -156,13 +164,6 @@ if [[ -f "$REPO_ROOT/.env" ]] && grep -q '^AGENT_ENDPOINT=' "$REPO_ROOT/.env"; t
     pass
 else
     fail "AGENT_ENDPOINT not set in .env"
-fi
-
-step "strands-php-client (sibling dir)"
-if [[ -f "$REPO_ROOT/../strands-php-client/composer.json" ]]; then
-    pass
-else
-    fail "missing at ../strands-php-client"
 fi
 
 step "docker-compose.yml"
@@ -258,6 +259,14 @@ step "uvicorn"
 if [[ -f "$VENV_DIR/bin/uvicorn" ]]; then
     uvicorn_ver=$("$VENV_DIR/bin/python" -c "import importlib.metadata; print(importlib.metadata.version('uvicorn'))" 2>/dev/null)
     pass "v${uvicorn_ver}"
+else
+    fail "not installed"
+fi
+
+step "yt-dlp"
+if [[ -f "$VENV_DIR/bin/yt-dlp" ]]; then
+    ytdlp_ver=$("$VENV_DIR/bin/yt-dlp" --version 2>/dev/null)
+    pass "v${ytdlp_ver}"
 else
     fail "not installed"
 fi
