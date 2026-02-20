@@ -19,26 +19,63 @@ variable "environment" {
 
 variable "project_name" {
   type    = string
-  default = "the-summit"
+  default = "ambient-scribe"
 }
 
 # =============================================================================
-# Shared VPC (from blundergoat-platform)
+# VPC (create or bring your own)
 # =============================================================================
+#
+# By default, a new VPC is created via the network module.
+# To use an existing VPC, set vpc_id and subnet IDs in terraform.tfvars.
+#
 
 variable "vpc_id" {
-  description = "VPC ID from blundergoat-platform (shared VPC)"
+  description = "Existing VPC ID (leave empty to create a new VPC)"
   type        = string
+  default     = ""
 }
 
 variable "public_subnet_ids" {
-  description = "Public subnet IDs from blundergoat-platform (for ALB)"
+  description = "Existing public subnet IDs (leave empty to create new subnets)"
   type        = list(string)
+  default     = []
 }
 
 variable "private_subnet_ids" {
-  description = "Private subnet IDs from blundergoat-platform (for ECS tasks)"
+  description = "Existing private subnet IDs (leave empty to create new subnets)"
   type        = list(string)
+  default     = []
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the VPC (only used when creating a new VPC)"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_subnet_cidrs" {
+  description = "CIDR blocks for public subnets (only used when creating a new VPC)"
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "private_subnet_cidrs" {
+  description = "CIDR blocks for private subnets (only used when creating a new VPC)"
+  type        = list(string)
+  default     = ["10.0.10.0/24", "10.0.11.0/24"]
+}
+
+variable "enable_nat_gateway" {
+  description = "Whether to create a NAT gateway for private subnet egress (~$32/month)"
+  type        = bool
+  default     = true
+}
+
+variable "single_nat_gateway" {
+  description = "Use a single NAT gateway instead of one per AZ (cheaper for non-HA)"
+  type        = bool
+  default     = true
 }
 
 # =============================================================================
@@ -54,7 +91,7 @@ variable "domain_name" {
 variable "subdomain" {
   description = "Subdomain for the agent endpoint"
   type        = string
-  default     = "summit"
+  default     = "scribe"
 }
 
 variable "create_hosted_zone" {
@@ -110,7 +147,7 @@ variable "agent_image_tag" {
 variable "ecr_repository_name" {
   description = "ECR repository name for the agent image"
   type        = string
-  default     = "the-summit-agent"
+  default     = "ambient-scribe-agent"
 }
 
 # =============================================================================
@@ -126,7 +163,7 @@ variable "app_image_tag" {
 variable "ecr_app_repository_name" {
   description = "ECR repository name for the app image"
   type        = string
-  default     = "the-summit-app"
+  default     = "ambient-scribe-app"
 }
 
 variable "app_log_retention_days" {
@@ -158,7 +195,7 @@ variable "mercure_log_retention_days" {
 variable "dynamodb_table_name" {
   description = "DynamoDB table name for session persistence"
   type        = string
-  default     = "the-summit-prod-sessions"
+  default     = "ambient-scribe-prod-sessions"
 }
 
 # =============================================================================

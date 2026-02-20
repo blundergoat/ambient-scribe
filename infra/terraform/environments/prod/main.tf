@@ -2,20 +2,20 @@
 # PRODUCTION ENVIRONMENT - Main Infrastructure Configuration
 # =============================================================================
 #
-# Root module orchestrating all modules for The Summit chat application.
-# Uses a shared VPC from blundergoat-platform (no network module needed).
+# Self-contained deployment for the Ambient Scribe application.
+# Creates its own VPC by default, or uses an existing VPC if provided.
 #
 # ARCHITECTURE:
 #
-#   Route 53 (summit.blundergoat.com)
+#   Route 53 (scribe.blundergoat.com)
 #        |
 #        v
-#   Application Load Balancer (public subnets, shared VPC)
+#   Application Load Balancer (public subnets)
 #        |--- /.well-known/mercure*  ---> Mercure target group (port 3701)
 #        |--- default                ---> App target group (port 8080)
 #        |
 #        v
-#   ECS Fargate Task (private subnets, shared VPC)
+#   ECS Fargate Task (private subnets)
 #     - App container (PHP Symfony, port 8080)      <-- ALB default target
 #     - Agent container (Python FastAPI, port 8000)  <-- internal sidecar
 #     - Mercure container (SSE hub, port 3701)       <-- ALB path-routed
@@ -28,6 +28,7 @@
 # (same task, same network namespace -- no service discovery needed).
 #
 # MODULE DEPENDENCY ORDER:
+#   0. network (conditional — creates VPC if vpc_id not provided)
 #   1. dynamodb, ecr, ecr_app, observability, secrets (independent)
 #   2. security (needs vpc_id), iam (needs phase 1 ARNs)
 #   3. ecs (needs iam, observability, ecr), dns (needs hosted_zone_id)
@@ -70,6 +71,12 @@ locals {
     ManagedBy = "terraform"
   }
 
+  # VPC resolution: create a new VPC or use the one provided via variables.
+  create_vpc         = var.vpc_id == ""
+  vpc_id             = local.create_vpc ? module.network[0].vpc_id : var.vpc_id
+  public_subnet_ids  = local.create_vpc ? module.network[0].public_subnet_ids : var.public_subnet_ids
+  private_subnet_ids = local.create_vpc ? module.network[0].private_subnet_ids : var.private_subnet_ids
+
   api_key_value = var.api_key != "" ? var.api_key : random_password.api_key.result
 
   # Environment variables passed to the agent container.
@@ -102,6 +109,30 @@ locals {
     SERVER_NAME                = ":3701"
     MERCURE_EXTRA_DIRECTIVES   = "anonymous\ncors_origins https://${var.subdomain}.${var.domain_name}"
   }
+}
+
+# =============================================================================
+# Phase 0: Network (conditional — creates VPC when vpc_id is not provided)
+# =============================================================================
+
+data "aws_availability_zones" "available" {
+  count = local.create_vpc ? 1 : 0
+  state = "available"
+}
+
+module "network" {
+  count  = local.create_vpc ? 1 : 0
+  source = "../../modules/network"
+
+  project_name         = var.project_name
+  environment          = var.environment
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = slice(data.aws_availability_zones.available[0].names, 0, 2)
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  enable_nat_gateway   = var.enable_nat_gateway
+  single_nat_gateway   = var.single_nat_gateway
+  tags                 = local.tags
 }
 
 # =============================================================================
@@ -155,7 +186,7 @@ module "security" {
   source            = "../../modules/security"
   project_name      = var.project_name
   environment       = var.environment
-  vpc_id            = var.vpc_id
+  vpc_id            = local.vpc_id
   alb_ingress_cidrs = var.alb_ingress_cidrs
   app_port          = 8080
   mercure_port      = 3701
@@ -238,8 +269,8 @@ module "alb" {
   source                     = "../../modules/alb"
   project_name               = var.project_name
   environment                = var.environment
-  vpc_id                     = var.vpc_id
-  public_subnet_ids          = var.public_subnet_ids
+  vpc_id                     = local.vpc_id
+  public_subnet_ids          = local.public_subnet_ids
   alb_security_group_id      = module.security.alb_security_group_id
   certificate_arn            = module.dns.certificate_arn
   internal                   = false
@@ -261,7 +292,7 @@ module "ecs_service" {
   service_name        = "${var.project_name}-app"
   task_definition_arn = module.ecs.agent_task_definition_arn
   desired_count       = 1
-  subnet_ids          = var.private_subnet_ids
+  subnet_ids          = local.private_subnet_ids
   security_group_ids  = [module.security.ecs_security_group_id]
   target_group_arn    = module.alb.target_group_arn
   container_name      = "app"

@@ -56,3 +56,18 @@ output "agent_url" {
   description = "Agent endpoint URL"
   value       = "https://${var.subdomain}.${var.domain_name}"
 }
+
+output "vpc_id" {
+  description = "VPC ID (created or provided)"
+  value       = local.vpc_id
+}
+
+output "public_subnet_ids" {
+  description = "Public subnet IDs (created or provided)"
+  value       = local.public_subnet_ids
+}
+
+output "private_subnet_ids" {
+  description = "Private subnet IDs (created or provided)"
+  value       = local.private_subnet_ids
+}

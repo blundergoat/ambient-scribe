@@ -2,13 +2,10 @@
 # PROD ENVIRONMENT CONFIGURATION - Copy this to terraform.tfvars
 # =============================================================================
 #
-# Required: vpc_id, public_subnet_ids, private_subnet_ids, hosted_zone_id
-# Get these from blundergoat-platform:
-#   cd /path/to/blundergoat-platform/infra/terraform/environments/prod
-#   terraform output vpc_id
-#   terraform output public_subnet_ids
-#   terraform output private_subnet_ids
-#   terraform output hosted_zone_id
+# By default, this configuration creates its own VPC.
+# If you have an existing VPC, uncomment the BYO section below.
+#
+# Required: hosted_zone_id (or set create_hosted_zone = true)
 #
 # =============================================================================
 
@@ -18,32 +15,38 @@
 
 aws_region   = "us-east-1"
 environment  = "prod"
-project_name = "the-summit"
+project_name = "ambient-scribe"
 
 # -----------------------------------------------------------------------------
-# Shared VPC (REQUIRED - from blundergoat-platform outputs)
+# VPC — Option A: Create new (default, no changes needed)
 # -----------------------------------------------------------------------------
 
-# Get with: terraform output -raw vpc_id (in blundergoat-platform)
-vpc_id = ""
+# A new VPC is created automatically. Customize CIDRs if needed:
+# vpc_cidr             = "10.0.0.0/16"
+# public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+# private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+# enable_nat_gateway   = true
+# single_nat_gateway   = true
 
-# Get with: terraform output -json public_subnet_ids (in blundergoat-platform)
-public_subnet_ids = []
+# -----------------------------------------------------------------------------
+# VPC — Option B: Bring your own (uncomment to use existing VPC)
+# -----------------------------------------------------------------------------
 
-# Get with: terraform output -json private_subnet_ids (in blundergoat-platform)
-private_subnet_ids = []
+# vpc_id             = "vpc-0123456789abcdef0"
+# public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
+# private_subnet_ids = ["subnet-ccc", "subnet-ddd"]
 
 # -----------------------------------------------------------------------------
 # DNS Settings
 # -----------------------------------------------------------------------------
 
 domain_name      = "blundergoat.com"
-subdomain        = "summit"
+subdomain        = "scribe"
 
-# Set to false to reuse an existing hosted zone (e.g., from blundergoat-platform)
+# Set to true to create a new hosted zone, or provide an existing one below
 create_hosted_zone = false
 
-# Route53 hosted zone ID for blundergoat.com (from blundergoat-platform outputs)
+# Route53 hosted zone ID for blundergoat.com
 hosted_zone_id = ""
 
 # -----------------------------------------------------------------------------
@@ -65,7 +68,7 @@ alb_idle_timeout_seconds = 120
 
 # API key for authenticating agent requests.
 # Leave empty to auto-generate. Retrieve with:
-#   aws secretsmanager get-secret-value --secret-id /the-summit/prod/api-key
+#   aws secretsmanager get-secret-value --secret-id /ambient-scribe/prod/api-key
 api_key = ""
 
 # Secrets Manager deletion window (0 for immediate in dev)

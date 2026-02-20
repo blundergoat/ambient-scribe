@@ -7,8 +7,8 @@
 #
 # =============================================================================
 
-bucket         = "the-summit-terraform-state-prod"
+bucket         = "ambient-scribe-terraform-state-prod"
 key            = "prod/terraform.tfstate"
 region         = "us-east-1"
-dynamodb_table = "the-summit-terraform-locks-prod"
+dynamodb_table = "ambient-scribe-terraform-locks-prod"
 encrypt        = true

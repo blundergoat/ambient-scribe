@@ -1,114 +1,73 @@
-# Milestone 0 — Shared Infrastructure Setup
+# Milestone 0 — Infrastructure Setup
 
 **Timeline:** ~1 evening (before Weekend 1)
-**Status:** In Progress (0.1 scaffold complete, 0.2–0.5 code written — awaiting apply)
+**Status:** In Progress (scaffold complete, VPC module added — awaiting apply)
 **Dependencies:** AWS account, Terraform installed, GitHub repos created
 
 ---
 
 ## Objective
 
-Stand up `blundergoat-infra` so the ambient scribe (and future projects) have a shared VPC, subnets, and ECR repos to deploy into. This decouples infrastructure ownership from individual app repos.
+Make ambient-scribe fully self-contained for infrastructure. By default, `terraform apply` creates its own VPC, subnets, NAT gateway, and all supporting resources. Users with existing infrastructure can bring their own VPC by passing `vpc_id` and subnet IDs in `terraform.tfvars`.
+
+> **Note:** The `blundergoat-infra` shared-VPC approach has been shelved. Ambient-scribe manages its own networking to eliminate cross-repo dependencies and simplify first-time setup.
 
 ---
 
 ## Tasks
 
-### 0.1 Create `blundergoat-infra` Repository
+### 0.1 Create Repository and Scaffold
 
-- [x] Create `mattyhansen/blundergoat-infra` (private) on GitHub
-- [x] Scaffold Terraform structure:
-  ```
-  blundergoat-infra/
-  ├── terraform/
-  │   ├── bootstrap/          # S3 state bucket + DynamoDB locks (local state)
-  │   │   ├── main.tf
-  │   │   ├── variables.tf
-  │   │   ├── outputs.tf
-  │   │   └── versions.tf
-  │   ├── main.tf             # Provider config, data sources
-  │   ├── vpc.tf              # VPC 10.1.0.0/16, public/private subnets, IGW, NAT
-  │   ├── security_groups.tf  # Shared SG (allow internal VPC traffic)
-  │   ├── ecr.tf              # Shared container registries (for_each)
-  │   ├── ssm_outputs.tf      # Write VPC/subnet/SG/ECR IDs to SSM
-  │   ├── variables.tf        # Region, CIDR ranges, environment tag
-  │   ├── outputs.tf          # Terraform outputs
-  │   ├── versions.tf         # Provider constraints
-  │   ├── backend.tf          # Partial S3 backend
-  │   └── backend.hcl.example # Example backend values
-  ├── .gitignore
-  └── README.md               # Architecture, deploy instructions, SSM consumption
-  ```
+- [x] Scaffold Terraform structure under `infra/terraform/`
+- [x] Bootstrap module for S3 state bucket + DynamoDB locks
+- [x] Environment module (`environments/prod/`) with all infrastructure modules
 - [x] `terraform fmt -check -recursive` — clean
-- [x] `terraform validate` — both bootstrap and root modules pass
+- [x] `terraform validate` — passes
 
 ### 0.2 Set Up Terraform State Backend
 
-- [x] Bootstrap module written: S3 bucket `blundergoat-infra-terraform-state-prod` + DynamoDB `blundergoat-infra-terraform-locks-prod` + KMS key
-- [x] S3 backend configured in `terraform/backend.tf` (partial config)
+- [x] Bootstrap module written: S3 bucket + DynamoDB lock table
 - [ ] `terraform apply` the bootstrap module (creates state infrastructure)
 
-### 0.3 Define Shared VPC
+### 0.3 Self-Contained VPC (Create-or-BYO)
 
-- [x] VPC `10.1.0.0/16` with public/private subnets across 2 AZs in `us-east-1` (non-overlapping with platform's `10.0.0.0/16`)
-- [x] Internet Gateway for public subnets
-- [x] NAT Gateway (single) for private subnet egress
-- [x] Route tables wired correctly
+- [x] Network module (`modules/network/`): VPC, public/private subnets, IGW, NAT, route tables
+- [x] Conditional creation: `vpc_id == ""` creates new VPC, otherwise uses provided IDs
+- [x] Default CIDR: `10.0.0.0/16` with `10.0.1.0/24`, `10.0.2.0/24` (public) and `10.0.10.0/24`, `10.0.11.0/24` (private)
+- [x] NAT gateway enabled by default (single, ~$32/month) for private subnet egress
+- [x] VPC outputs exposed: `vpc_id`, `public_subnet_ids`, `private_subnet_ids`
 - [ ] `terraform apply` (deploy VPC)
 
-### 0.4 Write SSM Parameter Store Outputs
+### 0.4 ECR Repositories
 
-- [x] `/blundergoat/shared/vpc_id` — defined in `ssm_outputs.tf`
-- [x] `/blundergoat/shared/private_subnet_ids` — JSON-encoded list
-- [x] `/blundergoat/shared/public_subnet_ids` — JSON-encoded list
-- [x] `/blundergoat/shared/internal_sg_id` — security group ID
-- [x] `/blundergoat/shared/ecr/ambient-scribe-agent` — ECR repo URL
-- [x] `/blundergoat/shared/ecr/ambient-scribe-php` — ECR repo URL
-- [ ] Verify parameters are readable after apply: `aws ssm get-parameter --name "/blundergoat/shared/vpc_id"`
-
-### 0.5 Create ECR Repositories
-
-- [x] `blundergoat/ambient-scribe-agent` (Python + NeMo) — defined in `ecr.tf` via `for_each`
-- [x] `blundergoat/ambient-scribe-php` (Symfony app) — with scanning + lifecycle policy
+- [x] `ambient-scribe-agent` (Python + NeMo) — defined in `modules/ecr`
+- [x] `ambient-scribe-app` (Symfony app) — with scanning + lifecycle policy
 - [ ] Verify repos exist after apply: `aws ecr describe-repositories`
 
-### 0.6 Apply and Verify
+### 0.5 Apply and Verify
 
-- [ ] Bootstrap: `cd terraform/bootstrap && terraform init && terraform apply`
+- [ ] Bootstrap: `cd infra/terraform/bootstrap && terraform init && terraform apply`
 - [ ] Main: `cp backend.hcl.example backend.hcl && terraform init -backend-config=backend.hcl`
-- [ ] `terraform plan` — review resource creation
-- [ ] `terraform apply` — deploy shared infrastructure
-- [ ] Verify SSM parameters populated and readable from a separate AWS CLI session
+- [ ] `terraform plan` — review resource creation (~30+ resources including network)
+- [ ] `terraform apply` — deploy all infrastructure
+- [ ] Verify VPC, subnets, NAT gateway created
 - [ ] Verify ECR repos exist: `aws ecr describe-repositories`
 
 ---
 
 ## Exit Criteria
 
-- [x] `blundergoat-infra` repo created with working Terraform (validated, fmt clean)
+- [x] Self-contained Terraform validated and fmt-clean
 - [ ] VPC + subnets exist in `us-east-1` (after `terraform apply`)
-- [ ] SSM parameters populated and readable
 - [ ] ECR repos created for ambient scribe containers
 - [ ] `terraform plan` on a fresh checkout produces no changes (idempotent)
-
----
-
-## Deferred: Summit Infrastructure Migration
-
-> Migrating The Summit's VPC into `blundergoat-infra` is a separate task with its own blast radius. Do NOT bundle it into this evening's work.
-
-If The Summit currently has its own VPC in Terraform:
-- [ ] File a separate issue / create a dedicated task
-- [ ] Plan the migration: update Summit Terraform to read from SSM, import existing VPC into `blundergoat-infra` state, remove from Summit state
-- [ ] Execute only after both the ambient scribe and Summit are stable on the new infra
-- [ ] This is a "next month" task, not a "this evening" task
+- [ ] BYO mode works: passing `vpc_id` + subnet IDs skips network module entirely
 
 ---
 
 ## Notes
 
-- This infrastructure is deployed once and rarely touched again
-- All app repos consume shared state via SSM — no cross-repo Terraform coupling
-- Tearing down an app never breaks another app or the shared infra
-- Deploy order: `blundergoat-infra` first (once), then any app repo independently
-- Repo naming convention: `mattyhansen/blundergoat-infra` (private, personal account) for infrastructure; `blundergoat/ambient-scribe` (public org) for application code
+- The `blundergoat-infra` repo still exists but is no longer a prerequisite for ambient-scribe
+- ambient-scribe's Terraform is fully standalone — clone, configure `terraform.tfvars`, apply
+- For users with existing VPCs, set `vpc_id`, `public_subnet_ids`, and `private_subnet_ids` to skip VPC creation
+- Single NAT gateway keeps costs low (~$32/month) while still allowing private subnet egress

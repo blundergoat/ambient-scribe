@@ -11,7 +11,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Name of the project, used in resource tags"
   type        = string
-  default     = "the-summit"
+  default     = "ambient-scribe"
 }
 
 variable "environment" {
@@ -23,11 +23,11 @@ variable "environment" {
 variable "state_bucket_name" {
   description = "Name of the S3 bucket for Terraform state (must be globally unique)"
   type        = string
-  default     = "the-summit-terraform-state-prod"
+  default     = "ambient-scribe-terraform-state-prod"
 }
 
 variable "lock_table_name" {
   description = "Name of the DynamoDB table for state locking"
   type        = string
-  default     = "the-summit-terraform-locks-prod"
+  default     = "ambient-scribe-terraform-locks-prod"
 }
