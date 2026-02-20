@@ -241,15 +241,15 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 
 ## Exit Criteria
 
-- [ ] Browser captures mic audio and sends chunks over WebSocket
-- [ ] FastAPI receives chunks, feeds NeMo pipeline, gets transcript segments
-- [ ] **NeMo inference runs in thread pool** — does not block the async event loop
-- [ ] Segments published to Mercure, rendered in browser in real-time
-- [ ] Can see `spk_0` and `spk_1` labelled text appearing as you speak
-- [ ] End-to-end latency under ~5 seconds (chunk interval + NeMo processing)
-- [ ] NeMo models loaded once at startup, shared across sessions
-- [ ] **Structured logging with correlation IDs and timing in place**
-- [ ] **Python tests pass for NeMo pipeline wrapper and API endpoints**
+- [x] Browser captures mic audio and sends chunks over WebSocket (code complete in index.html.twig)
+- [x] FastAPI receives chunks, feeds NeMo pipeline, gets transcript segments (code complete in server.py)
+- [x] **NeMo inference runs in thread pool** — does not block the async event loop (ThreadPoolExecutor in server.py)
+- [ ] Segments published to Mercure, rendered in browser in real-time (needs GPU + docker compose)
+- [ ] Can see `spk_0` and `spk_1` labelled text appearing as you speak (needs GPU + docker compose)
+- [ ] End-to-end latency under ~5 seconds (chunk interval + NeMo processing) (needs GPU + docker compose)
+- [x] NeMo models loaded once at startup, shared across sessions (lifespan handler in server.py)
+- [x] **Structured logging with correlation IDs and timing in place**
+- [x] **Python tests pass for NeMo pipeline wrapper and API endpoints** (38/38 passing)
 
 ---
 
