@@ -279,6 +279,30 @@ else
     fail "not importable"
 fi
 
+step "pytest"
+if [[ -f "$VENV_DIR/bin/pytest" ]]; then
+    pytest_ver=$("$VENV_DIR/bin/python" -c "import importlib.metadata; print(importlib.metadata.version('pytest'))" 2>/dev/null)
+    pass "v${pytest_ver}"
+else
+    fail "not installed - run: pip install -r tests/python/requirements-dev.txt"
+fi
+
+step "numpy"
+if [[ -f "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -c "import numpy" 2>/dev/null; then
+    numpy_ver=$("$VENV_DIR/bin/python" -c "import importlib.metadata; print(importlib.metadata.version('numpy'))" 2>/dev/null)
+    pass "v${numpy_ver}"
+else
+    fail "not importable"
+fi
+
+step "soundfile"
+if [[ -f "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -c "import soundfile" 2>/dev/null; then
+    sf_ver=$("$VENV_DIR/bin/python" -c "import importlib.metadata; print(importlib.metadata.version('soundfile'))" 2>/dev/null)
+    pass "v${sf_ver}"
+else
+    fail "not importable"
+fi
+
 # ── Python Syntax ──────────────────────────────────────────────────
 section "Python agent syntax"
 
@@ -327,6 +351,20 @@ if [[ -x "$REPO_ROOT/vendor/bin/phpstan" ]]; then
     fi
 else
     fail "phpstan not available"
+fi
+
+step "pytest runs"
+if [[ -f "$VENV_DIR/bin/pytest" ]]; then
+    pytest_output=$(NEMO_MODEL_PROVIDER=mock PYTHONPATH="$PYTHON_AGENT_DIR" "$VENV_DIR/bin/pytest" "$REPO_ROOT/tests/python/" -q 2>&1)
+    pytest_exit=$?
+    if [[ $pytest_exit -eq 0 ]]; then
+        pytest_summary=$(echo "$pytest_output" | tail -1)
+        pass "$pytest_summary"
+    else
+        fail "tests failing"
+    fi
+else
+    fail "pytest not available"
 fi
 
 step "Code style clean"

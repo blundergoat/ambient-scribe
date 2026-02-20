@@ -1,9 +1,11 @@
 """
 Tests for the NeMo pipeline wrapper.
 
-These tests verify the NemoPipeline and TranscriptionSession classes.
-NeMo models are NOT loaded in tests — we test the wrapper logic only.
+These tests verify the NemoPipeline, parsing logic, and TranscriptionSession classes.
+NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock) — we test wrapper logic only.
 """
+
+from unittest.mock import MagicMock
 
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 from nemo_session import AudioBuffer, TranscriptionSession
@@ -92,3 +94,121 @@ class TestTranscriptionSession:
 
         result = session.finalize()
         assert isinstance(result, list)
+
+
+class TestParseDiarStrings:
+    """Tests for NemoPipeline._parse_diar_strings static method."""
+
+    def test_nested_list_format(self):
+        """Sortformer returns list-of-lists (batch output)."""
+        diar_output = [["0.560 3.120 speaker_0", "3.200 5.800 speaker_1"]]
+        result = NemoPipeline._parse_diar_strings(diar_output)
+
+        assert len(result) == 2
+        assert result[0] == (0.56, 3.12, "speaker_0")
+        assert result[1] == (3.2, 5.8, "speaker_1")
+
+    def test_flat_list_format(self):
+        """Handle flat list of diar strings."""
+        diar_output = ["1.0 2.0 speaker_0", "3.0 4.0 speaker_1"]
+        result = NemoPipeline._parse_diar_strings(diar_output)
+
+        assert len(result) == 2
+        assert result[0] == (1.0, 2.0, "speaker_0")
+        assert result[1] == (3.0, 4.0, "speaker_1")
+
+    def test_empty_input(self):
+        assert NemoPipeline._parse_diar_strings([]) == []
+        assert NemoPipeline._parse_diar_strings(None) == []
+
+    def test_sorts_by_start_time(self):
+        diar_output = ["5.0 6.0 speaker_1", "1.0 2.0 speaker_0"]
+        result = NemoPipeline._parse_diar_strings(diar_output)
+
+        assert result[0][0] == 1.0
+        assert result[1][0] == 5.0
+
+
+class TestParseNemoOutput:
+    """Tests for NemoPipeline._parse_nemo_output alignment logic."""
+
+    def _make_pipeline(self) -> NemoPipeline:
+        """Create a mock-mode pipeline for testing parse logic."""
+        return NemoPipeline()
+
+    def _make_hyp(self, text: str) -> MagicMock:
+        """Create a mock ASR hypothesis object."""
+        hyp = MagicMock()
+        hyp.text = text
+        return hyp
+
+    def test_two_speakers_proportional_words(self):
+        """Words split proportionally across two equal-duration segments."""
+        pipeline = self._make_pipeline()
+        diar = [["0.0 2.0 speaker_0", "2.0 4.0 speaker_1"]]
+        hyps = [self._make_hyp("hello world foo bar")]
+
+        segments = pipeline._parse_nemo_output(diar, hyps)
+
+        assert len(segments) == 2
+        assert segments[0].speaker_id == "speaker_0"
+        assert segments[1].speaker_id == "speaker_1"
+        # With equal durations, 4 words split ~2+2
+        total_words = len(segments[0].text.split()) + len(segments[1].text.split())
+        assert total_words == 4
+
+    def test_single_segment_gets_all_words(self):
+        """Single diar segment gets all ASR words."""
+        pipeline = self._make_pipeline()
+        diar = [["0.0 5.0 speaker_0"]]
+        hyps = [self._make_hyp("the quick brown fox jumps")]
+
+        segments = pipeline._parse_nemo_output(diar, hyps)
+
+        assert len(segments) == 1
+        assert segments[0].speaker_id == "speaker_0"
+        assert segments[0].text == "the quick brown fox jumps"
+        assert segments[0].start == 0.0
+        assert segments[0].end == 5.0
+
+    def test_empty_diar_returns_empty(self):
+        """No diarization segments → empty result."""
+        pipeline = self._make_pipeline()
+        segments = pipeline._parse_nemo_output([], [self._make_hyp("hello")])
+        assert segments == []
+
+    def test_empty_asr_text_returns_empty_segments(self):
+        """Diar segments with no ASR text → segments with empty text."""
+        pipeline = self._make_pipeline()
+        diar = [["0.0 2.0 speaker_0"]]
+        hyps = [self._make_hyp("")]
+
+        segments = pipeline._parse_nemo_output(diar, hyps)
+
+        assert len(segments) == 1
+        assert segments[0].text == ""
+        assert segments[0].speaker_id == "speaker_0"
+
+    def test_no_hyps_returns_empty_segments(self):
+        """Diar segments with empty hyps list → segments with empty text."""
+        pipeline = self._make_pipeline()
+        diar = [["0.0 2.0 speaker_0"]]
+        segments = pipeline._parse_nemo_output(diar, [])
+        assert len(segments) == 1
+        assert segments[0].text == ""
+
+    def test_unequal_duration_distribution(self):
+        """Longer segment gets more words proportionally."""
+        pipeline = self._make_pipeline()
+        # speaker_0: 1s, speaker_1: 3s → 25%/75% split
+        diar = [["0.0 1.0 speaker_0", "1.0 4.0 speaker_1"]]
+        hyps = [self._make_hyp("a b c d e f g h")]  # 8 words
+
+        segments = pipeline._parse_nemo_output(diar, hyps)
+
+        assert len(segments) == 2
+        # speaker_0 gets ~25% of 8 = 2 words, speaker_1 gets rest
+        words_0 = len(segments[0].text.split())
+        words_1 = len(segments[1].text.split())
+        assert words_0 + words_1 == 8
+        assert words_1 > words_0  # Longer segment gets more words

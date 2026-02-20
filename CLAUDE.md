@@ -107,6 +107,10 @@ NeMo API discovery notes: `docs/nemo-api-notes.md`
 
 ## Workflow Rules
 
+### Plan before building
+
+After creating a plan, always save it to `docs/PLAN.md` with checkboxes before starting work.
+
 ### Debugging: read first, fix second
 
 When debugging issues, ALWAYS read the actual code and configuration files before proposing a fix. Trace the actual code path through ScribeController → Python WebSocket → NeMo pipeline → Mercure first.

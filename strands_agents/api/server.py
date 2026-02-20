@@ -55,6 +55,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -112,6 +113,20 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 MERCURE_HUB_URL = os.environ.get("MERCURE_HUB_URL", "http://mercure:3701/.well-known/mercure")
 MERCURE_JWT = os.environ.get("MERCURE_JWT", "")
+
+
+def log_vram() -> None:
+    """Log current GPU VRAM usage via nvidia-smi."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            logger.info("gpu.vram_usage", extra={"vram": result.stdout.strip()})
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass  # nvidia-smi not available (no GPU or mock mode)
+
 
 # Thread pool for GPU-bound NeMo inference.
 # Prevents blocking the async event loop, keeping /health and other
@@ -306,14 +321,19 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
                     },
                 )
 
-            # Log periodically (every 10th chunk) to avoid log spam
+            # Track total chunk-to-publish latency (inference + Mercure)
+            total_ms = int((time.time() - started_at) * 1000)
+            logger.info("websocket.chunk_e2e", extra={
+                "session_id": session_id,
+                "chunk_count": chunk_count,
+                "inference_ms": duration_ms,
+                "total_ms": total_ms,
+                "segments": len(segments),
+            })
+
+            # Log VRAM periodically (every 10th chunk) to avoid log spam
             if chunk_count % 10 == 0:
-                logger.info("websocket.chunk_stats", extra={
-                    "session_id": session_id,
-                    "chunk_count": chunk_count,
-                    "buffer_seconds": round(session.buffer.duration_seconds, 1),
-                    "last_inference_ms": duration_ms,
-                })
+                log_vram()
 
     except WebSocketDisconnect:
         logger.info("websocket.disconnected", extra={

@@ -19,8 +19,12 @@
 # sse-starlette          — Server-Sent Events support for FastAPI.
 #                          Used for streaming role inference results to PHP.
 #
+# numpy / soundfile      — Used by nemo_pipeline.py for PCM buffer → WAV conversion.
+#                          Pre-installed in the NeMo Docker image; listed here for
+#                          local dev outside Docker.
+#
 # NOTE: NeMo toolkit and CUDA dependencies come from the base Docker image
-# (nvcr.io/nvidia/nemo:24.12). Do NOT add nemo_toolkit here — it would
+# (nvcr.io/nvidia/nemo:25.09). Do NOT add nemo_toolkit here — it would
 # conflict with the pre-installed version.
 # =============================================================================
 
@@ -31,3 +35,5 @@ pydantic>=2.0.0
 httpx>=0.27.0
 websockets>=12.0
 sse-starlette>=2.0.0
+numpy>=1.26.0
+soundfile>=0.12.0

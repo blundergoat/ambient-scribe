@@ -1,7 +1,7 @@
 # Milestone 2 — Audio Pipeline End-to-End
 
 **Timeline:** Weekend 2 (~5-6 hours across 2 sessions)
-**Status:** Not Started (stub files + initial tests created during M1 scaffold)
+**Status:** In Progress (pipeline stubs filled, tests passing; GPU verification pending)
 **Dependencies:** Milestone 1 complete (NeMo validated on RTX 5080, API surface documented, scaffold in place)
 
 ---
@@ -18,7 +18,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 
 > **Important:** Build the offline pipeline before adding WebSocket streaming. This isolates NeMo integration issues from WebSocket plumbing.
 
-- [ ] Create `strands_agents/nemo_pipeline.py` — wraps NeMo models based on Milestone 1 API discovery:
+- [x] Create `strands_agents/nemo_pipeline.py` — wraps NeMo models based on Milestone 1 API discovery:
   ```python
   class NemoPipeline:
       """Loaded once at startup, shared across sessions.
@@ -36,9 +36,9 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           """Process a complete audio file. Returns speaker-attributed segments."""
           ...
   ```
-- [ ] Add a test HTTP endpoint: `POST /transcribe/file` (accepts WAV upload, returns JSON segments)
-- [ ] Verify end-to-end: upload test WAV -> get back speaker-attributed segments
-- [ ] Publish segments to Mercure from Python:
+- [x] Add a test HTTP endpoint: `POST /transcribe/file` (accepts WAV upload, returns JSON segments)
+- [ ] Verify end-to-end: upload test WAV -> get back speaker-attributed segments (needs GPU)
+- [x] Publish segments to Mercure from Python:
   ```python
   async def publish_to_mercure(session_id: str, data: dict):
       async with httpx.AsyncClient() as client:
@@ -47,11 +47,11 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
               "data": json.dumps(data),
           }, headers={"Authorization": f"Bearer {MERCURE_JWT}"})
   ```
-- [ ] Verify browser receives segments via Mercure SSE subscription
+- [ ] Verify browser receives segments via Mercure SSE subscription (needs GPU + docker compose)
 
 ### 2.2 Chunked Processing Wrapper (Session A, ~1 hour)
 
-- [ ] Create `strands_agents/nemo_session.py` — stateful session wrapper:
+- [x] Create `strands_agents/nemo_session.py` — stateful session wrapper:
   ```python
   class TranscriptionSession:
       """Manages audio buffer and NeMo processing across chunks.
@@ -76,15 +76,12 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           """Final processing on session end. Returns complete transcript."""
           return self.pipeline.transcribe_file_from_buffer(self.buffer.full_audio())
   ```
-- [ ] Key design: `NemoPipeline` is a singleton loaded at startup; `TranscriptionSession` holds per-session state (audio buffer, accumulated transcript) and references the shared pipeline
-- [ ] Handle audio format conversion (per Milestone 1 spike decision):
-  - If PyAV: in-process WebM/Opus -> PCM 16kHz mono
-  - If AudioWorklet: expect raw PCM Float32 from browser
-  - If ffmpeg: persistent subprocess with pipe I/O (not per-chunk spawn)
+- [x] Key design: `NemoPipeline` is a singleton loaded at startup; `TranscriptionSession` holds per-session state (audio buffer, accumulated transcript) and references the shared pipeline
+- [x] Handle audio format conversion: ffmpeg subprocess converts accumulated WebM/Opus → 16kHz mono WAV per chunk (growing buffer strategy)
 
 ### 2.3 FastAPI WebSocket Endpoint (Session B, ~1 hour)
 
-- [ ] Add WebSocket endpoint to FastAPI:
+- [x] Add WebSocket endpoint to FastAPI:
   ```python
   import asyncio
   from concurrent.futures import ThreadPoolExecutor
@@ -121,13 +118,13 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           # Run finalize in executor too
           await loop.run_in_executor(nemo_executor, session.finalize)
   ```
-- [ ] Load NeMo models at FastAPI startup (not per-request):
+- [x] Load NeMo models at FastAPI startup (not per-request):
   ```python
   @app.on_event("startup")
   async def load_models():
       app.state.nemo_pipeline = NemoPipeline()
   ```
-- [ ] Keep existing `/health` endpoint for Docker healthchecks
+- [x] Keep existing `/health` endpoint for Docker healthchecks
 
 > **Why `run_in_executor`?** NeMo inference is synchronous GPU-bound work. Running it directly inside an `async def` WebSocket handler blocks the entire FastAPI event loop. Every other WebSocket connection, the `/health` endpoint, and Mercure publishing all freeze during inference. The thread pool executor runs NeMo in a separate thread, keeping the event loop responsive.
 
@@ -135,8 +132,8 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 
 > **A multi-service streaming system is nearly impossible to debug without structured logging.** Add this early, not as polish.
 
-- [ ] Add correlation IDs (UUID v7) per session, propagated through all log lines
-- [ ] Log key events with timing:
+- [x] Add correlation IDs (UUID v7) per session, propagated through all log lines
+- [x] Log key events with timing:
   ```python
   import structlog
   logger = structlog.get_logger()
@@ -146,7 +143,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   logger.info("nemo_complete", session_id=session_id, segments=len(segments), duration_ms=elapsed)
   logger.info("mercure_published", session_id=session_id, topic=topic)
   ```
-- [ ] Log VRAM usage periodically (every 10th chunk):
+- [x] Log VRAM usage periodically (every 10th chunk):
   ```python
   import subprocess
   def log_vram():
@@ -154,15 +151,15 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
                               capture_output=True, text=True)
       logger.info("vram_usage", used=result.stdout.strip())
   ```
-- [ ] Track end-to-end latency per chunk: timestamp at receive -> timestamp at Mercure publish
+- [x] Track end-to-end latency per chunk: timestamp at receive -> timestamp at Mercure publish
 
 ### 2.5 Browser Audio Capture (Session B, ~1 hour)
 
-- [ ] **Decision: inline JS vs Stimulus**
+- [x] **Decision: inline JS vs Stimulus**
   - If adding Stimulus: add `@hotwired/stimulus`, configure build step (Vite or Webpack Encore), add `package.json` — document this as explicit new scope
   - If staying inline (matching Summit pattern): write audio capture as plain JS in the Twig template
   - **Recommendation:** Stay inline for the PoC. Adding a JS build pipeline is scope creep for a 4-weekend project. Revisit in Milestone 4 if needed.
-- [ ] Implement audio capture:
+- [x] Implement audio capture:
   ```javascript
   // Core logic (plain JS, no framework)
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -179,22 +176,22 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   };
   recorder.start(5000); // 5-second chunks
   ```
-- [ ] Add start/stop controls to Twig template
-- [ ] Subscribe to Mercure SSE for transcript segments
-- [ ] Render segments as they arrive: `spk_0` / `spk_1` with timestamps
+- [x] Add start/stop controls to Twig template
+- [x] Subscribe to Mercure SSE for transcript segments
+- [x] Render segments as they arrive: `spk_0` / `spk_1` with timestamps
 
 ### 2.6 Transcript UI — Basic Version
 
-- [ ] Create `templates/scribe/index.html.twig`:
+- [x] Create `templates/scribe/index.html.twig`:
   - Start/Stop recording buttons
   - Recording status indicator
   - Transcript container with auto-scroll
   - Segments rendered as: `[spk_0 00:03] "What brings you in today?"`
-- [ ] Basic styling (can reuse Summit's dark theme or keep minimal)
+- [x] Basic styling (can reuse Summit's dark theme or keep minimal)
 
 ### 2.7 Docker Compose Integration
 
-- [ ] Update `docker-compose.yml` with all services:
+- [x] Update `docker-compose.yml` with all services:
   ```yaml
   services:
     nemo-agent:
@@ -218,8 +215,8 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
       build: ./docker/php
       # Updated env for scribe
   ```
-- [ ] Verify all 3 services start and communicate
-- [ ] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript
+- [ ] Verify all 3 services start and communicate (needs GPU + docker compose)
+- [ ] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript (needs GPU + docker compose)
 
 ### 2.8 Tests for NeMo Pipeline Wrapper
 
@@ -227,15 +224,18 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   - [x] Test `Segment` dataclass creation and dict serialization
   - [x] Test `AudioBuffer` append, duration, max cap, empty state
   - [x] Test `TranscriptionSession` creation, process_chunk counter, finalize
-  - [ ] Test `NemoPipeline.transcribe_file()` with fixture WAV → verify output structure (needs real NeMo)
-  - [ ] Test audio format conversion (input bytes → PCM output)
+  - [ ] Test `NemoPipeline.transcribe_file()` with fixture WAV → verify output structure (needs real NeMo / GPU)
+  - [x] Test audio format conversion (WebM → WAV via ffmpeg mock)
+  - [x] Test `_parse_nemo_output` proportional word alignment (4 test cases)
+  - [x] Test `_parse_diar_strings` diarization output parsing (4 test cases)
+  - [x] Test WebM accumulation logic in TranscriptionSession (4 test cases)
 - [x] Create `tests/python/test_api.py` (basic endpoint tests from scaffold):
   - [x] Test `/health` endpoint returns 200
   - [x] Test `/session/{id}/history` returns empty for nonexistent session
   - [ ] Test `POST /transcribe/file` endpoint with fixture WAV (needs real NeMo)
   - [ ] Test `/ws/transcribe/{session_id}` WebSocket connection lifecycle (needs real NeMo)
 - [x] Add `pytest` and `pytest-asyncio` to `requirements-dev.txt`
-- [x] All 21 tests passing
+- [x] All 38 tests passing (21 original + 17 new)
 
 ---
 

@@ -178,6 +178,13 @@ else
     fail "yt-dlp install failed"
 fi
 
+step "pip install test deps (pytest)"
+if "$PYTHON_AGENT_DIR/.venv/bin/pip" install -r "$REPO_ROOT/tests/python/requirements-dev.txt" 2>&1 | tail -1; then
+    pass
+else
+    fail "test deps install failed"
+fi
+
 # ── System packages ──────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}Installing system packages${RESET}"
