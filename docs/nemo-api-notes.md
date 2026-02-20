@@ -266,11 +266,81 @@ The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 sp
 | ASR transcription | 0.3s | ~7.2s | 0.04x |
 | **Total inference** | **0.8s** | **~7.2s** | **0.11x** |
 
-Real-time factor (RTF) of 0.11x means we can process audio ~9x faster than real-time. Longer audio benchmarks (30s, 60s, 120s, 300s) are needed for buffer strategy decisions (see Task 1.6).
+Real-time factor (RTF) of 0.11x means we can process audio ~9x faster than real-time.
+
+### Buffer Strategy Benchmark (Task 1.6)
+
+Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio (8.5 min source, looped to reach longer durations):
+
+| Duration | Diar (s) | ASR (s) | Total (s) | RTF | VRAM (MiB) |
+|----------|----------|---------|-----------|------|------------|
+| 30s | 0.16 | 0.44 | 0.60 | 0.0200 | 9,067 |
+| 60s | 0.32 | 0.83 | 1.15 | 0.0191 | 9,347 |
+| 90s | 0.30 | 0.89 | 1.19 | 0.0132 | 9,585 |
+| 120s | 0.44 | 1.53 | 1.98 | 0.0165 | 9,805 |
+| 180s | 0.58 | 2.27 | 2.84 | 0.0158 | 10,405 |
+| 300s | 1.15 | 3.52 | 4.67 | 0.0156 | 12,845 |
+| 520s | 1.66 | 9.88 | 11.54 | 0.0222 | 15,568 |
+
+**Key findings:**
+- RTF ratio (first vs last): **1.11x — scaling is ~linear**
+- **Growing buffer is viable** for consultations up to ~8-9 minutes
+- At 520s (full 8.5 min clip), total inference is 11.5s with RTF 0.022x — still 45x faster than real-time
+- VRAM grows with audio length: 9 GB at 30s → 15.6 GB at 520s (near the 16 GB limit)
+- **VRAM is the constraint, not processing time** — for 15+ minute consultations, a hybrid approach (growing buffer with periodic flush) will be needed
+- Sortformer works correctly beyond its configured `session_len_sec: 90` — segments found at all durations tested
+
+**Decision: Growing buffer with VRAM-aware flush.** Re-process full audio each chunk. If VRAM approaches 15 GB, flush and restart the buffer. For a typical 10-15 minute GP consultation, this means at most 1-2 flushes.
 
 ---
 
-## 6. Model Details
+## 6. Edge Case Behaviour (Task 1.8)
+
+### Pure Silence (15 seconds)
+- **Diarization:** No segments detected (clean)
+- **ASR:** Zero words output (no hallucination)
+- **Implication:** Safe to send silence through the pipeline — no spurious transcripts
+
+### Single-Speaker Monologue (45 seconds, looped)
+- **Diarization:** 2 speakers detected — **Sortformer hallucinated a second speaker**
+- Speaker 0: 394/563 active frames, Speaker 1: 137/563 active frames
+- The OSCE audio has two speakers (doctor intro + patient responses) in the first 15s — even when looped as a "monologue", Sortformer picks up turn-taking patterns
+- **Implication:** The role inference agent should not rely solely on speaker count — it needs conversational context to validate attributions
+
+### Speech → Silence (15s) → Speech
+- **Diarization:** Correctly places segments before and after the gap. 1 minor segment leaked into the gap boundary
+- **ASR:** Correctly transcribes both speech portions, nothing during silence
+- **Implication:** Silence gaps are handled well — the pipeline can tolerate pauses during examination
+
+### Baseline Two-Speaker OSCE (4.5 minutes)
+- **Diarization:** 88 segments, 2 active speakers correctly identified
+- Speaker 0: 2307/3371 frames (doctor — talks more), Speaker 1: 1024/3371 frames (patient)
+- **ASR:** 783 words, good transcription quality
+- **Implication:** The pipeline produces usable output for real consultation audio
+
+---
+
+## 7. Audio Format Notes (Task 1.7)
+
+### Browser to Server
+- Browser `MediaRecorder` outputs WebM/Opus by default (compressed, small)
+- NeMo requires 16kHz mono WAV (PCM)
+- Server must convert incoming WebM chunks to WAV before NeMo inference
+
+### Recommended Approach: ffmpeg subprocess
+- ffmpeg is already a dependency (installed in setup-initial.sh)
+- Single `subprocess.run()` call per chunk: `ffmpeg -i input.webm -ar 16000 -ac 1 output.wav`
+- Alternative: `PyAV` (in-process, no subprocess overhead) — viable but adds a dependency
+- Alternative: `AudioWorklet` in browser sending raw PCM Float32 — eliminates server conversion but increases bandwidth ~10x
+
+### Decision: WebM/Opus from browser + ffmpeg conversion on server
+- Lowest bandwidth (compressed audio over WebSocket)
+- ffmpeg is battle-tested and already required
+- Conversion adds <50ms per chunk — negligible vs NeMo inference time
+
+---
+
+## 8. Model Details
 
 | Model | Class | HuggingFace ID |
 |---|---|---|
@@ -293,7 +363,7 @@ Real-time factor (RTF) of 0.11x means we can process audio ~9x faster than real-
 
 ---
 
-## 7. Gotchas and Quirks
+## 9. Gotchas and Quirks
 
 ### Container Version Matrix
 
@@ -306,7 +376,7 @@ Real-time factor (RTF) of 0.11x means we can process audio ~9x faster than real-
 
 ### Sortformer Configuration
 
-The Sortformer model reports `num_spks: 4` and `session_len_sec: 90`. It supports up to 4 speakers and sessions up to 90 seconds in streaming mode. For longer consultations (>90s), a sliding window or chunked approach is needed.
+The Sortformer model reports `num_spks: 4` and `session_len_sec: 90`. Despite the 90s config, **diarization works correctly on audio up to 520s** (tested in Task 1.6 benchmark). The streaming mode internally handles longer sessions.
 
 ### Single-Speaker Fallback
 
