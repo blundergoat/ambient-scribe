@@ -198,8 +198,8 @@ All scripts are in the `scripts/` directory.
 
 | Script | Purpose |
 |--------|---------|
-| `start-dev.sh` | Starts Ollama + Python agent + PHP app. Press Ctrl+C to stop all. |
-| `health-check-localdev.sh` | Checks if all services are running and responsive (Ollama API, model loaded, agent endpoints, PHP app, Mercure, port usage) |
+| `start-dev.sh` | Starts Docker Compose stack (nemo-agent + app + Mercure). Press Ctrl+C to stop. |
+| `health-checks.sh` | Read-only diagnostics: Docker, GPU, containers, services, config, connectivity |
 
 ### Dependencies
 
@@ -268,7 +268,7 @@ composer install
 Another process is using port 8081 or 8082. Check what's running:
 
 ```bash
-./scripts/health-check-localdev.sh    # Shows what's listening on each port
+./scripts/health-checks.sh    # Shows container state + service health
 ```
 
 Or override the ports:

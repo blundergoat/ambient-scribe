@@ -2,22 +2,11 @@
 # Preflight check: Run all quality gates before committing
 # Usage: ./scripts/preflight-checks.sh [--coverage-min=80]
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 cd "$REPO_ROOT"
 
-# ── Colors & Symbols ──────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS="${GREEN}✔${RESET}"
-FAIL="${RED}✘${RESET}"
+# SKIP symbol not provided by env-detect.sh (WARN uses ○ but SKIP is a local alias)
 SKIP="${YELLOW}○${RESET}"
-ARROW="${BLUE}▸${RESET}"
 
 # ── State ─────────────────────────────────────────────────────────
 TOTAL=0
