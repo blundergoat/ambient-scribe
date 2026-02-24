@@ -288,7 +288,61 @@ else
     skip "python3 not available"
 fi
 
-# 9. Docker Compose validate
+# 9. Python lint (ruff)
+step "Python lint (ruff)"
+t=$(date +%s%N)
+RUFF_BIN=""
+if command -v ruff &>/dev/null; then
+    RUFF_BIN="ruff"
+elif [[ -x "$REPO_ROOT/strands_agents/.venv/bin/ruff" ]]; then
+    RUFF_BIN="$REPO_ROOT/strands_agents/.venv/bin/ruff"
+fi
+if [[ -n "$RUFF_BIN" ]] && [[ -d "$agent_dir" ]]; then
+    ruff_output=$($RUFF_BIN check "$agent_dir" 2>&1)
+    ruff_exit=$?
+    if [[ $ruff_exit -eq 0 ]]; then
+        pass "$(elapsed_since $t)"
+    else
+        ruff_count=$(echo "$ruff_output" | grep -cE "^$agent_dir" || true)
+        fail "Python lint (${ruff_count} issues)"
+        echo "$ruff_output" | head -10 | while read -r line; do
+            echo -e "    ${DIM}${line}${RESET}"
+        done
+    fi
+elif [[ ! -d "$agent_dir" ]]; then
+    skip "no strands_agents/ directory"
+else
+    skip "ruff not installed (pip install ruff)"
+fi
+
+# 10. Python tests (pytest)
+step "Tests (pytest)"
+t=$(date +%s%N)
+PYTEST_BIN=""
+if command -v pytest &>/dev/null; then
+    PYTEST_BIN="pytest"
+elif [[ -x "$REPO_ROOT/strands_agents/.venv/bin/pytest" ]]; then
+    PYTEST_BIN="$REPO_ROOT/strands_agents/.venv/bin/pytest"
+fi
+if [[ -n "$PYTEST_BIN" ]] && [[ -d "$REPO_ROOT/tests/python" ]]; then
+    pytest_output=$(NEMO_MODEL_PROVIDER=mock PYTHONPATH="$REPO_ROOT/strands_agents" $PYTEST_BIN "$REPO_ROOT/tests/python/" -q 2>&1)
+    pytest_exit=$?
+    if [[ $pytest_exit -eq 0 ]]; then
+        pytest_summary=$(echo "$pytest_output" | tail -1)
+        pass "${pytest_summary} $(elapsed_since $t)"
+    else
+        fail "Python tests"
+        echo "$pytest_output" | tail -15 | while read -r line; do
+            echo -e "    ${DIM}${line}${RESET}"
+        done
+    fi
+elif [[ ! -d "$REPO_ROOT/tests/python" ]]; then
+    skip "no tests/python/ directory"
+else
+    skip "pytest not installed (pip install pytest)"
+fi
+
+# 11. Docker Compose validate
 step "Docker Compose config"
 t=$(date +%s%N)
 compose_file="$REPO_ROOT/docker-compose.yml"
@@ -310,7 +364,7 @@ else
     skip "docker not available"
 fi
 
-# 10. PHPUnit
+# 12. PHPUnit
 step "Tests (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -x vendor/bin/phpunit ]]; then
@@ -335,7 +389,7 @@ else
     fi
 fi
 
-# 11. Coverage
+# 13. Coverage
 step "Coverage (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -f phpunit.xml && ! -f phpunit.xml.dist ]]; then
@@ -386,7 +440,7 @@ else
     fi
 fi
 
-# 12. Mutation testing (optional)
+# 14. Mutation testing (optional)
 if [[ "$RUN_MUTATE" == true ]]; then
     step "Mutation testing (Infection)"
     t=$(date +%s%N)

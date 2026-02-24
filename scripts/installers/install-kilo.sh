@@ -4,13 +4,9 @@
 # WARNING: Only install on systems you own or have permission to modify.
 # Run this script in Git Bash, WSL, or any Unix-like terminal.
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-NC='\033[0m' # No Color
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_common.sh"
 
 # Allow overrides via environment variables
 KILO_NPM_PACKAGE=${KILO_NPM_PACKAGE:-@kilocode/cli}
@@ -25,86 +21,17 @@ KILO_OPENAI_API_KEY=${KILO_OPENAI_API_KEY:-local-dev-api-key}
 echo -e "${CYAN}Starting Kilo CLI installation...${NC}"
 echo -e "${YELLOW}npm package: ${WHITE}${KILO_NPM_PACKAGE}${NC}"
 echo -e "${YELLOW}LM Studio endpoint: ${WHITE}${KILO_BASE_URL}${NC}"
+print_platform
 
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Detect OS (used for Node.js guidance)
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    OS="macOS"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS="Linux"
-elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "mingw"* ]]; then
-    OS="Windows"
-else
-    OS="Unknown"
-fi
-
-echo -e "\n${CYAN}Detected OS: ${WHITE}$OS${NC}"
-
-echo -e "\n${YELLOW}Checking for Node.js installation...${NC}"
-if command_exists node; then
-    NODE_VERSION=$(node --version)
-    echo -e "${GREEN}Node.js is already installed (version ${NODE_VERSION})${NC}"
-    if command_exists npm; then
-        NPM_VERSION=$(npm --version)
-        echo -e "${GREEN}npm is already installed (version ${NPM_VERSION})${NC}"
-    else
-        echo -e "${RED}npm not found. Please reinstall Node.js.${NC}"
-        exit 1
-    fi
-else
-    echo -e "${RED}Node.js is required for Kilo CLI installation.${NC}"
-    # In non-interactive mode, auto-install; otherwise prompt
-    if [[ -t 0 ]]; then
-        read -p "Would you like to install Node.js? (y/n): " install_node
-        if [[ "$install_node" != "y" ]]; then
-            echo -e "${RED}Node.js is required. Exiting.${NC}"
-            exit 1
-        fi
-    else
-        echo -e "${CYAN}Non-interactive mode: auto-installing Node.js...${NC}"
-    fi
-
-    if [[ "$OS" == "Windows" ]]; then
-        echo -e "${CYAN}Installing Node.js via winget...${NC}"
-        winget install -e --id OpenJS.NodeJS.LTS
-    elif [[ "$OS" == "Linux" ]]; then
-        echo -e "${CYAN}Installing Node.js for Linux...${NC}"
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-    elif [[ "$OS" == "macOS" ]]; then
-        echo -e "${CYAN}Installing Node.js for macOS...${NC}"
-        if command_exists brew; then
-            brew install node
-        else
-            echo -e "${YELLOW}Homebrew not found. Please install it first or use the Node.js installer.${NC}"
-            exit 1
-        fi
-    fi
-
-    export PATH=$PATH:/usr/local/bin
-    hash -r
-    if ! command_exists node; then
-        echo -e "${RED}Node.js installation failed. Exiting.${NC}"
-        exit 1
-    fi
-fi
+require_node_or_install || exit 1
 
 echo -e "\n${CYAN}========================================"
 echo -e "Installing Kilo CLI via npm"
 echo -e "========================================${NC}"
 
-if command_exists npm; then
-    npm install -g "${KILO_NPM_PACKAGE}"
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}Error installing ${KILO_NPM_PACKAGE}.${NC}"
-        echo -e "${YELLOW}Check the package name or set KILO_NPM_PACKAGE to the correct npm package and rerun.${NC}"
-        exit 1
-    fi
-else
-    echo -e "${RED}npm is not installed.${NC}"
+if ! npm install -g "${KILO_NPM_PACKAGE}"; then
+    echo -e "\n${RED}Error installing ${KILO_NPM_PACKAGE}.${NC}"
+    echo -e "${YELLOW}Check the package name or set KILO_NPM_PACKAGE to the correct npm package and rerun.${NC}"
     exit 1
 fi
 
@@ -131,16 +58,14 @@ cat > "${KILO_CONFIG_FILE}" <<EOF
   ]
 }
 EOF
-chmod 700 "${KILO_CONFIG_DIR}" 2>/dev/null
-chmod 600 "${KILO_CONFIG_FILE}" 2>/dev/null
+chmod 700 "${KILO_CONFIG_DIR}" 2>/dev/null || true
+chmod 600 "${KILO_CONFIG_FILE}" 2>/dev/null || true
 echo -e "${GREEN}Saved configuration to ${KILO_CONFIG_FILE}${NC}"
 
 echo -e "\n${YELLOW}Verifying installation...${NC}"
-if command_exists kilo; then
+if verify_native_binary kilo "Kilo CLI"; then
     echo -e "${GREEN}Kilo CLI installed successfully!${NC}"
     kilo --version 2>/dev/null || echo -e "${YELLOW}Version command not available yet${NC}"
-else
-    echo -e "${YELLOW}Kilo command not found in PATH. You may need to restart your shell or add npm's global bin to PATH.${NC}"
 fi
 
 echo -e "\n${CYAN}========================================"
