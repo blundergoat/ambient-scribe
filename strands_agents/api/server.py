@@ -66,8 +66,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -218,7 +217,7 @@ async def publish_to_mercure(topic: str, data: dict[str, Any]) -> None:
 # =============================================================================
 
 @app.post("/transcribe/file", response_model=TranscribeFileResponse)
-async def transcribe_file(file: UploadFile, session_id: str = "") -> TranscribeFileResponse:
+async def transcribe_file(file: UploadFile, session_id: str = Form("")) -> TranscribeFileResponse:
     """Upload a WAV file and get a complete transcript.
 
     Batch mode entry point for testing and demo replay.

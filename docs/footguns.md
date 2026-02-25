@@ -110,3 +110,16 @@ The Python publisher JWT must be pre-signed with the same secret the Mercure hub
 - `StreamOrchestrator` (`index.html.twig:181-190`) handles SSE reconnection with exponential backoff
 - Each segment carries `start_time` and `end_time` — the UI can deduplicate and sort by timestamp regardless of arrival order
 - The `finalized` event type signals end-of-session so the browser knows when to stop expecting events
+
+---
+
+## FG-8: Docker Volume Mount Path vs WORKDIR Mismatch
+
+**Symptoms:** Container exits immediately with `ModuleNotFoundError: No module named 'api'`. Uvicorn cannot find the FastAPI application module.
+
+**Why:** The Dockerfile sets `WORKDIR /app` and CMD `uvicorn api.server:app`, expecting Python modules at `/app/api/server.py`, `/app/nemo_pipeline.py`, etc. If the docker-compose volume mount targets a subdirectory (e.g., `./strands_agents:/app/strands_agents`), the files land at `/app/strands_agents/api/server.py` — one level too deep. Python's import system searches from WORKDIR, so `import api.server` fails.
+
+**Prevention:**
+- The volume mount must map directly to WORKDIR: `./strands_agents:/app` (not `/app/strands_agents`)
+- The Dockerfile's `COPY . /app` (build context is `./strands_agents`) places files at the same path for production
+- When changing WORKDIR or volume mounts, verify with: `docker compose run --rm nemo-agent python -c "import api.server; print('OK')"`

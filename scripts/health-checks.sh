@@ -160,8 +160,8 @@ else
     check "app /scribe" "fail" "not reachable"
 fi
 
-# Mercure hub
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:3701/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
+# Mercure hub (no -f: Mercure returns 400 when no topic is provided, which is valid)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:3701/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" =~ ^(200|401|400)$ ]]; then
     check "Mercure hub" "pass" "HTTP ${HTTP_CODE}"
 elif [[ "$HTTP_CODE" != "000" ]]; then
@@ -216,7 +216,7 @@ echo ""
 
 # nemo-agent → Mercure
 if find_container "$NEMO_CONTAINER"; then
-    INTERNAL_CODE=$(docker exec "$NEMO_CONTAINER" curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://mercure:3701/.well-known/mercure" 2>/dev/null) || INTERNAL_CODE="000"
+    INTERNAL_CODE=$(docker exec "$NEMO_CONTAINER" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://mercure:3701/.well-known/mercure" 2>/dev/null) || INTERNAL_CODE="000"
     if [[ "$INTERNAL_CODE" =~ ^(200|401|400)$ ]]; then
         check "nemo-agent → Mercure" "pass" "HTTP ${INTERNAL_CODE}"
     elif [[ "$INTERNAL_CODE" != "000" ]]; then

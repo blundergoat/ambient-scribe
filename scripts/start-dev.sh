@@ -95,11 +95,18 @@ wait_healthy() {
     while [[ $elapsed -lt $timeout ]]; do
         local remaining=$(( timeout - elapsed ))
         local status
-        status=$(docker inspect "$container" --format '{{.State.Health.Status}}' 2>/dev/null || echo "missing")
+        status=$(docker inspect "$container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null || echo "missing")
 
         if [[ "$status" == "healthy" ]]; then
             echo -ne "\r\033[K"
             echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}healthy${RESET}"
+            return 0
+        fi
+
+        # Containers without a HEALTHCHECK (e.g., Mercure) — treat "running" as ready
+        if [[ "$status" == "no-healthcheck" || "$status" == "none" ]]; then
+            echo -ne "\r\033[K"
+            echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}running (no healthcheck)${RESET}"
             return 0
         fi
 
