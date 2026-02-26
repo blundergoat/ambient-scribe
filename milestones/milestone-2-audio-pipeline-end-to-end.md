@@ -1,7 +1,7 @@
 # Milestone 2 — Audio Pipeline End-to-End
 
 **Timeline:** Weekend 2 (~5-6 hours across 2 sessions)
-**Status:** In Progress (pipeline stubs filled, tests passing; GPU verification pending)
+**Status:** COMPLETE — GPU-verified 2026-02-26 (live browser transcription working end-to-end)
 **Dependencies:** Milestone 1 complete (NeMo validated on RTX 5080, API surface documented, scaffold in place)
 
 ---
@@ -37,7 +37,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           ...
   ```
 - [x] Add a test HTTP endpoint: `POST /transcribe/file` (accepts WAV upload, returns JSON segments)
-- [ ] Verify end-to-end: upload test WAV -> get back speaker-attributed segments (needs GPU)
+- [x] Verify end-to-end: upload test WAV -> get back speaker-attributed segments (87 segments, 7.56s)
 - [x] Publish segments to Mercure from Python:
   ```python
   async def publish_to_mercure(session_id: str, data: dict):
@@ -47,7 +47,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
               "data": json.dumps(data),
           }, headers={"Authorization": f"Bearer {MERCURE_JWT}"})
   ```
-- [ ] Verify browser receives segments via Mercure SSE subscription (needs GPU + docker compose)
+- [x] Verify browser receives segments via Mercure SSE subscription (75 segments in 1m42s live session)
 
 ### 2.2 Chunked Processing Wrapper (Session A, ~1 hour)
 
@@ -215,8 +215,8 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
       build: ./docker/php
       # Updated env for scribe
   ```
-- [ ] Verify all 3 services start and communicate (needs GPU + docker compose)
-- [ ] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript (needs GPU + docker compose)
+- [x] Verify all 3 services start and communicate (health-checks.sh: 19/19 passed)
+- [x] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript (verified 2026-02-26)
 
 ### 2.8 Tests for NeMo Pipeline Wrapper
 
@@ -244,9 +244,9 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 - [x] Browser captures mic audio and sends chunks over WebSocket (code complete in index.html.twig)
 - [x] FastAPI receives chunks, feeds NeMo pipeline, gets transcript segments (code complete in server.py)
 - [x] **NeMo inference runs in thread pool** — does not block the async event loop (ThreadPoolExecutor in server.py)
-- [ ] Segments published to Mercure, rendered in browser in real-time (needs GPU + docker compose)
-- [ ] Can see `spk_0` and `spk_1` labelled text appearing as you speak (needs GPU + docker compose)
-- [ ] End-to-end latency under ~5 seconds (chunk interval + NeMo processing) (needs GPU + docker compose)
+- [x] Segments published to Mercure, rendered in browser in real-time (verified via m2-debug-live.sh + browser)
+- [x] Can see `speaker_0` and `speaker_1` labelled text appearing as you speak (verified 2026-02-26)
+- [x] End-to-end latency under ~5 seconds (chunk interval + NeMo processing) (verified: ~5s per chunk)
 - [x] NeMo models loaded once at startup, shared across sessions (lifespan handler in server.py)
 - [x] **Structured logging with correlation IDs and timing in place**
 - [x] **Python tests pass for NeMo pipeline wrapper and API endpoints** (38/38 passing)

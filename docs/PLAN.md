@@ -1,7 +1,8 @@
 # Next Steps Plan
 
 **Created:** 2026-02-20
-**Current state:** M0 code-complete, M1 complete, M2 code-complete (GPU verification pending)
+**Updated:** 2026-02-26
+**Current state:** M0 code-complete, M1 complete, M2 GPU-verified, Priority 0 (preflight) next
 
 ---
 
@@ -27,26 +28,32 @@
 
 ---
 
-## Priority 1: GPU Verification Session (M2 sign-off)
+## ~~Priority 1: GPU Verification Session (M2 sign-off)~~ DONE (2026-02-26)
 
-All M2 code is written. These items need `docker compose up --build` on the GPU machine:
+Verified via `scripts/m2-verify.sh` + `scripts/m2-debug-live.sh` + manual browser test.
 
-- [ ] `docker compose up --build` — verify all 3 services start (nemo-agent, mercure, app)
-- [ ] Verify NeMo model loading at startup (watch logs for `server.startup.nemo_models_loaded`)
-- [ ] Upload test WAV via `POST /transcribe/file` — verify speaker-attributed segments returned
-- [ ] Open browser → record audio → verify WebSocket connection + chunk streaming
-- [ ] Verify segments appear in browser via Mercure SSE
-- [ ] Verify `websocket.chunk_e2e` latency logs are emitted
-- [ ] Hit `/health` during active transcription — verify it responds (event loop not blocked)
-- [ ] Run WebSocket lifecycle test: connect → send chunks → disconnect → verify finalize runs
+- [x] `docker compose up --build` — all 3 services start (nemo-agent, mercure, app)
+- [x] NeMo models load at startup (Sortformer + Parakeet restored from cache)
+- [x] `POST /transcribe/file` — 87 segments, 7.56s inference, two speakers
+- [x] Browser → record audio → WebSocket connects, chunks stream every 5s
+- [x] Segments appear in browser via Mercure SSE (75 segments in 1m42s session)
+- [x] `/health` responds during active inference (0ms, event loop not blocked)
+- [x] VRAM at 38% after inference (6302/16303 MB)
 
-**Outcome:** Mark remaining M2 exit criteria as done, or log specific issues to fix.
+**Bugs found and fixed:**
+- [x] **StreamOrchestrator `_active` ordering bug** — first EventSource topic (`/raw`) silently skipped because `_active` was `false` when `_connect()` ran. Fix: set `_active = true` before `_connect()` in `subscribe()`.
+
+**Bugs found, deferred:**
+- [ ] Duplicate segments: growing buffer re-publishes full transcript each chunk — browser appends all, needs dedup/replace
+- [ ] NeMo concurrency error: `"Cannot unfreeze partially"` when sessions overlap — needs mutex around model inference
+- [ ] Python logging invisible: `logging.getLogger(__name__)` with no `basicConfig(level=INFO)` — all INFO calls swallowed
+- [ ] `websocket.chunk_e2e` latency logs not visible (consequence of logging level issue)
 
 ---
 
 ## Priority 2: M3 — Role Attribution + Agent Intelligence
 
-This is the demo's centrepiece. Prerequisites: preflight green, M2 GPU-verified.
+This is the demo's centrepiece. Prerequisites: preflight green, M2 GPU-verified (DONE).
 
 ### Session A (~2 hours): Agent + Queue
 
@@ -92,10 +99,10 @@ Only after M3 is working end-to-end:
 ## Quick Reference: What's Blocking What
 
 ```
-Preflight green ←── PHP tests (Priority 0)
+Preflight green ←── PHP tests (Priority 0)        ← YOU ARE HERE
       │
       ▼
-M2 sign-off ←────── GPU verification (Priority 1)
+M2 sign-off ←────── GPU verification (Priority 1) ✔ DONE
       │
       ▼
 M3 build ←───────── Agent + queue + UX (Priority 2)

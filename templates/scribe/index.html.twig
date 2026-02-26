@@ -186,8 +186,8 @@
 
             const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null };
             this._streams.set(topic, state);
-            this._connect(topic, state);
             this._active = true;
+            this._connect(topic, state);
         }
 
         /** Disconnect a single topic. */
