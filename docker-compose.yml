@@ -53,26 +53,33 @@ services:
               count: 1
               capabilities: [gpu]
     ports:
-      - "8001:8000"
+      - "${AGENT_PORT:-8001}:8000"
     environment:
       # --- NeMo configuration ---
       - NEMO_MODEL_PROVIDER=${NEMO_MODEL_PROVIDER:-local}
+      - NEMO_STREAM_INPUT_FORMAT=${NEMO_STREAM_INPUT_FORMAT:-pcm}
 
       # --- Mercure publishing ---
       - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
       - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
+      - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
 
       # --- Role inference agent (uses Bedrock, NOT GPU) ---
       - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-bedrock}
       - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-us.anthropic.claude-sonnet-4-20250514-v1:0}
+      - ROLE_AGENT_OLLAMA_MODEL=${ROLE_AGENT_OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
 
       # --- AWS credentials (for Bedrock role inference) ---
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-southeast-2}
+      - AWS_PROFILE=${AWS_PROFILE:-}
     volumes:
-      - ./strands_agents:/app/strands_agents  # Hot reload in dev
+      - ./strands_agents:/app  # Hot reload in dev
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -93,15 +100,15 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8082:8080"
+      - "${APP_PORT:-8082}:8080"
     environment:
       - APP_ENV=dev
       - APP_DEBUG=1
       - APP_SECRET=${APP_SECRET:-ambient-scribe-dev-secret-change-me}
       - AGENT_ENDPOINT=http://nemo-agent:8000
-      - NEMO_WEBSOCKET_URL=ws://localhost:8001
+      - NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-8001}
       - MERCURE_URL=http://mercure:3701/.well-known/mercure
-      - MERCURE_PUBLIC_URL=http://localhost:3701/.well-known/mercure
+      - MERCURE_PUBLIC_URL=http://localhost:${MERCURE_PORT:-3701}/.well-known/mercure
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
     depends_on:
       nemo-agent:
@@ -120,11 +127,11 @@ services:
   mercure:
     image: dunglas/mercure
     ports:
-      - "3701:3701"
+      - "${MERCURE_PORT:-3701}:3701"
     environment:
       MERCURE_PUBLISHER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       MERCURE_SUBSCRIBER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       SERVER_NAME: ":3701"
       MERCURE_EXTRA_DIRECTIVES: |
         anonymous
-        cors_origins http://localhost:8082
+        cors_origins http://localhost:${APP_PORT:-8082}

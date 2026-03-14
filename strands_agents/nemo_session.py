@@ -29,6 +29,9 @@ handler must call it via run_in_executor() to avoid blocking the event loop.
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import tempfile
 import time
 
 from nemo_pipeline import NemoPipeline, Segment
@@ -109,7 +112,12 @@ class TranscriptionSession:
     asyncio.run_in_executor() to avoid blocking the event loop.
     """
 
-    def __init__(self, session_id: str, pipeline: NemoPipeline) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        pipeline: NemoPipeline,
+        input_format: str = "pcm",
+    ) -> None:
         """Create a new transcription session.
 
         Args:
@@ -121,10 +129,13 @@ class TranscriptionSession:
         self.buffer = AudioBuffer()
         self.accumulated_transcript: list[Segment] = []
         self.chunk_count: int = 0
+        self.input_format = input_format
         self.started_at: float = time.time()
+        self._seen_segment_keys: set[tuple[str, int, int, str]] = set()
 
         logger.info("transcription_session.created", extra={
             "session_id": session_id,
+            "input_format": input_format,
         })
 
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
@@ -148,21 +159,19 @@ class TranscriptionSession:
         self.chunk_count += 1
         chunk_started_at = time.time()
 
-        # =====================================================================
-        # PLACEHOLDER: Audio format conversion
-        # =====================================================================
-        # The actual conversion depends on the Milestone 1 audio format spike:
-        #   - If PyAV: convert WebM/Opus → PCM in-process
-        #   - If AudioWorklet: raw_audio is already PCM Float32, convert to int16
-        #   - If ffmpeg: pipe through persistent ffmpeg subprocess
-        # For now, assume raw PCM input.
-        pcm_audio = raw_audio
+        pcm_audio = self._decode_audio(raw_audio)
+        if pcm_audio == b"":
+            logger.info("transcription_session.chunk_skipped", extra={
+                "session_id": self.session_id,
+                "reason": "empty_after_decode",
+            })
+            return []
 
         self.buffer.append(pcm_audio)
 
         # Run NeMo on current buffer window
         result = self.pipeline.transcribe_buffer(self.buffer.current_window())
-        new_segments = result.segments
+        new_segments = self._filter_new_segments(result.segments)
 
         # Accumulate transcript
         self.accumulated_transcript.extend(new_segments)
@@ -199,4 +208,78 @@ class TranscriptionSession:
 
         # Final pass on complete audio
         result = self.pipeline.transcribe_buffer(self.buffer.full_audio())
-        return result.segments if result.segments else self.accumulated_transcript
+        new_segments = self._filter_new_segments(result.segments)
+        self.accumulated_transcript.extend(new_segments)
+
+        return list(self.accumulated_transcript)
+
+    def _decode_audio(self, raw_audio: bytes) -> bytes:
+        """Decode the incoming browser chunk into 16kHz mono PCM."""
+        if raw_audio == b"":
+            return b""
+
+        if self.input_format == "pcm":
+            return raw_audio
+
+        if self.input_format == "webm":
+            return self._decode_webm_chunk(raw_audio)
+
+        raise ValueError(f"Unsupported transcription input format: {self.input_format}")
+
+    def _decode_webm_chunk(self, raw_audio: bytes) -> bytes:
+        """Decode a MediaRecorder WebM/Opus chunk into raw PCM bytes."""
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
+            input_file.write(raw_audio)
+            input_path = input_file.name
+
+        try:
+            result = subprocess.run(
+                [
+                    os.environ.get("FFMPEG_BINARY", "ffmpeg"),
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    input_path,
+                    "-f",
+                    "s16le",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "pipe:1",
+                ],
+                capture_output=True,
+                check=True,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("ffmpeg is required to decode WebM audio chunks") from exc
+        except subprocess.CalledProcessError as exc:
+            error_output = exc.stderr.decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(f"ffmpeg decode failed: {error_output}") from exc
+        finally:
+            try:
+                os.unlink(input_path)
+            except FileNotFoundError:
+                pass
+
+        return result.stdout
+
+    def _filter_new_segments(self, segments: list[Segment]) -> list[Segment]:
+        """Return only transcript segments not seen in earlier buffer passes."""
+        new_segments: list[Segment] = []
+        for segment in segments:
+            key = (
+                segment.speaker_id,
+                int(round(segment.start * 100)),
+                int(round(segment.end * 100)),
+                segment.text.strip().lower(),
+            )
+            if key in self._seen_segment_keys:
+                continue
+
+            self._seen_segment_keys.add(key)
+            new_segments.append(segment)
+
+        return new_segments

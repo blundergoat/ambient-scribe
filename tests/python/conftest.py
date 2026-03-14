@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+os.environ.setdefault("NEMO_SKIP_MODEL_LOAD", "1")
+os.environ.setdefault("NEMO_STREAM_INPUT_FORMAT", "pcm")
+
 # Add the strands_agents directory to the Python path so tests can import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "strands_agents"))
 

@@ -79,6 +79,16 @@ class SessionStore:
             session.segments.append(segment)
         session.last_accessed_at = time.monotonic()
 
+    def replace_segments(self, session_id: str, segments: list[dict]) -> None:
+        """Replace the stored transcript for a session.
+
+        Useful after a final transcription pass where the caller already has
+        the full deduplicated transcript in memory.
+        """
+        session = self._get_or_create(session_id)
+        session.segments = list(segments[:self._max_segments])
+        session.last_accessed_at = time.monotonic()
+
     def get_segments(self, session_id: str) -> list[dict]:
         """Return all segments for a session.
 

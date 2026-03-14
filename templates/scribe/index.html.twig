@@ -5,27 +5,64 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ambient Scribe — Medical Transcription</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        (function () {
+            const storageKey = 'ambient-scribe-theme';
+            const storedTheme = localStorage.getItem(storageKey);
+            const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+            document.documentElement.dataset.theme = storedTheme || preferredTheme;
+        })();
+    </script>
     <style>
         :root {
-            --color-doctor: #2563eb;
-            --color-doctor-bg: #eff6ff;
-            --color-patient: #16a34a;
-            --color-patient-bg: #f0fdf4;
-            --color-unknown: #9ca3af;
-            --color-unknown-bg: #f9fafb;
+            color-scheme: light;
+            --page-bg: #eef2f7;
+            --surface-bg: #ffffff;
+            --surface-border: #d6dee8;
+            --surface-hover: #f8fafc;
+            --text-strong: #0f172a;
+            --text-muted: #475569;
+            --text-subtle: #64748b;
+            --color-doctor: #1d4ed8;
+            --color-doctor-bg: #dbeafe;
+            --color-patient: #166534;
+            --color-patient-bg: #dcfce7;
+            --color-unknown: #334155;
+            --color-unknown-bg: #e2e8f0;
         }
 
-        .dark {
-            --color-doctor-bg: #1e3a5f;
-            --color-patient-bg: #1a3a2a;
-            --color-unknown-bg: #1f2937;
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --page-bg: #020617;
+            --surface-bg: #0f172a;
+            --surface-border: #334155;
+            --surface-hover: #162033;
+            --text-strong: #e2e8f0;
+            --text-muted: #cbd5e1;
+            --text-subtle: #94a3b8;
+            --color-doctor: #93c5fd;
+            --color-doctor-bg: #172554;
+            --color-patient: #86efac;
+            --color-patient-bg: #14532d;
+            --color-unknown: #cbd5e1;
+            --color-unknown-bg: #1e293b;
+        }
+
+        body {
+            background: var(--page-bg);
+            color: var(--text-strong);
+            transition: background-color 0.2s ease, color 0.2s ease;
         }
 
         .segment {
             padding: 0.75rem 1rem;
             margin-bottom: 0.5rem;
             border-radius: 0.5rem;
-            transition: all 0.3s ease;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            color: var(--text-strong);
+            transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
         .segment--DOCTOR {
@@ -53,13 +90,15 @@
 
         .segment__time {
             font-size: 0.7rem;
-            opacity: 0.6;
+            color: var(--text-muted);
             margin-left: 0.5rem;
         }
 
         .segment__text {
             display: block;
             margin-top: 0.25rem;
+            color: var(--text-strong);
+            line-height: 1.55;
         }
 
         .recording-pulse {
@@ -74,23 +113,66 @@
         .confidence-badge {
             transition: all 0.5s ease;
         }
+
+        .panel {
+            background: var(--surface-bg);
+            border: 1px solid var(--surface-border);
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+
+        .muted-text {
+            color: var(--text-muted);
+        }
+
+        .subtle-text {
+            color: var(--text-subtle);
+        }
+
+        .title-text {
+            color: var(--text-strong);
+        }
+
+        .theme-toggle {
+            background: var(--surface-bg);
+            border: 1px solid var(--surface-border);
+            color: var(--text-muted);
+        }
+
+        .theme-toggle:hover {
+            background: var(--surface-hover);
+            color: var(--text-strong);
+        }
+
+        .theme-toggle:focus-visible {
+            outline: 2px solid var(--color-doctor);
+            outline-offset: 2px;
+        }
     </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
+<body class="min-h-screen">
     <div class="max-w-4xl mx-auto px-4 py-8">
 
         <!-- Header -->
-        <div class="mb-8">
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
-                Ambient Medical Scribe
-            </h1>
-            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Real-time consultation transcription with speaker identification
-            </p>
+        <div class="mb-8 flex items-start justify-between gap-4">
+            <div>
+                <h1 class="title-text text-2xl font-bold">
+                    Ambient Medical Scribe
+                </h1>
+                <p class="mt-1 text-sm muted-text">
+                    Real-time consultation transcription with speaker identification
+                </p>
+            </div>
+            <button
+                id="themeToggle"
+                type="button"
+                onclick="toggleTheme()"
+                class="theme-toggle rounded-full px-3 py-2 text-sm font-medium transition-colors"
+                aria-pressed="false"
+            ></button>
         </div>
 
         <!-- Controls -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6 flex items-center gap-4">
+        <div class="panel rounded-lg shadow-sm p-4 mb-6 flex items-center gap-4">
             <button
                 id="startBtn"
                 onclick="startRecording()"
@@ -107,7 +189,7 @@
             </button>
 
             <!-- Status -->
-            <span id="status" class="text-sm text-gray-500 dark:text-gray-400">
+            <span id="status" class="text-sm muted-text">
                 Ready
             </span>
 
@@ -116,7 +198,7 @@
             </span>
 
             <!-- Timer -->
-            <span id="timer" class="text-sm font-mono text-gray-400 hidden">
+            <span id="timer" class="text-sm font-mono subtle-text hidden">
                 00:00
             </span>
         </div>
@@ -124,9 +206,9 @@
         <!-- Transcript -->
         <div
             id="transcript"
-            class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 min-h-[400px] max-h-[600px] overflow-y-auto"
+            class="panel rounded-lg shadow-sm p-4 min-h-[400px] max-h-[600px] overflow-y-auto"
         >
-            <p id="emptyState" class="text-center text-gray-400 dark:text-gray-500 py-12">
+            <p id="emptyState" class="text-center subtle-text py-12">
                 Click "Start Consultation" to begin recording.
                 <br>
                 <span class="text-xs">Ensure microphone access is allowed.</span>
@@ -134,7 +216,7 @@
         </div>
 
         <!-- Segment Count -->
-        <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 text-right">
+        <div class="mt-2 text-xs muted-text text-right">
             <span id="segmentCount">0</span> segments
         </div>
     </div>
@@ -149,7 +231,33 @@
         mercureUrl: '{{ mercure_url }}',
         topicRaw: '{{ mercure_topic_raw }}',
         topicRoles: '{{ mercure_topic_roles }}',
+        enableRoleUpdates: {{ enable_role_updates ? 'true' : 'false' }},
     };
+    const THEME_STORAGE_KEY = 'ambient-scribe-theme';
+
+    function getCurrentTheme() {
+        return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    }
+
+    function applyTheme(theme) {
+        const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
+        const toggle = document.getElementById('themeToggle');
+
+        document.documentElement.dataset.theme = resolvedTheme;
+
+        if (toggle) {
+            toggle.textContent = resolvedTheme === 'dark' ? 'Theme: Dark' : 'Theme: Light';
+            toggle.setAttribute('aria-pressed', resolvedTheme === 'dark' ? 'true' : 'false');
+        }
+    }
+
+    function toggleTheme() {
+        const nextTheme = getCurrentTheme() === 'dark' ? 'light' : 'dark';
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+        applyTheme(nextTheme);
+    }
+
+    applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || getCurrentTheme());
 
     // =========================================================================
     // StreamOrchestrator — manages EventSource connections to Mercure
@@ -186,8 +294,8 @@
 
             const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null };
             this._streams.set(topic, state);
-            this._connect(topic, state);
             this._active = true;
+            this._connect(topic, state);
         }
 
         /** Disconnect a single topic. */
@@ -271,10 +379,147 @@
     }
 
     // =========================================================================
+    // PCM Streamer - captures mic audio as 16kHz mono PCM
+    // =========================================================================
+    class PcmStreamer {
+        constructor(stream, options = {}) {
+            this._stream = stream;
+            this._targetSampleRate = options.targetSampleRate || 16000;
+            this._chunkMs = options.chunkMs || 5000;
+            this._onChunk = options.onChunk || (() => {});
+            this._audioContext = null;
+            this._source = null;
+            this._processor = null;
+            this._silence = null;
+            this._buffers = [];
+            this._bufferedBytes = 0;
+            this._bytesPerChunk = this._targetSampleRate * 2 * (this._chunkMs / 1000);
+        }
+
+        async start() {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) {
+                throw new Error('Web Audio API is not supported in this browser');
+            }
+
+            this._audioContext = new AudioContextClass();
+            await this._audioContext.resume();
+
+            this._source = this._audioContext.createMediaStreamSource(this._stream);
+            this._processor = this._audioContext.createScriptProcessor(4096, 1, 1);
+            this._silence = this._audioContext.createGain();
+            this._silence.gain.value = 0;
+
+            this._processor.onaudioprocess = (event) => {
+                const input = event.inputBuffer.getChannelData(0);
+                const downsampled = this._downsampleBuffer(
+                    input,
+                    this._audioContext.sampleRate,
+                    this._targetSampleRate
+                );
+                const pcmChunk = this._floatTo16BitPcm(downsampled);
+
+                if (pcmChunk.byteLength === 0) {
+                    return;
+                }
+
+                this._buffers.push(pcmChunk);
+                this._bufferedBytes += pcmChunk.byteLength;
+
+                if (this._bufferedBytes >= this._bytesPerChunk) {
+                    this.flush();
+                }
+            };
+
+            this._source.connect(this._processor);
+            this._processor.connect(this._silence);
+            this._silence.connect(this._audioContext.destination);
+        }
+
+        flush() {
+            if (this._bufferedBytes === 0) {
+                return;
+            }
+
+            const merged = new Uint8Array(this._bufferedBytes);
+            let offset = 0;
+            for (const chunk of this._buffers) {
+                merged.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+
+            this._buffers = [];
+            this._bufferedBytes = 0;
+            this._onChunk(merged.buffer);
+        }
+
+        stop() {
+            this.flush();
+            this._processor?.disconnect();
+            this._source?.disconnect();
+            this._silence?.disconnect();
+            this._processor = null;
+            this._source = null;
+            this._silence = null;
+
+            if (this._audioContext) {
+                this._audioContext.close().catch(() => {});
+                this._audioContext = null;
+            }
+        }
+
+        _downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+            if (inputSampleRate === outputSampleRate) {
+                return new Float32Array(buffer);
+            }
+
+            if (inputSampleRate < outputSampleRate) {
+                throw new Error(
+                    `Cannot upsample audio from ${inputSampleRate}Hz to ${outputSampleRate}Hz`
+                );
+            }
+
+            const sampleRateRatio = inputSampleRate / outputSampleRate;
+            const outputLength = Math.round(buffer.length / sampleRateRatio);
+            const outputBuffer = new Float32Array(outputLength);
+
+            let outputOffset = 0;
+            let inputOffset = 0;
+
+            while (outputOffset < outputLength) {
+                const nextInputOffset = Math.round((outputOffset + 1) * sampleRateRatio);
+                let accumulator = 0;
+                let count = 0;
+
+                for (let i = inputOffset; i < nextInputOffset && i < buffer.length; i++) {
+                    accumulator += buffer[i];
+                    count++;
+                }
+
+                outputBuffer[outputOffset] = count > 0 ? accumulator / count : 0;
+                outputOffset++;
+                inputOffset = nextInputOffset;
+            }
+
+            return outputBuffer;
+        }
+
+        _floatTo16BitPcm(floatBuffer) {
+            const pcmBuffer = new Int16Array(floatBuffer.length);
+            for (let i = 0; i < floatBuffer.length; i++) {
+                const sample = Math.max(-1, Math.min(1, floatBuffer[i]));
+                pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+            }
+
+            return new Uint8Array(pcmBuffer.buffer);
+        }
+    }
+
+    // =========================================================================
     // State
     // =========================================================================
     let ws = null;
-    let recorder = null;
+    let pcmStreamer = null;
     let mediaStream = null;
     let timerInterval = null;
     let startTime = null;
@@ -291,32 +536,51 @@
         try {
             // Request microphone access
             mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: { sampleRate: 16000, channelCount: 1 }
+                audio: {
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                }
             });
 
             // Connect WebSocket to Python agent
             ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
             ws.binaryType = 'arraybuffer';
 
-            ws.onopen = () => {
+            ws.onopen = async () => {
                 console.log('WebSocket connected');
 
-                // Start MediaRecorder — send chunks every 5 seconds
-                recorder = new MediaRecorder(mediaStream, {
-                    mimeType: 'audio/webm;codecs=opus'
-                });
+                try {
+                    pcmStreamer = new PcmStreamer(mediaStream, {
+                        targetSampleRate: 16000,
+                        chunkMs: 5000,
+                        onChunk: (pcmChunk) => {
+                            if (ws?.readyState === WebSocket.OPEN) {
+                                ws.send(pcmChunk);
+                            }
+                        }
+                    });
 
-                recorder.ondataavailable = (e) => {
-                    if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                        ws.send(e.data);
-                    }
-                };
-
-                recorder.start(5000); // 5-second chunks
+                    await pcmStreamer.start();
+                } catch (err) {
+                    console.error('PCM stream setup failed:', err);
+                    document.getElementById('status').textContent = `Audio setup error: ${err.message}`;
+                    pcmStreamer?.stop();
+                    pcmStreamer = null;
+                    ws?.close();
+                }
             };
 
-            ws.onclose = () => console.log('WebSocket closed');
-            ws.onerror = (e) => console.error('WebSocket error:', e);
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                pcmStreamer?.stop();
+                pcmStreamer = null;
+            };
+            ws.onerror = (e) => {
+                console.error('WebSocket error:', e);
+                document.getElementById('status').textContent = 'Streaming error';
+            };
 
             // Subscribe to Mercure for transcript segments
             subscribeToMercure();
@@ -343,7 +607,8 @@
     }
 
     function stopRecording() {
-        recorder?.stop();
+        pcmStreamer?.stop();
+        pcmStreamer = null;
         ws?.close();
         mediaStream?.getTracks().forEach(t => t.stop());
         streams?.disconnectAll();
@@ -367,7 +632,9 @@
 
         streams = new StreamOrchestrator(CONFIG.mercureUrl);
         streams.subscribe(CONFIG.topicRaw, handleRawSegment);
-        streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
+        if (CONFIG.enableRoleUpdates) {
+            streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
+        }
     }
 
     // =========================================================================
@@ -381,6 +648,7 @@
         }
         if (data.type === 'error') {
             console.error('Transcription error:', data.message);
+            document.getElementById('status').textContent = `Transcription error: ${data.message}`;
             return;
         }
         if (data.type !== 'segment') return;
@@ -406,7 +674,7 @@
         el.innerHTML = `
             <span class="segment__speaker" style="color: ${getRoleColor(role)}">${speakerLabel}</span>
             <span class="segment__time">${timeStr}</span>
-            <span class="segment__text text-gray-800 dark:text-gray-200">${escapeHtml(segment.text)}</span>
+            <span class="segment__text">${escapeHtml(segment.text)}</span>
         `;
 
         container.appendChild(el);

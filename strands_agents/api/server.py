@@ -55,6 +55,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -65,8 +66,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -112,6 +112,9 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 MERCURE_HUB_URL = os.environ.get("MERCURE_HUB_URL", "http://mercure:3701/.well-known/mercure")
 MERCURE_JWT = os.environ.get("MERCURE_JWT", "")
+MERCURE_JWT_SECRET = os.environ.get("MERCURE_JWT_SECRET", "")
+NEMO_STREAM_INPUT_FORMAT = os.environ.get("NEMO_STREAM_INPUT_FORMAT", "pcm")
+_mercure_jwt_cache: str | None = None
 
 # Thread pool for GPU-bound NeMo inference.
 # Prevents blocking the async event loop, keeping /health and other
@@ -120,6 +123,47 @@ nemo_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="nemo")
 
 # Active transcription sessions (WebSocket → TranscriptionSession)
 active_sessions: dict[str, TranscriptionSession] = {}
+
+
+def _should_load_models() -> bool:
+    """Avoid GPU model loading under pytest unless explicitly requested."""
+    if os.environ.get("NEMO_SKIP_MODEL_LOAD", "").lower() in {"1", "true", "yes"}:
+        return False
+
+    return "pytest" not in sys.modules
+
+
+def _resolve_mercure_jwt() -> str:
+    """Return an explicit publisher JWT or mint one from the shared secret."""
+    global _mercure_jwt_cache
+
+    if MERCURE_JWT != "":
+        return MERCURE_JWT
+
+    if _mercure_jwt_cache is not None:
+        return _mercure_jwt_cache
+
+    if MERCURE_JWT_SECRET == "":
+        _mercure_jwt_cache = ""
+        return _mercure_jwt_cache
+
+    try:
+        import jwt
+    except ImportError:
+        logger.warning("mercure.publish.skipped", extra={"reason": "pyjwt_not_installed"})
+        _mercure_jwt_cache = ""
+        return _mercure_jwt_cache
+
+    token = jwt.encode(
+        {"mercure": {"publish": ["*"]}},
+        MERCURE_JWT_SECRET,
+        algorithm="HS256",
+    )
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+
+    _mercure_jwt_cache = token
+    return token
 
 
 # =============================================================================
@@ -133,9 +177,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     This runs once when the FastAPI server starts. It may take 30-60 seconds
     depending on model size and disk speed.
     """
-    logger.info("server.startup.loading_nemo_models")
-    app.state.nemo_pipeline = NemoPipeline()
-    logger.info("server.startup.nemo_models_loaded")
+    load_models = _should_load_models()
+    logger.info("server.startup.loading_nemo_models", extra={
+        "load_models": load_models,
+    })
+    app.state.nemo_pipeline = NemoPipeline(
+        load_models=load_models,
+        strict_startup=load_models,
+    )
+    app.state.nemo_input_format = NEMO_STREAM_INPUT_FORMAT
+    logger.info("server.startup.ready", extra={
+        "models_loaded": app.state.nemo_pipeline.is_loaded,
+        "input_format": app.state.nemo_input_format,
+    })
     yield
     nemo_executor.shutdown(wait=False)
 
@@ -176,21 +230,23 @@ async def publish_to_mercure(topic: str, data: dict[str, Any]) -> None:
         topic: The Mercure topic URI (e.g., "scribe/session/{id}/raw")
         data: The event data to JSON-encode and publish
     """
-    if not MERCURE_JWT:
+    token = _resolve_mercure_jwt()
+    if token == "":
         logger.warning("mercure.publish.skipped", extra={"reason": "no JWT configured"})
         return
 
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
+            response = await client.post(
                 MERCURE_HUB_URL,
                 data={
                     "topic": topic,
                     "data": json.dumps(data),
                 },
-                headers={"Authorization": f"Bearer {MERCURE_JWT}"},
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=5.0,
             )
+            response.raise_for_status()
     except Exception as e:
         logger.error("mercure.publish.failed", extra={
             "topic": topic,
@@ -272,7 +328,11 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
     cid = websocket.headers.get("x-correlation-id", session_id)
     correlation_id_var.set(cid)
 
-    session = TranscriptionSession(session_id, pipeline=app.state.nemo_pipeline)
+    session = TranscriptionSession(
+        session_id,
+        pipeline=app.state.nemo_pipeline,
+        input_format=app.state.nemo_input_format,
+    )
     active_sessions[session_id] = session
 
     logger.info("websocket.connected", extra={"session_id": session_id})
@@ -298,11 +358,13 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
 
             # Publish raw segments immediately (hot path, low latency)
             for segment in segments:
+                segment_payload = segment.dict()
+                sessions.append_segment(session_id, segment_payload)
                 await publish_to_mercure(
                     f"scribe/session/{session_id}/raw",
                     {
                         "type": "segment",
-                        **segment.dict(),
+                        **segment_payload,
                     },
                 )
 
@@ -322,7 +384,11 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
         })
 
         # Final transcription pass on disconnect
-        await loop.run_in_executor(nemo_executor, session.finalize)
+        final_segments = await loop.run_in_executor(nemo_executor, session.finalize)
+        sessions.replace_segments(
+            session_id,
+            [segment.dict() for segment in final_segments],
+        )
 
         # Publish finalized event
         await publish_to_mercure(
@@ -330,7 +396,7 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
             {"type": "finalized", "session_id": session_id},
         )
     except Exception as e:
-        logger.error("websocket.error", extra={
+        logger.exception("websocket.error", extra={
             "session_id": session_id,
             "error": str(e),
         })
@@ -350,13 +416,28 @@ async def session_history(session_id: str) -> dict:
     Returns the accumulated transcript segments.
     """
     session = active_sessions.get(session_id)
-    if session:
+    stored_segments = sessions.get_segments(session_id)
+
+    if stored_segments:
         return {
             "session_id": session_id,
-            "segments": [s.dict() for s in session.accumulated_transcript],
+            "segments": stored_segments,
+            "duration_seconds": round(
+                session.buffer.duration_seconds if session else _history_duration(stored_segments),
+                1,
+            ),
+            "chunk_count": session.chunk_count if session else 0,
+        }
+
+    if session:
+        session_segments = [s.dict() for s in session.accumulated_transcript]
+        return {
+            "session_id": session_id,
+            "segments": session_segments,
             "duration_seconds": round(session.buffer.duration_seconds, 1),
             "chunk_count": session.chunk_count,
         }
+
     return {"session_id": session_id, "segments": [], "message": "Session not found or ended"}
 
 
@@ -481,6 +562,16 @@ def _run_role_inference(session_id: str, transcript: str) -> dict | None:
             "error": str(e),
         })
         return None
+
+
+def _history_duration(segments: list[dict[str, Any]]) -> float:
+    """Estimate transcript duration from the last stored segment."""
+    if segments == []:
+        return 0.0
+
+    last_segment = segments[-1]
+    end = last_segment.get("end", 0.0)
+    return float(end) if isinstance(end, (int, float)) else 0.0
 
 
 @app.get("/health")

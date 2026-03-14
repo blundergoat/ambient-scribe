@@ -4,19 +4,19 @@
 # =============================================================================
 # Usage: ./scripts/health-check-localdev.sh
 #
-# Checks the health of all services started by start-dev.sh or docker compose:
-#   - Ollama API (port 11434)
-#   - Python FastAPI agent (port 8081)
-#   - PHP Symfony app (port 8082)
-#   - Mercure hub (port 3701) - optional, via docker compose or start-dev.sh
+# Checks the health of all services started by start-dev.sh:
+#   - Role inference backend (local Ollama or AWS Bedrock)
+#   - Dockerized NeMo agent (default port 8001, or the selected fallback port)
+#   - Local PHP Symfony app (default port 8082)
+#   - Dockerized Mercure hub (port 3701)
 #
 # Also checks LLM model availability, endpoint connectivity between services,
 # and response times.
 #
 # Environment (matches start-dev.sh defaults):
-#   AGENT_PORT   - Python agent port (default: 8081)
+#   AGENT_PORT   - NeMo agent port (default: from .env AGENT_ENDPOINT, else 8001)
 #   APP_PORT     - PHP app port (default: 8082)
-#   OLLAMA_HOST  - Ollama URL (default: http://localhost:11434)
+#   OLLAMA_HOST  - Ollama URL (default: from .env, else http://localhost:11434)
 #   MERCURE_PORT - Mercure port (default: 3701)
 #
 # Exit codes:
@@ -28,19 +28,75 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# ── Configurable endpoints ──────────────────────────────────────────
-AGENT_PORT="${AGENT_PORT:-8081}"
-APP_PORT="${APP_PORT:-8082}"
-OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-MERCURE_PORT="${MERCURE_PORT:-3701}"
+env_file_value() {
+    local key="$1"
+    if [[ -f "$REPO_ROOT/.env" ]]; then
+        grep -E "^[[:space:]]*${key}=" "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-
+    fi
+}
 
-# ── Load model name from .env ───────────────────────────────────────
-if [[ -f "$REPO_ROOT/.env" ]]; then
-    OLLAMA_MODEL="${OLLAMA_MODEL:-$(grep -E '^OLLAMA_MODEL=' "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2)}"
-    MODEL_PROVIDER="${MODEL_PROVIDER:-$(grep -E '^MODEL_PROVIDER=' "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2)}"
+port_from_url() {
+    local url="$1"
+    sed -nE 's#^[a-z]+://[^:/]+:([0-9]+).*$#\1#p' <<< "$url"
+}
+
+detect_running_ollama_host() {
+    local pid
+    local configured_host
+
+    while IFS= read -r pid; do
+        configured_host="$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -E '^OLLAMA_HOST=' | head -1 | cut -d= -f2-)"
+
+        if [[ -z "$configured_host" ]]; then
+            continue
+        fi
+
+        case "$configured_host" in
+            http://*)
+                echo "$configured_host"
+                return 0
+                ;;
+            0.0.0.0:*)
+                echo "http://localhost:${configured_host##*:}"
+                return 0
+                ;;
+            127.0.0.1:*|localhost:*)
+                echo "http://localhost:${configured_host##*:}"
+                return 0
+                ;;
+        esac
+    done < <(pgrep -f 'ollama serve' 2>/dev/null || true)
+
+    return 1
+}
+
+# ── Configurable endpoints ──────────────────────────────────────────
+ENV_AGENT_ENDPOINT="$(env_file_value "AGENT_ENDPOINT")"
+ENV_OLLAMA_HOST="$(env_file_value "OLLAMA_HOST")"
+ENV_OLLAMA_MODEL="$(env_file_value "OLLAMA_MODEL")"
+ENV_ROLE_AGENT_OLLAMA_MODEL="$(env_file_value "ROLE_AGENT_OLLAMA_MODEL")"
+ENV_ROLE_AGENT_PROVIDER="$(env_file_value "ROLE_AGENT_MODEL_PROVIDER")"
+ENV_LEGACY_PROVIDER="$(env_file_value "MODEL_PROVIDER")"
+ENV_MERCURE_PUBLIC_URL="$(env_file_value "MERCURE_PUBLIC_URL")"
+
+ROLE_AGENT_MODEL_PROVIDER="${ROLE_AGENT_MODEL_PROVIDER:-${ENV_ROLE_AGENT_PROVIDER:-${MODEL_PROVIDER:-${ENV_LEGACY_PROVIDER:-ollama}}}}"
+AGENT_PORT="${AGENT_PORT:-$(port_from_url "${ENV_AGENT_ENDPOINT:-http://localhost:8001}")}"
+AGENT_PORT="${AGENT_PORT:-8001}"
+APP_PORT="${APP_PORT:-8082}"
+MERCURE_PORT="${MERCURE_PORT:-$(port_from_url "${ENV_MERCURE_PUBLIC_URL:-http://localhost:3701/.well-known/mercure}")}"
+MERCURE_PORT="${MERCURE_PORT:-3701}"
+OLLAMA_HOST="${OLLAMA_HOST:-${ENV_OLLAMA_HOST:-http://localhost:11434}}"
+OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${ENV_ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-${ENV_OLLAMA_MODEL:-qwen2.5:14b}}}}"
+
+if [[ "$ROLE_AGENT_MODEL_PROVIDER" == "ollama" ]] && ! curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+    DETECTED_OLLAMA_HOST="$(detect_running_ollama_host || true)"
+    if [[ -n "$DETECTED_OLLAMA_HOST" ]] && curl -sf "${DETECTED_OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+        OLLAMA_HOST="$DETECTED_OLLAMA_HOST"
+    fi
 fi
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:14b}"
-MODEL_PROVIDER="${MODEL_PROVIDER:-ollama}"
+
+OLLAMA_PORT="$(port_from_url "$OLLAMA_HOST")"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -194,23 +250,23 @@ fi
 unset _mercure_secret _mercure_url _mercure_pub _mercure_probe _mercure_count
 
 # ═════════════════════════════════════════════════════════════════════
-# 1. Ollama
+# 1. Role inference backend
 # ═════════════════════════════════════════════════════════════════════
-section "Ollama (${OLLAMA_HOST})"
+section "Role inference (${ROLE_AGENT_MODEL_PROVIDER})"
 
-step "API responding"
-probe "${OLLAMA_HOST}/api/tags"
-if [[ "$PROBE_STATUS" == "200" ]]; then
-    pass "${PROBE_TIME_MS}ms"
-else
-    fail "not reachable"
-fi
+if [[ "$ROLE_AGENT_MODEL_PROVIDER" == "ollama" ]]; then
+    step "Ollama API responding"
+    probe "${OLLAMA_HOST}/api/tags"
+    if [[ "$PROBE_STATUS" == "200" ]]; then
+        pass "${PROBE_TIME_MS}ms at ${OLLAMA_HOST}"
+    else
+        fail "Ollama not reachable at ${OLLAMA_HOST}"
+    fi
 
-if [[ "$MODEL_PROVIDER" == "ollama" && "$PROBE_STATUS" == "200" ]]; then
-    step "Model: ${OLLAMA_MODEL}"
-    if echo "$PROBE_BODY" | grep -q "\"${OLLAMA_MODEL}\""; then
-        # Get model size from the tags response
-        model_size=$(echo "$PROBE_BODY" | python3 -c "
+    if [[ "$PROBE_STATUS" == "200" ]]; then
+        step "Model: ${OLLAMA_MODEL}"
+        if echo "$PROBE_BODY" | grep -q "\"${OLLAMA_MODEL}\""; then
+            model_size=$(echo "$PROBE_BODY" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -221,27 +277,31 @@ try:
             break
 except: pass
 " 2>/dev/null)
-        pass "${model_size:-available}"
-    else
-        fail "not pulled - run: ollama pull ${OLLAMA_MODEL}"
-    fi
+            pass "${model_size:-available}"
+        else
+            fail "not pulled - run: ollama pull ${OLLAMA_MODEL}"
+        fi
 
-    step "Model responds"
-    # Quick generate test - single token with tiny prompt
-    probe "${OLLAMA_HOST}/api/generate" 30
-    gen_result=$(curl -sf --max-time 30 -X POST "${OLLAMA_HOST}/api/generate" \
-        -d "{\"model\":\"${OLLAMA_MODEL}\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" 2>/dev/null)
-    if echo "$gen_result" | grep -q '"response"'; then
-        pass "inference ok"
-    else
-        warn "inference test failed - model may still be loading"
+        step "Model responds"
+        gen_result=$(curl -sf --max-time 30 -X POST "${OLLAMA_HOST}/api/generate" \
+            -d "{\"model\":\"${OLLAMA_MODEL}\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" 2>/dev/null)
+        if echo "$gen_result" | grep -q '"response"'; then
+            pass "inference ok"
+        else
+            warn "inference test failed - model may still be loading"
+        fi
     fi
+elif [[ "$ROLE_AGENT_MODEL_PROVIDER" == "bedrock" ]]; then
+    step "Provider"
+    pass "AWS Bedrock"
+else
+    fail "unknown ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════
-# 2. Python Agent
+# 2. NeMo agent
 # ═════════════════════════════════════════════════════════════════════
-section "Python agent (localhost:${AGENT_PORT})"
+section "NeMo agent (localhost:${AGENT_PORT})"
 
 step "Health endpoint"
 probe "http://localhost:${AGENT_PORT}/health"
@@ -264,23 +324,21 @@ else
     warn "docs unavailable (non-critical)"
 fi
 
-step "POST /invoke accepts requests"
-# Send no body - FastAPI returns 422 (missing required field) which proves the endpoint is wired
-invoke_result=$(curl -s -o /dev/null -w "%{http_code}" \
+step "POST /transcribe/file validates input"
+transcribe_result=$(curl -s -o /dev/null -w "%{http_code}" \
     --connect-timeout 3 --max-time 5 \
-    -X POST "http://localhost:${AGENT_PORT}/invoke" 2>/dev/null) || true
-if [[ "$invoke_result" =~ ^[0-9]+$ && "$invoke_result" != "000" ]]; then
-    pass "endpoint active (${invoke_result})"
+    -X POST "http://localhost:${AGENT_PORT}/transcribe/file" 2>/dev/null) || true
+if [[ "$transcribe_result" == "422" ]]; then
+    pass "endpoint active (422)"
 else
     fail "endpoint not responding"
 fi
 
-step "POST /stream accepts requests"
-stream_result=$(curl -s -o /dev/null -w "%{http_code}" \
-    --connect-timeout 3 --max-time 5 \
-    -X POST "http://localhost:${AGENT_PORT}/stream" 2>/dev/null) || true
-if [[ "$stream_result" =~ ^[0-9]+$ && "$stream_result" != "000" ]]; then
-    pass "endpoint active (${stream_result})"
+step "GET /session/test/roles"
+roles_result=$(curl -sf --connect-timeout 3 --max-time 5 \
+    "http://localhost:${AGENT_PORT}/session/test/roles" 2>/dev/null) || true
+if echo "$roles_result" | grep -q '"session_id"'; then
+    pass "endpoint active"
 else
     fail "endpoint not responding"
 fi
@@ -290,35 +348,31 @@ fi
 # ═════════════════════════════════════════════════════════════════════
 section "PHP app (localhost:${APP_PORT})"
 
-step "GET / (chat UI)"
+step "GET / (entrypoint)"
 probe "http://localhost:${APP_PORT}/"
-if [[ "$PROBE_STATUS" == "200" ]]; then
-    pass "${PROBE_TIME_MS}ms"
+if [[ "$PROBE_STATUS" =~ ^(200|302)$ ]]; then
+    pass "${PROBE_TIME_MS}ms (HTTP ${PROBE_STATUS})"
 else
     fail "not reachable — is start-dev.sh running?"
 fi
 
+step "GET /scribe"
+probe "http://localhost:${APP_PORT}/scribe"
 if [[ "$PROBE_STATUS" == "200" ]]; then
-    step "Renders HTML"
     if echo "$PROBE_BODY" | grep -qi "ambient scribe\|chat\|<html"; then
         pass
     else
         warn "responded but content unexpected"
     fi
+else
+    warn "scribe UI unavailable (HTTP ${PROBE_STATUS:-000})"
 fi
 
-step "POST /chat rejects empty"
-chat_result=$(curl -sf -w "\n%{http_code}" \
-    --connect-timeout 3 --max-time 5 \
-    -X POST "http://localhost:${APP_PORT}/chat" \
-    -H "Content-Type: application/json" \
-    -d '{"message":""}' 2>/dev/null) || true
-chat_status=$(echo "$chat_result" | tail -1)
-chat_body=$(echo "$chat_result" | head -1)
-if [[ "$chat_status" == "400" ]]; then
-    pass "validates input (400)"
-elif [[ "$chat_status" =~ ^[0-9]+$ ]]; then
-    warn "responded ${chat_status} (expected 400)"
+step "GET /scribe/test/roles"
+php_roles_result=$(curl -sf --connect-timeout 3 --max-time 5 \
+    "http://localhost:${APP_PORT}/scribe/test/roles" 2>/dev/null) || true
+if echo "$php_roles_result" | grep -q '"session_id"'; then
+    pass "PHP role proxy ok"
 else
     fail "endpoint not responding"
 fi
@@ -342,7 +396,12 @@ fi
 # ═════════════════════════════════════════════════════════════════════
 section "Port usage"
 
-for port_label in "${AGENT_PORT}:agent" "${APP_PORT}:php" "11434:ollama"; do
+PORT_LABELS=("${AGENT_PORT}:agent" "${APP_PORT}:php" "${MERCURE_PORT}:mercure")
+if [[ "$ROLE_AGENT_MODEL_PROVIDER" == "ollama" ]]; then
+    PORT_LABELS+=("${OLLAMA_PORT}:ollama")
+fi
+
+for port_label in "${PORT_LABELS[@]}"; do
     port="${port_label%%:*}"
     label="${port_label##*:}"
     step "Port ${port} (${label})"

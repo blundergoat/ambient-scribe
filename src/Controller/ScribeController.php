@@ -61,6 +61,7 @@ class ScribeController extends AbstractController
             'mercure_url' => $mercureUrl,
             'mercure_topic_raw' => "scribe/session/{$sessionId}/raw",
             'mercure_topic_roles' => "scribe/session/{$sessionId}/roles",
+            'enable_role_updates' => false,
         ]);
     }
 

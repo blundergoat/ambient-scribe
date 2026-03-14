@@ -29,6 +29,11 @@ strands_agents/**/.venv/
 *.swp
 *.swo
 
+# Claude Code
+.claude/settings.local.json
+tasks/todo.md
+tasks/handoff.md
+
 # OS
 .DS_Store
 

@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "read": ["**"],
+    "edit": [
+      "infra/**/*.tf",
+      "infra/**/*.tfvars.example",
+      "infra/**/*.md",
+      "docker-compose.yml",
+      "docker/**",
+      "Dockerfile",
+      ".env.example",
+      "scripts/**",
+      "CLAUDE.md",
+      "docs/**/*.md",
+      "tasks/**/*.md"
+    ],
+    "bash": [
+      "terraform *",
+      "docker *",
+      "aws *",
+      "git *"
+    ]
+  }
+}

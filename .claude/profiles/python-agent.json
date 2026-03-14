@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "read": ["**"],
+    "edit": [
+      "strands_agents/**/*.py",
+      "tests/python/**/*.py",
+      "tests/python/requirements-dev.txt",
+      "docker/nemo/**",
+      "docker-compose.yml",
+      ".env.example",
+      "CLAUDE.md",
+      "docs/**/*.md",
+      "tasks/**/*.md"
+    ],
+    "bash": [
+      "python3 *",
+      "pytest *",
+      "pip *",
+      "ruff *",
+      "docker compose *",
+      "git *"
+    ]
+  }
+}
