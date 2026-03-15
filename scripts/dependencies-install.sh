@@ -152,6 +152,11 @@ echo ""
 
 if [[ $ERRORS -eq 0 ]]; then
     echo -e "  ${GREEN}${BOLD}All dependencies installed${RESET}"
+    if [[ "$DO_PYTHON" == true ]]; then
+        echo ""
+        echo -e "  ${YELLOW}${BOLD}Note:${RESET} ${DIM}the local Python venv excludes torch and NVIDIA NeMo.${RESET}"
+        echo -e "     ${DIM}Use docker compose up --build for full transcription support.${RESET}"
+    fi
     echo ""
 else
     echo -e "  ${RED}${BOLD}${ERRORS} error(s) during install${RESET}"

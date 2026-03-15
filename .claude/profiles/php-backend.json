@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "read": ["**"],
+    "edit": [
+      "src/**/*.php",
+      "tests/**/*.php",
+      "config/**/*.yaml",
+      "config/**/*.php",
+      "templates/**/*.twig",
+      "composer.json",
+      "phpstan.neon",
+      "phpunit.xml.dist",
+      "phpmd.xml",
+      ".php-cs-fixer.php",
+      "CLAUDE.md",
+      "docs/**/*.md",
+      "tasks/**/*.md"
+    ],
+    "bash": [
+      "composer *",
+      "vendor/bin/*",
+      "php *",
+      "git *"
+    ]
+  }
+}
