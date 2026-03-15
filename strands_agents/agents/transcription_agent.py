@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ Output format:
 """
 
 
+@lru_cache(maxsize=1)
 def create_role_inference_agent():
     """Create a Strands Agent for role inference.
 

@@ -1,63 +1,44 @@
-# Footguns Index
+# Footguns
 
-Cross-domain architectural landmines — real coupling and hidden dependencies with file:line evidence.
+Cross-domain architectural landmines with real coupling and file:line evidence.
 
-## Format
+---
 
-Each entry: date, title, files involved, what breaks, evidence.
+Each entry names the files involved, what breaks, and the evidence.
 
-## Entries
+**Symptoms:** ASR inference crashes with `ValueError: not enough values to unpack (expected 6, got 5)`.
 
-### 1. Mercure JWT silent publish failure
-- **Files:** `strands_agents/api/server.py` (`publish_to_mercure()`), `.env.example`
-- **What breaks:** If `MERCURE_JWT_SECRET` is not configured or Mercure is unreachable, `publish_to_mercure()` logs a warning but silently drops segments. Browser receives nothing via SSE — no error visible to user.
-- **Evidence:** `server.py` wraps Mercure publish in try/except with `logger.warning()` only.
-- **Created:** 2026-03-14
+### 1. Mercure publish failure ~~is log-only~~ (MITIGATED)
+- **Files:** `strands_agents/api/server.py:236-269`, `templates/scribe/index.html.twig`
+- **Status:** `publish_to_mercure()` now returns `bool`, logs at ERROR, and sends a `system_error` WebSocket text frame to the browser on first failure. The template shows a persistent amber banner. The UI still depends on Mercure for segment delivery, but silent data loss is now surfaced.
+- **Remaining risk:** No fallback data path — if Mercure is down, segments are transcribed but not displayed until reconnection.
 
-### 2. Session cleanup races with role inference
-- **Files:** `strands_agents/api/server.py` (WebSocket disconnect handler), `strands_agents/tools/assign_roles.py` (`RoleMappingState`)
-- **What breaks:** WebSocket disconnect triggers `cleanup_session()` which deletes `RoleMappingState`. If PHP is still streaming role inference via `/session/{id}/roles/stream`, the endpoint crashes or returns stale data mid-iteration.
-- **Evidence:** `cleanup_session()` called in `except WebSocketDisconnect` block; `roles_stream()` reads same state concurrently.
-- **Created:** 2026-03-14
+### 2. Live role updates have two competing delivery paths
+- **Files:** `strands_agents/api/server.py:308-375`, `strands_agents/api/server.py:600-688`, `src/Service/RoleInferenceService.php:56-99`, `src/Controller/ScribeController.php:111-146`
+- **What breaks:** The Mercure queue path and the legacy PHP SSE proxy can infer roles from different transcript snapshots and timings, producing divergent mappings and duplicate compute.
+- **Evidence:** The queue worker publishes `scribe/session/{id}/roles`, while `/session/{id}/roles/stream` reruns role inference from stored transcript state and PHP still proxies that endpoint.
 
-### 3. NeMo GPU singleton has no recovery
-- **Files:** `strands_agents/nemo_pipeline.py` (NemoPipeline), `strands_agents/api/server.py` (startup)
-- **What breaks:** NeMo models loaded once at FastAPI startup as singleton on `app.state.nemo_pipeline`. If GPU memory error or model crash, no reload mechanism. Container restart required. `max_workers=2` in ThreadPoolExecutor is hardcoded — no config to tune for GPU capacity.
-- **Evidence:** `NemoPipeline` instantiated once in `lifespan()`, shared via `app.state`.
-- **Created:** 2026-03-14
+### 3. Session lifecycle ~~is split across three in-memory stores~~ (MITIGATED)
+- **Files:** `strands_agents/session_lifecycle.py`, `strands_agents/api/server.py:217-218`, `strands_agents/tools/assign_roles.py`
+- **Status:** `SessionLifecycle` class now coordinates registration and teardown with per-session `asyncio.Lock`. `lifecycle.destroy()` atomically cleans up active session + role state under lock. `assign_roles._session_states` access is protected by `threading.Lock`.
+- **Remaining risk:** `SessionStore` transcript data still has its own TTL eviction independent of lifecycle — long-idle sessions may have transcript data evicted while role state persists.
 
-### 4. PHP↔Python API contract not validated
-- **Files:** `src/Service/RoleInferenceService.php` (`streamRoleInference()`), `strands_agents/api/server.py` (`roles_stream()`)
-- **What breaks:** PHP expects SSE events with `mapping` and `confidence` keys. Python endpoint produces these, but neither side validates the contract. A format change in Python silently breaks PHP's `$onUpdate` callback.
-- **Evidence:** `RoleInferenceService::streamRoleInference()` accesses `$event['mapping']` without validation.
-- **Created:** 2026-03-14
+### 4. Stream input format is a cross-layer contract ~~not auto-detected~~ (MITIGATED)
+- **Files:** `strands_agents/nemo_session.py:_validate_audio_format`, `.env.example`, `templates/scribe/index.html.twig`
+- **Status:** First-chunk format validation now rejects WebM/WAV bytes when configured for PCM (raises `ValueError` with clear message). WebM mode warns if magic bytes are missing. The browser still hardcodes PCM via `PcmStreamer`.
+- **Remaining risk:** Misconfiguration is detected on first chunk but causes session failure rather than auto-correction.
 
-### 5. Three independent session state buckets
-- **Files:** `strands_agents/nemo_session.py` (TranscriptionSession), `strands_agents/session.py` (SessionStore), `strands_agents/tools/assign_roles.py` (RoleMappingState)
-- **What breaks:** Same session UUID keys three separate in-memory stores with no coordinated lifecycle. Partial cleanup (e.g., WebSocket disconnect cleans TranscriptionSession but not SessionStore) leaves orphaned state. All lost on container restart.
-- **Evidence:** Each file has independent dict/store keyed by `session_id`.
-- **Created:** 2026-03-14
+### 5. Browser-facing WebSocket and Mercure URLs are passed through unchanged
+- **Files:** `.env.example:17-24`, `.env.example:53-55`, `docker-compose.yml:109-111`, `src/Controller/ScribeController.php:54-64`, `templates/scribe/index.html.twig:228-235`
+- **What breaks:** Host-only defaults such as `localhost:48101` and `localhost:48137` work for the developer machine but fail for remote clients or alternate hostnames unless explicitly overridden end to end.
+- **Evidence:** Symfony injects the configured URLs directly into the browser config object; the browser then uses them as-is for WebSocket and Mercure connections.
 
-### 6. Audio format assumed, not detected
-- **Files:** `strands_agents/nemo_session.py` (AudioBuffer), `templates/scribe/index.html.twig` (MediaRecorder)
-- **What breaks:** `AudioBuffer` hardcodes 16kHz 16-bit PCM. Browser MediaRecorder may send Opus/WebM depending on browser. No format detection or conversion — wrong format produces garbage transcriptions silently.
-- **Evidence:** `nemo_session.py` AudioBuffer constructor sets `sample_rate=16000`, `sample_width=2`.
-- **Created:** 2026-03-14
+### 6. NeMo is a fixed-capacity singleton with no in-process recovery
+- **Files:** `strands_agents/api/server.py:123-127`, `strands_agents/api/server.py:180-201`, `docker-compose.yml:48-54`, `docker-compose.yml:83-88`
+- **What breaks:** GPU exhaustion, model-load failure, or degraded model state requires a process/container restart. Only two concurrent NeMo executor workers are allowed, regardless of hardware.
+- **Evidence:** The NeMo pipeline is created once during lifespan startup and shared for all sessions; the executor and GPU reservation are hardcoded.
 
-### 7. DynamoDB provisioned in Terraform but unused in code
-- **Files:** `infra/terraform/environments/prod/main.tf` (DynamoDB module), `strands_agents/session.py` (SessionStore)
-- **What breaks:** Production Terraform creates DynamoDB table for session storage, but code uses in-memory `SessionStore` with `MAX_SESSIONS=100` and `SESSION_TTL_SECONDS=7200`. Production will hit memory limits; DynamoDB sits empty.
-- **Evidence:** `session.py` uses Python dict; no DynamoDB SDK import or integration.
-- **Created:** 2026-03-14
-
-### 8. NEMO_WEBSOCKET_URL environment mismatch
-- **Files:** `.env.example`, `templates/scribe/index.html.twig`, `docker-compose.yml`
-- **What breaks:** `.env.example` defaults `NEMO_WEBSOCKET_URL=ws://localhost:8001`. In Docker with external browser access, `localhost` doesn't resolve to the container. WebSocket silently fails with CORS error — no user-facing feedback.
-- **Evidence:** Twig template reads `nemo_websocket_url` from Symfony config to construct WebSocket connection.
-- **Created:** 2026-03-14
-
-## Propagation
-
-- Entries 1-6 → `strands_agents/CLAUDE.md` (local)
-- Entry 7 → `infra/CLAUDE.md` (local)
-- Entry 8 → root-level (spans .env, docker-compose.yml, templates/) — no single directory qualifies for local CLAUDE.md
+### 7. Terraform provisions DynamoDB, but runtime session state is still memory-only
+- **Files:** `infra/terraform/environments/prod/main.tf:82-90`, `infra/terraform/environments/prod/main.tf:142-146`, `strands_agents/session.py:28-29`, `strands_agents/session.py:37-39`
+- **What breaks:** Production infrastructure implies persisted session storage, but live code still uses an in-memory `SessionStore` with TTL/LRU limits and loses data on restart.
+- **Evidence:** Terraform exports a DynamoDB table name to the agent container, while `SessionStore` keeps transcript data in a Python `OrderedDict` only.

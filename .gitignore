@@ -34,6 +34,12 @@ strands_agents/**/.venv/
 tasks/todo.md
 tasks/handoff.md
 
+# Node
+node_modules/
+
+# Playwright / test output
+test-results/
+
 # OS
 .DS_Store
 

@@ -14,6 +14,9 @@ os.environ.setdefault("NEMO_STREAM_INPUT_FORMAT", "pcm")
 # Add the strands_agents directory to the Python path so tests can import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "strands_agents"))
 
+# Force mock mode for NemoPipeline so tests never attempt GPU model loading
+os.environ.setdefault("NEMO_MODEL_PROVIDER", "mock")
+
 
 @pytest.fixture
 def fixtures_dir() -> Path:

@@ -1,7 +1,7 @@
 # Milestone 0 — Infrastructure Setup
 
 **Timeline:** ~1 evening (before Weekend 1)
-**Status:** In Progress (scaffold complete, VPC module added — awaiting apply)
+**Status:** Code Complete (Terraform written + validated; `terraform apply` pending)
 **Dependencies:** AWS account, Terraform installed, GitHub repos created
 
 ---

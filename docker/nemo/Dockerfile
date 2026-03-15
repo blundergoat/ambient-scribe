@@ -78,7 +78,9 @@ RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvi
 
 WORKDIR /app
 
-COPY . /app/
+# Copy application code (build context is ./strands_agents)
+# Dev override: docker-compose.yml mounts ./strands_agents:/app for hot reload
+COPY . /app
 
 EXPOSE 8000
 

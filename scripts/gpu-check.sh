@@ -20,19 +20,7 @@
 
 set -uo pipefail
 
-# --- Colours and icons ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS="${GREEN}✔${RESET}"
-FAIL="${RED}✘${RESET}"
-WARN="${YELLOW}●${RESET}"
-ARROW="${BLUE}→${RESET}"
+source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 
 echo ""
 echo -e "${BOLD}Ambient Scribe — GPU Prerequisites Check${RESET}"

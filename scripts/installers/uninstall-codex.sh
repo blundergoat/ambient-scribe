@@ -1,79 +1,72 @@
 #!/bin/bash
-# Uninstall Codex CLI for macOS/Linux/Git Bash - Fixed
-# Run this script with: bash uninstall-codex.sh
+# GOAT System Uninstaller - Codex CLI
+# Removes Codex CLI (Homebrew and/or npm) and configuration directories.
+# Run this script in Git Bash, WSL, or any Unix-like terminal.
 
-echo "Uninstalling Codex CLI..."
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_common.sh"
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+echo -e "${CYAN}Starting Codex CLI uninstallation process...${NC}"
+print_platform
 
-# First, let's see where codex is coming from
 if command_exists codex; then
-    echo "Found 'codex' command at: $(which codex)"
+    echo -e "${YELLOW}Found 'codex' command at: $(command -v codex)${NC}"
 else
-    echo "'codex' command not found in PATH."
+    echo -e "${YELLOW}'codex' command not found in PATH.${NC}"
 fi
 
 # Detect if installed via Homebrew (macOS)
-echo -e "\nChecking for Homebrew installation..."
-if command_exists brew && brew list codex &> /dev/null; then
-    echo "Found Codex installed via Homebrew"
-    brew uninstall codex
-    echo "Homebrew uninstall completed"
+echo -e "\n${CYAN}========================================"
+echo -e "Checking Homebrew installation"
+echo -e "========================================${NC}"
+
+if command_exists brew && brew list codex &>/dev/null; then
+    echo -e "${YELLOW}Found Codex installed via Homebrew${NC}"
+    if brew uninstall codex; then
+        echo -e "${GREEN}Homebrew uninstall completed.${NC}"
+    else
+        echo -e "${YELLOW}Homebrew uninstall reported an issue.${NC}"
+    fi
 else
-    echo "Codex not found in Homebrew"
+    echo -e "${YELLOW}Codex not found in Homebrew.${NC}"
 fi
 
-# Try npm uninstall for all related packages
-echo -e "\nAttempting to uninstall all related npm packages..."
+# npm uninstall
+echo -e "\n${CYAN}========================================"
+echo -e "Uninstalling Codex CLI via npm"
+echo -e "========================================${NC}"
+
 if command_exists npm; then
-    echo "Removing 'openai' package..."
-    npm uninstall -g openai >/dev/null 2>&1
-    echo "Removing '@openai/codex' package..."
-    npm uninstall -g @openai/codex >/dev/null 2>&1
-    echo "NPM uninstall process completed"
+    sanitize_path_for_wsl
+    echo -e "${YELLOW}Removing 'openai' package...${NC}"
+    npm uninstall -g openai >/dev/null 2>&1 || true
+    echo -e "${YELLOW}Removing '@openai/codex' package...${NC}"
+    npm uninstall -g @openai/codex >/dev/null 2>&1 || true
+    echo -e "${GREEN}npm uninstall process completed.${NC}"
 else
-    echo "NPM not found, skipping npm uninstall"
+    echo -e "${YELLOW}npm not found, skipping npm uninstall.${NC}"
 fi
 
-# Remove potential config/cache directories
-echo -e "\nRemoving configuration and cache directories..."
+echo -e "\n${CYAN}========================================"
+echo -e "Cleaning up Codex CLI data"
+echo -e "========================================${NC}"
 
-# Check for .openai directory
-if [ -d "$HOME/.openai" ]; then
-    # Bypassing interactive prompt for non-interactive execution
-    echo "Found OpenAI config directory ($HOME/.openai). Removing it."
-    rm -rf "$HOME/.openai"
-    echo "Removed: $HOME/.openai"
-else
-    echo "Directory not found: $HOME/.openai"
-fi
+for dir in "$HOME/.openai" "$HOME/.config/codex" "$HOME/.codex"; do
+    remove_dir_prompt "$dir"
+done
 
-# Check for .config/codex directory
-if [ -d "$HOME/.config/codex" ]; then
-    rm -rf "$HOME/.config/codex"
-    echo "Removed: $HOME/.config/codex"
-else
-    echo "Config directory not found: $HOME/.config/codex"
-fi
+echo -e "\n${CYAN}========================================"
+echo -e "Verifying uninstall"
+echo -e "========================================${NC}"
 
-# Check for .codex directory
-if [ -d "$HOME/.codex" ]; then
-    rm -rf "$HOME/.codex"
-    echo "Removed: $HOME/.codex"
-else
-    echo "Directory not found: $HOME/.codex"
-fi
-
-# Verify uninstall
-echo -e "\nVerifying uninstall..."
 if command_exists codex; then
-    echo "WARNING: Codex command still found at: $(which codex)"
-    echo "You may need to manually remove it or restart your terminal"
+    echo -e "${YELLOW}codex command still present at: $(command -v codex)${NC}"
+    echo -e "${YELLOW}You may need to manually remove it or restart your terminal.${NC}"
 else
-    echo "SUCCESS: Codex CLI has been uninstalled"
+    echo -e "${GREEN}Codex CLI command not found. Uninstall appears complete.${NC}"
 fi
 
-echo -e "\nUninstall complete!"
+echo -e "\n${GREEN}========================================"
+echo -e "Uninstallation process completed!"
+echo -e "========================================${NC}"

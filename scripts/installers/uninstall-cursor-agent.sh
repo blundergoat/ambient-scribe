@@ -9,51 +9,37 @@
 # Run this script in Git Bash, WSL, or any Unix-like terminal.
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_common.sh"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-NC='\033[0m' # No Color
+block_gitbash "Cursor Agent uninstaller"
 
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+echo -e "${CYAN}Starting Cursor Agent uninstallation...${NC}"
+print_platform
 
-remove_path_prompt() {
+# Helper to prompt+remove a single file (not a dir).
+remove_file_prompt() {
     local p="$1"
     if [[ ! -e "$p" ]]; then
         return 0
     fi
-
-    read -r -p "Remove ${p}? (y/n): " confirm_remove
-    if [[ "$confirm_remove" != "y" ]]; then
-        echo -e "${YELLOW}Skipped: ${p}${NC}"
-        return 0
+    if [[ -t 0 ]]; then
+        read -r -p "Remove ${p}? (y/n): " _confirm
+        if [[ "$_confirm" != "y" ]]; then
+            echo -e "${YELLOW}Skipped: ${p}${NC}"
+            return 0
+        fi
+    else
+        echo -e "${CYAN}Non-interactive mode: removing ${p}...${NC}"
     fi
-
     if rm -f "$p" 2>/dev/null; then
         echo -e "${GREEN}Removed: ${p}${NC}"
-        return 0
+    else
+        echo -e "${YELLOW}Failed to remove: ${p}${NC}"
+        echo -e "${YELLOW}If this is a system location, rerun with elevated permissions (e.g. sudo) or remove manually.${NC}"
     fi
-
-    echo -e "${YELLOW}Failed to remove: ${p}${NC}"
-    echo -e "${YELLOW}If this is a system location, rerun with elevated permissions (e.g. sudo) or remove manually.${NC}"
     return 0
 }
-
-os="$(uname -s 2>/dev/null || echo "")"
-case "$os" in
-  MINGW*|MSYS*|CYGWIN*)
-    echo -e "${RED}This uninstaller is not supported in Git Bash/MSYS/Cygwin.${NC}"
-    echo -e "${YELLOW}If you installed Cursor Agent inside WSL, run this script inside WSL.${NC}"
-    exit 1
-    ;;
-esac
-
-echo -e "${CYAN}Starting Cursor Agent uninstallation...${NC}"
 
 agent_cmd_path=""
 if command_exists cursor-agent; then
@@ -69,7 +55,7 @@ echo -e "========================================${NC}"
 
 # Prefer removing exactly what PATH resolves to (this is typically a symlink/shim).
 if [[ -n "${agent_cmd_path}" ]]; then
-    remove_path_prompt "${agent_cmd_path}"
+    remove_file_prompt "${agent_cmd_path}"
 fi
 
 # Also offer removal from common user/system install locations.
@@ -85,7 +71,7 @@ for candidate in "${common_candidates[@]}"; do
         continue
     fi
     if [[ -e "${candidate}" ]]; then
-        remove_path_prompt "${candidate}"
+        remove_file_prompt "${candidate}"
     fi
 done
 
@@ -94,13 +80,7 @@ if [[ -d "${install_root}" ]]; then
     echo -e "\n${CYAN}========================================"
     echo -e "Removing Cursor Agent files"
     echo -e "========================================${NC}"
-    read -r -p "Remove ${install_root} and all its contents? (y/n): " confirm_rm_root
-    if [[ "$confirm_rm_root" == "y" ]]; then
-        rm -rf "${install_root}"
-        echo -e "${GREEN}Removed: ${install_root}${NC}"
-    else
-        echo -e "${YELLOW}Skipped: ${install_root}${NC}"
-    fi
+    remove_dir_prompt "${install_root}"
 fi
 
 echo -e "\n${CYAN}========================================"

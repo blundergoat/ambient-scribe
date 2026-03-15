@@ -157,7 +157,7 @@ class RoleInferenceService
                 timeout: 5,
             );
         } catch (StrandsException) {
-            return ['mapping' => [], 'confidence' => 0.0];
+            return ['mapping' => new \stdClass(), 'confidence' => 0.0];
         }
     }
 }

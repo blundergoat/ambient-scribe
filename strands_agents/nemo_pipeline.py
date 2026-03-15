@@ -9,13 +9,9 @@ This module wraps the NeMo multitalker Parakeet pipeline (Sortformer diarization
 + multi-speaker ASR) in a singleton class that is loaded once at process startup
 and shared across all WebSocket sessions.
 
-This implementation follows the API surface documented during Milestone 1's
-"NeMo API Discovery Spike" (task 1.4).
-
-The plan's original code sketches assumed independent sortformer.diarize() and
-parakeet.transcribe() calls, but NeMo's multitalker pipeline is a COMPOSITE
-RECIPE with its own inference entrypoint. Do NOT assume you can manually pass
-speaker masks between models.
+Approach: Independent diarize (Sortformer) + ASR (multitalker Parakeet), aligned
+by proportional word distribution across diarization segments. Simpler than
+SpeakerTaggedASR and sufficient for GP consultations with minimal speaker overlap.
 
 =============================================================================
 DESIGN DECISIONS
@@ -34,23 +30,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
-import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+import numpy as np
+import soundfile
 
-DEFAULT_SAMPLE_RATE_HZ = 16000
-DIAR_MODEL_ID = os.environ.get(
-    "NEMO_DIAR_MODEL_ID",
-    "nvidia/diar_streaming_sortformer_4spk-v2.1",
-)
-ASR_MODEL_ID = os.environ.get(
-    "NEMO_ASR_MODEL_ID",
-    "nvidia/multitalker-parakeet-streaming-0.6b-v1",
-)
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATA MODELS
@@ -97,47 +86,62 @@ class NemoPipeline:
     Loaded once at process startup. Shared across all TranscriptionSession instances.
     All methods are synchronous and GPU-bound — callers must use run_in_executor().
 
-    This implementation uses the documented Sortformer diarizer plus
-    multitalker Parakeet ASR, with per-segment WAV slicing for a pragmatic
-    speaker-attributed transcript path.
+    PLACEHOLDER IMPLEMENTATION: The actual NeMo API calls need to be filled in
+    after the Milestone 1 API discovery spike. See docs/nemo-api-notes.md.
     """
 
-    def __init__(
-        self,
-        load_models: bool = False,
-        strict_startup: bool | None = None,
-    ) -> None:
+    def __init__(self) -> None:
         """Load NeMo models into GPU memory.
 
         This is called once at FastAPI startup. It may take 30-60 seconds
         to load all models depending on disk speed and GPU.
+
+        Set NEMO_MODEL_PROVIDER=mock to skip model loading (for tests).
         """
         self._model_provider = os.environ.get("NEMO_MODEL_PROVIDER", "local")
-        self._device: Any = None
-        self._torch: Any = None
         self._diar_model: Any = None
         self._asr_model: Any = None
+        self._device: Any = None
+        self._models_loaded = False
         self._load_error: str | None = None
-        self._strict_startup = load_models if strict_startup is None else strict_startup
 
         logger.info("nemo_pipeline.loading_models", extra={
             "provider": self._model_provider,
-            "load_models": load_models,
         })
 
-        self._models_loaded = False
-        if load_models:
-            try:
-                self._load_models()
-            except Exception as exc:
-                self._load_error = str(exc)
-                logger.exception("nemo_pipeline.model_load_failed")
-                if self._strict_startup:
-                    raise
+        if self._model_provider == "mock":
+            logger.info("nemo_pipeline.mock_mode")
+            return
 
-        logger.info("nemo_pipeline.ready", extra={
-            "models_loaded": self._models_loaded,
-        })
+        try:
+            import torch
+            from nemo.collections.asr.models import SortformerEncLabelModel
+            from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            self._diar_model = SortformerEncLabelModel.from_pretrained(
+                "nvidia/diar_streaming_sortformer_4spk-v2.1"
+            ).eval().to(device)
+
+            self._asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+                "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+            ).eval().to(device)
+
+            # CUDA graph workaround (required for PyTorch 2.8 compat)
+            self._asr_model.decoding.decoding.use_cuda_graph_decoder = False
+            self._asr_model.decoding.decoding.decoding_computer.disable_cuda_graphs()
+
+            self._device = device
+            self._models_loaded = True
+
+            logger.info("nemo_pipeline.models_loaded", extra={"device": str(device)})
+        except Exception as e:
+            self._load_error = str(e)
+            logger.exception("nemo_pipeline.models_failed", extra={
+                "provider": self._model_provider,
+                "error": self._load_error,
+            })
 
     @property
     def is_loaded(self) -> bool:
@@ -146,16 +150,14 @@ class NemoPipeline:
 
     @property
     def load_error(self) -> str | None:
-        """Model load error if startup failed in non-strict mode."""
+        """Model load failure, if startup fell back to degraded mode."""
         return self._load_error
 
     def transcribe_file(self, audio_path: str) -> TranscriptionResult:
         """Process a complete audio file. Returns speaker-attributed segments.
 
-        This is the offline/batch mode entry point. Used for:
-          - Testing with fixture WAV files (Milestone 1)
-          - The /transcribe/file HTTP endpoint (Milestone 2)
-          - Demo replay mode (Milestone 4)
+        Runs independent diarization (Sortformer) + ASR (multitalker Parakeet),
+        then aligns words to speaker segments proportionally.
 
         Args:
             audio_path: Path to a WAV file (16kHz mono PCM expected)
@@ -163,70 +165,35 @@ class NemoPipeline:
         Returns:
             TranscriptionResult with speaker-attributed segments.
         """
-        if not self.is_loaded:
-            logger.warning("nemo_pipeline.transcribe_file.skipped", extra={
-                "reason": "models_not_loaded",
-                "audio_path": audio_path,
-            })
-            return TranscriptionResult(raw_output={
-                "warning": "NeMo models are not loaded",
-                "audio_path": audio_path,
-            })
-
-        audio = Path(audio_path)
-        if not audio.exists():
-            raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
         logger.info("nemo_pipeline.transcribe_file.started", extra={
             "audio_path": audio_path,
         })
 
-        diarization_output = self._run_diarization(audio_path)
-        diarized_segments = self._merge_adjacent_segments(
-            self._parse_nemo_output(diarization_output)
-        )
+        if not self._models_loaded:
+            return TranscriptionResult(segments=[], raw_output={})
 
-        if not diarized_segments:
-            return TranscriptionResult(segments=[], raw_output={
-                "audio_path": audio_path,
-                "diarization_segments": [],
-            })
+        import torch
 
-        transcript_segments: list[Segment] = []
-        raw_segments: list[dict[str, Any]] = []
+        with torch.inference_mode():
+            diar_output = self._diar_model.diarize(
+                audio=audio_path, batch_size=1, verbose=False,
+            )
+            asr_hyps = self._asr_model.transcribe(
+                [audio_path], return_hypotheses=True, verbose=False,
+            )
 
-        with tempfile.TemporaryDirectory(prefix="ambient-scribe-segments-") as temp_dir:
-            for index, diarized_segment in enumerate(diarized_segments):
-                clip_path = Path(temp_dir) / f"segment_{index}.wav"
-                if not self._extract_wav_segment(
-                    audio_path,
-                    clip_path,
-                    diarized_segment["start"],
-                    diarized_segment["end"],
-                ):
-                    continue
+        parsed = self._parse_nemo_output(diar_output, asr_hyps)
 
-                text = self._transcribe_clip(str(clip_path))
-                if text == "":
-                    continue
-
-                segment = Segment(
-                    speaker_id=diarized_segment["speaker_id"],
-                    text=text,
-                    start=diarized_segment["start"],
-                    end=diarized_segment["end"],
-                )
-                transcript_segments.append(segment)
-                raw_segments.append({
-                    **diarized_segment,
-                    "text": text,
-                })
+        logger.info("nemo_pipeline.transcribe_file.completed", extra={
+            "audio_path": audio_path,
+            "segments": len(parsed),
+        })
 
         return TranscriptionResult(
-            segments=transcript_segments,
+            segments=parsed,
             raw_output={
-                "audio_path": audio_path,
-                "diarization_segments": raw_segments,
+                "diar": str(diar_output),
+                "asr_text": asr_hyps[0].text if asr_hyps else "",
             },
         )
 
@@ -245,182 +212,129 @@ class NemoPipeline:
         Returns:
             TranscriptionResult with speaker-attributed segments.
         """
-        if audio_buffer == b"":
-            return TranscriptionResult()
-
         logger.info("nemo_pipeline.transcribe_buffer.started", extra={
             "buffer_bytes": len(audio_buffer),
         })
 
-        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
-            self._write_pcm_wav(wav_file.name, audio_buffer)
-            return self.transcribe_file(wav_file.name)
+        if not self._models_loaded:
+            return TranscriptionResult(segments=[], raw_output={})
 
-    def _load_models(self) -> None:
-        """Load the documented NeMo models into GPU memory."""
-        import torch
-        from nemo.collections.asr.models import SortformerEncLabelModel
-        from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+        pcm_array = np.frombuffer(audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
 
-        self._torch = torch
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                tmp_path = f.name
+                soundfile.write(tmp_path, pcm_array, 16000)
+            return self.transcribe_file(tmp_path)
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
 
-        self._diar_model = SortformerEncLabelModel.from_pretrained(
-            DIAR_MODEL_ID,
-        ).eval().to(self._device)
-        self._asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-            ASR_MODEL_ID,
-        ).eval().to(self._device)
+    def _parse_nemo_output(
+        self, diar_segments: Any, asr_hyps: Any,
+    ) -> list[Segment]:
+        """Align ASR words to diarization speaker segments proportionally.
 
-        if hasattr(self._asr_model, "decoding") and hasattr(self._asr_model.decoding, "decoding"):
-            decoding = self._asr_model.decoding.decoding
-            decoding.use_cuda_graph_decoder = False
-            decoding_computer = getattr(decoding, "decoding_computer", None)
-            if hasattr(decoding_computer, "disable_cuda_graphs"):
-                decoding_computer.disable_cuda_graphs()
+        Approach: Independent diarize + ASR. Words are distributed across
+        diarization segments proportional to each segment's duration share.
 
-        self._models_loaded = True
-        self._load_error = None
+        Diarization output format (list of strings per file):
+            ["0.560 3.120 speaker_0", "3.200 5.800 speaker_1", ...]
 
-        logger.info("nemo_pipeline.models_loaded", extra={
-            "device": str(self._device),
-            "diar_model_id": DIAR_MODEL_ID,
-            "asr_model_id": ASR_MODEL_ID,
-        })
-
-    def _run_diarization(self, audio_path: str) -> Any:
-        """Run diarization with the validated Sortformer API."""
-        with self._torch.inference_mode():
-            return self._diar_model.diarize(
-                audio=audio_path,
-                batch_size=1,
-                verbose=False,
-            )
-
-    def _parse_nemo_output(self, raw_output: Any) -> list[dict[str, Any]]:
-        """Parse NeMo's raw output into our Segment format.
+        ASR output: list of Hypothesis objects with .text attribute.
 
         Args:
-            raw_output: Raw output from NeMo's inference entrypoint
+            diar_segments: Raw output from SortformerEncLabelModel.diarize()
+            asr_hyps: Raw output from EncDecMultiTalkerRNNTBPEModel.transcribe()
 
         Returns:
-            Parsed diarization segments with speaker IDs and timestamps.
+            List of Segment objects with speaker attribution.
         """
-        diarization_lines: list[str] = []
-
-        if isinstance(raw_output, tuple):
-            first_item = raw_output[0]
-        else:
-            first_item = raw_output
-
-        if isinstance(first_item, list) and len(first_item) == 1 and isinstance(first_item[0], list):
-            diarization_lines = [line for line in first_item[0] if isinstance(line, str)]
-        elif isinstance(first_item, list):
-            diarization_lines = [line for line in first_item if isinstance(line, str)]
-
-        parsed_segments: list[dict[str, Any]] = []
-        for line in diarization_lines:
-            parts = line.split()
-            if len(parts) != 3:
-                continue
-
-            start, end, speaker_id = parts
-            parsed_segments.append({
-                "speaker_id": speaker_id.replace("speaker_", "spk_"),
-                "start": float(start),
-                "end": float(end),
-            })
-
-        return parsed_segments
-
-    def _merge_adjacent_segments(
-        self,
-        segments: list[dict[str, Any]],
-        max_gap_seconds: float = 0.35,
-        min_duration_seconds: float = 0.15,
-    ) -> list[dict[str, Any]]:
-        """Coalesce adjacent diarization segments to reduce tiny ASR calls."""
-        if segments == []:
+        # Parse diarization segments: "start end speaker_id"
+        parsed_diar = self._parse_diar_strings(diar_segments)
+        if not parsed_diar:
             return []
 
-        merged: list[dict[str, Any]] = [dict(segments[0])]
-        for segment in segments[1:]:
-            current = merged[-1]
-            same_speaker = current["speaker_id"] == segment["speaker_id"]
-            gap_seconds = segment["start"] - current["end"]
+        # Get ASR text
+        asr_text = ""
+        if asr_hyps:
+            hyp = asr_hyps[0]
+            asr_text = hyp.text if hasattr(hyp, "text") else str(hyp)
+        if not asr_text.strip():
+            return [
+                Segment(speaker_id=spk, text="", start=start, end=end)
+                for start, end, spk in parsed_diar
+            ]
 
-            if same_speaker and gap_seconds <= max_gap_seconds:
-                current["end"] = segment["end"]
-                continue
+        words = asr_text.split()
+        if not words:
+            return []
 
-            if (segment["end"] - segment["start"]) < min_duration_seconds:
-                continue
+        # Distribute words proportionally across diarization segments
+        total_duration = sum(end - start for start, end, _ in parsed_diar)
+        if total_duration <= 0:
+            return []
 
-            merged.append(dict(segment))
+        segments: list[Segment] = []
+        word_idx = 0
+        for i, (start, end, speaker_id) in enumerate(parsed_diar):
+            seg_duration = end - start
+            share = seg_duration / total_duration
 
-        return merged
+            if i == len(parsed_diar) - 1:
+                # Last segment gets all remaining words
+                seg_words = words[word_idx:]
+            else:
+                word_count = max(1, round(len(words) * share))
+                seg_words = words[word_idx:word_idx + word_count]
+                word_idx += len(seg_words)
 
-    def _extract_wav_segment(
-        self,
-        source_path: str,
-        destination_path: Path,
-        start_seconds: float,
-        end_seconds: float,
-    ) -> bool:
-        """Slice a PCM WAV clip for per-segment ASR."""
-        with wave.open(source_path, "rb") as source_wav:
-            frame_rate = source_wav.getframerate()
-            start_frame = max(int(start_seconds * frame_rate), 0)
-            end_frame = max(int(end_seconds * frame_rate), start_frame)
-            total_frames = source_wav.getnframes()
+            text = " ".join(seg_words)
+            if text:
+                segments.append(Segment(
+                    speaker_id=speaker_id,
+                    text=text,
+                    start=start,
+                    end=end,
+                ))
 
-            if start_frame >= total_frames or end_frame <= start_frame:
-                return False
+        return segments
 
-            source_wav.setpos(start_frame)
-            frames = source_wav.readframes(end_frame - start_frame)
-            if frames == b"":
-                return False
+    @staticmethod
+    def _parse_diar_strings(diar_output: Any) -> list[tuple[float, float, str]]:
+        """Parse Sortformer diarization output strings.
 
-            with wave.open(str(destination_path), "wb") as clip_wav:
-                clip_wav.setnchannels(source_wav.getnchannels())
-                clip_wav.setsampwidth(source_wav.getsampwidth())
-                clip_wav.setframerate(frame_rate)
-                clip_wav.writeframes(frames)
+        Input formats handled:
+          - List of lists of strings: [["0.56 3.12 speaker_0", ...]]
+          - List of strings: ["0.56 3.12 speaker_0", ...]
 
-        return True
+        Returns:
+            List of (start, end, speaker_id) tuples, sorted by start time.
+        """
+        raw_strings: list[str] = []
 
-    def _transcribe_clip(self, clip_path: str) -> str:
-        """Run ASR on a single diarized clip."""
-        with self._torch.inference_mode():
-            hypotheses = self._asr_model.transcribe(
-                [clip_path],
-                return_hypotheses=True,
-                verbose=False,
-            )
+        if not diar_output:
+            return []
 
-        if hypotheses == []:
-            return ""
+        # Handle nested list (batch output: list of lists)
+        items = diar_output
+        if items and isinstance(items[0], list):
+            items = items[0]
 
-        first_hypothesis = hypotheses[0]
-        if hasattr(first_hypothesis, "text"):
-            text = str(first_hypothesis.text)
-        elif isinstance(first_hypothesis, str):
-            text = first_hypothesis
-        else:
-            text = str(first_hypothesis)
+        for item in items:
+            s = str(item).strip()
+            if s:
+                raw_strings.append(s)
 
-        return " ".join(text.split())
+        parsed: list[tuple[float, float, str]] = []
+        for s in raw_strings:
+            match = re.match(r"([\d.]+)\s+([\d.]+)\s+(\S+)", s)
+            if match:
+                start = float(match.group(1))
+                end = float(match.group(2))
+                speaker = match.group(3)
+                parsed.append((start, end, speaker))
 
-    def _write_pcm_wav(
-        self,
-        output_path: str,
-        pcm_audio: bytes,
-        sample_rate_hz: int = DEFAULT_SAMPLE_RATE_HZ,
-    ) -> None:
-        """Write raw PCM audio to a mono 16-bit WAV file."""
-        with wave.open(output_path, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate_hz)
-            wav_file.writeframes(pcm_audio)
+        parsed.sort(key=lambda x: x[0])
+        return parsed

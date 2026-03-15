@@ -37,8 +37,10 @@ applyTo: 'scripts/**/*.sh'
 | `preflight-checks.sh` | Runs all quality gates (tests, lint, analysis, coverage) |
 | `dependencies-install.sh` | Install from lock files |
 | `dependencies-update.sh` | Update to latest within constraints |
-| `setup-initial.sh` | First-time project setup |
-| `health-check-localdev.sh` | Checks all local services are running |
+| `setup-initial.sh` | First-time Docker-first project setup (GPU, builds, health checks) |
+| `start-dev.sh` | Daily lightweight startup (Docker Compose + health checks + log streaming) |
+| `health-checks.sh` | Read-only diagnostics (Docker, GPU, containers, services, config) |
+| `env-detect.sh` | Shared context sourced by all scripts (paths, dc() wrapper, colors) |
 
 ## Error Handling
 

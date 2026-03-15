@@ -2,22 +2,11 @@
 # Preflight check: Run all quality gates before committing
 # Usage: ./scripts/preflight-checks.sh [--coverage-min=80]
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 cd "$REPO_ROOT"
 
-# ── Colors & Symbols ──────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS="${GREEN}✔${RESET}"
-FAIL="${RED}✘${RESET}"
+# SKIP symbol not provided by env-detect.sh (WARN uses ○ but SKIP is a local alias)
 SKIP="${YELLOW}○${RESET}"
-ARROW="${BLUE}▸${RESET}"
 
 # ── State ─────────────────────────────────────────────────────────
 TOTAL=0
@@ -150,7 +139,26 @@ else
     done
 fi
 
-# 3. Code style (PHP-CS-Fixer)
+# 3. Dangerous policy (repo diff)
+step "Danger policy (repo diff)"
+t=$(date +%s%N)
+danger_script="$REPO_ROOT/scripts/deny-dangerous.sh"
+if [[ -x "$danger_script" ]]; then
+    danger_output=$("$danger_script" --check-repo 2>&1)
+    danger_exit=$?
+    if [[ $danger_exit -eq 0 ]]; then
+        pass "$(elapsed_since $t)"
+    else
+        fail "Danger policy"
+        echo "$danger_output" | head -10 | while read -r line; do
+            echo -e "    ${DIM}${line}${RESET}"
+        done
+    fi
+else
+    skip "scripts/deny-dangerous.sh not found"
+fi
+
+# 4. Code style (PHP-CS-Fixer)
 step "Code style (PHP-CS-Fixer)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/php-cs-fixer ]]; then
@@ -166,7 +174,7 @@ else
     skip "php-cs-fixer not installed"
 fi
 
-# 4. Cyclomatic complexity
+# 5. Cyclomatic complexity
 step "Cyclomatic complexity (max 20)"
 t=$(date +%s%N)
 complexity_script="$REPO_ROOT/scripts/check-cyclomatic-complexity.php"
@@ -186,7 +194,7 @@ else
     skip "scripts/check-cyclomatic-complexity.php not found"
 fi
 
-# 5. Mess detector (PHPMD)
+# 6. Mess detector (PHPMD)
 step "Mess detector (PHPMD)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/phpmd ]]; then
@@ -209,7 +217,7 @@ else
     skip "phpmd not installed"
 fi
 
-# 6. PHPStan
+# 7. PHPStan
 step "Static analysis (PHPStan L10)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/phpstan ]]; then
@@ -232,7 +240,7 @@ else
     skip "phpstan not installed"
 fi
 
-# 7. Twig lint
+# 8. Twig lint
 step "Twig templates lint"
 t=$(date +%s%N)
 if [[ -d templates ]]; then
@@ -256,39 +264,41 @@ else
     skip "no templates/ directory"
 fi
 
-# 8. Python agent syntax check
-step "Python agent syntax"
+# 9. Python lint (Ruff)
+step "Python lint (Ruff)"
 t=$(date +%s%N)
 agent_dir="$REPO_ROOT/strands_agents"
-if [[ -d "$agent_dir" ]] && command -v python3 &>/dev/null; then
-    py_errors=0
-    py_files=0
-    py_error_detail=""
-    for f in "$agent_dir"/*.py "$agent_dir"/api/*.py "$agent_dir"/agents/*.py; do
-        if [[ -f "$f" ]]; then
-            py_files=$((py_files + 1))
-            check_output=$(python3 -m py_compile "$f" 2>&1)
-            if [[ $? -ne 0 ]]; then
-                py_errors=$((py_errors + 1))
-                py_error_detail="$check_output"
-            fi
-        fi
-    done
-    if [[ $py_errors -eq 0 ]]; then
-        pass "${py_files} files $(elapsed_since $t)"
+if [[ -d "$agent_dir" ]]; then
+    if command -v ruff &>/dev/null; then
+        ruff_cmd=$(command -v ruff)
+    elif [[ -x "$agent_dir/.venv/bin/ruff" ]]; then
+        ruff_cmd="$agent_dir/.venv/bin/ruff"
     else
-        fail "Python agent syntax (${py_errors} errors)"
-        echo "$py_error_detail" | head -5 | while read -r line; do
-            echo -e "    ${DIM}${line}${RESET}"
-        done
+        ruff_cmd=""
+    fi
+
+    if [[ -n "$ruff_cmd" ]]; then
+        ruff_output=$("$ruff_cmd" check "$agent_dir" 2>&1)
+        ruff_exit=$?
+        if [[ $ruff_exit -eq 0 ]]; then
+            pass "$(elapsed_since $t)"
+        else
+            err_count=$(echo "$ruff_output" | grep -cE '^[^ ]+:[0-9]+:[0-9]+:' || true)
+            fail "Python lint (${err_count} errors)"
+            echo "$ruff_output" | head -10 | while read -r line; do
+                echo -e "    ${DIM}${line}${RESET}"
+            done
+        fi
+    else
+        skip "ruff not available"
     fi
 elif [[ ! -d "$agent_dir" ]]; then
     skip "no strands_agents/ directory"
 else
-    skip "python3 not available"
+    skip "python tooling not available"
 fi
 
-# 9. Docker Compose validate
+# 10. Docker Compose validate
 step "Docker Compose config"
 t=$(date +%s%N)
 compose_file="$REPO_ROOT/docker-compose.yml"
@@ -310,7 +320,7 @@ else
     skip "docker not available"
 fi
 
-# 10. PHPUnit
+# 11. PHPUnit
 step "Tests (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -x vendor/bin/phpunit ]]; then
@@ -335,7 +345,7 @@ else
     fi
 fi
 
-# 11. Coverage
+# 12. Coverage
 step "Coverage (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -f phpunit.xml && ! -f phpunit.xml.dist ]]; then
@@ -386,7 +396,7 @@ else
     fi
 fi
 
-# 12. Mutation testing (optional)
+# 13. Mutation testing (optional)
 if [[ "$RUN_MUTATE" == true ]]; then
     step "Mutation testing (Infection)"
     t=$(date +%s%N)

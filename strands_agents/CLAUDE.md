@@ -2,12 +2,12 @@
 
 ## Footguns (from docs/footguns.md)
 
-- **Mercure JWT silent failure:** `publish_to_mercure()` silently drops segments if JWT not configured. No browser error.
-- **Session cleanup race:** WebSocket disconnect `cleanup_session()` can delete `RoleMappingState` while `/roles/stream` is still reading it.
+- ~~**Mercure JWT silent failure:**~~ MITIGATED — `publish_to_mercure()` returns `bool`, logs ERROR, sends `system_error` WebSocket frame. Browser shows amber banner.
+- ~~**Session cleanup race:**~~ MITIGATED — `SessionLifecycle` class with per-session `asyncio.Lock`. `lifecycle.destroy()` is atomic. `assign_roles._session_states` has `threading.Lock`.
 - **NeMo singleton no recovery:** GPU model loaded once at startup. Crash = container restart. `max_workers=2` hardcoded.
-- **PHP↔Python contract unvalidated:** SSE event format (`mapping`, `confidence`) not validated on either side. Changes break silently.
-- **Three session state buckets:** `nemo_session.py`, `session.py`, `tools/assign_roles.py` — independent stores, no coordinated lifecycle.
-- **Audio format assumed:** `AudioBuffer` hardcodes 16kHz PCM. Browser may send WebM/Opus.
+- **PHP↔Python contract:** `/history` and `/roles` now accept both GET and POST. Empty mapping serializes as `{}` on both sides.
+- ~~**Three session state buckets:**~~ MITIGATED — `session_lifecycle.py` coordinates active session + role state cleanup. `SessionStore` TTL eviction is still independent.
+- ~~**Audio format assumed:**~~ MITIGATED — First-chunk validation rejects WebM/WAV bytes when PCM configured. Raises `ValueError` with clear message.
 
 ## Conventions
 

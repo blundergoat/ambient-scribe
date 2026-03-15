@@ -19,9 +19,9 @@
 #   Browser ──(HTTP)──► app (PHP) ──(HTTP)──► nemo-agent (session history)
 #
 # PORTS:
-#   http://localhost:8082  — Scribe UI (PHP app)
-#   http://localhost:8001  — NeMo agent API (for debugging)
-#   http://localhost:3701  — Mercure hub (for SSE subscriptions)
+#   http://localhost:48082  — Scribe UI (PHP app)
+#   http://localhost:48101  — NeMo agent API (for debugging)
+#   http://localhost:48137  — Mercure hub (for SSE subscriptions)
 #
 # GPU REQUIREMENT:
 #   The nemo-agent service requires an NVIDIA GPU with the NVIDIA Container
@@ -53,18 +53,22 @@ services:
               count: 1
               capabilities: [gpu]
     ports:
-      - "${AGENT_PORT:-8001}:8000"
+      - "${AGENT_PORT:-48101}:8000"
     environment:
       # --- NeMo configuration ---
       - NEMO_MODEL_PROVIDER=${NEMO_MODEL_PROVIDER:-local}
       - NEMO_STREAM_INPUT_FORMAT=${NEMO_STREAM_INPUT_FORMAT:-pcm}
+      - NEMO_MAX_WORKERS=${NEMO_MAX_WORKERS:-2}
+      - NEMO_BUFFER_MAX_DURATION=${NEMO_BUFFER_MAX_DURATION:-900}
+      - MAX_SESSIONS=${MAX_SESSIONS:-100}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-7200}
 
       # --- Mercure publishing ---
       - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
       - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
 
-      # --- Role inference agent (uses Bedrock, NOT GPU) ---
+      # --- Role inference agent (uses Bedrock by default, Ollama optional) ---
       - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-bedrock}
       - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-us.anthropic.claude-sonnet-4-20250514-v1:0}
       - ROLE_AGENT_OLLAMA_MODEL=${ROLE_AGENT_OLLAMA_MODEL:-llama3.1:8b}
@@ -75,12 +79,13 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-southeast-2}
-      - AWS_PROFILE=${AWS_PROFILE:-}
     volumes:
       - ./strands_agents:/app  # Hot reload in dev
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
+      # /health returns 200 (ok) when models loaded or skipped, 503 (degraded)
+      # when model loading failed. 503 will cause Docker to mark unhealthy.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 10s
@@ -100,15 +105,15 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${APP_PORT:-8082}:8080"
+      - "${APP_PORT:-48082}:8080"
     environment:
       - APP_ENV=dev
       - APP_DEBUG=1
       - APP_SECRET=${APP_SECRET:-ambient-scribe-dev-secret-change-me}
       - AGENT_ENDPOINT=http://nemo-agent:8000
-      - NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-8001}
+      - NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-48101}
       - MERCURE_URL=http://mercure:3701/.well-known/mercure
-      - MERCURE_PUBLIC_URL=http://localhost:${MERCURE_PORT:-3701}/.well-known/mercure
+      - MERCURE_PUBLIC_URL=http://localhost:${MERCURE_PORT:-48137}/.well-known/mercure
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
     depends_on:
       nemo-agent:
@@ -127,11 +132,13 @@ services:
   mercure:
     image: dunglas/mercure
     ports:
-      - "${MERCURE_PORT:-3701}:3701"
+      - "${MERCURE_PORT:-48137}:3701"
     environment:
       MERCURE_PUBLISHER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       MERCURE_SUBSCRIBER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       SERVER_NAME: ":3701"
+      # Keep dev CORS scoped to the local app by default. If you need a wider
+      # setting for short-lived debugging, override MERCURE_CORS_ORIGINS.
       MERCURE_EXTRA_DIRECTIVES: |
         anonymous
-        cors_origins http://localhost:${APP_PORT:-8082}
+        cors_origins ${MERCURE_CORS_ORIGINS:-http://localhost:48082}

@@ -1,57 +1,37 @@
-# Architecture Overview — Ambient Scribe
+# Architecture
 
-Real-time medical transcription system. Browser captures microphone audio, streams to Python via WebSocket, NeMo performs GPU-accelerated diarization + ASR, Strands agent assigns DOCTOR/PATIENT roles, results stream back via Mercure SSE.
+Ambient Scribe is a browser -> Python -> Mercure -> browser transcription system. Symfony serves the UI and session APIs; the live audio path bypasses PHP.
 
-## Major Components
+## Components
 
-| Component | Stack | Location | Purpose |
-|-----------|-------|----------|---------|
-| Web UI | Twig + inline JS | `templates/scribe/index.html.twig` | Audio capture (MediaRecorder), WebSocket streaming, Mercure SSE subscription |
-| PHP backend | Symfony 6.4 | `src/` | Session page serving, role inference proxy, session history retrieval |
-| Python agent | FastAPI | `strands_agents/` | WebSocket server, NeMo inference, role inference, Mercure publishing |
-| NeMo pipeline | NeMo Parakeet | `strands_agents/nemo_pipeline.py` | GPU diarization + ASR (singleton, shared across sessions) |
-| Role agent | Strands SDK | `strands_agents/agents/transcription_agent.py` | DOCTOR/PATIENT attribution via Bedrock or Ollama |
-| SSE hub | Mercure | Docker service | Real-time event delivery to browser |
-| Infrastructure | Terraform | `infra/terraform/` | AWS ECS Fargate, ALB, DynamoDB, WAF |
+- Browser UI (`templates/scribe/index.html.twig`): captures microphone audio with `PcmStreamer`, opens the WebSocket, and subscribes to Mercure `raw` and `roles` topics.
+- Symfony app (`src/`): renders `/scribe`, exposes history and role snapshot/proxy endpoints, and owns app config.
+- FastAPI agent (`strands_agents/api/server.py`): handles WebSocket ingest, batch upload, session history, legacy role SSE, and Mercure publishing.
+- NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`): singleton GPU diarization/ASR plus per-session audio buffering.
+- Role inference (`strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py`): sequential per-session DOCTOR/PATIENT mapping.
+- Mercure (`docker-compose.yml`): fan-out for `scribe/session/{id}/raw` and `scribe/session/{id}/roles`.
+- Terraform (`infra/terraform/`): ECS/Fargate, ALB, Mercure, secrets, and DynamoDB scaffolding.
 
-## Data Flow
+## Primary Flows
 
-```
-Browser → GET /scribe (Symfony) → Twig renders page with session UUID
-       → WS /ws/transcribe/{id} (FastAPI) → binary audio chunks
-           → ThreadPoolExecutor → NemoPipeline.transcribe_file() (GPU)
-           → Segment[] → publish to Mercure topic: scribe/session/{id}/raw
-       → POST /session/{id}/roles/stream (FastAPI) → Strands agent → Bedrock/Ollama
-           → RoleMappingState update → publish to Mercure topic: scribe/session/{id}/roles
-       ← EventSource (Mercure SSE) ← browser receives raw segments + role updates
-```
+1. Browser loads `/scribe`; Symfony injects session id, WebSocket URL, Mercure URL, and topic names.
+2. Browser streams PCM audio to `ws://.../ws/transcribe/{session_id}`.
+3. FastAPI runs NeMo inside `ThreadPoolExecutor(max_workers=2)`, stores transcript state, and publishes raw segments to Mercure.
+4. A per-session async queue runs role inference and publishes role updates to Mercure.
+5. Browser merges the `raw` and `roles` topics into one transcript timeline.
+6. PHP can still fetch history plus current/streamed role data for non-live paths.
 
-## Non-Obvious Constraints
+## Constraints
 
-1. **NeMo GPU exclusivity.** The NeMo model fills ~4-8GB VRAM. The Strands role agent MUST use Bedrock (AWS) or Ollama (CPU-only). Never co-locate a GPU LLM with NeMo on 16GB.
-2. **ThreadPoolExecutor(max_workers=2).** Only 2 concurrent NeMo inference calls. Others queue. Hardcoded in `api/server.py`.
-3. **All session state is in-memory.** Three independent stores (TranscriptionSession, SessionStore, RoleMappingState) keyed by session UUID. All lost on restart. DynamoDB created in Terraform but not yet integrated.
-4. **Mercure JWT optional.** If not configured, publishes silently fail. No browser-visible error.
-5. **PHP never touches audio.** PHP proxies role inference results only. Audio flows browser → Python directly.
+- NeMo owns the GPU; the role model must stay on Bedrock or CPU-only Ollama.
+- `NEMO_STREAM_INPUT_FORMAT` is a browser/server contract, not auto-detected.
+- Live state is coordinated by `SessionLifecycle` (wraps active sessions + role state cleanup). `SessionStore` transcript data has independent TTL eviction.
+- Mercure publish failures return `False`, log at ERROR, and send a `system_error` WebSocket frame to the browser.
+- Browser-facing URLs in `.env.example` and `docker-compose.yml` use local-host defaults and must be overridden for remote clients.
 
-## Deliberate Trade-Offs
+## Trade-Offs
 
-- **In-memory over DynamoDB:** Faster iteration during M1-M2. DynamoDB integration planned for M3/M4.
-- **Singleton NeMo over per-request:** GPU memory constraint. Recovery requires container restart.
-- **Two Mercure topics over one:** Decouples hot path (NeMo) from cold path (role inference). Browser handles merge.
-- **Sequential role inference per session:** Prevents race conditions on RoleMappingState. Throughput traded for correctness.
-
-## Docker Services
-
-| Service | Port | GPU | Purpose |
-|---------|------|-----|---------|
-| `nemo-agent` | 8000 (HTTP), 8001 (WS) | Yes (NVIDIA) | FastAPI + NeMo + Strands agent |
-| `mercure` | 3701 | No | Caddy-based SSE hub |
-| `app` | 8080/8082 | No | Symfony PHP application |
-
-## TODOs
-
-- [ ] DynamoDB integration for session persistence (currently in-memory only)
-- [ ] Audio format detection (currently assumes 16kHz PCM; browser may send WebM/Opus)
-- [ ] Coordinated session lifecycle across three state stores
-- [ ] NeMo model health check and recovery mechanism
+- Two Mercure topics keep the NeMo hot path independent from role-inference latency.
+- In-memory state keeps iteration fast but loses data on restart and diverges from Terraform's DynamoDB scaffold.
+- A singleton NeMo pipeline minimizes GPU churn but requires process restart for recovery.
+- Legacy PHP role-stream endpoints remain even though the live UI now prefers Mercure role topics.

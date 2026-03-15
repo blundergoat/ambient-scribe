@@ -13,10 +13,10 @@ Everything runs in containers. No local PHP/Python install needed.
 ```bash
 cp .env.example .env
 docker compose up --build
-# Open http://localhost:8082
+# Open http://localhost:48082
 ```
 
-First run pulls the LLM model (~9GB for qwen2.5:14b) — this takes a few minutes.
+First run builds the NeMo image and warms large model layers — this can take a while.
 
 ### Option B: Bare-metal (recommended for development)
 
@@ -25,7 +25,7 @@ Runs PHP and Python directly. Faster iteration, no container rebuilds.
 ```bash
 ./scripts/setup-initial.sh    # Install all dependencies
 ./scripts/start-dev.sh        # Start PHP + Python + Ollama
-# Open http://localhost:8082
+# Open http://localhost:48082
 ```
 
 ## Prerequisites
@@ -56,10 +56,10 @@ Both modes run the same core services:
 
 ```mermaid
 graph LR
-    Browser -->|":8082"| PHP["PHP Symfony<br/>Chat UI"]
-    PHP -->|":8081"| Agent["Python FastAPI<br/>Agent"]
+    Browser -->|":48082"| PHP["PHP Symfony<br/>Chat UI"]
+    PHP -->|":48101"| Agent["Python FastAPI<br/>Agent"]
     Agent -->|":11434"| LLM["Ollama<br/>(or Bedrock)"]
-    PHP -.->|":3701"| Mercure["Mercure<br/>SSE hub"]
+    PHP -.->|":48137"| Mercure["Mercure<br/>SSE hub"]
     Mercure -.->|"EventSource"| Browser
 
     style Mercure stroke-dasharray: 5 5
@@ -69,31 +69,32 @@ Mercure is optional (Docker Compose only) — without it, the app falls back to 
 
 ### Docker Compose mode
 
-5 containers with automatic dependency ordering:
+3 containers with automatic dependency ordering:
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| **ollama** | ollama/ollama | 11434 | Local LLM server |
-| **ollama-pull** | ollama/ollama | — | One-shot model download, then exits |
-| **agent** | Built from `strands_agents/Dockerfile` | 8081 → 8000 | Python FastAPI agent (Strands SDK) |
-| **mercure** | dunglas/mercure | 3701 | Real-time SSE hub for streaming mode |
-| **app** | Built from `Dockerfile` | 8082 → 8080 | PHP Symfony chat UI |
+| **nemo-agent** | Built from `docker/nemo/Dockerfile` | 48101 → 8000 | Python FastAPI agent with NeMo inference |
+| **mercure** | dunglas/mercure | 48137 → 3701 | Real-time SSE hub for streaming mode |
+| **app** | Built from `Dockerfile` | 48082 → 8080 | PHP Symfony scribe UI |
 
-Startup order: ollama → ollama-pull → agent → mercure → app
+Startup order: nemo-agent → mercure → app
 
-Containers talk via Docker networking (e.g. `http://agent:8000`, `http://ollama:11434`).
+Containers talk via Docker networking (e.g. `http://nemo-agent:8000`, `http://mercure:3701`).
+If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches a host Ollama instance via
+`OLLAMA_HOST` (default `http://host.docker.internal:11434`).
 
 ### Bare-metal mode
 
-3 processes managed by `start-dev.sh`:
+4 local services managed by `start-dev.sh`:
 
-| Process | Port | What runs |
+| Service | Port | What runs |
 |---------|------|-----------|
 | **Ollama** | 11434 | `ollama serve` (started automatically if not running) |
-| **Python agent** | 8081 | `uvicorn api.server:app` via the project venv |
-| **PHP app** | 8082 | `php -S 0.0.0.0:8082 -t public` |
+| **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on host port 48101 |
+| **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
+| **PHP app** | 48082 | `php -S 0.0.0.0:48082 -t public` |
 
-Processes talk via `localhost`. Mercure is not started — streaming mode is disabled, sync mode works fully. Use Docker Compose if you need streaming.
+Services talk via `localhost`, and `start-dev.sh` keeps the streaming path available by starting the agent and Mercure containers alongside the local PHP server.
 
 ## Environment Configuration
 
@@ -176,10 +177,10 @@ These are set automatically by `start-dev.sh` and `docker-compose.yml`. You typi
 
 | Variable | Docker value | Bare-metal value | Purpose |
 |----------|-------------|-----------------|---------|
-| `AGENT_ENDPOINT` | `http://agent:8000` | `http://localhost:8081` | PHP → Python agent URL |
-| `OLLAMA_HOST` | `http://ollama:11434` | `http://localhost:11434` | Python agent → Ollama URL |
+| `AGENT_ENDPOINT` | `http://nemo-agent:8000` | `http://localhost:48101` | PHP → Python agent URL |
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` | `http://localhost:11434` | Python agent → Ollama URL |
 | `MERCURE_URL` | `http://mercure:3701/...` | *(empty)* | PHP → Mercure publish URL |
-| `MERCURE_PUBLIC_URL` | `http://localhost:3701/...` | *(empty)* | Browser → Mercure subscribe URL |
+| `MERCURE_PUBLIC_URL` | `http://localhost:48137/...` | *(empty)* | Browser → Mercure subscribe URL |
 | `MERCURE_JWT_SECRET` | `ambient-scribe-mercure-secret` | *(empty)* | JWT signing for Mercure |
 | `APP_SECRET` | `ambient-scribe-dev-secret-change-me` | same | Symfony CSRF/session secret |
 
@@ -198,8 +199,8 @@ All scripts are in the `scripts/` directory.
 
 | Script | Purpose |
 |--------|---------|
-| `start-dev.sh` | Starts Ollama + Python agent + PHP app. Press Ctrl+C to stop all. |
-| `health-check-localdev.sh` | Checks if all services are running and responsive (Ollama API, model loaded, agent endpoints, PHP app, Mercure, port usage) |
+| `start-dev.sh` | Starts Docker Compose stack (nemo-agent + app + Mercure). Press Ctrl+C to stop. |
+| `health-checks.sh` | Read-only diagnostics: Docker, GPU, containers, services, config, connectivity |
 
 ### Dependencies
 
@@ -265,16 +266,16 @@ composer install
 
 ### "Address already in use" on start
 
-Another process is using port 8081 or 8082. Check what's running:
+Another process is using port 48101, 48082, or 48137. Check what's running:
 
 ```bash
-./scripts/health-check-localdev.sh    # Shows what's listening on each port
+./scripts/health-checks.sh    # Shows container state + service health
 ```
 
 Or override the ports:
 
 ```bash
-AGENT_PORT=9081 APP_PORT=9082 ./scripts/start-dev.sh
+AGENT_PORT=58101 APP_PORT=58082 MERCURE_PORT=58137 ./scripts/start-dev.sh
 ```
 
 ### Ollama model is slow

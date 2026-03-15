@@ -29,7 +29,7 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Default configuration
-API_URL="${API_URL:-http://localhost:8000}"
+API_URL="${API_URL:-http://localhost:48101}"
 REQUESTS=200
 CONCURRENCY=10
 ENDPOINT="/health"
@@ -47,7 +47,7 @@ show_help() {
     echo "  -n, --requests NUM     Total number of requests (default: 200)"
     echo "  -c, --concurrency NUM  Concurrent requests (default: 10)"
     echo "  -d, --duration SEC     Test duration in seconds (overrides -n)"
-    echo "  -u, --url URL          API base URL (default: http://localhost:8000)"
+    echo "  -u, --url URL          API base URL (default: http://localhost:48101)"
     echo "  --suite                Run all endpoints"
     echo "  -h, --help             Show this help"
     echo ""

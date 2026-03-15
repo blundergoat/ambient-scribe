@@ -48,10 +48,10 @@ Prove NeMo multitalker Parakeet runs on the RTX 5080 and produces speaker-attrib
 ### 1.2 Acquire Test Audio
 
 - [ ] **Primary:** Record a 2-3 minute GP consultation roleplay (two speakers, clear audio)
-- [ ] **Secondary:** Download OSCE history-taking videos via `yt-dlp -x --audio-format wav --audio-quality 0 <URL>`
+- [x] **Secondary:** Download OSCE history-taking videos via `yt-dlp -x --audio-format wav --audio-quality 0 <URL>`
   - Search: `"OSCE history taking" chest pain` (Geeky Medics, Zero to Finals, OSCE Sense)
 - [ ] **Baseline:** Download NeMo sample: `https://dldata-public.s3.us-east-2.amazonaws.com/2086-149220-0033.wav` (single-speaker, for basic ASR validation only)
-- [ ] Store test audio in `tests/fixtures/audio/`
+- [x] Store test audio in `tests/fixtures/audio/`
 
 > **Legal note:** YouTube-extracted audio is fine for local development and testing but **must not be committed to the repo** if you plan to open-source. Use self-recorded audio or NeMo's sample files for any fixtures that ship with the repo. Add `tests/fixtures/audio/*.wav` to `.gitignore` except for self-recorded or explicitly licensed files.
 

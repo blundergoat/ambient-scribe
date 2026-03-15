@@ -20,7 +20,7 @@ CLAUDE.md                          # Project context + workflow rules
 ```mermaid
 graph TD
     A["Claude edits a .php file"] -->|"PostToolUse hook"| B["php-cs-fixer fix<br/><small>auto-formats the file</small>"]
-    C["Claude finishes responding"] -->|"Stop hook"| D["phpstan analyse + py_compile<br/><small>catches type errors in PHP and Python</small>"]
+    C["Claude finishes responding"] -->|"Stop hook"| D["phpstan analyse + ruff check<br/><small>catches PHP type errors and Python lint issues</small>"]
     E["You type /preflight"] -->|"Skill"| F["Run all quality gates<br/><small>cs:fix → PHPStan → complexity → PHPMD → PHPUnit → Python</small>"]
     G["You type /review"] -->|"Skill"| H["Verified code review<br/><small>read code → verify findings → categorize</small>"]
     I["You type /audit"] -->|"Skill"| K["Multi-pass audit<br/><small>discover → verify → prioritize → self-check</small>"]
@@ -132,7 +132,7 @@ Hooks are defined in `.claude/settings.json` and fire automatically on specific 
 
 ```json
 {
-  "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; python3 -m py_compile strands_agents/api/server.py 2>&1; python3 -m py_compile strands_agents/agents/__init__.py 2>&1"
+  "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; RUFF=$(command -v ruff || echo strands_agents/.venv/bin/ruff); $RUFF check strands_agents/ 2>&1 | head -10"
 }
 ```
 
@@ -140,7 +140,7 @@ Hooks are defined in `.claude/settings.json` and fire automatically on specific 
 
 **What it does:** Two checks in one pass:
 1. **PHPStan** (level 10) — catches type errors, undefined methods, wrong argument types
-2. **Python py_compile** — catches syntax errors in the agent files
+2. **Ruff check** — catches Python lint and import issues in the agent files
 
 Output is truncated to 10 lines to keep feedback concise.
 
@@ -172,7 +172,7 @@ Runs all quality gates in sequence and fixes failures before declaring success.
 3. composer analyse:complexity  — cyclomatic complexity (max 20)
 4. composer analyse:messdetector — PHPMD
 5. composer test                — PHPUnit
-6. Python syntax check          — all agent files
+6. Python Ruff check            — all agent files
 7. Fix and re-run on failure
 8. Only report success when everything passes
 ```

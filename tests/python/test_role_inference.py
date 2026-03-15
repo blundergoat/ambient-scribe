@@ -2,7 +2,13 @@
 Tests for the role inference tools and state management.
 """
 
-from tools.assign_roles import RoleMapping, RoleMappingState, get_or_create_state, cleanup_session
+from tools.assign_roles import (
+    RoleMapping,
+    RoleMappingState,
+    apply_role_mapping_result,
+    cleanup_session,
+    get_or_create_state,
+)
 
 
 class TestRoleMappingState:
@@ -41,6 +47,12 @@ class TestRoleMappingState:
         state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, confidence=0.7)
         flip = state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, confidence=0.8)
         assert not flip
+
+    def test_detects_full_speaker_flip(self):
+        state = RoleMappingState()
+        state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, confidence=0.7)
+        flip = state.update({"spk_0": "PATIENT", "spk_1": "DOCTOR"}, confidence=0.9)
+        assert flip
 
 
 class TestSessionStateManagement:
@@ -84,3 +96,37 @@ class TestRoleMapping:
         )
         assert mapping.confidence == 0.85
         assert not mapping.flip_detected
+
+
+class TestApplyRoleMappingResult:
+    """Tests for the helper that persists agent output and attributes segments."""
+
+    def test_apply_role_mapping_result_updates_state_and_segments(self):
+        cleanup_session("apply-role-session")
+
+        result = apply_role_mapping_result(
+            session_id="apply-role-session",
+            segments=[
+                {
+                    "speaker_id": "spk_0",
+                    "text": "Good morning",
+                    "start": 0.0,
+                    "end": 1.0,
+                },
+                {
+                    "speaker_id": "spk_1",
+                    "text": "I've had chest pain",
+                    "start": 1.5,
+                    "end": 3.5,
+                },
+            ],
+            mapping={"spk_0": "doctor", "spk_1": "patient"},
+            confidence=0.8,
+            reasoning="Doctor asks the opening clinical question.",
+        )
+
+        assert result.mapping == {"spk_0": "DOCTOR", "spk_1": "PATIENT"}
+        assert result.attributed_segments[0]["role"] == "DOCTOR"
+        assert result.attributed_segments[1]["role"] == "PATIENT"
+        assert result.confidence == 0.8
+        assert get_or_create_state("apply-role-session").current_mapping == result.mapping

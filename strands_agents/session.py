@@ -31,11 +31,12 @@ LIMITATIONS (this is a PoC)
 
 from __future__ import annotations
 
+import os
 import time
 from collections import OrderedDict
 
-MAX_SESSIONS = 100
-SESSION_TTL_SECONDS = 7200  # 2 hours
+MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "100"))
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "7200"))
 MAX_SEGMENTS_PER_SESSION = 5000  # ~4 hours at 5s chunks
 
 
@@ -88,6 +89,29 @@ class SessionStore:
         session = self._get_or_create(session_id)
         session.segments = list(segments[:self._max_segments])
         session.last_accessed_at = time.monotonic()
+
+    def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
+        """Annotate stored segments with their inferred roles.
+
+        Args:
+            session_id: The session UUID.
+            mapping: Speaker-to-role mapping, e.g. {"spk_0": "DOCTOR"}.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+
+        if self._is_expired(session):
+            self._sessions.pop(session_id, None)
+            return
+
+        for segment in session.segments:
+            speaker_id = segment.get("speaker_id")
+            if isinstance(speaker_id, str) and speaker_id in mapping:
+                segment["role"] = mapping[speaker_id]
+
+        session.last_accessed_at = time.monotonic()
+        self._sessions.move_to_end(session_id)
 
     def get_segments(self, session_id: str) -> list[dict]:
         """Return all segments for a session.

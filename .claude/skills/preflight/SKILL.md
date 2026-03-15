@@ -1,49 +1,17 @@
 # Preflight Check Skill
 
-Mechanical build verification with RFC 2119 constraints. Run all quality gates, fix failures, report structured results.
+Run all quality gates for PHP and Python. Fix any failures before reporting results.
 
-## MUST (cannot skip)
+## Steps
 
-1. `composer cs:check` — PHP code style (PSR-12). If violations: `composer cs:fix`, then re-check.
-2. `composer analyse` — PHPStan Level 10. Zero errors required.
-3. `composer analyse:complexity` — Cyclomatic complexity (max 20).
-4. `composer analyse:messdetector` — PHPMD.
-5. `composer test` — PHPUnit test suite.
-6. Python syntax: `python3 -m py_compile` on every `.py` file in `strands_agents/` (including subdirectories).
-7. Python tests: `cd strands_agents && pytest ../tests/python/`
+1. Run PHP code style check: `composer cs:check`. If violations found, run `composer cs:fix` then re-check.
+2. Run PHPStan static analysis: `composer analyse` (Level 10).
+3. Run cyclomatic complexity check: `composer analyse:complexity` (max 20).
+4. Run PHPMD mess detector: `composer analyse:messdetector`.
+5. Run PHPUnit tests: `composer test`.
+6. Run Python lint: `ruff check strands_agents/` (or via venv). If fixable violations found, run `ruff check --fix strands_agents/` then re-check.
+7. Run Python tests: `NEMO_MODEL_PROVIDER=mock PYTHONPATH=strands_agents pytest tests/python/`.
+8. If any step fails, fix the issue and re-run that step.
+9. Report a summary of all results - pass/fail for each gate.
 
-## SHOULD (skip only with documented reason)
-
-8. `composer test:coverage` — Coverage minimum 80%.
-9. `composer cs:fix` followed by formatter verification.
-10. Dependency audit: `composer audit` for known vulnerabilities.
-
-## MAY (skip during active debugging)
-
-11. Full formatter run on unchanged files.
-
-## Constraints
-
-- MUST NOT report task complete if any MUST item fails.
-- If a MUST item fails, attempt to fix and re-run that step.
-- If fix attempt fails, report exactly what failed, the error output, and file:line location.
-
-## Output Format
-
-```
-## Preflight Results
-
-| Gate | Status | Notes |
-|------|--------|-------|
-| CS Check | ✅/❌ | |
-| PHPStan L10 | ✅/❌ | |
-| Complexity | ✅/❌ | |
-| PHPMD | ✅/❌ | |
-| PHPUnit | ✅/❌ | |
-| Python syntax | ✅/❌ | |
-| Python tests | ✅/❌ | |
-| Coverage | ✅/⏭️ | |
-| Dependency audit | ✅/⏭️ | |
-
-**Result:** PASS / FAIL (with details)
-```
+If ALL gates pass, report success. If any gate still fails after attempted fixes, report exactly what failed and why.
