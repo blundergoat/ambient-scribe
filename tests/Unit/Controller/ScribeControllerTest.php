@@ -5,31 +5,38 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Controller;
 
 use App\Controller\ScribeController;
+use App\Service\RoleInferenceResult;
 use App\Service\RoleInferenceService;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use StrandsPhpClient\Exceptions\AgentErrorException;
+use StrandsPhpClient\Exceptions\StrandsException;
 use StrandsPhpClient\StrandsClient;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedJsonResponse;
 
 final class ScribeControllerTest extends TestCase
 {
+    public function testHomeRedirectsToScribe(): void
+    {
+        $controller = $this->createController();
+
+        $response = $controller->home();
+
+        self::assertInstanceOf(RedirectResponse::class, $response);
+        self::assertSame(302, $response->getStatusCode());
+        self::assertSame('/scribe', $response->getTargetUrl());
+    }
+
     public function testIndexRendersSessionConfigWithRoleUpdatesEnabled(): void
     {
-        $client = $this->createMock(StrandsClient::class);
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
-        $controller = new TestableScribeController(
-            $client,
-            $roleInferenceService,
-            new NullLogger(),
-            [
-                'nemo_websocket_url' => 'ws://localhost:48101',
-                'mercure_url' => 'http://localhost:48137/.well-known/mercure',
-                'kernel.environment' => 'prod',
-                'kernel.project_dir' => '/tmp/nonexistent',
-            ],
-        );
+        $controller = $this->createController([
+            'kernel.environment' => 'prod',
+            'kernel.project_dir' => '/tmp/nonexistent',
+        ]);
 
         $response = $controller->index();
 
@@ -60,22 +67,11 @@ final class ScribeControllerTest extends TestCase
 
     public function testIndexLoadsScenarioFixturesInDevMode(): void
     {
-        $client = $this->createMock(StrandsClient::class);
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
-
-        // Use the real project dir so the fixture file is found
         $projectDir = \dirname(__DIR__, 3);
-        $controller = new TestableScribeController(
-            $client,
-            $roleInferenceService,
-            new NullLogger(),
-            [
-                'nemo_websocket_url' => 'ws://localhost:48101',
-                'mercure_url' => 'http://localhost:48137/.well-known/mercure',
-                'kernel.environment' => 'dev',
-                'kernel.project_dir' => $projectDir,
-            ],
-        );
+        $controller = $this->createController([
+            'kernel.environment' => 'dev',
+            'kernel.project_dir' => $projectDir,
+        ]);
 
         $response = $controller->index();
         $payload = json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
@@ -83,7 +79,6 @@ final class ScribeControllerTest extends TestCase
         self::assertTrue($payload['parameters']['dev_panel_enabled']);
         self::assertNotEmpty($payload['parameters']['scenarios']);
 
-        // Verify scenario structure
         $firstScenario = $payload['parameters']['scenarios'][0];
         self::assertArrayHasKey('id', $firstScenario);
         self::assertArrayHasKey('name', $firstScenario);
@@ -93,19 +88,10 @@ final class ScribeControllerTest extends TestCase
 
     public function testIndexHandlesMissingFixtureFileInDevMode(): void
     {
-        $client = $this->createMock(StrandsClient::class);
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
-        $controller = new TestableScribeController(
-            $client,
-            $roleInferenceService,
-            new NullLogger(),
-            [
-                'nemo_websocket_url' => 'ws://localhost:48101',
-                'mercure_url' => 'http://localhost:48137/.well-known/mercure',
-                'kernel.environment' => 'dev',
-                'kernel.project_dir' => '/tmp/nonexistent-project',
-            ],
-        );
+        $controller = $this->createController([
+            'kernel.environment' => 'dev',
+            'kernel.project_dir' => '/tmp/nonexistent-project',
+        ]);
 
         $response = $controller->index();
         $payload = json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
@@ -116,8 +102,6 @@ final class ScribeControllerTest extends TestCase
 
     public function testIndexHandlesInvalidScenarioFixtureJsonInDevMode(): void
     {
-        $client = $this->createMock(StrandsClient::class);
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::once())
             ->method('warning')
@@ -132,17 +116,10 @@ final class ScribeControllerTest extends TestCase
         file_put_contents($fixtureDir . '/scenarios.json', '{"scenarios": [}');
 
         try {
-            $controller = new TestableScribeController(
-                $client,
-                $roleInferenceService,
-                $logger,
-                [
-                    'nemo_websocket_url' => 'ws://localhost:48101',
-                    'mercure_url' => 'http://localhost:48137/.well-known/mercure',
-                    'kernel.environment' => 'dev',
-                    'kernel.project_dir' => $projectDir,
-                ],
-            );
+            $controller = $this->createController([
+                'kernel.environment' => 'dev',
+                'kernel.project_dir' => $projectDir,
+            ], logger: $logger);
 
             $response = $controller->index();
             $payload = json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
@@ -171,8 +148,7 @@ final class ScribeControllerTest extends TestCase
                 ],
             ]);
 
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
-        $controller = new TestableScribeController($client, $roleInferenceService, new NullLogger(), []);
+        $controller = $this->createController(client: $client);
 
         $response = $controller->history('session-123');
 
@@ -183,6 +159,136 @@ final class ScribeControllerTest extends TestCase
                 ['speaker_id' => 'spk_0', 'text' => 'Good morning'],
             ],
         ], json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testHistoryHandlesAgentErrorExceptionWith502(): void
+    {
+        $client = $this->createMock(StrandsClient::class);
+        $client->expects(self::once())
+            ->method('postJson')
+            ->willThrowException(new AgentErrorException('NeMo error', statusCode: 500));
+
+        $controller = $this->createController(client: $client);
+
+        $response = $controller->history('abc-123');
+
+        self::assertInstanceOf(JsonResponse::class, $response);
+        self::assertSame(502, $response->getStatusCode());
+        self::assertSame([
+            'session_id' => 'abc-123',
+            'segments' => [],
+            'error' => 'NeMo error',
+        ], json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testHistoryHandlesAgentErrorExceptionWith404(): void
+    {
+        $client = $this->createMock(StrandsClient::class);
+        $client->expects(self::once())
+            ->method('postJson')
+            ->willThrowException(new AgentErrorException('Not found', statusCode: 404));
+
+        $controller = $this->createController(client: $client);
+
+        $response = $controller->history('abc-123');
+
+        self::assertSame(404, $response->getStatusCode());
+    }
+
+    public function testHistoryHandlesStrandsExceptionWith503(): void
+    {
+        $client = $this->createMock(StrandsClient::class);
+        $client->expects(self::once())
+            ->method('postJson')
+            ->willThrowException(new StrandsException('Connection refused'));
+
+        $controller = $this->createController(client: $client);
+
+        $response = $controller->history('abc-123');
+
+        self::assertInstanceOf(JsonResponse::class, $response);
+        self::assertSame(503, $response->getStatusCode());
+        self::assertSame([
+            'session_id' => 'abc-123',
+            'segments' => [],
+            'error' => 'Agent unavailable: Connection refused',
+        ], json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testRolesStreamReturnsStreamedJsonResponse(): void
+    {
+        $roleInferenceService = $this->createMock(RoleInferenceService::class);
+        $roleInferenceService->expects(self::once())
+            ->method('streamRoleInference')
+            ->willReturnCallback(function (string $sessionId, callable $onUpdate): RoleInferenceResult {
+                self::assertSame('session-xyz', $sessionId);
+                $onUpdate(['mapping' => ['spk_0' => 'DOCTOR'], 'confidence' => 0.6]);
+                $onUpdate(['mapping' => ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'], 'confidence' => 0.92]);
+
+                return new RoleInferenceResult(
+                    mapping: ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'],
+                    confidence: 0.92,
+                    eventsReceived: 2,
+                );
+            });
+
+        $controller = $this->createController(roleInferenceService: $roleInferenceService);
+
+        $response = $controller->rolesStream('session-xyz');
+
+        self::assertInstanceOf(StreamedJsonResponse::class, $response);
+    }
+
+    public function testRolesReturnsCurrentMapping(): void
+    {
+        $roleInferenceService = $this->createMock(RoleInferenceService::class);
+        $roleInferenceService->expects(self::once())
+            ->method('getCurrentMapping')
+            ->with('session-xyz')
+            ->willReturn(['mapping' => ['spk_0' => 'DOCTOR'], 'confidence' => 0.85]);
+
+        $controller = $this->createController(roleInferenceService: $roleInferenceService);
+
+        $response = $controller->roles('session-xyz');
+
+        self::assertInstanceOf(JsonResponse::class, $response);
+        self::assertSame([
+            'session_id' => 'session-xyz',
+            'mapping' => ['spk_0' => 'DOCTOR'],
+            'confidence' => 0.85,
+        ], json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testRolesSerializesEmptyMappingAsObject(): void
+    {
+        $roleInferenceService = $this->createMock(RoleInferenceService::class);
+        $roleInferenceService->expects(self::once())
+            ->method('getCurrentMapping')
+            ->with('session-empty')
+            ->willReturn(['mapping' => [], 'confidence' => 0.0]);
+
+        $controller = $this->createController(roleInferenceService: $roleInferenceService);
+
+        $response = $controller->roles('session-empty');
+
+        self::assertStringContainsString('"mapping":{}', $response->getContent() ?: '');
+    }
+
+    private function createController(
+        array $parameters = [],
+        ?StrandsClient $client = null,
+        ?RoleInferenceService $roleInferenceService = null,
+        ?LoggerInterface $logger = null,
+    ): TestableScribeController {
+        return new TestableScribeController(
+            $client ?? $this->createMock(StrandsClient::class),
+            $roleInferenceService ?? $this->createMock(RoleInferenceService::class),
+            $logger ?? new NullLogger(),
+            $parameters + [
+                'nemo_websocket_url' => 'ws://localhost:48101',
+                'mercure_url' => 'http://localhost:48137/.well-known/mercure',
+            ],
+        );
     }
 }
 
@@ -223,5 +329,15 @@ final class TestableScribeController extends ScribeController
         array $context = [],
     ): JsonResponse {
         return new JsonResponse($data, $status, $headers);
+    }
+
+    public function redirectToRoute(
+        string $route,
+        array $parameters = [],
+        int $status = 302,
+    ): RedirectResponse {
+        $target = $route === 'scribe_index' ? '/scribe' : '/' . ltrim($route, '/');
+
+        return new RedirectResponse($target, $status);
     }
 }

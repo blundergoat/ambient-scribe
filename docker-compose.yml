@@ -137,9 +137,8 @@ services:
       MERCURE_PUBLISHER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       MERCURE_SUBSCRIBER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       SERVER_NAME: ":3701"
-      # CORS: In dev mode, allow all origins to avoid port mismatch issues
-      # when APP_PORT changes after Mercure starts. For production, restrict
-      # to the actual app origin.
+      # Keep dev CORS scoped to the local app by default. If you need a wider
+      # setting for short-lived debugging, override MERCURE_CORS_ORIGINS.
       MERCURE_EXTRA_DIRECTIVES: |
         anonymous
-        cors_origins *
+        cors_origins ${MERCURE_CORS_ORIGINS:-http://localhost:48082}
