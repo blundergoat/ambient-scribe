@@ -243,17 +243,6 @@ print(f'{header}.{payload}.{sig}')
 " 2>/dev/null)
     fi
 
-<<<<<<< Updated upstream
-    if [[ -n "$JWT_PAYLOAD" ]]; then
-        # Write to .env
-        if grep -q '^MERCURE_PUBLISHER_JWT=' "$REPO_ROOT/.env" 2>/dev/null; then
-            sed -i "s|^MERCURE_PUBLISHER_JWT=.*|MERCURE_PUBLISHER_JWT=${JWT_PAYLOAD}|" "$REPO_ROOT/.env"
-        else
-            echo "MERCURE_PUBLISHER_JWT=${JWT_PAYLOAD}" >> "$REPO_ROOT/.env"
-        fi
-        export MERCURE_PUBLISHER_JWT="$JWT_PAYLOAD"
-        pass "generated and saved to .env"
-=======
 # ── PHP dependencies ───────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}Installing PHP dependencies${RESET}"
@@ -345,7 +334,6 @@ if command -v ffmpeg &>/dev/null; then
 else
     if sudo apt-get install -y -qq ffmpeg 2>&1 | tail -1; then
         pass "installed"
->>>>>>> Stashed changes
     else
         fail "could not generate — install PHP or Python"
     fi
@@ -353,16 +341,6 @@ fi
 
 echo ""
 
-<<<<<<< Updated upstream
-# =============================================================================
-# STEP 3: Build Docker Images
-# =============================================================================
-echo -e "  ${BOLD}Building Docker images${RESET}"
-echo -e "  ${DIM}NeMo image is large — first build takes 15-30 minutes${RESET}"
-echo ""
-
-if dc build --progress=tty 2>&1; then
-=======
 if [[ $ERRORS -eq 0 ]]; then
     echo ""
     echo -e "  ${GREEN}${BOLD}Setup complete!${RESET}"
@@ -376,7 +354,6 @@ if [[ $ERRORS -eq 0 ]]; then
     echo -e "    ${ARROW} Start local dev:        ${BOLD}scripts/start-dev.sh${RESET}"
     echo -e "    ${ARROW} Start full stack:        ${BOLD}docker compose up --build${RESET}"
     echo -e "    ${ARROW} Python venv is at:       ${DIM}strands_agents/.venv${RESET}"
->>>>>>> Stashed changes
     echo ""
     echo -e "  ${ARROW} Docker images              ${PASS}  ${DIM}all built${RESET}"
 else

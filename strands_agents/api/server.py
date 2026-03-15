@@ -66,12 +66,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-<<<<<<< Updated upstream
 from fastapi import FastAPI, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
-=======
-from fastapi import FastAPI, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
->>>>>>> Stashed changes
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -121,8 +117,52 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 # =============================================================================
 
 MERCURE_HUB_URL = os.environ.get("MERCURE_HUB_URL", "http://mercure:3701/.well-known/mercure")
-MERCURE_JWT = os.environ.get("MERCURE_JWT", "")
-<<<<<<< Updated upstream
+MERCURE_JWT_SECRET = os.environ.get("MERCURE_JWT_SECRET", "")
+NEMO_STREAM_INPUT_FORMAT = os.environ.get("NEMO_STREAM_INPUT_FORMAT", "pcm")
+NEMO_BUFFER_MAX_DURATION = float(os.environ.get("NEMO_BUFFER_MAX_DURATION", "900"))
+_mercure_jwt_cache: str | None = None
+
+
+def _resolve_mercure_jwt() -> str:
+    """Return the Mercure publisher JWT.
+
+    Prefers MERCURE_JWT (a pre-signed token) over MERCURE_JWT_SECRET.
+    Caches the result so we don't re-read env vars on every publish.
+    """
+    global _mercure_jwt_cache
+    if _mercure_jwt_cache is not None:
+        return _mercure_jwt_cache
+
+    jwt_env = os.environ.get("MERCURE_JWT", "")
+    if jwt_env:
+        _mercure_jwt_cache = jwt_env
+        return _mercure_jwt_cache
+
+    secret = MERCURE_JWT_SECRET
+    if not secret:
+        _mercure_jwt_cache = ""
+        return _mercure_jwt_cache
+
+    try:
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"mercure": {"publish": ["*"]}},
+            secret,
+            algorithm="HS256",
+        )
+        _mercure_jwt_cache = token if isinstance(token, str) else token.decode("utf-8")
+    except Exception:
+        _mercure_jwt_cache = ""
+
+    return _mercure_jwt_cache
+
+
+def _history_duration(segments: list[dict]) -> float:
+    """Estimate session duration from stored segment timestamps."""
+    if not segments:
+        return 0.0
+    ends = [float(seg.get("end", 0)) for seg in segments if seg.get("end") is not None]
+    return max(ends) if ends else 0.0
 
 
 def log_vram() -> None:
@@ -137,12 +177,6 @@ def log_vram() -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass  # nvidia-smi not available (no GPU or mock mode)
 
-=======
-MERCURE_JWT_SECRET = os.environ.get("MERCURE_JWT_SECRET", "")
-NEMO_STREAM_INPUT_FORMAT = os.environ.get("NEMO_STREAM_INPUT_FORMAT", "pcm")
-NEMO_BUFFER_MAX_DURATION = float(os.environ.get("NEMO_BUFFER_MAX_DURATION", "900"))
-_mercure_jwt_cache: str | None = None
->>>>>>> Stashed changes
 
 # Thread pool for GPU-bound NeMo inference.
 # Prevents blocking the async event loop, keeping /health and other
@@ -168,6 +202,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     logger.info("server.startup.loading_nemo_models")
     app.state.nemo_pipeline = NemoPipeline()
+    app.state.nemo_input_format = NEMO_STREAM_INPUT_FORMAT
     logger.info("server.startup.nemo_models_loaded")
     yield
     nemo_executor.shutdown(wait=False)
@@ -222,10 +257,6 @@ async def publish_to_mercure(topic: str, data: dict[str, Any]) -> bool:
     Returns:
         True if published successfully, False otherwise.
     """
-<<<<<<< Updated upstream
-    if not MERCURE_JWT:
-        logger.warning("mercure.publish.skipped", extra={"reason": "no JWT configured"})
-=======
     token = _resolve_mercure_jwt()
     if token == "":
         logger.error("mercure.publish.skipped", extra={"reason": "no JWT configured"})
@@ -283,7 +314,6 @@ async def enqueue_role_inference(
 ) -> None:
     """Queue raw transcript segments for sequential per-session role inference."""
     if segments == []:
->>>>>>> Stashed changes
         return
 
     queue = _inference_queues.get(session_id)
@@ -316,23 +346,6 @@ async def _role_inference_worker(session_id: str) -> None:
     queue = _inference_queues[session_id]
 
     try:
-<<<<<<< Updated upstream
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                MERCURE_HUB_URL,
-                data={
-                    "topic": topic,
-                    "data": json.dumps(data),
-                },
-                headers={"Authorization": f"Bearer {MERCURE_JWT}"},
-                timeout=5.0,
-            )
-    except Exception as e:
-        logger.error("mercure.publish.failed", extra={
-            "topic": topic,
-            "error": str(e),
-        })
-=======
         while True:
             try:
                 batch = await asyncio.wait_for(
@@ -423,7 +436,6 @@ async def _role_inference_worker(session_id: str) -> None:
 
         if not lifecycle.is_active(session_id):
             cleanup_role_state(session_id)
->>>>>>> Stashed changes
 
 
 # =============================================================================
@@ -500,10 +512,6 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
     cid = websocket.headers.get("x-correlation-id", session_id)
     correlation_id_var.set(cid)
 
-<<<<<<< Updated upstream
-    session = TranscriptionSession(session_id, pipeline=app.state.nemo_pipeline)
-    active_sessions[session_id] = session
-=======
     session = TranscriptionSession(
         session_id,
         pipeline=app.state.nemo_pipeline,
@@ -511,7 +519,6 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
         max_buffer_duration=NEMO_BUFFER_MAX_DURATION,
     )
     await lifecycle.register(session_id, session)
->>>>>>> Stashed changes
 
     logger.info("websocket.connected", extra={"session_id": session_id})
 
@@ -538,14 +545,10 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
             # Publish raw segments immediately (hot path, low latency)
             segment_payloads: list[dict[str, Any]] = []
             for segment in segments:
-<<<<<<< Updated upstream
-                await publish_to_mercure(
-=======
                 segment_payload = segment.dict()
                 segment_payloads.append(segment_payload)
                 sessions.append_segment(session_id, segment_payload)
                 published = await publish_to_mercure(
->>>>>>> Stashed changes
                     f"scribe/session/{session_id}/raw",
                     {
                         "type": "segment",
@@ -586,9 +589,6 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
         })
 
         # Final transcription pass on disconnect
-<<<<<<< Updated upstream
-        await loop.run_in_executor(nemo_executor, session.finalize)
-=======
         final_segments = await loop.run_in_executor(nemo_executor, session.finalize)
         sessions.replace_segments(
             session_id,
@@ -597,7 +597,6 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
         current_state = get_or_create_state(session_id)
         if current_state.current_mapping:
             sessions.apply_role_mapping(session_id, current_state.current_mapping)
->>>>>>> Stashed changes
 
         # Publish finalized event
         await publish_to_mercure(
@@ -624,9 +623,6 @@ async def session_history(session_id: str) -> dict:
     Returns the accumulated transcript segments.
     Accepts both GET and POST (PHP StrandsClient uses postJson).
     """
-<<<<<<< Updated upstream
-    session = active_sessions.get(session_id)
-=======
     session = lifecycle.get(session_id)
     stored_segments = sessions.get_segments(session_id)
 
@@ -641,7 +637,6 @@ async def session_history(session_id: str) -> dict:
             "chunk_count": session.chunk_count if session else 0,
         }
 
->>>>>>> Stashed changes
     if session:
         return {
             "session_id": session_id,

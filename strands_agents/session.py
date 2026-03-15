@@ -80,8 +80,6 @@ class SessionStore:
             session.segments.append(segment)
         session.last_accessed_at = time.monotonic()
 
-<<<<<<< Updated upstream
-=======
     def replace_segments(self, session_id: str, segments: list[dict]) -> None:
         """Replace the stored transcript for a session.
 
@@ -115,7 +113,6 @@ class SessionStore:
         session.last_accessed_at = time.monotonic()
         self._sessions.move_to_end(session_id)
 
->>>>>>> Stashed changes
     def get_segments(self, session_id: str) -> list[dict]:
         """Return all segments for a session.
 

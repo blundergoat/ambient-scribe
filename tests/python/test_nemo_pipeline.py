@@ -131,10 +131,6 @@ class TestParseDiarStrings:
         assert result[1][0] == 5.0
 
 
-<<<<<<< Updated upstream
-class TestParseNemoOutput:
-    """Tests for NemoPipeline._parse_nemo_output alignment logic."""
-=======
 class TestAudioFormatValidation:
     """Tests for first-chunk audio format detection."""
 
@@ -198,7 +194,6 @@ class TestAudioFormatValidation:
 
 class TestNemoPipeline:
     """Wrapper tests that avoid loading the real GPU models."""
->>>>>>> Stashed changes
 
     def _make_pipeline(self) -> NemoPipeline:
         """Create a mock-mode pipeline for testing parse logic."""

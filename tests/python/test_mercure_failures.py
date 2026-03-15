@@ -25,7 +25,7 @@ def clear_state():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    app.state.nemo_pipeline = NemoPipeline(load_models=False)
+    app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     yield
     sessions._sessions.clear()

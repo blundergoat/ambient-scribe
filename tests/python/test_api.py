@@ -5,15 +5,6 @@ Tests for the FastAPI server endpoints.
 import pytest
 from fastapi.testclient import TestClient
 
-<<<<<<< Updated upstream
-from api.server import app
-
-
-@pytest.fixture
-def client():
-    """Create a FastAPI test client."""
-    return TestClient(app)
-=======
 import api.server as api_server
 from api.server import app, lifecycle, session_history, sessions, transcribe_stream
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
@@ -31,7 +22,7 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    app.state.nemo_pipeline = NemoPipeline(load_models=False)
+    app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     yield
     sessions._sessions.clear()
@@ -41,7 +32,6 @@ def clear_sessions():
     role_tools._session_states.clear()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
->>>>>>> Stashed changes
 
 
 class TestHealthEndpoint:
@@ -78,8 +68,6 @@ class TestSessionHistory:
         data = response.json()
         assert data["session_id"] == "nonexistent-id"
         assert data["segments"] == []
-<<<<<<< Updated upstream
-=======
 
     @pytest.mark.asyncio
     async def test_history_accepts_post(self):
@@ -280,7 +268,7 @@ class TestSessionLifecycle:
         from nemo_pipeline import NemoPipeline
         from nemo_session import TranscriptionSession
 
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
         session = TranscriptionSession("lifecycle-test", pipeline)
 
         # Register
@@ -307,7 +295,7 @@ class TestSessionLifecycle:
         from nemo_session import TranscriptionSession
         from tools.assign_roles import get_or_create_state, _session_states
 
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
 
         for i in range(10):
             sid = f"cycle-{i}"
@@ -328,7 +316,7 @@ class TestSessionLifecycle:
         from nemo_session import TranscriptionSession
         from tools.assign_roles import get_or_create_state, _session_states
 
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
         session = TranscriptionSession("sse-test", pipeline)
         await lifecycle.register("sse-test", session)
         get_or_create_state("sse-test").update({"spk_0": "DOCTOR"}, 0.9)
@@ -441,4 +429,3 @@ class TestSessionStore:
         assert store.get_segments("s3") != []
         assert store.get_segments("s4") != []
         assert store.session_count == 3
->>>>>>> Stashed changes

@@ -30,7 +30,7 @@ def clear_state():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    app.state.nemo_pipeline = NemoPipeline(load_models=False)
+    app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     yield
     sessions._sessions.clear()
@@ -118,7 +118,7 @@ class TestConcurrentSessions:
         """Destroying session C doesn't affect session A's data."""
         from nemo_session import TranscriptionSession
 
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
 
         # Register A and C
         session_a = TranscriptionSession("session-a", pipeline)

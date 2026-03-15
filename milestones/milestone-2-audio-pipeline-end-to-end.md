@@ -1,11 +1,7 @@
 # Milestone 2 — Audio Pipeline End-to-End
 
 **Timeline:** Weekend 2 (~5-6 hours across 2 sessions)
-<<<<<<< Updated upstream
-**Status:** COMPLETE — GPU-verified 2026-02-26 (live browser transcription working end-to-end)
-=======
 **Status:** In Progress (core code paths implemented; real end-to-end verification still pending)
->>>>>>> Stashed changes
 **Dependencies:** Milestone 1 complete (NeMo validated on RTX 5080, API surface documented, scaffold in place)
 
 ---
@@ -43,11 +39,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           ...
   ```
 - [x] Add a test HTTP endpoint: `POST /transcribe/file` (accepts WAV upload, returns JSON segments)
-<<<<<<< Updated upstream
-- [x] Verify end-to-end: upload test WAV -> get back speaker-attributed segments (87 segments, 7.56s)
-=======
 - [ ] Verify end-to-end with a real WAV fixture + loaded NeMo models: upload test WAV -> get back speaker-attributed segments
->>>>>>> Stashed changes
 - [x] Publish segments to Mercure from Python:
   ```python
   async def publish_to_mercure(session_id: str, data: dict):
@@ -57,11 +49,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
               "data": json.dumps(data),
           }, headers={"Authorization": f"Bearer {MERCURE_JWT}"})
   ```
-<<<<<<< Updated upstream
-- [x] Verify browser receives segments via Mercure SSE subscription (75 segments in 1m42s live session)
-=======
 - [ ] Verify browser receives segments via Mercure SSE subscription in a real `docker compose` run
->>>>>>> Stashed changes
 
 ### 2.2 Chunked Processing Wrapper (Session A, ~1 hour)
 
@@ -91,14 +79,10 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           return self.pipeline.transcribe_file_from_buffer(self.buffer.full_audio())
   ```
 - [x] Key design: `NemoPipeline` is a singleton loaded at startup; `TranscriptionSession` holds per-session state (audio buffer, accumulated transcript) and references the shared pipeline
-<<<<<<< Updated upstream
-- [x] Handle audio format conversion: ffmpeg subprocess converts accumulated WebM/Opus → 16kHz mono WAV per chunk (growing buffer strategy)
-=======
 - [ ] Handle audio format conversion (per Milestone 1 spike decision):
   - **Current implementation:** browser streams 16kHz PCM directly via Web Audio; `TranscriptionSession` supports `pcm` input and includes a fallback WebM decode path via ffmpeg
   - **Gap:** Milestone 1 recommended `MediaRecorder` WebM/Opus with server-side conversion; the planned persistent ffmpeg pipe is not implemented
   - **Decision to make before calling M2 done:** keep browser-side PCM as the PoC path, or switch back to WebM/Opus and validate chunk decoding properly
->>>>>>> Stashed changes
 
 ### 2.3 FastAPI WebSocket Endpoint (Session B, ~1 hour)
 
@@ -139,15 +123,11 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
           # Run finalize in executor too
           await loop.run_in_executor(nemo_executor, session.finalize)
   ```
-<<<<<<< Updated upstream
-- [x] Load NeMo models at FastAPI startup (not per-request):
-=======
 - [x] Load NeMo models at FastAPI startup (not per-request) via FastAPI lifespan:
->>>>>>> Stashed changes
   ```python
   @asynccontextmanager
   async def lifespan(app: FastAPI):
-      app.state.nemo_pipeline = NemoPipeline(load_models=True)
+      app.state.nemo_pipeline = NemoPipeline()
       yield
   ```
 - [x] Keep existing `/health` endpoint for Docker healthchecks
@@ -186,11 +166,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 - [x] **Decision: inline JS vs Stimulus**
   - If adding Stimulus: add `@hotwired/stimulus`, configure build step (Vite or Webpack Encore), add `package.json` — document this as explicit new scope
   - If staying inline (matching Summit pattern): write audio capture as plain JS in the Twig template
-<<<<<<< Updated upstream
-  - **Recommendation:** Stay inline for the PoC. Adding a JS build pipeline is scope creep for a 4-weekend project. Revisit in Milestone 4 if needed.
-=======
   - **Chosen path:** Stay inline for the PoC. No JS build pipeline added.
->>>>>>> Stashed changes
 - [x] Implement audio capture:
   ```javascript
   // Current implementation: browser-side PCM capture via Web Audio
@@ -207,11 +183,7 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   - Recording status indicator
   - Transcript container with auto-scroll
   - Segments rendered as: `[spk_0 00:03] "What brings you in today?"`
-<<<<<<< Updated upstream
-- [x] Basic styling (can reuse Summit's dark theme or keep minimal)
-=======
 - [x] Basic styling implemented (light/dark theme, segment cards, timer, status badge)
->>>>>>> Stashed changes
 
 ### 2.7 Docker Compose Integration
 
@@ -239,13 +211,8 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
       build: ./docker/php
       # Updated env for scribe
   ```
-<<<<<<< Updated upstream
-- [x] Verify all 3 services start and communicate (health-checks.sh: 19/19 passed)
-- [x] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript (verified 2026-02-26)
-=======
 - [ ] Verify all 3 services start and communicate in a real run
 - [ ] Test full flow: `docker compose up --build` -> open browser -> record -> see transcript
->>>>>>> Stashed changes
 
 ### 2.8 Tests for NeMo Pipeline Wrapper
 
@@ -253,19 +220,10 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   - [x] Test `Segment` dataclass creation and dict serialization
   - [x] Test `AudioBuffer` append, duration, max cap, empty state
   - [x] Test `TranscriptionSession` creation, process_chunk counter, finalize
-<<<<<<< Updated upstream
-  - [ ] Test `NemoPipeline.transcribe_file()` with fixture WAV → verify output structure (needs real NeMo / GPU)
-  - [x] Test audio format conversion (WebM → WAV via ffmpeg mock)
-  - [x] Test `_parse_nemo_output` proportional word alignment (4 test cases)
-  - [x] Test `_parse_diar_strings` diarization output parsing (4 test cases)
-  - [x] Test WebM accumulation logic in TranscriptionSession (4 test cases)
-- [x] Create `tests/python/test_api.py` (basic endpoint tests from scaffold):
-=======
   - [x] Test `NemoPipeline.transcribe_file()` wrapper logic with monkeypatched diarization + ASR output
   - [ ] Test `NemoPipeline.transcribe_file()` with fixture WAV + real NeMo → verify output structure
   - [ ] Test audio format conversion (input bytes → PCM output)
 - [x] Create `tests/python/test_api.py` (basic endpoint tests with stub pipelines):
->>>>>>> Stashed changes
   - [x] Test `/health` endpoint returns 200
   - [x] Test `/session/{id}/history` returns empty for nonexistent session
   - [x] Test `POST /transcribe/file` endpoint with a stub pipeline
@@ -273,27 +231,12 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
   - [ ] Test `POST /transcribe/file` endpoint with fixture WAV + real NeMo
   - [ ] Test `/ws/transcribe/{session_id}` WebSocket lifecycle with real NeMo
 - [x] Add `pytest` and `pytest-asyncio` to `requirements-dev.txt`
-<<<<<<< Updated upstream
-- [x] All 38 tests passing (21 original + 17 new)
-=======
 - [ ] Re-run the Python suite in an environment with `pytest` installed and record the current pass count
->>>>>>> Stashed changes
 
 ---
 
 ## Exit Criteria
 
-<<<<<<< Updated upstream
-- [x] Browser captures mic audio and sends chunks over WebSocket (code complete in index.html.twig)
-- [x] FastAPI receives chunks, feeds NeMo pipeline, gets transcript segments (code complete in server.py)
-- [x] **NeMo inference runs in thread pool** — does not block the async event loop (ThreadPoolExecutor in server.py)
-- [x] Segments published to Mercure, rendered in browser in real-time (verified via m2-debug-live.sh + browser)
-- [x] Can see `speaker_0` and `speaker_1` labelled text appearing as you speak (verified 2026-02-26)
-- [x] End-to-end latency under ~5 seconds (chunk interval + NeMo processing) (verified: ~5s per chunk)
-- [x] NeMo models loaded once at startup, shared across sessions (lifespan handler in server.py)
-- [x] **Structured logging with correlation IDs and timing in place**
-- [x] **Python tests pass for NeMo pipeline wrapper and API endpoints** (38/38 passing)
-=======
 - [ ] Browser captures mic audio and sends chunks over WebSocket in a real browser session
 - [ ] FastAPI receives chunks, feeds NeMo pipeline, gets transcript segments with loaded models
 - [x] **NeMo inference runs in thread pool** — does not block the async event loop
@@ -312,7 +255,6 @@ Live mic audio from browser -> WebSocket -> NeMo -> transcript segments back to 
 2. Add or source a legal local WAV fixture under `tests/fixtures/audio/` so the batch and WebSocket paths can be verified against real NeMo output.
 3. Decide whether browser-side PCM is the accepted PoC path or whether to restore the Milestone 1 WebM/Opus plan before calling M2 complete.
 4. Add the missing observability pieces: end-to-end latency, VRAM logging, and one or two explicit health/flow checks during active transcription.
->>>>>>> Stashed changes
 
 ---
 

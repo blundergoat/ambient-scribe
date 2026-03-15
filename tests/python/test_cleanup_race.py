@@ -27,7 +27,7 @@ def clear_state():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    app.state.nemo_pipeline = NemoPipeline(load_models=False)
+    app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     yield
     sessions._sessions.clear()
@@ -41,7 +41,7 @@ class TestCleanupRace:
     @pytest.mark.asyncio
     async def test_concurrent_destroy_and_sse_read(self):
         """SSE consumer active during destroy → no exception, state preserved."""
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
 
         for i in range(50):
             sid = f"race-{i}"
@@ -67,7 +67,7 @@ class TestCleanupRace:
     @pytest.mark.asyncio
     async def test_concurrent_destroy_without_sse(self):
         """Destroy without SSE consumers → immediate cleanup, no crash."""
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
 
         for i in range(50):
             sid = f"clean-{i}"
@@ -83,7 +83,7 @@ class TestCleanupRace:
     @pytest.mark.asyncio
     async def test_parallel_register_destroy_no_deadlock(self):
         """Rapid register/destroy for different sessions doesn't deadlock."""
-        pipeline = NemoPipeline(load_models=False)
+        pipeline = NemoPipeline()
 
         async def register_and_destroy(sid):
             session = TranscriptionSession(sid, pipeline)

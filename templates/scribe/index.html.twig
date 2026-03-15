@@ -7,20 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
-<<<<<<< Updated upstream
-            --color-doctor: #2563eb;
-            --color-doctor-bg: #eff6ff;
-            --color-patient: #16a34a;
-            --color-patient-bg: #f0fdf4;
-            --color-unknown: #9ca3af;
-            --color-unknown-bg: #f9fafb;
-        }
-
-        .dark {
-            --color-doctor-bg: #1e3a5f;
-            --color-patient-bg: #1a3a2a;
-            --color-unknown-bg: #1f2937;
-=======
             color-scheme: light;
             --page-bg: #f1f5f9;
             --surface-bg: #ffffff;
@@ -83,17 +69,10 @@
             transition: background-color 0.2s, color 0.2s;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
->>>>>>> Stashed changes
         }
 
         /* ---- Segment Styles ---- */
         .segment {
-<<<<<<< Updated upstream
-            padding: 0.75rem 1rem;
-            margin-bottom: 0.5rem;
-            border-radius: 0.5rem;
-            transition: all 0.3s ease;
-=======
             display: flex;
             gap: 0.75rem;
             padding: 0.875rem 1rem;
@@ -101,7 +80,6 @@
             border-radius: var(--radius);
             border: 1px solid transparent;
             transition: background-color 0.2s, border-color 0.2s;
->>>>>>> Stashed changes
         }
         .segment:hover { background: var(--surface-hover); }
 
@@ -166,26 +144,16 @@
         .segment--UNKNOWN .segment__speaker { color: var(--color-unknown); }
 
         .segment__time {
-<<<<<<< Updated upstream
-            font-size: 0.7rem;
-            opacity: 0.6;
-            margin-left: 0.5rem;
-=======
             font-size: 0.6875rem;
             color: var(--text-subtle);
             font-variant-numeric: tabular-nums;
->>>>>>> Stashed changes
         }
 
         .segment__text {
             display: block;
-<<<<<<< Updated upstream
-            margin-top: 0.25rem;
-=======
             color: var(--text-strong);
             line-height: 1.6;
             font-size: 0.9375rem;
->>>>>>> Stashed changes
         }
 
         /* ---- Recording Pulse ---- */
@@ -199,31 +167,6 @@
             display: inline-block;
             margin-right: 6px;
         }
-<<<<<<< Updated upstream
-    </style>
-</head>
-<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
-    <div class="max-w-4xl mx-auto px-4 py-8">
-
-        <!-- Header -->
-        <div class="mb-8">
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
-                Ambient Medical Scribe
-            </h1>
-            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Real-time consultation transcription with speaker identification
-            </p>
-        </div>
-
-        <!-- Controls -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6 flex items-center gap-4">
-            <button
-                id="startBtn"
-                onclick="startRecording()"
-                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-            >
-                Start Consultation
-=======
 
         /* ---- Panels ---- */
         .panel {
@@ -644,7 +587,6 @@
             <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5"/></svg>
                 <span id="startBtnLabel">Start Recording</span>
->>>>>>> Stashed changes
             </button>
             <button id="stopBtn" onclick="stopRecording()" class="btn btn--danger hidden" aria-label="Stop recording">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>
@@ -660,37 +602,6 @@
                 New Session
             </button>
 
-<<<<<<< Updated upstream
-            <!-- Status -->
-            <span id="status" class="text-sm text-gray-500 dark:text-gray-400">
-                Ready
-            </span>
-
-            <!-- Confidence Badge -->
-            <span id="confidenceBadge" class="confidence-badge ml-auto text-xs px-2 py-1 rounded-full hidden">
-            </span>
-
-            <!-- Timer -->
-            <span id="timer" class="text-sm font-mono text-gray-400 hidden">
-                00:00
-            </span>
-        </div>
-
-        <!-- Transcript -->
-        <div
-            id="transcript"
-            class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 min-h-[400px] max-h-[600px] overflow-y-auto"
-        >
-            <p id="emptyState" class="text-center text-gray-400 dark:text-gray-500 py-12">
-                Click "Start Consultation" to begin recording.
-                <br>
-                <span class="text-xs">Ensure microphone access is allowed.</span>
-            </p>
-        </div>
-
-        <!-- Segment Count -->
-        <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 text-right">
-=======
             <div class="flex items-center gap-3 ml-auto">
                 <span id="status" class="text-sm muted-text" aria-live="polite">Ready</span>
                 <span id="confidenceBadge" class="confidence-badge text-xs px-2 py-0.5 rounded-full hidden" aria-label="Speaker identification confidence"></span>
@@ -712,7 +623,6 @@
 
         {# Segment Count #}
         <div class="mt-1.5 text-xs muted-text text-right" role="status">
->>>>>>> Stashed changes
             <span id="segmentCount">0</span> segments
         </div>
 
@@ -781,8 +691,6 @@
         topicRaw: '{{ mercure_topic_raw }}',
         topicRoles: '{{ mercure_topic_roles }}',
     };
-<<<<<<< Updated upstream
-=======
     const THEME_STORAGE_KEY = 'ambient-scribe-theme';
 
     // =========================================================================
@@ -883,7 +791,6 @@
 
     applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || getCurrentTheme());
     applyMode();
->>>>>>> Stashed changes
 
     // =========================================================================
     // StreamOrchestrator — manages EventSource connections to Mercure
@@ -961,8 +868,6 @@
     }
 
     // =========================================================================
-<<<<<<< Updated upstream
-=======
     // PCM Streamer
     // =========================================================================
     class PcmStreamer {
@@ -1056,7 +961,6 @@
     }
 
     // =========================================================================
->>>>>>> Stashed changes
     // State
     // =========================================================================
     let ws = null;
@@ -1088,37 +992,12 @@
     async function startRecording() {
         try {
             mediaStream = await navigator.mediaDevices.getUserMedia({
-<<<<<<< Updated upstream
-                audio: { sampleRate: 16000, channelCount: 1 }
-=======
                 audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
->>>>>>> Stashed changes
             });
 
             ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
             ws.binaryType = 'arraybuffer';
 
-<<<<<<< Updated upstream
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-
-                // Start MediaRecorder — send chunks every 5 seconds
-                recorder = new MediaRecorder(mediaStream, {
-                    mimeType: 'audio/webm;codecs=opus'
-                });
-
-                recorder.ondataavailable = (e) => {
-                    if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                        ws.send(e.data);
-                    }
-                };
-
-                recorder.start(5000); // 5-second chunks
-            };
-
-            ws.onclose = () => console.log('WebSocket closed');
-            ws.onerror = (e) => console.error('WebSocket error:', e);
-=======
             ws.onopen = async () => {
                 try {
                     pcmStreamer = new PcmStreamer(mediaStream, {
@@ -1144,7 +1023,6 @@
                 if (isRecording && !userInitiatedStop) handleUnexpectedDisconnect(event.code);
             };
             ws.onerror = () => { document.getElementById('status').textContent = 'Streaming error'; };
->>>>>>> Stashed changes
 
             subscribeToMercure();
 
@@ -1173,14 +1051,10 @@
     }
 
     function stopRecording() {
-<<<<<<< Updated upstream
-        recorder?.stop();
-=======
         userInitiatedStop = true;
         isRecording = false;
         clearTimeout(reconnectTimer);
         pcmStreamer?.stop(); pcmStreamer = null;
->>>>>>> Stashed changes
         ws?.close();
         mediaStream?.getTracks().forEach(t => t.stop());
         streams?.disconnectAll();
@@ -1253,9 +1127,6 @@
         if (!CONFIG.mercureUrl) return;
         streams = new StreamOrchestrator(CONFIG.mercureUrl);
         streams.subscribe(CONFIG.topicRaw, handleRawSegment);
-<<<<<<< Updated upstream
-        streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
-=======
         if (CONFIG.enableRoleUpdates) streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
     }
 
@@ -1274,7 +1145,6 @@
             announce(msg);
             if (segmentIndex > 0) document.getElementById('downloadBtn').classList.remove('hidden');
         }
->>>>>>> Stashed changes
     }
 
     function autoReconnect() {
@@ -1385,19 +1255,8 @@
     // Segment Rendering
     // =========================================================================
     function handleRawSegment(data) {
-<<<<<<< Updated upstream
-        if (data.type === 'finalized') {
-            document.getElementById('status').textContent = 'Transcript finalized';
-            return;
-        }
-        if (data.type === 'error') {
-            console.error('Transcription error:', data.message);
-            return;
-        }
-=======
         if (data.type === 'finalized') { document.getElementById('status').textContent = 'Transcript finalized'; return; }
         if (data.type === 'error') { document.getElementById('status').textContent = `Transcription error: ${data.message}`; return; }
->>>>>>> Stashed changes
         if (data.type !== 'segment') return;
         const role = roleMapping[data.speaker_id] || 'UNKNOWN';
         appendSegment(data, role);
@@ -1419,11 +1278,6 @@
         const avatarText = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
 
         el.innerHTML = `
-<<<<<<< Updated upstream
-            <span class="segment__speaker" style="color: ${getRoleColor(role)}">${speakerLabel}</span>
-            <span class="segment__time">${timeStr}</span>
-            <span class="segment__text text-gray-800 dark:text-gray-200">${escapeHtml(segment.text)}</span>
-=======
             <div class="segment__avatar">${avatarText}</div>
             <div class="segment__body">
                 <div class="segment__header">
@@ -1432,7 +1286,6 @@
                 </div>
                 <span class="segment__text">${escapeHtml(segment.text)}</span>
             </div>
->>>>>>> Stashed changes
         `;
 
         container.appendChild(el);

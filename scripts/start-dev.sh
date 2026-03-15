@@ -9,19 +9,6 @@
 #   --no-logs       Skip log streaming (exit after health checks)
 #   --help, -h      Show this help
 #
-<<<<<<< Updated upstream
-# What it does:
-#   1. Quick preflight (Docker, .env, nvidia-smi)
-#   2. Check current container state
-#   3. Start containers (rebuild only with --build or missing images)
-#   4. Health-check all services
-#   5. Stream nemo-agent logs
-#
-# Ctrl+C stops containers (preserves them for fast restart).
-#
-# For first-time setup:     scripts/setup-initial.sh
-# To diagnose issues:       scripts/health-checks.sh
-=======
 #   ollama (default):
 #     1. Ollama (auto-starts via binary or Docker if needed)
 #     2. NeMo FastAPI agent via Docker Compose on the first free port in 48101-48110
@@ -54,23 +41,18 @@
 #   OLLAMA_MODEL   - Model name (default: from .env or qwen2.5:14b)
 #
 # Press Ctrl+C to stop all services and containers started by this script.
->>>>>>> Stashed changes
 # =============================================================================
 
 set -uo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 
-<<<<<<< Updated upstream
-ERRORS=0
-=======
 # ── Configurable ports ──────────────────────────────────────────────
 AGENT_PORT="${AGENT_PORT:-48101}"
 AGENT_PORT_MAX="${AGENT_PORT_MAX:-48110}"
 APP_PORT="${APP_PORT:-48082}"
 APP_PORT_MAX="${APP_PORT_MAX:-48090}"
 MERCURE_PORT="${MERCURE_PORT:-48137}"
->>>>>>> Stashed changes
 
 # ── Parse flags ─────────────────────────────────────────────────────
 FORCE_BUILD=false
@@ -188,9 +170,6 @@ else
     pass
 fi
 
-<<<<<<< Updated upstream
-step ".env file"
-=======
 OLLAMA_HOST_LOCAL="$OLLAMA_HOST"
 if [[ "$MODEL_PROVIDER" == "ollama" ]] && ! curl -sf "${OLLAMA_HOST_LOCAL}/api/tags" >/dev/null 2>&1; then
     DETECTED_OLLAMA_HOST="$(detect_running_ollama_host || true)"
@@ -453,7 +432,6 @@ done
 # Docker Compose overrides specific values via its environment: block.
 #
 # Verify AGENT_ENDPOINT / NEMO_WEBSOCKET_URL / MERCURE URLs / stream format in .env match local dev:
->>>>>>> Stashed changes
 if [[ -f "$REPO_ROOT/.env" ]]; then
     pass
 else

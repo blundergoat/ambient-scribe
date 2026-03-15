@@ -124,11 +124,6 @@ class TranscriptionSession:
     asyncio.run_in_executor() to avoid blocking the event loop.
     """
 
-<<<<<<< Updated upstream
-    CHUNK_INTERVAL_SECONDS = 5.0  # Browser sends chunks every 5 seconds
-
-    def __init__(self, session_id: str, pipeline: NemoPipeline) -> None:
-=======
     def __init__(
         self,
         session_id: str,
@@ -136,7 +131,6 @@ class TranscriptionSession:
         input_format: str = "pcm",
         max_buffer_duration: float = 900.0,
     ) -> None:
->>>>>>> Stashed changes
         """Create a new transcription session.
 
         Args:
@@ -151,12 +145,8 @@ class TranscriptionSession:
         self.accumulated_transcript: list[Segment] = []
         self.chunk_count: int = 0
         self.started_at: float = time.time()
-<<<<<<< Updated upstream
-        self._webm_accumulator: bytearray = bytearray()
-=======
         self._seen_segment_keys: set[tuple[str, int, int, str]] = set()
         self._format_validated: bool = False
->>>>>>> Stashed changes
 
         logger.info("transcription_session.created", extra={
             "session_id": session_id,
@@ -182,10 +172,6 @@ class TranscriptionSession:
         self.chunk_count += 1
         chunk_started_at = time.time()
 
-<<<<<<< Updated upstream
-        # Accumulate raw WebM bytes
-        self._webm_accumulator.extend(raw_audio)
-=======
         if not self._format_validated and raw_audio != b"":
             self._validate_audio_format(raw_audio)
             self._format_validated = True
@@ -197,31 +183,18 @@ class TranscriptionSession:
                 "reason": "empty_after_decode",
             })
             return []
->>>>>>> Stashed changes
 
-        # Convert full accumulated WebM to WAV, then transcribe
-        wav_path = None
-        try:
-            wav_path = self._convert_webm_to_wav(bytes(self._webm_accumulator))
-            if wav_path is None:
-                return []
+        self.buffer.append(pcm_audio)
 
-            result = self.pipeline.transcribe_file(wav_path)
-            new_segments = result.segments
-        finally:
-            if wav_path:
-                Path(wav_path).unlink(missing_ok=True)
-
-        # Replace accumulated transcript with fresh full-audio result
-        self.accumulated_transcript = list(new_segments)
+        result = self.pipeline.transcribe_buffer(self.buffer.current_window())
+        new_segments = self._filter_new_segments(result.segments)
+        self.accumulated_transcript.extend(new_segments)
 
         duration_ms = int((time.time() - chunk_started_at) * 1000)
-        estimated_seconds = self.chunk_count * self.CHUNK_INTERVAL_SECONDS
         logger.info("transcription_session.chunk_processed", extra={
             "session_id": self.session_id,
             "chunk_number": self.chunk_count,
-            "estimated_audio_seconds": round(estimated_seconds, 1),
-            "webm_bytes": len(self._webm_accumulator),
+            "audio_seconds": round(self.buffer.duration_seconds, 1),
             "segments_returned": len(new_segments),
             "duration_ms": duration_ms,
         })
@@ -237,26 +210,36 @@ class TranscriptionSession:
         Returns:
             Complete transcript segments for the entire session.
         """
-        estimated_seconds = self.chunk_count * self.CHUNK_INTERVAL_SECONDS
         logger.info("transcription_session.finalizing", extra={
             "session_id": self.session_id,
             "total_chunks": self.chunk_count,
-            "estimated_audio_seconds": round(estimated_seconds, 1),
+            "audio_seconds": round(self.buffer.duration_seconds, 1),
             "duration_seconds": round(time.time() - self.started_at, 1),
         })
 
-        if not self._webm_accumulator:
+        if self.buffer.total_bytes == 0:
             return self.accumulated_transcript
 
         # Final pass on complete audio
-<<<<<<< Updated upstream
-        wav_path = None
-=======
         result = self.pipeline.transcribe_buffer(self.buffer.full_audio())
         new_segments = self._filter_new_segments(result.segments)
         self.accumulated_transcript.extend(new_segments)
 
         return list(self.accumulated_transcript)
+
+    def _filter_new_segments(self, segments: list[Segment]) -> list[Segment]:
+        """Return only segments not already accumulated (deduplication by key).
+
+        Uses (speaker_id, start_int, end_int, text) as a dedup key so that
+        re-processing the same audio window on reconnect does not emit duplicates.
+        """
+        new_segments = []
+        for seg in segments:
+            key = (seg.speaker_id, int(seg.start * 100), int(seg.end * 100), seg.text)
+            if key not in self._seen_segment_keys:
+                self._seen_segment_keys.add(key)
+                new_segments.append(seg)
+        return new_segments
 
     def _validate_audio_format(self, raw_audio: bytes) -> None:
         """Validate that the first audio chunk matches the configured input format."""
@@ -296,21 +279,38 @@ class TranscriptionSession:
 
     def _decode_webm_chunk(self, raw_audio: bytes) -> bytes:
         """Decode a MediaRecorder WebM/Opus chunk into raw PCM bytes."""
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
-            input_file.write(raw_audio)
-            input_path = input_file.name
-
->>>>>>> Stashed changes
+        input_path = None
+        output_path = None
         try:
-            wav_path = self._convert_webm_to_wav(bytes(self._webm_accumulator))
-            if wav_path is None:
-                return self.accumulated_transcript
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
+                input_file.write(raw_audio)
+                input_path = input_file.name
 
-            result = self.pipeline.transcribe_file(wav_path)
-            return result.segments if result.segments else self.accumulated_transcript
+            with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as output_file:
+                output_path = output_file.name
+
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", input_path,
+                    "-ar", "16000", "-ac", "1",
+                    "-f", "s16le",
+                    output_path,
+                ],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+            return Path(output_path).read_bytes()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error("transcription_session.webm_decode.failed", extra={
+                "error": str(e),
+            })
+            return b""
         finally:
-            if wav_path:
-                Path(wav_path).unlink(missing_ok=True)
+            if input_path:
+                Path(input_path).unlink(missing_ok=True)
+            if output_path:
+                Path(output_path).unlink(missing_ok=True)
 
     @staticmethod
     def _convert_webm_to_wav(webm_bytes: bytes) -> str | None:

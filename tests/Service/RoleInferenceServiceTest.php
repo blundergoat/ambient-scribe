@@ -167,6 +167,8 @@ class RoleInferenceServiceTest extends TestCase
 
         $result = $this->service->getCurrentMapping('session-fail');
 
-        self::assertSame(['mapping' => [], 'confidence' => 0.0], $result);
+        self::assertInstanceOf(\stdClass::class, $result['mapping']);
+        self::assertSame(0.0, $result['confidence']);
+        self::assertSame('{}', json_encode($result['mapping']));
     }
 }
