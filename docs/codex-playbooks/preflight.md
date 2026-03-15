@@ -12,7 +12,7 @@ Mechanical verification before you call work done.
 
 Ambient Scribe defaults:
 - PHP: `composer test`, `composer analyse`, `composer cs:check`
-- Python agent: `python3 -m pytest tests/python -q` when pytest is available, plus `python3 -m py_compile strands_agents/api/server.py`
+- Python agent: `ruff check strands_agents` when Ruff is available, plus `python3 -m pytest tests/python -q`
 - Stack validation: `./scripts/preflight-checks.sh`
 
 ## SHOULD

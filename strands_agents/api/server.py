@@ -222,7 +222,7 @@ logging.getLogger().addFilter(CorrelationIdFilter())
 sessions = SessionStore()
 
 # Coordinated session lifecycle (replaces bare active_sessions dict)
-lifecycle = SessionLifecycle(sessions)
+lifecycle = SessionLifecycle()
 
 
 # =============================================================================

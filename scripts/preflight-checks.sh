@@ -264,36 +264,38 @@ else
     skip "no templates/ directory"
 fi
 
-# 9. Python agent syntax check
-step "Python agent syntax"
+# 9. Python lint (Ruff)
+step "Python lint (Ruff)"
 t=$(date +%s%N)
 agent_dir="$REPO_ROOT/strands_agents"
-if [[ -d "$agent_dir" ]] && command -v python3 &>/dev/null; then
-    py_errors=0
-    py_files=0
-    py_error_detail=""
-    for f in "$agent_dir"/*.py "$agent_dir"/api/*.py "$agent_dir"/agents/*.py; do
-        if [[ -f "$f" ]]; then
-            py_files=$((py_files + 1))
-            check_output=$(python3 -m py_compile "$f" 2>&1)
-            if [[ $? -ne 0 ]]; then
-                py_errors=$((py_errors + 1))
-                py_error_detail="$check_output"
-            fi
-        fi
-    done
-    if [[ $py_errors -eq 0 ]]; then
-        pass "${py_files} files $(elapsed_since $t)"
+if [[ -d "$agent_dir" ]]; then
+    if command -v ruff &>/dev/null; then
+        ruff_cmd=$(command -v ruff)
+    elif [[ -x "$agent_dir/.venv/bin/ruff" ]]; then
+        ruff_cmd="$agent_dir/.venv/bin/ruff"
     else
-        fail "Python agent syntax (${py_errors} errors)"
-        echo "$py_error_detail" | head -5 | while read -r line; do
-            echo -e "    ${DIM}${line}${RESET}"
-        done
+        ruff_cmd=""
+    fi
+
+    if [[ -n "$ruff_cmd" ]]; then
+        ruff_output=$("$ruff_cmd" check "$agent_dir" 2>&1)
+        ruff_exit=$?
+        if [[ $ruff_exit -eq 0 ]]; then
+            pass "$(elapsed_since $t)"
+        else
+            err_count=$(echo "$ruff_output" | grep -cE '^[^ ]+:[0-9]+:[0-9]+:' || true)
+            fail "Python lint (${err_count} errors)"
+            echo "$ruff_output" | head -10 | while read -r line; do
+                echo -e "    ${DIM}${line}${RESET}"
+            done
+        fi
+    else
+        skip "ruff not available"
     fi
 elif [[ ! -d "$agent_dir" ]]; then
     skip "no strands_agents/ directory"
 else
-    skip "python3 not available"
+    skip "python tooling not available"
 fi
 
 # 10. Docker Compose validate

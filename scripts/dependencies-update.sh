@@ -223,18 +223,18 @@ if [[ "$DO_PYTHON" == true ]]; then
             fi
         fi
 
-        # Syntax check
-        step "Python agent syntax"
+        # Ruff check
+        step "Python agent lint"
         py_errors=0
-        for f in "$PYTHON_AGENT_DIR"/*.py "$PYTHON_AGENT_DIR"/api/*.py; do
-            if [[ -f "$f" ]] && ! "$VENV_DIR/bin/python" -m py_compile "$f" 2>/dev/null; then
-                py_errors=$((py_errors + 1))
-            fi
-        done
+        if [[ ! -x "$VENV_DIR/bin/ruff" ]]; then
+            py_errors=1
+        elif ! "$VENV_DIR/bin/ruff" check "$PYTHON_AGENT_DIR" >/dev/null 2>&1; then
+            py_errors=1
+        fi
         if [[ $py_errors -eq 0 ]]; then
             pass
         else
-            fail "${py_errors} file(s) with syntax errors"
+            fail "${py_errors} lint check(s) failed"
         fi
     fi
 fi

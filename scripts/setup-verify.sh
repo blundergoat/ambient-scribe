@@ -303,24 +303,30 @@ else
     fail "not importable"
 fi
 
-# ── Python Syntax ──────────────────────────────────────────────────
-section "Python agent syntax"
+# ── Python Lint ────────────────────────────────────────────────────
+section "Python agent lint"
 
 py_errors=0
 py_files=0
-for f in "$PYTHON_AGENT_DIR"/*.py "$PYTHON_AGENT_DIR"/api/*.py; do
-    if [[ -f "$f" ]]; then
-        py_files=$((py_files + 1))
-        rel_path="${f#$REPO_ROOT/}"
-        step "$rel_path"
-        if "$VENV_DIR/bin/python" -m py_compile "$f" 2>/dev/null; then
-            pass
-        else
-            fail "syntax error"
-            py_errors=$((py_errors + 1))
+if [[ ! -x "$VENV_DIR/bin/ruff" ]]; then
+    step "ruff availability"
+    fail "ruff not installed"
+    py_errors=$((py_errors + 1))
+else
+    for f in "$PYTHON_AGENT_DIR"/*.py "$PYTHON_AGENT_DIR"/api/*.py; do
+        if [[ -f "$f" ]]; then
+            py_files=$((py_files + 1))
+            rel_path="${f#$REPO_ROOT/}"
+            step "$rel_path"
+            if "$VENV_DIR/bin/ruff" check "$f" >/dev/null 2>&1; then
+                pass
+            else
+                fail "lint error"
+                py_errors=$((py_errors + 1))
+            fi
         fi
-    fi
-done
+    done
+fi
 
 # ── Quick Smoke Tests ──────────────────────────────────────────────
 section "Smoke tests"

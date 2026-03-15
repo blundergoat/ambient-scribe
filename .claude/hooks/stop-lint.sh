@@ -37,17 +37,28 @@ if [ "$HAS_PHP" = true ]; then
   fi
 fi
 
-# Python: syntax check on changed files (fast, <2s)
+# Python: Ruff check on changed files (fast, <2s)
 if [ "$HAS_PYTHON" = true ]; then
-  if command -v python3 &>/dev/null; then
+  if command -v ruff &>/dev/null; then
+    RUFF=$(command -v ruff)
+  elif [ -x "$ROOT/strands_agents/.venv/bin/ruff" ]; then
+    RUFF="$ROOT/strands_agents/.venv/bin/ruff"
+  else
+    RUFF=""
+  fi
+
+  if [ -n "$RUFF" ]; then
     PY_FILES=$(echo "$CHANGED_FILES" | grep -E '\.py$' || true)
     for f in $PY_FILES; do
       if [ -f "$f" ]; then
-        python3 -m py_compile "$f" 2>&1 || {
-          echo "Python syntax error in $f" >&2
+        output=$("$RUFF" check "$f" 2>&1) || {
+          echo "Python lint error in $f:" >&2
+          echo "$output" >&2
         }
       fi
     done
+  else
+    echo "ruff not found; skipping Python lint" >&2
   fi
 fi
 

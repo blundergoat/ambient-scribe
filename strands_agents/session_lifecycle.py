@@ -15,11 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from nemo_session import TranscriptionSession
-    from session import SessionStore
 
 from tools.assign_roles import cleanup_session as cleanup_role_state
 
@@ -27,15 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 _SESSION_LOCK_TIMEOUT = 5.0
+CloseRoleInferenceFn = Callable[[str], Awaitable[None]]
 
 
 class SessionLifecycle:
     """Coordinates session registration and teardown under per-session locks."""
 
-    def __init__(self, store: SessionStore) -> None:
+    def __init__(self) -> None:
         self._locks: dict[str, asyncio.Lock] = {}
         self._active: dict[str, TranscriptionSession] = {}
-        self._store = store
         self._sse_consumers: dict[str, int] = {}
 
     async def register(self, session_id: str, session: TranscriptionSession) -> None:
@@ -56,7 +55,7 @@ class SessionLifecycle:
     async def destroy(
         self,
         session_id: str,
-        close_role_inference_fn=None,
+        close_role_inference_fn: CloseRoleInferenceFn | None = None,
     ) -> None:
         """Atomically tear down all state for a session under its lock.
 
@@ -118,7 +117,7 @@ class SessionLifecycle:
         """Return the per-session lock for safe state reads."""
         return self._get_or_create_lock(session_id)
 
-    def get(self, session_id: str):
+    def get(self, session_id: str) -> TranscriptionSession | None:
         """Return the active TranscriptionSession or None."""
         return self._active.get(session_id)
 

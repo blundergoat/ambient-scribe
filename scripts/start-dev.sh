@@ -473,7 +473,8 @@ if [[ "$ALL_RUNNING" == "false" ]]; then
     fi
 
     # shellcheck disable=SC2086
-    if dc up -d $BUILD_FLAG 2>&1 | tail -3; then
+    echo -e "     ${DIM}Running: dc up -d ${BUILD_FLAG}${RESET}"
+    if dc up -d $BUILD_FLAG; then
         echo -e "  ${ARROW} Docker Compose             ${PASS}  ${DIM}containers started${RESET}"
     else
         echo -e "  ${ARROW} Docker Compose             ${FAIL}  ${RED}failed to start${RESET}"
@@ -535,7 +536,8 @@ echo ""
 
 dc logs -f nemo-agent 2>&1 | while IFS= read -r line; do
     case "$line" in
-        *WARNING*|*ERROR*|*Traceback*|*"POST "*|*"GET "*|*WebSocket*|*"model"*|*"loaded"*|*"health"*)
+        *"/health"*) ;; # skip Docker healthcheck spam
+        *WARNING*|*ERROR*|*Traceback*|*"POST "*|*"GET "*|*WebSocket*|*"model"*|*"loaded"*)
             echo -e "    ${CYAN}[nemo]${RESET} $line" ;;
     esac
 done &

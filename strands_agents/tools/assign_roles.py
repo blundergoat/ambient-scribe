@@ -87,10 +87,11 @@ class RoleMappingState:
         return flip_detected
 
     def _detect_flip(self, new_mapping: dict[str, str]) -> bool:
-        """Detect if the speaker labels have flipped (swapped roles).
+        """Detect a role permutation across the same speaker IDs.
 
-        A flip occurs when spk_0 and spk_1 swap their assigned roles
-        compared to the previous mapping.
+        A flip occurs when at least two existing speakers change roles, every
+        changed speaker gets a different role than before, and the set of roles
+        assigned across those changed speakers is preserved.
 
         Args:
             new_mapping: The proposed new mapping.
