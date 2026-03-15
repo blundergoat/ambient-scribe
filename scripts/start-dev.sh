@@ -54,6 +54,32 @@ APP_PORT="${APP_PORT:-48082}"
 APP_PORT_MAX="${APP_PORT_MAX:-48090}"
 MERCURE_PORT="${MERCURE_PORT:-48137}"
 
+# ── Role inference provider & Ollama defaults ──────────────────────
+MODEL_PROVIDER="${ROLE_AGENT_MODEL_PROVIDER:-${MODEL_PROVIDER:-ollama}}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
+OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:14b}}"
+
+# ── Ollama helpers ─────────────────────────────────────────────────
+detect_running_ollama_host() {
+    local pid configured_host
+    while IFS= read -r pid; do
+        configured_host="$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -E '^OLLAMA_HOST=' | head -1 | cut -d= -f2-)"
+        [[ -z "$configured_host" ]] && continue
+        case "$configured_host" in
+            http://*) echo "$configured_host"; return 0 ;;
+            0.0.0.0:*) echo "http://localhost:${configured_host##*:}"; return 0 ;;
+            127.0.0.1:*|localhost:*) echo "http://localhost:${configured_host##*:}"; return 0 ;;
+        esac
+    done < <(pgrep -f 'ollama serve' 2>/dev/null || true)
+    return 1
+}
+
+dockerize_ollama_host() {
+    local host="$1"
+    # Replace localhost/127.0.0.1 with host.docker.internal for container access
+    echo "$host" | sed -E 's#(localhost|127\.0\.0\.1)#host.docker.internal#'
+}
+
 # ── Parse flags ─────────────────────────────────────────────────────
 FORCE_BUILD=false
 NO_LOGS=false
@@ -84,6 +110,8 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # ── Helpers ─────────────────────────────────────────────────────────
+ERRORS=0
+
 step() {
     printf "  ${ARROW} %-44s" "$1"
 }
@@ -338,6 +366,7 @@ echo -e "  ${BOLD}Starting services${RESET}"
 echo ""
 
 export MODEL_PROVIDER
+NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
 export NEMO_MODEL_PROVIDER
 export AGENT_PORT
 export APP_PORT
@@ -351,9 +380,6 @@ if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
     export ROLE_AGENT_OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-$OLLAMA_MODEL}"
 else
     # Pass through AWS credentials for Bedrock
-    if ! export_aws_profile_credentials; then
-        cleanup 1
-    fi
     [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]     && export AWS_ACCESS_KEY_ID
     [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
     [[ -n "${AWS_SESSION_TOKEN:-}" ]]     && export AWS_SESSION_TOKEN
@@ -365,61 +391,6 @@ else
         export ROLE_AGENT_MODEL_ID="$MODEL_ID"
     fi
 fi
-
-if ! select_available_port AGENT_PORT "NeMo agent" "$AGENT_PORT_MAX"; then
-    echo -e "  ${FAIL} ${RED}Could not reserve a port for the NeMo agent${RESET}"
-    exit 1
-fi
-
-echo -e "  ${ARROW} NeMo agent             ${DIM}http://localhost:${AGENT_PORT}${RESET}"
-echo -e "  ${ARROW} Mercure                ${DIM}http://localhost:${MERCURE_PORT}${RESET}"
-echo -e "     ${DIM}Building/starting containers. First run can take a while.${RESET}"
-echo -e "     ${DIM}Detailed Docker log: ${COMPOSE_LOG}${RESET}"
-
-DOCKER_STACK_STARTED=true
-if start_compose_stack; then
-    MERCURE_DOCKER=true
-    follow_agent_logs
-else
-    show_compose_failure_details
-    cleanup 1
-fi
-
-# Interleaved health-check loop: poll agent and Mercure concurrently
-AGENT_READY=false
-MERCURE_READY=false
-for i in $(seq 1 90); do
-    if [[ "$AGENT_READY" != "true" ]]; then
-        if curl -sf "http://localhost:${AGENT_PORT}/health" >/dev/null 2>&1; then
-            echo -e "  ${ARROW} NeMo agent             ${PASS}  ${DIM}ready${RESET}"
-            AGENT_READY=true
-        fi
-    fi
-    if [[ "$MERCURE_READY" != "true" ]]; then
-        mercure_status=$(curl -so /dev/null -w "%{http_code}" \
-            --connect-timeout 2 "http://localhost:${MERCURE_PORT}/.well-known/mercure" 2>/dev/null) || true
-        if [[ "$mercure_status" =~ ^(200|401|400)$ ]]; then
-            echo -e "  ${ARROW} Mercure                ${PASS}  ${DIM}ready (streaming enabled)${RESET}"
-            MERCURE_READY=true
-        fi
-    fi
-    # Both ready - break early
-    [[ "$AGENT_READY" == "true" && "$MERCURE_READY" == "true" ]] && break
-    # Timeout handling
-    if [[ $i -eq 90 ]]; then
-        if [[ "$AGENT_READY" != "true" ]]; then
-            echo -e "  ${ARROW} NeMo agent             ${FAIL}  ${RED}failed to start${RESET}"
-            echo -e "     ${DIM}See log: ${AGENT_LOG}${RESET}"
-            cleanup 1
-        fi
-        if [[ "$MERCURE_READY" != "true" ]]; then
-            echo -e "  ${ARROW} Mercure                ${FAIL}  ${RED}failed to start${RESET}"
-            echo -e "     ${DIM}Check: docker compose logs mercure${RESET}"
-            cleanup 1
-        fi
-    fi
-    sleep 1
-done
 
 # ── 4. PHP Symfony ──────────────────────────────────────────────────
 # IMPORTANT: Do NOT export environment variables for Symfony here.
@@ -540,9 +511,9 @@ STARTUP_ELAPSED=$(( SECONDS - STARTUP_START ))
 echo -e "  ${GREEN}${BOLD}Ready!${RESET} ${DIM}(${STARTUP_ELAPSED}s)${RESET}"
 echo ""
 echo -e "  ${DIM}Services:${RESET}"
-echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:8082/scribe${RESET}"
-echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:8001${RESET}"
-echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:3701${RESET}"
+echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:${APP_PORT}/scribe${RESET}"
+echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT}${RESET}"
+echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT}${RESET}"
 echo ""
 echo -e "  ${DIM}Useful commands:${RESET}"
 echo -e "    ${ARROW} Health check:  ${DIM}./scripts/health-checks.sh${RESET}"

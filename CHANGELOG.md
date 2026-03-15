@@ -26,17 +26,18 @@ without GPU hardware.
 - **Reconnect logic** — automatic WebSocket reconnect (3 attempts) with
   segment preservation and manual reconnect fallback
 - **Role inference** — Strands agent streaming role updates via
-  `RoleInferenceService`, retroactive segment relabelling, confidence badge
+  `RoleInferenceService`, retroactive segment relabelling, three-tier
+  confidence badge (green >=80%, amber >=50%, grey <50%)
 - **Dev panel** (APP_ENV=dev only, zero prod bytes) —
   - 3-column layout: scenario panel (left), transcript (centre),
     inspector (right)
   - Inspector tabs: Segments, Pipeline, Mercure, WebSocket, State, Raw
   - Raw tab ring buffer (200 entries) with collapsible JSON and Copy All
   - State tab auto-refreshes every 500 ms
-- **Scenario runner** — 7 fixture-driven scenarios injected client-side
+- **Scenario runner** — 8 fixture-driven scenarios injected client-side
   (happy path, role flip, reconnect recovery, high-volume stress,
-  empty session, single speaker, late role update) with end-state
-  validation, batch execution, progress bar, and JSON export
+  empty session, single speaker, late role update, permanent disconnect)
+  with end-state validation, batch execution, progress bar, and JSON export
 - **ScribeController** — `GET /scribe` (UI), `GET /scribe/{id}/history`,
   `POST /scribe/{id}/roles/stream`, `GET /scribe/{id}/roles`; loads
   scenario fixtures in dev mode
@@ -62,6 +63,19 @@ without GPU hardware.
 
 ### Fixed
 
+- `start-dev.sh` crashes on launch — unbound `OLLAMA_HOST`,
+  `MODEL_PROVIDER`, `NEMO_MODEL_PROVIDER`, and `ERRORS` variables under
+  `set -uo pipefail`; undefined `select_available_port`,
+  `start_compose_stack`, `follow_agent_logs`, `show_compose_failure_details`,
+  and `export_aws_profile_credentials` functions (dead code from prior
+  refactor removed)
+- Ready banner in `start-dev.sh` showed hardcoded old ports (`8082`,
+  `8001`, `3701`) instead of configured `APP_PORT`, `AGENT_PORT`,
+  `MERCURE_PORT`
+- Dev panel inspector Segments tab never updated retroactively when roles
+  were assigned — entries now relabel in sync with the main transcript
+- High-volume stress scenario had no `role_update`, so `relabelSegments()`
+  across 50 DOM nodes was never exercised
 - StreamOrchestrator `_active` flag ordering bug that prevented clean
   reconnection after page-level teardown
 - Docker volume mount path for Python hot-reload

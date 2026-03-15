@@ -1313,6 +1313,9 @@
         if (confidence >= 0.8) {
             badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
             badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800';
+        } else if (confidence >= 0.5) {
+            badge.textContent = `Low confidence (${Math.round(confidence * 100)}%)`;
+            badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800';
         } else {
             badge.textContent = 'Identifying speakers...';
             badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
@@ -1338,6 +1341,21 @@
                 avatar.textContent = newRole === 'UNKNOWN' ? '?' : getAvatarLabel(newRole);
             }
         });
+
+        // Update inspector segment log entries retroactively
+        const log = document.getElementById('devSegmentLog');
+        if (log) {
+            log.querySelectorAll('.dev-panel__entry').forEach(entry => {
+                const speakerId = entry.dataset.speakerId;
+                if (!speakerId) return;
+                const newRole = roleMapping[speakerId] || 'UNKNOWN';
+                const roleSpan = entry.querySelector('[data-role-label]');
+                if (roleSpan) {
+                    roleSpan.textContent = getRoleLabel(newRole);
+                    roleSpan.style.color = getRoleColor(newRole);
+                }
+            });
+        }
     }
 
     // =========================================================================
@@ -1435,9 +1453,10 @@
             if (!log) return;
             const entry = document.createElement('div');
             entry.className = 'dev-panel__entry';
+            entry.dataset.speakerId = data.speaker_id || '';
             const text = (data.text || '').substring(0, 60);
             const badge = source === 'scenario' ? '<span style="color:#f59e0b">[S]</span> ' : '';
-            entry.innerHTML = `${badge}<span style="color:${getRoleColor(role)}">${getRoleLabel(role)}</span> <span class="subtle-text">${formatTime(data.start || 0)}</span><br>${escapeHtml(text)}`;
+            entry.innerHTML = `${badge}<span data-role-label style="color:${getRoleColor(role)}">${getRoleLabel(role)}</span> <span class="subtle-text">${formatTime(data.start || 0)}</span><br>${escapeHtml(text)}`;
             log.appendChild(entry);
             log.scrollTop = log.scrollHeight;
         }

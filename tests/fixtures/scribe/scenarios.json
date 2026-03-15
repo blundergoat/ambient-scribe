@@ -122,12 +122,13 @@
                 {"type": "segment", "delay": 50, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Segment 47: Ice for the first week, then you can try heat.", "start": 92.0, "end": 94.0}},
                 {"type": "segment", "delay": 50, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Segment 48: Understood.", "start": 94.0, "end": 96.0}},
                 {"type": "segment", "delay": 50, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Segment 49: Schedule a follow-up in two weeks.", "start": 96.0, "end": 98.0}},
-                {"type": "segment", "delay": 50, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Segment 50: I'll make an appointment on my way out.", "start": 98.0, "end": 100.0}}
+                {"type": "segment", "delay": 50, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Segment 50: I'll make an appointment on my way out.", "start": 98.0, "end": 100.0}},
+                {"type": "role_update", "delay": 100, "data": {"mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"}, "confidence": 0.88}}
             ],
             "expectedEndState": {
                 "segmentCount": 50,
-                "roleMapping": {},
-                "confidenceMin": 0,
+                "roleMapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
+                "confidenceMin": 0.8,
                 "flipDetected": false
             }
         },
@@ -198,6 +199,24 @@
                 "segmentCount": 20,
                 "roleMapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidenceMin": 0.9,
+                "flipDetected": false
+            }
+        },
+        {
+            "id": "permanent-disconnect",
+            "name": "Permanent Disconnect",
+            "description": "Disconnect without reconnect — UI reaches terminal error state",
+            "events": [
+                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Let me check your vitals first.", "start": 0.0, "end": 2.5}},
+                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Sure, go ahead.", "start": 3.0, "end": 4.5}},
+                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Blood pressure looks normal.", "start": 5.0, "end": 7.0}},
+                {"type": "ws_disconnect", "delay": 500, "data": {"code": 1006, "reason": "abnormal closure"}},
+                {"type": "control", "delay": 2000, "data": {"action": "stop"}}
+            ],
+            "expectedEndState": {
+                "segmentCount": 3,
+                "roleMapping": {},
+                "confidenceMin": 0,
                 "flipDetected": false
             }
         }
