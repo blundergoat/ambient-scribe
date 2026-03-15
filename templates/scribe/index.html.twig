@@ -645,6 +645,9 @@
         </div>
 
         <div class="dev-panel__content" data-content="segments">
+            <div class="flex justify-end mb-1">
+                <button onclick="devPanel.clearSegmentLog()" class="dev-panel__btn">Clear</button>
+            </div>
             <div id="devSegmentLog" class="dev-panel__log"></div>
         </div>
 
@@ -1522,6 +1525,25 @@
             }, null, 2);
         }
 
+        clearSegmentLog() {
+            const log = document.getElementById('devSegmentLog');
+            if (log) log.innerHTML = '';
+        }
+
+        clearRawLog() {
+            this._rawBuffer = [];
+            const log = document.getElementById('devRawLog');
+            if (log) log.innerHTML = '';
+            const countEl = document.getElementById('devRawCount');
+            if (countEl) countEl.textContent = '0';
+        }
+
+        clearMercureLog() {
+            this._mercureMetrics.clear();
+            const log = document.getElementById('devMercureLog');
+            if (log) log.innerHTML = '<div class="dev-panel__entry subtle-text">Waiting for Mercure events...</div>';
+        }
+
         async fetchHealth() {
             const el = document.getElementById('devPipelineInfo');
             if (!el) return;
@@ -1531,7 +1553,11 @@
                 const resp = await fetch(`${wsBaseUrl}/health`);
                 const data = await resp.json();
                 el.textContent = JSON.stringify(data, null, 2);
-            } catch (err) { el.textContent = `Error: ${err.message}`; }
+            } catch (err) {
+                el.textContent = scenarioMode || !isRecording
+                    ? 'No backend connected (demo/scenario mode)\n\nThe Pipeline tab requires a running NeMo agent.\nStart the full stack with: docker compose up --build'
+                    : `Connection error: ${err.message}`;
+            }
         }
 
         copyAllRaw() {
@@ -1578,6 +1604,7 @@
 
             this._running = false;
             this._updateControls(false);
+            this._showPostScenarioButtons();
         }
 
         async runAll() {
@@ -1600,6 +1627,7 @@
             this._updateProgress(SCENARIOS.length, SCENARIOS.length);
             this._running = false;
             this._updateControls(false);
+            this._showPostScenarioButtons();
         }
 
         async runRandom() {
@@ -1630,6 +1658,7 @@
 
             this._running = false;
             this._updateControls(false);
+            this._showPostScenarioButtons();
         }
 
         stop() { this._stopped = true; }
@@ -1651,6 +1680,12 @@
             roleMapping = {};
             confidence = 0;
             document.getElementById('segmentCount').textContent = '0';
+
+            // Clear inspector panels between runs
+            devPanel.clearSegmentLog();
+            devPanel.clearRawLog();
+            devPanel.clearMercureLog();
+
             scenarioMode = true;
         }
 
@@ -1753,6 +1788,14 @@
             const text = document.getElementById('scenarioProgressText');
             if (fill) fill.style.width = `${(current / total) * 100}%`;
             if (text) text.textContent = `${current}/${total}`;
+        }
+
+        _showPostScenarioButtons() {
+            if (segmentIndex > 0) {
+                document.getElementById('downloadBtn').classList.remove('hidden');
+                document.getElementById('resetBtn').classList.remove('hidden');
+            }
+            document.getElementById('status').textContent = 'Scenario complete';
         }
     }
 
