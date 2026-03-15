@@ -141,6 +141,7 @@ class TranscriptionSession:
         """
         self.session_id = session_id
         self.pipeline = pipeline
+        self.input_format = input_format.lower()
         self.buffer = AudioBuffer(max_duration_seconds=max_buffer_duration)
         self.accumulated_transcript: list[Segment] = []
         self.chunk_count: int = 0
@@ -148,8 +149,12 @@ class TranscriptionSession:
         self._seen_segment_keys: set[tuple[str, int, int, str]] = set()
         self._format_validated: bool = False
 
+        if self.input_format not in {"pcm", "webm"}:
+            raise ValueError(f"Unsupported transcription input format: {self.input_format}")
+
         logger.info("transcription_session.created", extra={
             "session_id": session_id,
+            "input_format": self.input_format,
         })
 
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:

@@ -126,6 +126,27 @@ class TestTranscriptionEndpoints:
         assert payload["segments"][0]["speaker_id"] == "spk_0"
 
     @pytest.mark.asyncio
+    async def test_transcribe_file_endpoint_accepts_form_session_id(self):
+        class StubPipeline:
+            def transcribe_file(self, audio_path):
+                assert audio_path.endswith(".wav")
+                return TranscriptionResult(segments=[])
+
+        app.state.nemo_pipeline = StubPipeline()
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/transcribe/file",
+                data={"session_id": "batch-form-session"},
+                files={"file": ("sample.wav", b"RIFFtest", "audio/wav")},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["session_id"] == "batch-form-session"
+
+    @pytest.mark.asyncio
     async def test_transcribe_stream_publishes_and_persists_segments(self, monkeypatch):
         published_events = []
         enqueued_segments = []

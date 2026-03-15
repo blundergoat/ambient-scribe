@@ -102,43 +102,56 @@ class NemoPipeline:
         self._diar_model: Any = None
         self._asr_model: Any = None
         self._device: Any = None
+        self._models_loaded = False
+        self._load_error: str | None = None
 
         logger.info("nemo_pipeline.loading_models", extra={
             "provider": self._model_provider,
         })
 
         if self._model_provider == "mock":
-            self._models_loaded = False
             logger.info("nemo_pipeline.mock_mode")
             return
 
-        import torch
-        from nemo.collections.asr.models import SortformerEncLabelModel
-        from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+        try:
+            import torch
+            from nemo.collections.asr.models import SortformerEncLabelModel
+            from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self._diar_model = SortformerEncLabelModel.from_pretrained(
-            "nvidia/diar_streaming_sortformer_4spk-v2.1"
-        ).eval().to(device)
+            self._diar_model = SortformerEncLabelModel.from_pretrained(
+                "nvidia/diar_streaming_sortformer_4spk-v2.1"
+            ).eval().to(device)
 
-        self._asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-            "nvidia/multitalker-parakeet-streaming-0.6b-v1"
-        ).eval().to(device)
+            self._asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+                "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+            ).eval().to(device)
 
-        # CUDA graph workaround (required for PyTorch 2.8 compat)
-        self._asr_model.decoding.decoding.use_cuda_graph_decoder = False
-        self._asr_model.decoding.decoding.decoding_computer.disable_cuda_graphs()
+            # CUDA graph workaround (required for PyTorch 2.8 compat)
+            self._asr_model.decoding.decoding.use_cuda_graph_decoder = False
+            self._asr_model.decoding.decoding.decoding_computer.disable_cuda_graphs()
 
-        self._device = device
-        self._models_loaded = True
+            self._device = device
+            self._models_loaded = True
 
-        logger.info("nemo_pipeline.models_loaded", extra={"device": str(device)})
+            logger.info("nemo_pipeline.models_loaded", extra={"device": str(device)})
+        except Exception as e:
+            self._load_error = str(e)
+            logger.exception("nemo_pipeline.models_failed", extra={
+                "provider": self._model_provider,
+                "error": self._load_error,
+            })
 
     @property
     def is_loaded(self) -> bool:
         """Whether models are loaded and ready for inference."""
         return self._models_loaded
+
+    @property
+    def load_error(self) -> str | None:
+        """Model load failure, if startup fell back to degraded mode."""
+        return self._load_error
 
     def transcribe_file(self, audio_path: str) -> TranscriptionResult:
         """Process a complete audio file. Returns speaker-attributed segments.

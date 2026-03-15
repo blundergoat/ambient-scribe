@@ -66,6 +66,7 @@ services:
       # --- Mercure publishing ---
       - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
       - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
+      - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
 
       # --- Role inference agent (uses Bedrock by default, Ollama optional) ---
       - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-bedrock}

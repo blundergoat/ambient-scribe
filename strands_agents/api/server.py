@@ -66,7 +66,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -443,23 +443,26 @@ async def _role_inference_worker(session_id: str) -> None:
 # =============================================================================
 
 @app.post("/transcribe/file", response_model=TranscribeFileResponse)
-async def transcribe_file(file: UploadFile, session_id: str = Form("")) -> TranscribeFileResponse:
+async def transcribe_file(
+    file: UploadFile,
+    session_id_query: str | None = Query(None, alias="session_id"),
+    session_id_form: str | None = Form(None, alias="session_id"),
+) -> TranscribeFileResponse:
     """Upload a WAV file and get a complete transcript.
 
     Batch mode entry point for testing and demo replay.
 
     Args:
         file: WAV file upload (16kHz mono PCM expected)
-        session_id: Optional session ID for grouping
+        session_id_query: Optional session ID for grouping, accepted via query or form
 
     Returns:
         TranscribeFileResponse with speaker-attributed segments.
     """
-    if not session_id:
-        session_id = str(uuid.uuid4())
+    resolved_session_id = session_id_query or session_id_form or str(uuid.uuid4())
 
     # Save uploaded file temporarily
-    temp_path = Path(f"/tmp/scribe_{session_id}.wav")
+    temp_path = Path(f"/tmp/scribe_{resolved_session_id}.wav")
     try:
         content = await file.read()
         temp_path.write_bytes(content)
@@ -477,13 +480,13 @@ async def transcribe_file(file: UploadFile, session_id: str = Form("")) -> Trans
         segments = [s.dict() for s in result.segments]
 
         logger.info("transcribe_file.completed", extra={
-            "session_id": session_id,
+            "session_id": resolved_session_id,
             "segments": len(segments),
             "duration_seconds": round(duration, 2),
         })
 
         return TranscribeFileResponse(
-            session_id=session_id,
+            session_id=resolved_session_id,
             segments=segments,
             duration_seconds=round(duration, 2),
         )
