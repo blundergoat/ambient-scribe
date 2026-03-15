@@ -367,6 +367,15 @@ echo ""
 
 export MODEL_PROVIDER
 NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
+
+# GPU is required — NeMo transcription is the core feature
+if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
+    echo -e "  ${FAIL} ${RED}NVIDIA GPU required for NeMo transcription${RESET}"
+    echo -e "     ${DIM}Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/${RESET}"
+    echo -e "     ${DIM}Or set NEMO_MODEL_PROVIDER=mock in .env for test/development only${RESET}"
+    exit 1
+fi
+
 export NEMO_MODEL_PROVIDER
 export AGENT_PORT
 export APP_PORT
@@ -403,10 +412,11 @@ fi
 # Docker Compose overrides specific values via its environment: block.
 #
 # Verify AGENT_ENDPOINT / NEMO_WEBSOCKET_URL / MERCURE URLs / stream format in .env match local dev:
+step ".env file"
 if [[ -f "$REPO_ROOT/.env" ]]; then
     pass
 else
-    fail "not found — run ./scripts/setup-initial.sh first"
+    fail "not found — run: cp .env.example .env"
     echo ""
     exit 1
 fi
@@ -414,8 +424,10 @@ fi
 step "nvidia-smi"
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
+elif [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
+    echo -e "${WARN}  ${DIM}no GPU — using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
 else
-    fail "not found — GPU required for NeMo"
+    fail "not found — GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
     echo ""
     exit 1
 fi

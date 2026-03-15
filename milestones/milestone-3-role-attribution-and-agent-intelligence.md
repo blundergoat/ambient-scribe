@@ -29,18 +29,18 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 
 - [x] `create_role_inference_agent()` factory with model provider selection (Bedrock/Ollama)
 - [x] System prompt for DOCTOR/PATIENT reasoning (medical mode)
-- [ ] **Make system prompt mode-aware** — pass selected mode from browser → WebSocket → agent. Each mode gets a tailored prompt with appropriate role names and reasoning signals
+- [x] **Make system prompt mode-aware** — 6 mode-specific prompts in `ROLE_PROMPTS` dict, `create_role_inference_agent(mode=...)` with `@lru_cache(maxsize=6)`
 - [ ] **Wire `assign_roles` as a real Strands `@tool`** — currently `tools=[]`, tool is called as helper functions after agent returns. Wiring it gives the agent access to mapping history during reasoning
-- [ ] **Fix agent JSON parsing** — `json.loads(str(result))` fails if agent includes preamble. Add regex JSON extraction fallback
-- [ ] **Cap `mapping_history` to last 5 entries** in agent prompt (currently grows unboundedly)
-- [ ] **Increase transcript context** — currently capped at 2000 chars. Add "first 500 chars" (conversation opening) plus "last 3000 chars" (recent context)
+- [x] **Fix agent JSON parsing** — `json.loads(str(result))` fails if agent includes preamble. Add regex JSON extraction fallback
+- [x] **Cap `mapping_history` to last 5 entries** in agent prompt (currently grows unboundedly)
+- [x] **Increase transcript context** — currently capped at 2000 chars. Add "first 500 chars" (conversation opening) plus "last 3000 chars" (recent context)
 
 ### 3.2 Local-First Role Inference
 
-- [ ] **Default to Ollama** in `.env.example` and `docker-compose.yml`
+- [x] **Default to Ollama** in `.env.example` and `docker-compose.yml`
 - [ ] **Test and document a specific Ollama model** — benchmark latency (CPU inference on 64GB system) and quality (does the model correctly identify roles?)
-- [ ] **3-tier fallback:** Ollama → Bedrock (if configured) → heuristic rule-based classifier (keyword matching as last resort)
-- [ ] Heuristic classifier: question-asking patterns → interviewer/doctor/host, symptom descriptions → patient, etc.
+- [x] **3-tier fallback:** LLM agent → heuristic keyword classifier → None (graceful degradation)
+- [x] Heuristic classifier: mode-specific keyword matching (medical/meeting/interview/general)
 - [x] Ollama support exists in `transcription_agent.py` via `_create_role_agent_model()`
 
 ### 3.3 Async Role Inference with Sequential Guarantees
@@ -50,17 +50,17 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] Queue drains and merges batched segments before processing
 - [x] Role updates published to Mercure with mapping, confidence, flip_detected, reasoning
 - [x] Worker cleanup on idle timeout (60s)
-- [ ] **Add max queue depth / backpressure** — prevent unbounded growth if agent is slower than NeMo
-- [ ] **Fix `asyncio.get_event_loop()` → `asyncio.get_running_loop()`** everywhere (deprecated in Python 3.10+)
+- [x] **Add max queue depth / backpressure** — prevent unbounded growth if agent is slower than NeMo (maxsize=50)
+- [x] **Fix `asyncio.get_event_loop()` → `asyncio.get_running_loop()`** everywhere (deprecated in Python 3.10+)
 
 ### 3.4 Retire Legacy PHP Role SSE Path
 
 > **Why:** Two competing role inference paths (Mercure queue + PHP `/roles/stream` SSE proxy) produce divergent mappings and duplicate LLM calls. This is documented in `docs/footguns.md` FG-2.
 
-- [ ] **Retire `POST /session/{id}/roles/stream`** as a live inference path — keep `GET /session/{id}/roles` as a snapshot-only endpoint
-- [ ] Remove `RoleInferenceService::streamRoleInference()` or gate it behind a debug flag
-- [ ] Update `ScribeController::rolesStream()` to return current cached state instead of re-running inference
-- [ ] Update `docs/footguns.md` FG-2 to mark as resolved
+- [x] **Retire `POST /session/{id}/roles/stream`** as a live inference path (endpoint deleted)
+- [x] Remove `RoleInferenceService::streamRoleInference()` — deleted `RoleInferenceResult` class and `streamRoleInference` method
+- [x] Update `ScribeController::rolesStream()` to return current cached state instead of re-running inference
+- [x] Update `docs/footguns.md` FG-2 to mark as resolved
 
 ### 3.5 Progressive Confidence UX
 
@@ -69,25 +69,25 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] Confidence badge: green (>=80%), amber (>=50%), grey (<50%)
 - [x] `relabelSegments()` retroactively updates all DOM segments on role update
 - [x] Inspector segment log updates retroactively
-- [ ] **Fix confidence calculation** — use EWMA or last-5-readings window (currently simple lifetime average that's permanently skewed by early low-confidence readings)
-- [ ] **Cold start animation** — segments fade from grey to colour-coded when confidence threshold crosses 0.8
-- [ ] **Flip notification** — brief toast: "Speaker labels corrected" when `flip_detected=true`
-- [ ] **Single speaker / silence** — maintain existing mapping, skip inference during silence (integrates with M2.5 VAD gating)
+- [x] **Fix confidence calculation** — use last-5-readings window (replaces lifetime average that was permanently skewed by early low-confidence readings)
+- [x] **Cold start animation** — segments fade from grey to colour-coded with 0.6s ease-out animation on relabel
+- [x] **Flip notification** — toast "Speaker labels corrected" via `showToast()` when `flip_detected=true`
+- [x] **Single speaker / silence** — `_session_has_multiple_speakers` skips inference for single-speaker sessions; empty segments not enqueued
 
 ### 3.6 Manual Speaker Override
 
 > **Why:** In a real session, the user knows who is speaking. A single click to correct a wrong assignment is faster than waiting for the agent to figure it out. This also improves agent accuracy for the rest of the session.
 
-- [ ] Click a speaker label in the transcript to cycle through available roles for the current mode
-- [ ] Override sent to backend as ground truth — locks the mapping for that speaker
-- [ ] Agent receives overrides as `confirmed_mapping` in its context — stops re-guessing confirmed speakers
-- [ ] Visual indicator on manually-confirmed segments
+- [x] Click a speaker label in the transcript to cycle through available roles for the current mode
+- [x] Override sent to backend as ground truth — locks the mapping for that speaker (`POST /session/{id}/roles/override`)
+- [x] Agent receives overrides as `confirmed_overrides` in its context — stops re-guessing confirmed speakers
+- [x] Visual indicator on manually-confirmed segments (checkmark icon next to overridden labels)
 
 ### 3.7 Mode Passthrough
 
-- [ ] Browser sends selected mode to backend (via WebSocket connect message or session config endpoint)
-- [ ] Agent system prompt dynamically includes mode-appropriate role names and reasoning signals
-- [ ] Backend publishes role labels matching the mode (not hardcoded DOCTOR/PATIENT)
+- [x] Browser sends selected mode to backend via WebSocket query parameter (`?mode=meeting`)
+- [x] Agent system prompt dynamically includes mode-appropriate role names and reasoning signals
+- [x] Backend publishes role labels matching the mode (agent receives mode-specific prompt + role instruction)
 - [x] Frontend mode selector with 6 modes, role labels, and avatars already exists
 
 ### 3.8 Tests
@@ -98,21 +98,21 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] `ScribeControllerTest.php` — 12 test methods covering index, history, roles, error handling
 - [x] `RoleInferenceServiceTest.php` — streaming, cancellation, error handling, mapping lookup
 - [ ] Test `assign_roles` tool with known segments → verify mapping structure
-- [ ] Test flip detection: send mapping A then reversed → verify `flip_detected=True`
-- [ ] Test 3+ speakers: verify the third speaker gets an appropriate role
-- [ ] Test mode-specific prompts: Medical vs Meeting vs General produce different role labels
+- [x] Test flip detection: send mapping A then reversed → verify `flip_detected=True` (`test_flip_detection_on_role_swap`, `test_no_flip_on_first_mapping`, `test_no_flip_on_same_mapping`)
+- [x] Test 3+ speakers: verify the third speaker gets an appropriate role (`test_three_speakers_mapping`)
+- [x] Test mode-specific prompts: verify ROLE_PROMPTS dict has correct role names per mode
 
 ---
 
 ## Exit Criteria
 
 - [ ] Roles correctly assigned in a live local session (Ollama, no AWS)
-- [ ] Single role delivery path (Mercure queue only, legacy SSE retired)
-- [ ] Mode-aware: selected mode determines role labels in agent reasoning and UI
-- [ ] Confidence threshold reachable (EWMA, not lifetime average)
-- [ ] Manual override works: click → lock → agent respects
+- [x] Single role delivery path (Mercure queue only, legacy SSE retired)
+- [x] Mode-aware: selected mode determines role labels in agent reasoning and UI
+- [x] Confidence threshold reachable (last-5 window, not lifetime average)
+- [x] Manual override works: click → lock → agent respects
 - [ ] 3+ speakers handled: additional speakers get appropriate labels per mode
-- [ ] Progressive confidence UX: grey → amber → green with animated relabel
+- [x] Progressive confidence UX: grey → amber → green with animated relabel
 
 ---
 

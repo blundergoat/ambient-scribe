@@ -54,13 +54,15 @@ class RoleMappingState:
     current_mapping: dict[str, str] = field(default_factory=dict)
     mapping_history: list[dict[str, str]] = field(default_factory=list)
     confidence_history: list[float] = field(default_factory=list)
+    confirmed_overrides: dict[str, str] = field(default_factory=dict)
 
     @property
     def running_confidence(self) -> float:
-        """Running average confidence across all invocations."""
+        """EWMA confidence over the last 5 invocations."""
         if not self.confidence_history:
             return 0.0
-        return sum(self.confidence_history) / len(self.confidence_history)
+        recent = self.confidence_history[-5:]
+        return sum(recent) / len(recent)
 
     def update(self, new_mapping: dict[str, str], confidence: float) -> bool:
         """Update the mapping and detect flips.

@@ -34,7 +34,7 @@ Make transcription accurate enough to trust: correct speaker-word attribution, s
 - [ ] **Finalize (on disconnect):** Full-buffer reprocess (existing behaviour). All segments become final.
 - [ ] Define window sizes as configurable env vars (`NEMO_FAST_WINDOW_SECONDS`, `NEMO_RECONCILE_WINDOW_SECONDS`)
 - [ ] Update `AudioBuffer` to support efficient windowed access (not just `current_window()` returning everything)
-- [ ] Use `collections.deque` in `AudioBuffer` for O(1) popleft (currently `list.pop(0)` is O(n))
+- [x] Use `collections.deque` in `AudioBuffer` for O(1) popleft (currently `list.pop(0)` is O(n))
 
 ### 2A.3 VRAM-Aware Buffer Management
 
@@ -64,9 +64,9 @@ Make transcription accurate enough to trust: correct speaker-word attribution, s
 
 ### 2A.6 Speaker Hallucination Filter
 
-- [ ] After diarisation, calculate each speaker's frame activity percentage
-- [ ] Suppress speakers with < 5% total frame activity (phantom speakers from Sortformer)
-- [ ] Log suppressed speakers for debugging
+- [x] After diarisation, calculate each speaker's frame activity percentage
+- [x] Suppress speakers with < 5% total frame activity (phantom speakers from Sortformer)
+- [x] Log suppressed speakers for debugging
 
 ### 2A.7 Quality Benchmarking
 

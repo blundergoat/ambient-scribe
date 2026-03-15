@@ -275,3 +275,68 @@ class TestNemoPipeline:
         words_1 = len(segments[1].text.split())
         assert words_0 + words_1 == 8
         assert words_1 > words_0  # Longer segment gets more words
+
+
+class TestFilterHallucinatedSpeakers:
+    """Tests for the hallucinated speaker filter."""
+
+    def test_suppresses_speaker_below_threshold(self):
+        """A speaker with 1s out of 100s total (1%) should be suppressed."""
+        parsed_diar = [
+            (0.0, 30.0, "speaker_0"),   # 30s — kept
+            (30.0, 69.0, "speaker_1"),   # 39s — kept
+            (69.0, 99.0, "speaker_0"),   # 30s — kept (total speaker_0 = 60s)
+            (99.0, 100.0, "speaker_2"),  # 1s  — suppressed (1%)
+        ]
+
+        result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
+
+        speaker_ids = {spk for _, _, spk in result}
+        assert "speaker_0" in speaker_ids
+        assert "speaker_1" in speaker_ids
+        assert "speaker_2" not in speaker_ids
+        assert len(result) == 3
+
+    def test_keeps_speakers_above_threshold(self):
+        """Speakers with >= 5% of total duration are kept."""
+        parsed_diar = [
+            (0.0, 50.0, "speaker_0"),   # 50%
+            (50.0, 100.0, "speaker_1"), # 50%
+        ]
+
+        result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
+        assert len(result) == 2
+
+    def test_empty_input(self):
+        """Empty diar list returns empty."""
+        assert NemoPipeline._filter_hallucinated_speakers([]) == []
+
+    def test_all_speakers_below_threshold_returns_empty(self):
+        """If every speaker is below 5% threshold individually but
+        together they're all equal, none are suppressed (each >= threshold)."""
+        # Two speakers, each exactly 50% — both kept
+        parsed_diar = [
+            (0.0, 1.0, "speaker_0"),
+            (1.0, 2.0, "speaker_1"),
+        ]
+        result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
+        assert len(result) == 2
+
+    def test_integration_with_parse_nemo_output(self):
+        """Hallucinated speaker is removed before words are distributed."""
+        pipeline = NemoPipeline()
+        # speaker_2 has 0.5s out of 100.5s total — well below 5%
+        diar = [[
+            "0.0 50.0 speaker_0",
+            "50.0 100.0 speaker_1",
+            "100.0 100.5 speaker_2",
+        ]]
+        hyp = MagicMock()
+        hyp.text = "word1 word2 word3 word4"
+
+        segments = pipeline._parse_nemo_output(diar, [hyp])
+
+        speaker_ids = {seg.speaker_id for seg in segments}
+        assert "speaker_2" not in speaker_ids
+        assert "speaker_0" in speaker_ids
+        assert "speaker_1" in speaker_ids

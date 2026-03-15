@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Controller;
 
 use App\Controller\ScribeController;
-use App\Service\RoleInferenceResult;
 use App\Service\RoleInferenceService;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -16,7 +15,6 @@ use StrandsPhpClient\StrandsClient;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\StreamedJsonResponse;
 
 final class ScribeControllerTest extends TestCase
 {
@@ -213,30 +211,6 @@ final class ScribeControllerTest extends TestCase
             'segments' => [],
             'error' => 'Agent unavailable: Connection refused',
         ], json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR));
-    }
-
-    public function testRolesStreamReturnsStreamedJsonResponse(): void
-    {
-        $roleInferenceService = $this->createMock(RoleInferenceService::class);
-        $roleInferenceService->expects(self::once())
-            ->method('streamRoleInference')
-            ->willReturnCallback(function (string $sessionId, callable $onUpdate): RoleInferenceResult {
-                self::assertSame('session-xyz', $sessionId);
-                $onUpdate(['mapping' => ['spk_0' => 'DOCTOR'], 'confidence' => 0.6]);
-                $onUpdate(['mapping' => ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'], 'confidence' => 0.92]);
-
-                return new RoleInferenceResult(
-                    mapping: ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'],
-                    confidence: 0.92,
-                    eventsReceived: 2,
-                );
-            });
-
-        $controller = $this->createController(roleInferenceService: $roleInferenceService);
-
-        $response = $controller->rolesStream('session-xyz');
-
-        self::assertInstanceOf(StreamedJsonResponse::class, $response);
     }
 
     public function testRolesReturnsCurrentMapping(): void

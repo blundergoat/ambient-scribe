@@ -18,12 +18,16 @@ def clear_inference_state():
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._session_modes.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     yield
     api_server.sessions._sessions.clear()
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._session_modes.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
 
 
@@ -42,14 +46,14 @@ class TestInferenceQueue:
         for segment in sample_segments:
             api_server.sessions.append_segment(session_id, dict(segment))
 
-        async def fake_publish(topic, data):
+        async def fake_publish(topic, data, event_id=None):
             published_events.append((topic, data))
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(
             api_server,
             "_run_role_inference",
-            lambda session_id, segments, transcript: {
+            lambda session_id, segments, transcript, mode="medical": {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.88,
                 "reasoning": "Opening clinical question identifies the doctor.",
@@ -86,10 +90,10 @@ class TestInferenceQueue:
         for segment in sample_segments:
             api_server.sessions.append_segment(session_id, dict(segment))
 
-        async def fake_publish(topic, data):
+        async def fake_publish(topic, data, event_id=None):
             return None
 
-        def fake_run_role_inference(session_id, segments, transcript):
+        def fake_run_role_inference(session_id, segments, transcript, mode="medical"):
             invocations.append([segment["text"] for segment in segments])
             if len(invocations) == 1:
                 started.set()
@@ -139,7 +143,7 @@ class TestInferenceQueue:
         for segment in single_speaker_segments:
             api_server.sessions.append_segment(session_id, dict(segment))
 
-        async def fake_publish(topic, data):
+        async def fake_publish(topic, data, event_id=None):
             published_events.append((topic, data))
 
         def fail_if_called(*args, **kwargs):

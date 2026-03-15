@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ambient Scribe — Real-time Transcription</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/tailwind.js"></script>
     <style>
         :root {
             color-scheme: light;
@@ -96,6 +96,15 @@
             background: var(--color-unknown-bg);
         }
 
+        .segment--relabeled {
+            animation: segment-relabel 0.6s ease-out;
+        }
+        @keyframes segment-relabel {
+            0% { opacity: 0.6; transform: translateX(-2px); }
+            50% { opacity: 1; }
+            100% { opacity: 1; transform: translateX(0); }
+        }
+
         .segment__avatar {
             width: 2rem;
             height: 2rem;
@@ -142,6 +151,19 @@
         .segment--PATIENT .segment__speaker,
         .segment--SPEAKER_B .segment__speaker { color: var(--color-speaker-b); }
         .segment--UNKNOWN .segment__speaker { color: var(--color-unknown); }
+
+        .segment__speaker[style*="cursor: pointer"]:hover {
+            text-decoration: underline;
+            text-decoration-style: dotted;
+        }
+
+        .segment__override-icon {
+            display: inline-block;
+            font-size: 0.625rem;
+            margin-left: 0.25rem;
+            vertical-align: super;
+            opacity: 0.7;
+        }
 
         .segment__time {
             font-size: 0.6875rem;
@@ -584,18 +606,21 @@
 
         {# Controls #}
         <div class="panel p-3 mb-4 flex items-center gap-3 flex-wrap">
-            <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording">
+            <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording (Space)" title="Start recording (Space)">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5"/></svg>
                 <span id="startBtnLabel">Start Recording</span>
+                <span class="text-xs opacity-70">(Space)</span>
             </button>
-            <button id="stopBtn" onclick="stopRecording()" class="btn btn--danger hidden" aria-label="Stop recording">
+            <button id="stopBtn" onclick="stopRecording()" class="btn btn--danger hidden" aria-label="Stop recording (Space or Escape)" title="Stop recording (Space / Esc)">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>
                 Stop
+                <span class="text-xs opacity-70">(Space)</span>
             </button>
             <button id="reconnectBtn" onclick="reconnect()" class="btn btn--ghost hidden" style="border-color:#f59e0b; color:#f59e0b;" aria-label="Reconnect">Reconnect</button>
-            <button id="downloadBtn" onclick="downloadTranscript()" class="btn btn--ghost hidden" aria-label="Download transcript">
+            <button id="downloadBtn" onclick="downloadTranscript()" class="btn btn--ghost hidden" aria-label="Download transcript (D)" title="Download transcript (D)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                 Download
+                <span class="text-xs opacity-70">(D)</span>
             </button>
             <button id="resetBtn" onclick="resetSession()" class="btn btn--ghost hidden" aria-label="New session">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
@@ -604,6 +629,7 @@
 
             <div class="flex items-center gap-3 ml-auto">
                 <span id="status" class="text-sm muted-text" aria-live="polite">Ready</span>
+                <span id="audioLevel" class="hidden ml-2 text-xs" aria-live="polite"></span>
                 <span id="confidenceBadge" class="confidence-badge text-xs px-2 py-0.5 rounded-full hidden" aria-label="Speaker identification confidence"></span>
                 <span id="timer" class="text-sm font-mono subtle-text hidden" aria-label="Recording timer">00:00</span>
             </div>
@@ -611,6 +637,7 @@
 
         {# System Banner #}
         <div id="systemBanner" class="hidden mb-4 px-4 py-3 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium border border-amber-300"></div>
+        <div id="toastContainer" style="position:fixed; bottom:1.5rem; right:1.5rem; z-index:50;"></div>
 
         {# Transcript #}
         <div id="transcript" role="log" aria-live="polite" class="panel p-4 overflow-y-auto" style="min-height:400px; max-height:calc(100vh - 220px);">
@@ -809,7 +836,7 @@
 
         subscribe(topic, handler) {
             if (this._streams.has(topic)) return;
-            const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null };
+            const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null, lastEventId: null };
             this._streams.set(topic, state);
             this._active = true;
             this._connect(topic, state);
@@ -849,12 +876,21 @@
             if (!this._active || !this._mercureUrl) return;
             const url = new URL(this._mercureUrl);
             url.searchParams.append('topic', topic);
+            // Mercure Last-Event-ID: resume from the last received event
+            // so we don't miss segments during brief network interruptions.
+            if (state.lastEventId) {
+                url.searchParams.append('Last-Event-ID', state.lastEventId);
+            }
             const source = new EventSource(url);
             state.source = source;
 
             source.onmessage = (event) => {
                 state.backoffMs = 1000;
                 state.retries = 0;
+                // Track the last event ID for reconnection
+                if (event.lastEventId) {
+                    state.lastEventId = event.lastEventId;
+                }
                 try { state.handler(JSON.parse(event.data)); }
                 catch (err) { console.error(`StreamOrchestrator: parse error on ${topic}`, err); }
             };
@@ -880,6 +916,7 @@
             this._targetSampleRate = options.targetSampleRate || 16000;
             this._chunkMs = options.chunkMs || 5000;
             this._onChunk = options.onChunk || (() => {});
+            this._onAudioLevel = options.onAudioLevel || null;
             this._audioContext = null;
             this._source = null;
             this._processor = null;
@@ -906,6 +943,17 @@
                 const downsampled = this._downsampleBuffer(input, this._audioContext.sampleRate, this._targetSampleRate);
                 const pcmChunk = this._floatTo16BitPcm(downsampled);
                 if (pcmChunk.byteLength === 0) return;
+
+                // Calculate RMS energy and fire callback
+                if (this._onAudioLevel) {
+                    let sumSquares = 0;
+                    for (let i = 0; i < downsampled.length; i++) {
+                        sumSquares += downsampled[i] * downsampled[i];
+                    }
+                    const rms = Math.sqrt(sumSquares / downsampled.length);
+                    this._onAudioLevel(rms);
+                }
+
                 this._buffers.push(pcmChunk);
                 this._bufferedBytes += pcmChunk.byteLength;
                 if (this._bufferedBytes >= this._bytesPerChunk) this.flush();
@@ -970,10 +1018,12 @@
     let ws = null;
     let recorder = null;
     let mediaStream = null;
+    let pcmStreamer = null;
     let timerInterval = null;
     let startTime = null;
     let segmentIndex = 0;
     let roleMapping = {};
+    let previousRoleMapping = {};
     let confidence = 0;
     let streams = null;
     let isRecording = false;
@@ -981,6 +1031,42 @@
     let reconnectAttempts = 0;
     let reconnectTimer = null;
     const MAX_RECONNECT_ATTEMPTS = 3;
+    const segmentsBySpeaker = new Map();
+    const manualOverrides = new Set();
+    let lowLevelCount = 0;
+
+    // =========================================================================
+    // Audio Level Feedback
+    // =========================================================================
+    function updateAudioLevel(rms) {
+        const el = document.getElementById('audioLevel');
+        if (!el) return;
+
+        if (rms > 0.95) {
+            lowLevelCount = 0;
+            el.classList.remove('hidden');
+            el.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:4px;"></span>Audio clipping detected';
+            el.style.color = '#ef4444';
+        } else if (rms < 0.005) {
+            lowLevelCount++;
+            if (lowLevelCount >= 3) {
+                el.classList.remove('hidden');
+                el.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#eab308;margin-right:4px;"></span>Low audio level \u2014 move closer to the microphone';
+                el.style.color = '#eab308';
+            }
+        } else {
+            lowLevelCount = 0;
+            el.classList.remove('hidden');
+            el.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;margin-right:4px;"></span>';
+            el.style.color = '#22c55e';
+        }
+    }
+
+    function hideAudioLevel() {
+        lowLevelCount = 0;
+        const el = document.getElementById('audioLevel');
+        if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+    }
 
     function showRoleIdentificationPending() {
         if (!CONFIG.enableRoleUpdates) return;
@@ -999,14 +1085,15 @@
                 audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             });
 
-            ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
+            ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}?mode=${currentMode}`);
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = async () => {
                 try {
                     pcmStreamer = new PcmStreamer(mediaStream, {
                         targetSampleRate: 16000, chunkMs: 5000,
-                        onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); }
+                        onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); },
+                        onAudioLevel: (rms) => { updateAudioLevel(rms); }
                     });
                     await pcmStreamer.start();
                 } catch (err) {
@@ -1068,6 +1155,7 @@
         document.getElementById('stopBtn').classList.add('hidden');
         document.getElementById('reconnectBtn').classList.add('hidden');
         document.getElementById('status').textContent = 'Session ended';
+        hideAudioLevel();
         announce('Recording stopped');
 
         if (segmentIndex > 0) {
@@ -1096,6 +1184,7 @@
         roleMapping = {};
         confidence = 0;
         startTime = null;
+        manualOverrides.clear();
         clearInterval(timerInterval);
         timerInterval = null;
 
@@ -1175,7 +1264,7 @@
     }
 
     function connectWebSocket() {
-        ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
+        ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}?mode=${currentMode}`);
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = async () => {
@@ -1183,7 +1272,8 @@
             if (!pcmStreamer && mediaStream) {
                 pcmStreamer = new PcmStreamer(mediaStream, {
                     targetSampleRate: 16000, chunkMs: 5000,
-                    onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); }
+                    onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); },
+                    onAudioLevel: (rms) => { updateAudioLevel(rms); }
                 });
                 await pcmStreamer.start();
             }
@@ -1281,18 +1371,35 @@
         const speakerLabel = role === 'UNKNOWN' ? segment.speaker_id : displayLabel;
         const avatarText = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
 
+        const isOverridden = manualOverrides.has(segment.speaker_id);
+        const overrideIcon = isOverridden ? ' <span class="segment__override-icon" title="Manually confirmed">&#x2713;</span>' : '';
+
         el.innerHTML = `
             <div class="segment__avatar">${avatarText}</div>
             <div class="segment__body">
                 <div class="segment__header">
-                    <span class="segment__speaker">${escapeHtml(speakerLabel)}</span>
+                    <span class="segment__speaker">${escapeHtml(speakerLabel)}${overrideIcon}</span>
                     <span class="segment__time">${formatTime(segment.start)}</span>
                 </div>
                 <span class="segment__text">${escapeHtml(segment.text)}</span>
             </div>
         `;
 
+        // Make the speaker label clickable for role override
+        const label = el.querySelector('.segment__speaker');
+        if (label) {
+            label.style.cursor = 'pointer';
+            label.title = 'Click to change role';
+            label.addEventListener('click', () => {
+                const speakerId = el.dataset.speakerId;
+                cycleRole(speakerId);
+            });
+        }
+
         container.appendChild(el);
+
+        if (!segmentsBySpeaker.has(segment.speaker_id)) segmentsBySpeaker.set(segment.speaker_id, []);
+        segmentsBySpeaker.get(segment.speaker_id).push(el);
 
         container.scrollTop = container.scrollHeight;
 
@@ -1301,12 +1408,79 @@
     }
 
     // =========================================================================
+    // Manual Speaker Role Override
+    // =========================================================================
+    function cycleRole(speakerId) {
+        const mode = getMode();
+        const roles = Object.keys(mode.roleLabels);
+        const currentRole = roleMapping[speakerId] || 'UNKNOWN';
+
+        let nextRole;
+        const idx = roles.indexOf(currentRole);
+        if (idx === -1) {
+            // Currently UNKNOWN or unrecognised — cycle to first role
+            nextRole = roles[0];
+        } else if (idx === roles.length - 1) {
+            // At end of role list — wrap to UNKNOWN, then back to first
+            nextRole = 'UNKNOWN';
+        } else {
+            nextRole = roles[idx + 1];
+        }
+
+        previousRoleMapping = { ...roleMapping };
+        roleMapping[speakerId] = nextRole;
+        manualOverrides.add(speakerId);
+        relabelSegments();
+        sendRoleOverride(speakerId, nextRole);
+    }
+
+    async function sendRoleOverride(speakerId, role) {
+        const wsBaseUrl = CONFIG.wsUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+        try {
+            await fetch(`${wsBaseUrl}/session/${CONFIG.sessionId}/roles/override`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ speaker_id: speakerId, role: role }),
+            });
+        } catch (e) {
+            console.warn('Role override failed:', e);
+        }
+    }
+
+    // =========================================================================
+    // Toast Notifications
+    // =========================================================================
+    function showToast(message, duration = 3000) {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.style.cssText = 'padding:0.5rem 1rem; margin-top:0.5rem; border-radius:0.5rem; font-size:0.875rem; font-weight:500; background:#fef3c7; color:#92400e; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1); opacity:1; transition:opacity 0.3s ease;';
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        }, duration);
+    }
+
+    // =========================================================================
     // Role Updates
     // =========================================================================
     function handleRoleUpdate(data) {
         if (!data.mapping) return;
-        roleMapping = data.mapping;
+        previousRoleMapping = { ...roleMapping };
+
+        // Apply the mapping but preserve manually-overridden speakers
+        for (const [spk, role] of Object.entries(data.mapping)) {
+            if (!manualOverrides.has(spk)) {
+                roleMapping[spk] = role;
+            }
+        }
         confidence = data.confidence || 0;
+
+        if (data.flip_detected) {
+            showToast('Speaker labels corrected');
+        }
 
         const badge = document.getElementById('confidenceBadge');
         badge.classList.remove('hidden');
@@ -1324,30 +1498,59 @@
     }
 
     function relabelSegments() {
-        document.querySelectorAll('.segment').forEach(el => {
-            const speakerId = el.dataset.speakerId;
+        // Only update segments for speakers whose role actually changed
+        const changedSpeakers = [];
+        for (const [speakerId, role] of Object.entries(roleMapping)) {
+            if (previousRoleMapping[speakerId] !== role) {
+                changedSpeakers.push(speakerId);
+            }
+        }
+
+        // If no previous mapping existed, update all tracked speakers
+        if (Object.keys(previousRoleMapping).length === 0) {
+            for (const speakerId of segmentsBySpeaker.keys()) {
+                if (!changedSpeakers.includes(speakerId)) changedSpeakers.push(speakerId);
+            }
+        }
+
+        for (const speakerId of changedSpeakers) {
             const newRole = roleMapping[speakerId] || 'UNKNOWN';
+            const elements = segmentsBySpeaker.get(speakerId) || [];
 
-            el.className = `segment segment--${newRole}`;
+            for (const el of elements) {
+                const previousClass = el.className;
+                el.className = `segment segment--${newRole}`;
 
-            const label = el.querySelector('.segment__speaker');
-            if (label) {
-                const displayLabel = getRoleLabel(newRole === 'UNKNOWN' ? 'UNKNOWN' : newRole);
-                label.textContent = newRole === 'UNKNOWN' ? speakerId : displayLabel;
+                // Animate segments that transition from UNKNOWN to a known role
+                if (previousClass.includes('segment--UNKNOWN') && newRole !== 'UNKNOWN') {
+                    el.classList.add('segment--relabeled');
+                    el.addEventListener('animationend', () => {
+                        el.classList.remove('segment--relabeled');
+                    }, { once: true });
+                }
+
+                const label = el.querySelector('.segment__speaker');
+                if (label) {
+                    const displayLabel = getRoleLabel(newRole === 'UNKNOWN' ? 'UNKNOWN' : newRole);
+                    const labelText = newRole === 'UNKNOWN' ? speakerId : displayLabel;
+                    const overrideIcon = manualOverrides.has(speakerId) ? ' <span class="segment__override-icon" title="Manually confirmed">&#x2713;</span>' : '';
+                    label.innerHTML = escapeHtml(labelText) + overrideIcon;
+                }
+
+                const avatar = el.querySelector('.segment__avatar');
+                if (avatar) {
+                    avatar.textContent = newRole === 'UNKNOWN' ? '?' : getAvatarLabel(newRole);
+                }
             }
+        }
 
-            const avatar = el.querySelector('.segment__avatar');
-            if (avatar) {
-                avatar.textContent = newRole === 'UNKNOWN' ? '?' : getAvatarLabel(newRole);
-            }
-        });
-
-        // Update inspector segment log entries retroactively
+        // Update inspector segment log entries retroactively (only changed speakers)
         const log = document.getElementById('devSegmentLog');
-        if (log) {
+        if (log && changedSpeakers.length > 0) {
+            const changedSet = new Set(changedSpeakers);
             log.querySelectorAll('.dev-panel__entry').forEach(entry => {
                 const speakerId = entry.dataset.speakerId;
-                if (!speakerId) return;
+                if (!speakerId || !changedSet.has(speakerId)) return;
                 const newRole = roleMapping[speakerId] || 'UNKNOWN';
                 const roleSpan = entry.querySelector('[data-role-label]');
                 if (roleSpan) {
@@ -1698,7 +1901,10 @@
             if (empty) empty.classList.add('hidden');
             segmentIndex = 0;
             roleMapping = {};
+            previousRoleMapping = {};
             confidence = 0;
+            segmentsBySpeaker.clear();
+            manualOverrides.clear();
             document.getElementById('segmentCount').textContent = '0';
 
             // Clear inspector panels between runs
@@ -1875,6 +2081,29 @@
         }
     });
     {% endif %}
+
+    // =========================================================================
+    // Keyboard Shortcuts
+    // =========================================================================
+    document.addEventListener('keydown', (e) => {
+        // Don't capture when typing in an input/textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        switch(e.key) {
+            case ' ':  // Space = toggle recording
+                e.preventDefault();
+                if (isRecording) stopRecording();
+                else startRecording();
+                break;
+            case 'Escape':  // Esc = stop recording
+                if (isRecording) stopRecording();
+                break;
+            case 'd':  // D = download
+                if (e.ctrlKey || e.metaKey) return; // don't capture Ctrl+D
+                document.getElementById('downloadBtn')?.click();
+                break;
+        }
+    });
     </script>
 </body>
 </html>

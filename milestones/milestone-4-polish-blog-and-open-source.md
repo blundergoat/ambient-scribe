@@ -1,7 +1,7 @@
 # Milestone 4 — Product Polish + Demo
 
 **Timeline:** Weekend 4 (~5-6 hours)
-**Status:** Not Started (some UI pieces already exist)
+**Status:** In Progress (audio quality feedback, accessibility, and several UI pieces done; summaries, replay, JS extraction remaining)
 **Dependencies:** Milestone 3 + 3.5 complete
 
 ---
@@ -16,10 +16,10 @@ Make the application demo-ready with a compelling user experience. Audio quality
 
 ### 4.1 Audio Quality Feedback
 
-- [ ] RMS energy check on incoming PCM chunks in `PcmStreamer`
-- [ ] If average amplitude below threshold for 3+ consecutive chunks: show "Low audio level — move closer to the microphone"
-- [ ] Clipping detection: if samples hit max int16 value frequently, show "Audio clipping detected"
-- [ ] Visual mic level indicator (waveform or simple bar) confirming the mic is active even during silence
+- [x] RMS energy check on incoming PCM chunks in `PcmStreamer`
+- [x] If average amplitude below threshold for 3+ consecutive chunks: show "Low audio level — move closer to the microphone"
+- [x] Clipping detection: if samples hit max int16 value frequently, show "Audio clipping detected"
+- [x] Visual mic level indicator (waveform or simple bar) confirming the mic is active even during silence
 
 ### 4.2 Session Summary Generation
 
@@ -48,9 +48,9 @@ Make the application demo-ready with a compelling user experience. Audio quality
 
 - [ ] Extract `PcmStreamer` and `StreamOrchestrator` into separate JS files (no build pipeline needed)
 - [ ] Separate dev panel / scenario runner from production template (conditional `<script>` loading)
-- [ ] Fix: `pcmStreamer` variable is an implicit global (never declared with `let`/`const`)
-- [ ] `relabelSegments()` performance: track segments by `speaker_id` in a Map, only update changed roles
-- [ ] Accessibility: `aria-live` on transcript container, keyboard shortcuts (Space=start/stop, Esc=end)
+- [x] Fix: `pcmStreamer` variable is an implicit global (never declared with `let`/`const`)
+- [x] `relabelSegments()` performance: track segments by `speaker_id` in a Map (`segmentsBySpeaker`), only update changed roles
+- [x] Accessibility: `aria-live` on transcript container, keyboard shortcuts (Space=start/stop, Esc=end)
 - [x] Timer, segment counter, download button already exist
 - [x] Light/dark theme with persistence already exists
 - [x] Mobile viewport meta tag already exists
@@ -68,7 +68,7 @@ Make the application demo-ready with a compelling user experience. Audio quality
 
 ## Exit Criteria
 
-- [ ] Audio quality feedback visible when mic level is too low
+- [x] Audio quality feedback visible when mic level is too low
 - [ ] Mode-appropriate summary generated on session end
 - [ ] Demo replay works end-to-end without live microphone
 - [ ] JS extracted from monolithic template (3+ separate files)

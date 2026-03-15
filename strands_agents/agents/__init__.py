@@ -16,6 +16,6 @@ DIRECTORY STRUCTURE (halaxy-agents-lab pattern):
     assign_roles.py         — Role mapping persistence, flip detection, confidence tracking
 """
 
-from agents.transcription_agent import create_role_inference_agent
+from agents.transcription_agent import ROLE_PROMPTS, create_role_inference_agent, get_role_instruction
 
-__all__ = ["create_role_inference_agent"]
+__all__ = ["ROLE_PROMPTS", "create_role_inference_agent", "get_role_instruction"]

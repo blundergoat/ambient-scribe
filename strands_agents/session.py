@@ -132,12 +132,15 @@ class SessionStore:
         self._sessions.move_to_end(session_id)
         return list(session.segments)
 
-    def get_transcript_text(self, session_id: str, max_chars: int = 2000) -> str:
+    def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str:
         """Return the accumulated transcript as plain text (for role inference context).
+
+        Returns the first 500 chars (opening context) plus the last (max_chars - 500)
+        chars (recent context), separated by an ellipsis marker.
 
         Args:
             session_id: The session UUID
-            max_chars: Maximum characters to return (last N chars)
+            max_chars: Maximum characters to return (first 500 + last N)
 
         Returns:
             Plain text transcript with speaker labels.
@@ -151,7 +154,9 @@ class SessionStore:
 
         full_text = "\n".join(lines)
         if len(full_text) > max_chars:
-            return full_text[-max_chars:]
+            first = full_text[:500]
+            last = full_text[-(max_chars - 500):]
+            return first + "\n...\n" + last
         return full_text
 
     def cleanup(self, session_id: str) -> None:

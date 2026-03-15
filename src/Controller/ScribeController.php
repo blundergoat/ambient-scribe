@@ -13,7 +13,6 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\StreamedJsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Uid\Uuid;
 
@@ -23,7 +22,6 @@ use Symfony\Component\Uid\Uuid;
  * Endpoints:
  *   GET  /scribe                    - Renders the transcript UI with session config
  *   GET  /scribe/{id}/history       - Returns the full transcript for a completed session
- *   POST /scribe/{id}/roles/stream  - Streams progressive role inference via SSE
  *   GET  /scribe/{id}/roles         - Returns the current role mapping snapshot
  *
  * ARCHITECTURE NOTE:
@@ -123,37 +121,6 @@ class ScribeController extends AbstractController
                 'error' => 'Agent unavailable: ' . $e->getMessage(),
             ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
-    }
-
-    /**
-     * POST /scribe/{sessionId}/roles/stream - Stream progressive role inference.
-     *
-     * Uses streamSse() to consume the Python agent's role inference endpoint.
-     * Returns a streamed JSON response where each line is a role_update event.
-     * The browser can read this with fetch() + ReadableStream or EventSource.
-     *
-     * Per-request timeout: 15s (LLM inference via Bedrock, not instant).
-     * Cancellation: consumer returns false to stop the stream early.
-     */
-    #[Route('/scribe/{sessionId}/roles/stream', name: 'scribe_roles_stream', methods: ['POST'])]
-    public function rolesStream(string $sessionId): StreamedJsonResponse
-    {
-        $events = [];
-
-        $result = $this->roleInferenceService->streamRoleInference(
-            $sessionId,
-            function (array $event) use (&$events): null {
-                $events[] = $event;
-
-                return null;
-            },
-        );
-
-        return new StreamedJsonResponse([
-            'session_id' => $sessionId,
-            'events' => $events,
-            'result' => $result->toArray(),
-        ]);
     }
 
     /**

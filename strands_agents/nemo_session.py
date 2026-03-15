@@ -38,6 +38,7 @@ import logging
 import subprocess
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 
 from nemo_pipeline import NemoPipeline, Segment
@@ -60,7 +61,7 @@ class AudioBuffer:
             max_duration_seconds: Maximum audio duration to retain (default: 15 minutes).
                                   Safety cap to prevent unbounded memory growth.
         """
-        self._chunks: list[bytes] = []
+        self._chunks: deque[bytes] = deque()
         self._total_bytes: int = 0
         self._max_bytes: int = int(max_duration_seconds * 16000 * 2)  # 16kHz, 16-bit = 32KB/s
 
@@ -75,7 +76,7 @@ class AudioBuffer:
 
         # Safety cap: if buffer exceeds max, trim from the beginning
         while self._total_bytes > self._max_bytes and len(self._chunks) > 1:
-            removed = self._chunks.pop(0)
+            removed = self._chunks.popleft()
             self._total_bytes -= len(removed)
 
     def current_window(self) -> bytes:

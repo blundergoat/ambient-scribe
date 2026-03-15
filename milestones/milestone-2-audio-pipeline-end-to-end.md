@@ -91,8 +91,8 @@ Live mic audio from browser → WebSocket → NeMo → transcript segments back 
 - [x] `test_concurrent_sessions.py` — multi-session isolation
 - [x] `test_mercure_failures.py` — publish retry and failure handling
 - [x] `test_inference_queue.py` — sequential processing, role publication
-- [ ] **Fix `test_api.py`** — missing imports (`ThreadPoolExecutor`, `httpx`, `WebSocketDisconnect`, `asyncio`) and undefined `client` fixture
-- [ ] **Fix `test_nemo_session.py`** — references `_webm_accumulator` which no longer exists
+- [x] **Fix `test_api.py`** — missing imports (`ThreadPoolExecutor`, `httpx`, `WebSocketDisconnect`, `asyncio`) and undefined `client` fixture
+- [x] **Fix `test_nemo_session.py`** — references `_webm_accumulator` which no longer exists
 - [x] PHPUnit: 28 tests, 116 assertions passing. PHPStan Level 10 clean.
 
 ---
@@ -106,7 +106,7 @@ Live mic audio from browser → WebSocket → NeMo → transcript segments back 
 - [x] Can see `spk_0`, `spk_1`, `spk_2` labelled text appearing as you speak
 - [x] NeMo models loaded once at startup, shared across sessions
 - [x] Structured logging with correlation IDs and timing in place
-- [ ] **Python tests pass** (blocked by `test_api.py` import issues)
+- [x] **Python tests pass** (98 tests all green)
 
 ---
 

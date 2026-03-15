@@ -69,19 +69,21 @@ Mercure is optional (Docker Compose only) — without it, the app falls back to 
 
 ### Docker Compose mode
 
-3 containers with automatic dependency ordering:
+3 containers with automatic dependency ordering (+ 1 optional):
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | **nemo-agent** | Built from `docker/nemo/Dockerfile` | 48101 → 8000 | Python FastAPI agent with NeMo inference |
 | **mercure** | dunglas/mercure | 48137 → 3701 | Real-time SSE hub for streaming mode |
 | **app** | Built from `Dockerfile` | 48082 → 8080 | PHP Symfony scribe UI |
+| **ollama** *(optional)* | ollama/ollama | 11434 → 11434 | Local LLM for role inference (CPU-only) |
 
-Startup order: nemo-agent → mercure → app
+Startup order: nemo-agent → mercure → app. The ollama service is opt-in via the `local` profile (`docker compose --profile local up`).
 
 Containers talk via Docker networking (e.g. `http://nemo-agent:8000`, `http://mercure:3701`).
-If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches a host Ollama instance via
-`OLLAMA_HOST` (default `http://host.docker.internal:11434`).
+If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST`:
+- Host-installed Ollama (default): `http://host.docker.internal:11434`
+- Docker Compose Ollama (profile): `http://ollama:11434`
 
 ### Bare-metal mode
 
@@ -111,8 +113,8 @@ cp .env.example .env
 No credentials needed. The model runs on your machine.
 
 ```env
-MODEL_PROVIDER=ollama
-OLLAMA_MODEL=qwen2.5:14b
+ROLE_AGENT_MODEL_PROVIDER=ollama
+ROLE_AGENT_OLLAMA_MODEL=qwen2.5:14b
 ```
 
 #### AWS Bedrock (cloud)
@@ -120,25 +122,62 @@ OLLAMA_MODEL=qwen2.5:14b
 Uses cloud-hosted models. Requires AWS credentials.
 
 ```env
-MODEL_PROVIDER=bedrock
+ROLE_AGENT_MODEL_PROVIDER=bedrock
 AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_SESSION_TOKEN=              # Only if using temporary credentials
 AWS_DEFAULT_REGION=ap-southeast-2
-MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
+ROLE_AGENT_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
+
+### Ollama Setup
+
+Ollama provides local LLM inference for role attribution (DOCTOR/PATIENT). The GPU is reserved for NeMo transcription, so Ollama always runs on CPU.
+
+#### Option A: Install Ollama natively (recommended for bare-metal dev)
+
+Install from https://ollama.com, then pull the recommended model:
+
+```bash
+ollama pull qwen2.5:14b
+```
+
+`start-dev.sh` auto-starts Ollama if the binary is installed but the server is not running.
+
+#### Option B: Use the Docker Compose profile
+
+An optional Ollama service is included in `docker-compose.yml` via the `local` profile:
+
+```bash
+docker compose --profile local up
+```
+
+This starts Ollama alongside the main stack. When using this, set `OLLAMA_HOST` so the nemo-agent container can reach it:
+
+```env
+OLLAMA_HOST=http://ollama:11434
+```
+
+#### Expected CPU inference latency
+
+| Model | RAM needed | Inference time (CPU, 64GB RAM) |
+|-------|-----------|-------------------------------|
+| `qwen2.5:7b` | ~8GB | ~15s per role inference |
+| `qwen2.5:14b` | ~16GB | ~30s per role inference |
+
+These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously — transcript segments appear immediately, and DOCTOR/PATIENT labels update a few seconds later.
 
 ### Changing the Ollama model
 
 Edit `.env`:
 
 ```env
-OLLAMA_MODEL=mistral
+ROLE_AGENT_OLLAMA_MODEL=mistral
 ```
 
-Good options: `qwen2.5:14b` (default, 9GB), `mistral` (4GB), `llama3.1` (4.7GB), `gemma2` (5.4GB).
+Good options: `qwen2.5:14b` (default, 9GB), `qwen2.5:7b` (5GB), `mistral` (4GB), `llama3.1` (4.7GB).
 
-Smaller models are faster but produce lower quality council debates. The 14b parameter model is a good balance for machines with 16GB+ RAM.
+Smaller models are faster but produce lower quality role attribution. The 14b model is a good balance for machines with 16GB+ RAM.
 
 **For Docker Compose**: restart to pull the new model:
 
@@ -151,25 +190,14 @@ docker compose up
 
 ```bash
 # Either set in .env and restart, or override inline:
-OLLAMA_MODEL=mistral ./scripts/start-dev.sh
+ROLE_AGENT_OLLAMA_MODEL=mistral ./scripts/start-dev.sh
 ```
 
 **To pull a model manually**:
 
 ```bash
-ollama pull mistral
+ollama pull qwen2.5:14b
 ```
-
-### Hardware requirements for Ollama
-
-| Model | Size | RAM needed | GPU VRAM | Speed |
-|-------|------|-----------|----------|-------|
-| mistral (7B) | ~4GB | 8GB | 8GB | Fast |
-| llama3.1 (8B) | ~4.7GB | 8GB | 8GB | Fast |
-| qwen2.5:14b | ~9GB | 16GB | 16GB | Moderate |
-| llama3.1:70b | ~40GB | 64GB | 48GB | Slow |
-
-CPU inference works but is significantly slower. A GPU with sufficient VRAM is recommended.
 
 ### Other environment variables
 

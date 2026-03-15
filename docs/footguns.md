@@ -13,10 +13,10 @@ Each entry names the files involved, what breaks, and the evidence.
 - **Status:** `publish_to_mercure()` now returns `bool`, logs at ERROR, and sends a `system_error` WebSocket text frame to the browser on first failure. The template shows a persistent amber banner. The UI still depends on Mercure for segment delivery, but silent data loss is now surfaced.
 - **Remaining risk:** No fallback data path — if Mercure is down, segments are transcribed but not displayed until reconnection.
 
-### 2. Live role updates have two competing delivery paths
-- **Files:** `strands_agents/api/server.py:308-375`, `strands_agents/api/server.py:600-688`, `src/Service/RoleInferenceService.php:56-99`, `src/Controller/ScribeController.php:111-146`
-- **What breaks:** The Mercure queue path and the legacy PHP SSE proxy can infer roles from different transcript snapshots and timings, producing divergent mappings and duplicate compute.
-- **Evidence:** The queue worker publishes `scribe/session/{id}/roles`, while `/session/{id}/roles/stream` reruns role inference from stored transcript state and PHP still proxies that endpoint.
+### 2. ~~Live role updates have two competing delivery paths~~ (RESOLVED)
+- **Files:** `strands_agents/api/server.py`, `src/Service/RoleInferenceService.php`, `src/Controller/ScribeController.php`
+- **Status:** The PHP SSE proxy endpoint (`POST /scribe/{id}/roles/stream`) has been deleted. `RoleInferenceService::streamRoleInference()` and the `RoleInferenceResult` class have been deleted. The Mercure queue is the single live role delivery path. `RoleInferenceService` now only provides `getCurrentMapping()` for snapshot lookups.
+- **Remaining risk:** None. Single delivery path.
 
 ### 3. Session lifecycle ~~is split across three in-memory stores~~ (MITIGATED)
 - **Files:** `strands_agents/session_lifecycle.py`, `strands_agents/api/server.py:217-218`, `strands_agents/tools/assign_roles.py`
@@ -38,7 +38,13 @@ Each entry names the files involved, what breaks, and the evidence.
 - **What breaks:** GPU exhaustion, model-load failure, or degraded model state requires a process/container restart. Only two concurrent NeMo executor workers are allowed, regardless of hardware.
 - **Evidence:** The NeMo pipeline is created once during lifespan startup and shared for all sessions; the executor and GPU reservation are hardcoded.
 
-### 7. Terraform provisions DynamoDB, but runtime session state is still memory-only
+### 7. WebSocket reconnect grace period keeps sessions alive after disconnect
+- **Files:** `strands_agents/session_lifecycle.py:schedule_destroy`, `strands_agents/api/server.py:transcribe_stream`, `strands_agents/api/server.py:_periodic_cleanup`
+- **Status:** On WebSocket disconnect, `schedule_destroy()` delays session cleanup by `SESSION_RECONNECT_GRACE_SECONDS` (default 30). If the same `session_id` reconnects within the window, `register()` cancels the pending destroy and the existing `TranscriptionSession` (audio buffer + transcript state) is reused.
+- **What could break:** During the grace window, `_session_modes`, `_mercure_event_ids`, and role state remain alive. The periodic cleanup treats sessions with pending destroys as "live" to avoid premature eviction. If the grace period is set very long, memory usage grows because audio buffers are not released.
+- **Evidence:** `lifecycle._pending_destroys` dict holds `asyncio.Task` objects for each scheduled destroy.
+
+### 8. Terraform provisions DynamoDB, but runtime session state is still memory-only
 - **Files:** `infra/terraform/environments/prod/main.tf:82-90`, `infra/terraform/environments/prod/main.tf:142-146`, `strands_agents/session.py:28-29`, `strands_agents/session.py:37-39`
 - **What breaks:** Production infrastructure implies persisted session storage, but live code still uses an in-memory `SessionStore` with TTL/LRU limits and loses data on restart.
 - **Evidence:** Terraform exports a DynamoDB table name to the agent container, while `SessionStore` keeps transcript data in a Python `OrderedDict` only.

@@ -2,12 +2,23 @@
 Tests for the FastAPI server endpoints.
 """
 
+import asyncio
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+import httpx
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import api.server as api_server
 from api.server import app, lifecycle, session_history, sessions, transcribe_stream
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
+
+# Valid UUID for tests (session_id validation requires UUID format)
+TEST_SESSION_ID = "00000000-0000-4000-8000-000000000001"
+TEST_SESSION_ID_2 = "00000000-0000-4000-8000-000000000002"
+TEST_SESSION_ID_3 = "00000000-0000-4000-8000-000000000003"
 import tools.assign_roles as role_tools
 
 
@@ -22,16 +33,27 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
+    api_server._session_modes.clear()
+    api_server._mercure_event_ids.clear()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
+    app.state.http_client = httpx.AsyncClient(timeout=5.0)
     yield
     sessions._sessions.clear()
     lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
+    api_server._session_modes.clear()
+    api_server._mercure_event_ids.clear()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
+
+
+@pytest.fixture
+def client():
+    """Synchronous test client for FastAPI app."""
+    return TestClient(app)
 
 
 class TestHealthEndpoint:
@@ -63,10 +85,10 @@ class TestSessionHistory:
     """Tests for the /session/{id}/history endpoint."""
 
     def test_history_nonexistent_session(self, client):
-        response = client.get("/session/nonexistent-id/history")
+        response = client.get(f"/session/{TEST_SESSION_ID}/history")
         assert response.status_code == 200
         data = response.json()
-        assert data["session_id"] == "nonexistent-id"
+        assert data["session_id"] == TEST_SESSION_ID
         assert data["segments"] == []
 
     @pytest.mark.asyncio
@@ -74,22 +96,22 @@ class TestSessionHistory:
         """PHP StrandsClient uses postJson() — endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.post("/session/post-test/history")
+            response = await client.post(f"/session/{TEST_SESSION_ID}/history")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["session_id"] == "post-test"
+        assert data["session_id"] == TEST_SESSION_ID
 
     @pytest.mark.asyncio
     async def test_roles_accepts_post(self):
         """PHP StrandsClient uses postJson() — endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.post("/session/post-test/roles")
+            response = await client.post(f"/session/{TEST_SESSION_ID}/roles")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["session_id"] == "post-test"
+        assert data["session_id"] == TEST_SESSION_ID
         assert isinstance(data["mapping"], dict)
 
 
@@ -116,13 +138,13 @@ class TestTranscriptionEndpoints:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.post(
                 "/transcribe/file",
-                params={"session_id": "batch-session"},
+                params={"session_id": TEST_SESSION_ID},
                 files={"file": ("sample.wav", b"RIFFtest", "audio/wav")},
             )
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["session_id"] == "batch-session"
+        assert payload["session_id"] == TEST_SESSION_ID
         assert payload["segments"][0]["speaker_id"] == "spk_0"
 
     @pytest.mark.asyncio
@@ -138,22 +160,18 @@ class TestTranscriptionEndpoints:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.post(
                 "/transcribe/file",
-                data={"session_id": "batch-form-session"},
+                data={"session_id": TEST_SESSION_ID_2},
                 files={"file": ("sample.wav", b"RIFFtest", "audio/wav")},
             )
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["session_id"] == "batch-form-session"
+        assert payload["session_id"] == TEST_SESSION_ID_2
 
     @pytest.mark.asyncio
     async def test_transcribe_stream_publishes_and_persists_segments(self, monkeypatch):
         published_events = []
         enqueued_segments = []
-
-        class ImmediateLoop:
-            async def run_in_executor(self, executor, func, *args):
-                return func(*args)
 
         class StubPipeline:
             def transcribe_buffer(self, audio_buffer):
@@ -170,6 +188,7 @@ class TestTranscriptionEndpoints:
         class FakeWebSocket:
             def __init__(self):
                 self.headers = {}
+                self.query_params = {}
                 self.accepted = False
                 self._sent_chunk = False
 
@@ -183,29 +202,35 @@ class TestTranscriptionEndpoints:
                 self._sent_chunk = True
                 return b"\x00" * 3200
 
-        async def fake_publish(topic, data):
+        async def fake_publish(topic, data, event_id=None):
             published_events.append((topic, data))
             return True
 
-        async def fake_enqueue(session_id, segments):
+        async def fake_enqueue(session_id, segments, mode=None):
             enqueued_segments.append((session_id, segments))
+
+        # Use a real executor that runs synchronously in-process
+        sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-sync")
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
-        monkeypatch.setattr("api.server.asyncio.get_event_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr("api.server.nemo_executor", sync_executor)
         monkeypatch.setattr("api.server.publish_to_mercure", fake_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
+        # Use 0 grace period so schedule_destroy fires immediately in tests
+        monkeypatch.setattr("api.server.SESSION_RECONNECT_GRACE_SECONDS", 0.0)
 
         websocket = FakeWebSocket()
-        await transcribe_stream(websocket, "test-session")
+        await transcribe_stream(websocket, TEST_SESSION_ID)
 
         assert websocket.accepted is True
-        history = await session_history("test-session")
+        history = await session_history(TEST_SESSION_ID)
         assert history["segments"][0]["speaker_id"] == "spk_1"
         assert any(event[1]["type"] == "segment" for event in published_events)
         assert any(event[1]["type"] == "finalized" for event in published_events)
+        sync_executor.shutdown(wait=False)
         assert enqueued_segments == [(
-            "test-session",
+            TEST_SESSION_ID,
             [{
                 "speaker_id": "spk_1",
                 "text": "I have had a cough for three days.",
@@ -233,6 +258,7 @@ class TestTranscriptionEndpoints:
         class FakeWebSocket:
             def __init__(self):
                 self.headers = {}
+                self.query_params = {}
                 self.accepted = False
                 self._chunks_sent = 0
 
@@ -248,7 +274,7 @@ class TestTranscriptionEndpoints:
             async def send_json(self, data):
                 sent_json_messages.append(data)
 
-        async def failing_publish(topic, data):
+        async def failing_publish(topic, data, event_id=None):
             return False
 
         async def fake_enqueue(session_id, segments):
@@ -256,12 +282,14 @@ class TestTranscriptionEndpoints:
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
-        monkeypatch.setattr("api.server.asyncio.get_event_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr("api.server.asyncio.get_running_loop", lambda: ImmediateLoop())
         monkeypatch.setattr("api.server.publish_to_mercure", failing_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
+        # Use 0 grace period so schedule_destroy fires immediately in tests
+        monkeypatch.setattr("api.server.SESSION_RECONNECT_GRACE_SECONDS", 0.0)
 
         websocket = FakeWebSocket()
-        await transcribe_stream(websocket, "mercure-fail-session")
+        await transcribe_stream(websocket, TEST_SESSION_ID)
 
         # Should have sent exactly one system_error warning
         error_messages = [m for m in sent_json_messages if m.get("type") == "system_error"]
@@ -329,30 +357,6 @@ class TestSessionLifecycle:
         # All role states should be cleaned up
         for i in range(10):
             assert f"cycle-{i}" not in _session_states
-
-    @pytest.mark.asyncio
-    async def test_sse_consumer_prevents_premature_role_cleanup(self):
-        """Role state is preserved while SSE consumer is active."""
-        from nemo_pipeline import NemoPipeline
-        from nemo_session import TranscriptionSession
-        from tools.assign_roles import get_or_create_state, _session_states
-
-        pipeline = NemoPipeline()
-        session = TranscriptionSession("sse-test", pipeline)
-        await lifecycle.register("sse-test", session)
-        get_or_create_state("sse-test").update({"spk_0": "DOCTOR"}, 0.9)
-
-        # SSE consumer starts
-        lifecycle.sse_consumer_start("sse-test")
-
-        # Destroy while SSE is active — role state should survive
-        await lifecycle.destroy("sse-test")
-        assert not lifecycle.is_active("sse-test")
-        assert "sse-test" in _session_states  # preserved for SSE reader
-
-        # SSE consumer ends — now role state should be cleaned up
-        lifecycle.sse_consumer_end("sse-test")
-        assert "sse-test" not in _session_states
 
     @pytest.mark.asyncio
     async def test_destroy_lock_timeout_still_cleans_best_effort(self, monkeypatch):
