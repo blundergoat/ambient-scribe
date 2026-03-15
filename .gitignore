@@ -33,6 +33,7 @@ strands_agents/**/.venv/
 .claude/settings.local.json
 tasks/todo.md
 tasks/handoff.md
+/commit.md
 
 # Node
 node_modules/
