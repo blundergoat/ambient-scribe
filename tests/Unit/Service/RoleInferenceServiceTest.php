@@ -45,6 +45,13 @@ final class RoleInferenceServiceTest extends TestCase
                     ]);
                 },
             );
+        $this->strandsClient->expects(self::once())
+            ->method('postJson')
+            ->with('/session/session-123/roles', [], 5)
+            ->willReturn([
+                'mapping' => ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'],
+                'confidence' => 0.92,
+            ]);
 
         $collectedEvents = [];
         $result = $this->service->streamRoleInference(
@@ -67,6 +74,8 @@ final class RoleInferenceServiceTest extends TestCase
 
     public function testStreamRoleInferenceCancelledByConsumer(): void
     {
+        $this->strandsClient->expects(self::never())
+            ->method('postJson');
         $this->strandsClient->method('streamSse')
             ->willReturnCallback(function (string $path, array $payload, callable $onEvent): void {
                 $onEvent(['mapping' => ['spk_0' => 'DOCTOR'], 'confidence' => 0.5]);
@@ -92,6 +101,8 @@ final class RoleInferenceServiceTest extends TestCase
 
     public function testStreamRoleInferenceHandlesAgentErrorException(): void
     {
+        $this->strandsClient->expects(self::never())
+            ->method('postJson');
         $this->strandsClient->method('streamSse')
             ->willThrowException(new AgentErrorException('Model timeout', statusCode: 504));
 
@@ -108,6 +119,8 @@ final class RoleInferenceServiceTest extends TestCase
 
     public function testStreamRoleInferenceHandlesStrandsException(): void
     {
+        $this->strandsClient->expects(self::never())
+            ->method('postJson');
         $this->strandsClient->method('streamSse')
             ->willThrowException(new StrandsException('Connection refused'));
 
@@ -129,6 +142,13 @@ final class RoleInferenceServiceTest extends TestCase
                 $onEvent(['confidence' => 0.75]);
                 $onEvent(['status' => 'processing']);
             });
+        $this->strandsClient->expects(self::once())
+            ->method('postJson')
+            ->with('/session/session-partial/roles', [], 5)
+            ->willReturn([
+                'mapping' => ['spk_0' => 'DOCTOR'],
+                'confidence' => 0.75,
+            ]);
 
         $result = $this->service->streamRoleInference(
             'session-partial',
@@ -146,12 +166,133 @@ final class RoleInferenceServiceTest extends TestCase
             ->willReturnCallback(function (string $path, array $payload, callable $onEvent): void {
                 $onEvent(['mapping' => 'invalid', 'confidence' => 'not-a-number']);
             });
+        $this->strandsClient->expects(self::once())
+            ->method('postJson')
+            ->with('/session/session-bad-data/roles', [], 5)
+            ->willReturn([
+                'mapping' => 'invalid',
+                'confidence' => 'not-a-number',
+            ]);
 
         $result = $this->service->streamRoleInference(
             'session-bad-data',
             static fn (array $event): null => null,
         );
 
+        self::assertSame([], $result->mapping);
+        self::assertSame(0.0, $result->confidence);
+    }
+
+    public function testStreamRoleInferenceUsesAuthoritativeSnapshotAfterStream(): void
+    {
+        $this->strandsClient->expects(self::once())
+            ->method('streamSse')
+            ->willReturnCallback(function (string $path, array $payload, callable $onEvent): void {
+                $onEvent([
+                    'type' => 'role_update',
+                    'mapping' => ['spk_0' => 'UNKNOWN'],
+                    'confidence' => 0.2,
+                ]);
+            });
+        $this->strandsClient->expects(self::once())
+            ->method('postJson')
+            ->with('/session/session-snapshot/roles', [], 5)
+            ->willReturn([
+                'mapping' => ['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'],
+                'confidence' => 0.97,
+            ]);
+
+        $result = $this->service->streamRoleInference(
+            'session-snapshot',
+            static fn (array $event): null => null,
+        );
+
+        self::assertTrue($result->isSuccessful());
+        self::assertSame(['spk_0' => 'DOCTOR', 'spk_1' => 'PATIENT'], $result->mapping);
+        self::assertSame(0.97, $result->confidence);
+    }
+
+    public function testStreamRoleInferenceFallsBackToStreamStateWhenSnapshotLookupFails(): void
+    {
+        $this->strandsClient->expects(self::once())
+            ->method('streamSse')
+            ->willReturnCallback(function (string $path, array $payload, callable $onEvent): void {
+                $onEvent([
+                    'type' => 'role_update',
+                    'mapping' => ['spk_0' => 'DOCTOR'],
+                    'confidence' => 0.88,
+                ]);
+            });
+        $this->strandsClient->expects(self::once())
+            ->method('postJson')
+            ->with('/session/session-fallback/roles', [], 5)
+            ->willThrowException(new StrandsException('snapshot unavailable'));
+
+        $result = $this->service->streamRoleInference(
+            'session-fallback',
+            static fn (array $event): null => null,
+        );
+
+        self::assertTrue($result->isSuccessful());
+        self::assertSame(['spk_0' => 'DOCTOR'], $result->mapping);
+        self::assertSame(0.88, $result->confidence);
+    }
+
+    public function testStreamRoleInferenceHandlesInBandErrorEvent(): void
+    {
+        $this->strandsClient->expects(self::once())
+            ->method('streamSse')
+            ->willReturnCallback(function (string $path, array $payload, callable $onEvent): void {
+                $result = $onEvent([
+                    'type' => 'role_update',
+                    'mapping' => ['spk_0' => 'DOCTOR'],
+                    'confidence' => 0.5,
+                ]);
+                self::assertNull($result);
+
+                $result = $onEvent([
+                    'type' => 'error',
+                    'message' => 'Bedrock unavailable',
+                ]);
+                self::assertFalse($result);
+            });
+        $this->strandsClient->expects(self::never())
+            ->method('postJson');
+
+        $events = [];
+        $result = $this->service->streamRoleInference(
+            'session-error-event',
+            static function (array $event) use (&$events): null {
+                $events[] = $event;
+
+                return null;
+            },
+        );
+
+        self::assertCount(2, $events);
+        self::assertFalse($result->isSuccessful());
+        self::assertSame('Bedrock unavailable', $result->error);
+        self::assertSame(['spk_0' => 'DOCTOR'], $result->mapping);
+        self::assertSame(0.5, $result->confidence);
+        self::assertSame(2, $result->eventsReceived);
+        self::assertFalse($result->cancelled);
+    }
+
+    public function testStreamRoleInferenceTreatsEmptyStreamAsError(): void
+    {
+        $this->strandsClient->expects(self::once())
+            ->method('streamSse');
+        $this->strandsClient->expects(self::never())
+            ->method('postJson');
+
+        $result = $this->service->streamRoleInference(
+            'session-empty',
+            static fn (array $event): null => null,
+        );
+
+        self::assertFalse($result->isSuccessful());
+        self::assertSame('Role inference stream ended before any events were received', $result->error);
+        self::assertSame(0, $result->eventsReceived);
         self::assertSame([], $result->mapping);
         self::assertSame(0.0, $result->confidence);
     }

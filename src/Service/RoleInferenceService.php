@@ -34,6 +34,7 @@ use StrandsPhpClient\StrandsClient;
 class RoleInferenceService
 {
     private const ROLE_INFERENCE_TIMEOUT = 15;
+    private const ROLE_SNAPSHOT_TIMEOUT = 5;
 
     public function __construct(
         private readonly StrandsClient $strandsClient,
@@ -59,6 +60,7 @@ class RoleInferenceService
         $lastMapping = [];
         $lastConfidence = 0.0;
         $cancelled = false;
+        $streamError = null;
 
         $this->logger->debug('RoleInference: starting stream', [
             'session_id' => $sessionId,
@@ -69,9 +71,10 @@ class RoleInferenceService
             $this->strandsClient->streamSse(
                 "/session/{$sessionId}/roles/stream",
                 ['session_id' => $sessionId],
-                function (array $event) use ($sessionId, $onUpdate, &$eventsReceived, &$lastMapping, &$lastConfidence, &$cancelled): ?bool {
+                function (array $event) use ($sessionId, $onUpdate, &$eventsReceived, &$lastMapping, &$lastConfidence, &$cancelled, &$streamError): ?bool {
                     $eventsReceived++;
 
+                    $eventType = \is_string($event['type'] ?? null) ? $event['type'] : null;
                     if (isset($event['mapping']) && \is_array($event['mapping'])) {
                         /** @var array<string, string> $mapping */
                         $mapping = $event['mapping'];
@@ -79,6 +82,22 @@ class RoleInferenceService
                     }
                     if (isset($event['confidence']) && is_numeric($event['confidence'])) {
                         $lastConfidence = (float) $event['confidence'];
+                    }
+
+                    if ($eventType === 'error') {
+                        $streamError = \is_string($event['message'] ?? null) && $event['message'] !== ''
+                            ? $event['message']
+                            : 'Role inference failed';
+
+                        $onUpdate($event);
+
+                        $this->logger->warning('RoleInference: stream reported error', [
+                            'session_id' => $sessionId,
+                            'events_received' => $eventsReceived,
+                            'error' => $streamError,
+                        ]);
+
+                        return false;
                     }
 
                     $result = $onUpdate($event);
@@ -126,6 +145,42 @@ class RoleInferenceService
             );
         }
 
+        if ($streamError !== null) {
+            return new RoleInferenceResult(
+                mapping: $lastMapping,
+                confidence: $lastConfidence,
+                eventsReceived: $eventsReceived,
+                cancelled: false,
+                error: $streamError,
+            );
+        }
+
+        if ($eventsReceived === 0) {
+            $message = 'Role inference stream ended before any events were received';
+            $this->logger->warning('RoleInference: empty stream', [
+                'session_id' => $sessionId,
+                'timeout' => self::ROLE_INFERENCE_TIMEOUT,
+            ]);
+
+            return new RoleInferenceResult(
+                mapping: $lastMapping,
+                confidence: $lastConfidence,
+                eventsReceived: 0,
+                cancelled: false,
+                error: $message,
+            );
+        }
+
+        // Reconcile against the authoritative snapshot so a dropped final SSE
+        // frame does not leave PHP with stale role state.
+        if (!$cancelled) {
+            $snapshot = $this->fetchAuthoritativeSnapshot($sessionId);
+            if ($snapshot !== null) {
+                $lastMapping = $snapshot['mapping'];
+                $lastConfidence = $snapshot['confidence'];
+            }
+        }
+
         $this->logger->debug('RoleInference: stream complete', [
             'session_id' => $sessionId,
             'events_received' => $eventsReceived,
@@ -154,10 +209,57 @@ class RoleInferenceService
             return $this->strandsClient->postJson(
                 "/session/{$sessionId}/roles",
                 [],
-                timeout: 5,
+                timeout: self::ROLE_SNAPSHOT_TIMEOUT,
             );
         } catch (StrandsException) {
             return ['mapping' => new \stdClass(), 'confidence' => 0.0];
         }
+    }
+
+    /**
+     * @return array{mapping: array<string, string>, confidence: float}|null
+     */
+    private function fetchAuthoritativeSnapshot(string $sessionId): ?array
+    {
+        try {
+            $snapshot = $this->strandsClient->postJson(
+                "/session/{$sessionId}/roles",
+                [],
+                timeout: self::ROLE_SNAPSHOT_TIMEOUT,
+            );
+        } catch (StrandsException $e) {
+            $this->logger->warning('RoleInference: snapshot lookup failed after stream', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        if (!isset($snapshot['mapping']) || !\is_array($snapshot['mapping'])) {
+            $this->logger->warning('RoleInference: snapshot returned invalid mapping', [
+                'session_id' => $sessionId,
+                'snapshot' => $snapshot,
+            ]);
+
+            return null;
+        }
+
+        if (!is_numeric($snapshot['confidence'] ?? null)) {
+            $this->logger->warning('RoleInference: snapshot returned invalid confidence', [
+                'session_id' => $sessionId,
+                'snapshot' => $snapshot,
+            ]);
+
+            return null;
+        }
+
+        /** @var array<string, string> $mapping */
+        $mapping = $snapshot['mapping'];
+
+        return [
+            'mapping' => $mapping,
+            'confidence' => (float) $snapshot['confidence'],
+        ];
     }
 }

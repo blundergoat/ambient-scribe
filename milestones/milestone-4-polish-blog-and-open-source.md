@@ -1,137 +1,87 @@
-# Milestone 4 — Polish, Blog, and Open Source
+# Milestone 4 — Product Polish + Demo
 
-**Timeline:** Weekend 4 (~4-5 hours, optional/stretch)
-**Status:** Not Started
-**Dependencies:** Milestone 3 complete (DOCTOR/PATIENT attribution working end-to-end)
+**Timeline:** Weekend 4 (~5-6 hours)
+**Status:** Not Started (some UI pieces already exist)
+**Dependencies:** Milestone 3 + 3.5 complete
 
 ---
 
 ## Objective
 
-Make the project demo-ready, produce the BlunderGOAT blog article, and prepare for open source release. This milestone is optional — the core PoC is complete after Milestone 3.
+Make the application demo-ready with a compelling user experience. Audio quality feedback, session summaries, replay mode, and frontend cleanup. Prepare for the blog article and open source release.
 
 ---
 
 ## Tasks
 
-### 4.1 Replay Demo Mode (~1 hour)
+### 4.1 Audio Quality Feedback
 
-> Pre-recorded consultation audio plays through the pipeline so you can demo without needing two live speakers.
+- [ ] RMS energy check on incoming PCM chunks in `PcmStreamer`
+- [ ] If average amplitude below threshold for 3+ consecutive chunks: show "Low audio level — move closer to the microphone"
+- [ ] Clipping detection: if samples hit max int16 value frequently, show "Audio clipping detected"
+- [ ] Visual mic level indicator (waveform or simple bar) confirming the mic is active even during silence
 
-- [ ] Add a "Demo Mode" button to the UI
-- [ ] Store a **self-recorded** consultation WAV in `public/demo/` (not YouTube-extracted — see legal note below)
-- [ ] On demo start:
-  - Python reads the WAV file and feeds it through the pipeline in simulated real-time (5-second chunks with delays)
-  - Publishes segments to Mercure as if they were live
-  - Browser displays the transcript building in real-time
-- [ ] Add FastAPI endpoint: `POST /demo/start/{session_id}` triggers the replay
-- [ ] Include a progress indicator showing playback position
+### 4.2 Session Summary Generation
 
-### 4.2 Clinical Summary Generation (~1 hour)
+> **Why:** The summary is what transforms a transcription tool into a productivity tool. It's the highest-value feature for every mode, not just medical.
 
-- [ ] At consultation end (user clicks "End Consultation"), trigger a Strands agent to produce a brief clinical summary:
-  - Chief complaint
-  - History of presenting illness (key points)
-  - Key findings mentioned
-  - Plan / next steps discussed
-- [ ] Display summary in a collapsible panel below the transcript
-- [ ] Summary agent system prompt:
-  ```
-  You are a clinical documentation assistant. Given a doctor-patient consultation
-  transcript, produce a concise clinical summary. Use standard medical documentation
-  format. Do not infer information not present in the transcript.
-  ```
-- [ ] Publish summary to a dedicated Mercure topic: `scribe/session/{id}/summary`
+- [ ] Triggered on "End Session" — Strands agent produces a structured summary
+- [ ] Summary format adapts to the selected mode:
+  - **Medical:** SOAP note (Subjective, Objective, Assessment, Plan)
+  - **Meeting:** Action items, decisions, attendees, next steps
+  - **Interview:** Key topics discussed, candidate strengths/concerns, follow-up items
+  - **General:** Key points, speaker contributions, topics covered
+- [ ] Summary displayed in a collapsible panel below the transcript
+- [ ] Summary cites transcript spans (e.g., "Patient reported chest pain [00:03-00:08]")
+- [ ] Summary published to Mercure topic: `scribe/session/{id}/summary`
+- [ ] Downloadable as part of the JSON/text export
 
-### 4.3 UI Polish (~1 hour)
+### 4.3 Replay Demo Mode
 
-- [ ] Session timer showing duration and segment count
-- [ ] Mobile-responsive layout (ambient scribe is often used on a tablet in-room)
-- [ ] Improved dark mode with accessible colour contrast
-- [ ] Loading states and error messages for:
-  - Microphone permission denied
-  - WebSocket connection failure
-  - NeMo pipeline error
-  - Agent timeout
-- [ ] Export transcript as plain text or JSON (download button)
-- [ ] Keyboard shortcuts:
-  - `Space` or `R` to start/stop recording
-  - `Esc` to end consultation
+- [ ] "Demo Mode" button in the UI (or CLI trigger)
+- [ ] Replays a self-recorded WAV through the pipeline in simulated real-time (5-second chunks with delays)
+- [ ] Segments publish to Mercure as if they were live
+- [ ] Progress indicator showing playback position
+- [ ] Useful for demos, testing, and development without a live microphone
 
-### 4.4 Production Deployment Considerations
+### 4.4 Frontend Cleanup
 
-- [ ] **HTTPS/WSS requirement:**
-  - `getUserMedia` requires secure context in production
-  - ALB needs TLS termination (ACM certificate)
-  - WebSocket upgrade support at ALB (configure target group with stickiness + WebSocket protocol)
-  - Browser must use `wss://` not `ws://`
-- [ ] Add TLS configuration to Terraform (ACM cert, ALB HTTPS listener)
-- [ ] Add Route53 record for `scribe.blundergoat.com`
-- [ ] Rate limiting on WebSocket connections (WAF or application-level)
-- [ ] WebSocket authentication (token-based, passed as query param or first message)
+- [ ] Extract `PcmStreamer` and `StreamOrchestrator` into separate JS files (no build pipeline needed)
+- [ ] Separate dev panel / scenario runner from production template (conditional `<script>` loading)
+- [ ] Fix: `pcmStreamer` variable is an implicit global (never declared with `let`/`const`)
+- [ ] `relabelSegments()` performance: track segments by `speaker_id` in a Map, only update changed roles
+- [ ] Accessibility: `aria-live` on transcript container, keyboard shortcuts (Space=start/stop, Esc=end)
+- [x] Timer, segment counter, download button already exist
+- [x] Light/dark theme with persistence already exists
+- [x] Mobile viewport meta tag already exists
 
-### 4.5 Session Persistence
+### 4.5 Scenario Runner Improvements
 
-> **Currently, transcripts exist only in Python's in-memory session store.** If the process restarts or the user navigates away, the transcript is lost. This is acceptable for a PoC but worth documenting.
-
-- [ ] Document as known limitation in README
-- [ ] If time permits: persist completed transcripts to DynamoDB (same pattern as The Summit's production session store)
-- [ ] If time permits: add session recovery — on page reload, fetch transcript history from Python/DynamoDB and re-render
-
-### 4.6 BlunderGOAT Article
-
-**Title:** "Building a Real-Time Ambient Medical Scribe in 4 Weekends"
-**Subtitle:** "How I turned a multi-agent chatroom into a speaker-aware medical transcription system"
-**Tagline:** "Make the right way the easy way"
-
-- [ ] **Structure:**
-  1. **The Problem** — ambient scribe needs real-time streaming + speaker diarization + role attribution. Most solutions are expensive SaaS or complex custom builds.
-  2. **The Blunder** — naive approach: pipe audio to a transcription API and regex match speakers. Falls apart with overlapping speech, label flips, cold start.
-  3. **The Framework** — agent-based architecture where transcription is a tool and role inference is a reasoning task. NeMo does the ML, Strands agent does the thinking.
-  4. **The Build** — weekend-by-weekend walkthrough with architecture diagrams, code snippets, and gotchas.
-  5. **The Payoff** — Strands tool pattern means swapping NeMo -> Riva -> Deepgram -> Whisper is a one-file change. Agent intelligence is backend-agnostic.
-- [ ] Include architecture diagrams (Mermaid or ASCII)
-- [ ] Include 2-minute demo video (screen recording of live transcription)
-- [ ] Include VRAM usage screenshots and latency measurements
-- [ ] Link to GitHub repo
-
-### 4.7 Open Source Preparation (~1 hour)
-
-- [ ] Strip any employer-specific or personal references
-- [ ] **Audit test fixtures for licensing:**
-  - Only self-recorded audio or explicitly licensed files may be committed
-  - YouTube-extracted OSCE audio must NOT be in the repo (add to `.gitignore`)
-  - Add a `tests/fixtures/audio/README.md` explaining how to obtain test audio locally
-- [x] Comprehensive README with architecture diagram, prerequisites, quick start, tech stack (created during scaffold)
-- [ ] Add `CONTRIBUTING.md`
-- [ ] Add `LICENSE` (MIT or Apache 2.0)
-- [ ] Verify `docker compose up --build` works from a clean clone (GPU required)
-- [x] Add `.env.example` with all required environment variables documented (created during scaffold)
-- [ ] Tag as `v0.1.0-poc`
+- [x] 8 scenarios: happy path, role flip, reconnect, high-volume stress, empty, single speaker, late role, permanent disconnect
+- [x] Batch execution, progress bar, JSON export
+- [ ] Add timing assertions (high-volume stress should complete within 5s budget)
+- [ ] Add segment content assertions (verify rendered text matches injected data)
+- [ ] Add 3+ speaker scenario
+- [ ] Promote scenario runner as a required local gate (not just dev convenience)
 
 ---
 
 ## Exit Criteria
 
-### Demo-Ready (minimum for this milestone)
-- [ ] Pre-recorded demo replay works end-to-end (using self-recorded audio)
-- [ ] Clinical summary generated at consultation end
-- [ ] UI is polished and mobile-responsive
-- [ ] Can record a compelling 2-minute demo video
-
-### Open Source (stretch)
-- [ ] Repo is clean, documented, and reproducible from clone
-- [ ] **No unlicensed third-party audio in the repo**
-- [ ] README covers setup, architecture, and known limitations
-- [ ] Tagged `v0.1.0-poc`
-- [ ] Blog article published on BlunderGOAT
+- [ ] Audio quality feedback visible when mic level is too low
+- [ ] Mode-appropriate summary generated on session end
+- [ ] Demo replay works end-to-end without live microphone
+- [ ] JS extracted from monolithic template (3+ separate files)
+- [ ] Scenario runner passes as part of quality gate
+- [ ] Can record a compelling 2-minute demo video showing the full flow
 
 ---
 
-## Success Metrics (Full Project)
+## Already Done (from earlier milestones)
 
-| Level | Criteria |
-|---|---|
-| **Minimum Viable Demo** (Milestone 2) | Live mic -> real-time transcript with speaker labels in browser. Latency < 5s. Works on 2-person conversation. |
-| **Full Demo** (Milestone 3) | DOCTOR/PATIENT attribution with progressive confidence. Agent self-corrects label flips. Colour-coded transcript UI. Compelling enough for a 2-minute demo video. |
-| **Stretch** (Milestone 4) | Pre-recorded demo replay. Clinical summary generation. Open source repo with working Docker Compose. Published BlunderGOAT article. |
+- [x] Session timer and segment count
+- [x] Download as JSON and plain text
+- [x] Mobile viewport meta tag + Tailwind responsive utilities
+- [x] Mercure failure banner + system error handling
+- [x] 6 interaction modes with role labels and avatars
+- [x] Dev panel with inspector tabs (Segments, Pipeline, Mercure, WebSocket, State, Raw)

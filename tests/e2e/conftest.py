@@ -2,7 +2,7 @@
 E2E test configuration — runs against live local services.
 
 Prerequisites (started by scripts/e2e-test.sh):
-  - Python agent on AGENT_PORT (NEMO_SKIP_MODEL_LOAD=1)
+  - Python agent on AGENT_PORT (NEMO_MODEL_PROVIDER=mock)
   - Mercure on MERCURE_PORT
   - PHP app on APP_PORT (optional, for proxy tests)
 """
