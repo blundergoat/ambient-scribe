@@ -8,11 +8,11 @@ Docker Compose local topology and AWS deployment overview. For full deployment c
 
 | Service | Image | Port (host:container) | GPU | Purpose |
 |---|---|---|---|---|
-| `nemo-agent` | `docker/nemo/Dockerfile` | 8001:8000 | Yes (1x NVIDIA) | FastAPI + NeMo inference + Strands agent |
-| `app` | `./Dockerfile` | 8082:8080 | No | Symfony PHP UI + session management |
-| `mercure` | `dunglas/mercure` | 3701:3701 | No | SSE hub for real-time segment delivery |
+| `nemo-agent` | `docker/nemo/Dockerfile` | 48101:8000 | Yes (1x NVIDIA) | FastAPI + NeMo inference + Strands agent |
+| `app` | `./Dockerfile` | 48082:8080 | No | Symfony PHP UI + session management |
+| `mercure` | `dunglas/mercure` | 48137:3701 | No | SSE hub for real-time segment delivery |
 
-Communication: `app` → `nemo-agent` via `http://nemo-agent:8000`. `nemo-agent` → `mercure` via `http://mercure:3701`. Browser → `mercure` via `http://localhost:3701`.
+Communication: `app` → `nemo-agent` via `http://nemo-agent:8000`. `nemo-agent` → `mercure` via `http://mercure:3701`. Browser → `mercure` via `http://localhost:48137`.
 
 **Requires NVIDIA Container Toolkit** for GPU passthrough to `nemo-agent`.
 
@@ -37,8 +37,8 @@ These variables must be consistent across services. Mismatch causes silent failu
 | `MERCURE_PUBLISHER_JWT` | Yes (pre-signed) | — | — | JWT signed with MERCURE_JWT_SECRET |
 | `MERCURE_HUB_URL` | `http://mercure:3701/...` | — | — | Internal Docker network |
 | `MERCURE_URL` | — | `http://mercure:3701/...` | — | PHP server-side publish URL |
-| `MERCURE_PUBLIC_URL` | — | `http://localhost:3701/...` | — | Browser-side SSE URL |
-| `NEMO_WEBSOCKET_URL` | — | `ws://localhost:8001` | — | Browser-side WebSocket URL |
+| `MERCURE_PUBLIC_URL` | — | `http://localhost:48137/...` | — | Browser-side SSE URL |
+| `NEMO_WEBSOCKET_URL` | — | `ws://localhost:48101` | — | Browser-side WebSocket URL |
 | `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | — | — | Must be bedrock or ollama, NOT local GPU |
 
 See `docs/footguns.md` FG-6 for JWT mismatch debugging.

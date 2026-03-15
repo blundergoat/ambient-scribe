@@ -7,6 +7,8 @@ namespace App\Tests\Unit\Controller;
 use App\Controller\ScribeController;
 use App\Service\RoleInferenceService;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use StrandsPhpClient\StrandsClient;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -20,6 +22,7 @@ final class ScribeControllerTest extends TestCase
         $controller = new TestableScribeController(
             $client,
             $roleInferenceService,
+            new NullLogger(),
             [
                 'nemo_websocket_url' => 'ws://localhost:48101',
                 'mercure_url' => 'http://localhost:48137/.well-known/mercure',
@@ -65,6 +68,7 @@ final class ScribeControllerTest extends TestCase
         $controller = new TestableScribeController(
             $client,
             $roleInferenceService,
+            new NullLogger(),
             [
                 'nemo_websocket_url' => 'ws://localhost:48101',
                 'mercure_url' => 'http://localhost:48137/.well-known/mercure',
@@ -94,6 +98,7 @@ final class ScribeControllerTest extends TestCase
         $controller = new TestableScribeController(
             $client,
             $roleInferenceService,
+            new NullLogger(),
             [
                 'nemo_websocket_url' => 'ws://localhost:48101',
                 'mercure_url' => 'http://localhost:48137/.well-known/mercure',
@@ -107,6 +112,50 @@ final class ScribeControllerTest extends TestCase
 
         self::assertTrue($payload['parameters']['dev_panel_enabled']);
         self::assertSame([], $payload['parameters']['scenarios']);
+    }
+
+    public function testIndexHandlesInvalidScenarioFixtureJsonInDevMode(): void
+    {
+        $client = $this->createMock(StrandsClient::class);
+        $roleInferenceService = $this->createMock(RoleInferenceService::class);
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('warning')
+            ->with(
+                'Scribe scenarios fixture is invalid JSON',
+                self::arrayHasKey('path'),
+            );
+
+        $projectDir = sys_get_temp_dir() . '/ambient-scribe-invalid-' . uniqid('', true);
+        $fixtureDir = $projectDir . '/tests/fixtures/scribe';
+        mkdir($fixtureDir, 0777, true);
+        file_put_contents($fixtureDir . '/scenarios.json', '{"scenarios": [}');
+
+        try {
+            $controller = new TestableScribeController(
+                $client,
+                $roleInferenceService,
+                $logger,
+                [
+                    'nemo_websocket_url' => 'ws://localhost:48101',
+                    'mercure_url' => 'http://localhost:48137/.well-known/mercure',
+                    'kernel.environment' => 'dev',
+                    'kernel.project_dir' => $projectDir,
+                ],
+            );
+
+            $response = $controller->index();
+            $payload = json_decode($response->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
+
+            self::assertTrue($payload['parameters']['dev_panel_enabled']);
+            self::assertSame([], $payload['parameters']['scenarios']);
+        } finally {
+            unlink($fixtureDir . '/scenarios.json');
+            rmdir($fixtureDir);
+            rmdir($projectDir . '/tests/fixtures');
+            rmdir($projectDir . '/tests');
+            rmdir($projectDir);
+        }
     }
 
     public function testHistoryReturnsAgentPayload(): void
@@ -123,7 +172,7 @@ final class ScribeControllerTest extends TestCase
             ]);
 
         $roleInferenceService = $this->createMock(RoleInferenceService::class);
-        $controller = new TestableScribeController($client, $roleInferenceService, []);
+        $controller = new TestableScribeController($client, $roleInferenceService, new NullLogger(), []);
 
         $response = $controller->history('session-123');
 
@@ -145,9 +194,10 @@ final class TestableScribeController extends ScribeController
     public function __construct(
         StrandsClient $strandsClient,
         RoleInferenceService $roleInferenceService,
+        LoggerInterface $logger,
         private readonly array $parameters,
     ) {
-        parent::__construct($strandsClient, $roleInferenceService);
+        parent::__construct($strandsClient, $roleInferenceService, $logger);
     }
 
     public function getParameter(string $name): \UnitEnum|array|string|int|float|bool|null

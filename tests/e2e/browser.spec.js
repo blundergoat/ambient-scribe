@@ -5,17 +5,17 @@
  * using Playwright with headless Chromium.
  *
  * Services must be running (use scripts/e2e-test.sh --no-start to skip service startup):
- *   - Python agent on AGENT_PORT (default 48201)
- *   - PHP app on APP_PORT (default 48202)
- *   - Mercure on MERCURE_PORT (default 48203)
+ *   - Python agent on AGENT_PORT (default 48101)
+ *   - PHP app on APP_PORT (default 48082)
+ *   - Mercure on MERCURE_PORT (default 48137)
  *
  * Run: npx playwright test tests/e2e/browser.spec.js
  */
 
 const { test, expect } = require("@playwright/test");
 
-const APP_PORT = process.env.APP_PORT || "48202";
-const AGENT_PORT = process.env.AGENT_PORT || "48201";
+const APP_PORT = process.env.APP_PORT || "48082";
+const AGENT_PORT = process.env.AGENT_PORT || "48101";
 const APP_URL = `http://localhost:${APP_PORT}`;
 
 // Helper: inject fake segments into the page (simulates Mercure SSE delivery)

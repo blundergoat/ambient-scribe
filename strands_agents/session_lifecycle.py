@@ -72,8 +72,17 @@ class SessionLifecycle:
             logger.error("session_lifecycle.destroy_lock_timeout", extra={
                 "session_id": session_id,
             })
-            # Force cleanup even without lock to prevent leaks
             self._active.pop(session_id, None)
+            if close_role_inference_fn is not None:
+                try:
+                    await close_role_inference_fn(session_id)
+                except Exception:
+                    logger.exception("session_lifecycle.destroy_close_role_inference_failed", extra={
+                        "session_id": session_id,
+                    })
+            if self._sse_consumers.get(session_id, 0) == 0:
+                cleanup_role_state(session_id)
+                self._locks.pop(session_id, None)
             return
         try:
             self._active.pop(session_id, None)

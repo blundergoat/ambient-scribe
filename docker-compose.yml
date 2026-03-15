@@ -67,9 +67,11 @@ services:
       - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
       - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
 
-      # --- Role inference agent (uses Bedrock, NOT GPU) ---
+      # --- Role inference agent (uses Bedrock by default, Ollama optional) ---
       - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-bedrock}
       - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-us.anthropic.claude-sonnet-4-20250514-v1:0}
+      - ROLE_AGENT_OLLAMA_MODEL=${ROLE_AGENT_OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
 
       # --- AWS credentials (for Bedrock role inference) ---
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
@@ -78,6 +80,8 @@ services:
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-southeast-2}
     volumes:
       - ./strands_agents:/app  # Hot reload in dev
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       # /health returns 200 (ok) when models loaded or skipped, 503 (degraded)
       # when model loading failed. 503 will cause Docker to mark unhealthy.

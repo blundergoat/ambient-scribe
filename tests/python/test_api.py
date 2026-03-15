@@ -333,6 +333,38 @@ class TestSessionLifecycle:
         lifecycle.sse_consumer_end("sse-test")
         assert "sse-test" not in _session_states
 
+    @pytest.mark.asyncio
+    async def test_destroy_lock_timeout_still_cleans_best_effort(self, monkeypatch):
+        """Timeout during destroy still closes workers and clears role state."""
+        from nemo_pipeline import NemoPipeline
+        from nemo_session import TranscriptionSession
+        from tools.assign_roles import get_or_create_state, _session_states
+
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("timeout-test", pipeline)
+        await lifecycle.register("timeout-test", session)
+        get_or_create_state("timeout-test").update({"spk_0": "DOCTOR"}, 0.9)
+
+        closed_sessions: list[str] = []
+
+        async def fake_close(session_id: str) -> None:
+            closed_sessions.append(session_id)
+
+        async def timeout_wait_for(awaitable, timeout):
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr("session_lifecycle.asyncio.wait_for", timeout_wait_for)
+
+        await lifecycle.destroy("timeout-test", fake_close)
+
+        assert not lifecycle.is_active("timeout-test")
+        assert "timeout-test" not in _session_states
+        assert "timeout-test" not in lifecycle._locks
+        assert closed_sessions == ["timeout-test"]
+
 
 class TestThreadSafety:
     """Tests for thread safety of _session_states."""

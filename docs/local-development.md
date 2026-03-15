@@ -16,7 +16,7 @@ docker compose up --build
 # Open http://localhost:48082
 ```
 
-First run pulls the LLM model (~9GB for qwen2.5:14b) — this takes a few minutes.
+First run builds the NeMo image and warms large model layers — this can take a while.
 
 ### Option B: Bare-metal (recommended for development)
 
@@ -69,19 +69,19 @@ Mercure is optional (Docker Compose only) — without it, the app falls back to 
 
 ### Docker Compose mode
 
-5 containers with automatic dependency ordering:
+3 containers with automatic dependency ordering:
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| **ollama** | ollama/ollama | 11434 | Local LLM server |
-| **ollama-pull** | ollama/ollama | — | One-shot model download, then exits |
-| **agent** | Built from `strands_agents/Dockerfile` | 48101 → 8000 | Python FastAPI agent (Strands SDK) |
+| **nemo-agent** | Built from `docker/nemo/Dockerfile` | 48101 → 8000 | Python FastAPI agent with NeMo inference |
 | **mercure** | dunglas/mercure | 48137 → 3701 | Real-time SSE hub for streaming mode |
-| **app** | Built from `Dockerfile` | 48082 → 8080 | PHP Symfony chat UI |
+| **app** | Built from `Dockerfile` | 48082 → 8080 | PHP Symfony scribe UI |
 
-Startup order: ollama → ollama-pull → agent → mercure → app
+Startup order: nemo-agent → mercure → app
 
-Containers talk via Docker networking (e.g. `http://agent:8000`, `http://ollama:11434`).
+Containers talk via Docker networking (e.g. `http://nemo-agent:8000`, `http://mercure:3701`).
+If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches a host Ollama instance via
+`OLLAMA_HOST` (default `http://host.docker.internal:11434`).
 
 ### Bare-metal mode
 
@@ -177,8 +177,8 @@ These are set automatically by `start-dev.sh` and `docker-compose.yml`. You typi
 
 | Variable | Docker value | Bare-metal value | Purpose |
 |----------|-------------|-----------------|---------|
-| `AGENT_ENDPOINT` | `http://agent:8000` | `http://localhost:48101` | PHP → Python agent URL |
-| `OLLAMA_HOST` | `http://ollama:11434` | `http://localhost:11434` | Python agent → Ollama URL |
+| `AGENT_ENDPOINT` | `http://nemo-agent:8000` | `http://localhost:48101` | PHP → Python agent URL |
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` | `http://localhost:11434` | Python agent → Ollama URL |
 | `MERCURE_URL` | `http://mercure:3701/...` | *(empty)* | PHP → Mercure publish URL |
 | `MERCURE_PUBLIC_URL` | `http://localhost:48137/...` | *(empty)* | Browser → Mercure subscribe URL |
 | `MERCURE_JWT_SECRET` | `ambient-scribe-mercure-secret` | *(empty)* | JWT signing for Mercure |

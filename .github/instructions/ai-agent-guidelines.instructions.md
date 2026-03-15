@@ -28,17 +28,17 @@ Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) 
 
 ## Architecture
 
-Real-time medical transcription system. Browser captures microphone audio via MediaRecorder, streams binary frames over WebSocket to the Python agent layer. NeMo Parakeet performs GPU-accelerated diarization and ASR. The Strands role inference agent assigns DOCTOR/PATIENT roles to speaker labels. Transcription results are published to the browser via Mercure SSE.
+Real-time medical transcription system. Browser captures microphone audio via `PcmStreamer`, encodes it as raw PCM, and streams binary frames over WebSocket to the Python agent layer. NeMo Parakeet performs GPU-accelerated diarization and ASR. The Strands role inference agent assigns DOCTOR/PATIENT roles to speaker labels. Transcription results are published to the browser via Mercure SSE.
 
 ```
-Browser (MediaRecorder) → WebSocket → FastAPI (server.py)
-                                         ↓
-                                   NemoPipeline (GPU diarization + ASR)
-                                         ↓
-                                   TranscriptionAgent (Strands → Bedrock)
-                                         ↓
-                                   Mercure SSE → Browser (live transcript)
-                                         ↓
+Browser (PcmStreamer, raw PCM) → WebSocket → FastAPI (server.py)
+                                              ↓
+                                        NemoPipeline (GPU diarization + ASR)
+                                              ↓
+                                        TranscriptionAgent (Strands → Bedrock)
+                                              ↓
+                                        Mercure SSE → Browser (live transcript)
+                                              ↓
 ScribeController (Symfony) ← session history ← SessionStore
 ```
 

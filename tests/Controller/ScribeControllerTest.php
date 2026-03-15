@@ -10,6 +10,7 @@ use App\Service\RoleInferenceService;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
+use Psr\Log\NullLogger;
 use StrandsPhpClient\Exceptions\AgentErrorException;
 use StrandsPhpClient\Exceptions\StrandsException;
 use StrandsPhpClient\StrandsClient;
@@ -35,6 +36,7 @@ class ScribeControllerTest extends TestCase
         $this->controller = new ScribeController(
             $this->strandsClient,
             $this->roleInferenceService,
+            new NullLogger(),
         );
 
         $parameterBag = $this->createMock(ParameterBagInterface::class);

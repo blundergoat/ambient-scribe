@@ -20,13 +20,13 @@ Both loaded once at startup as a singleton (`NemoPipeline` in `nemo_pipeline.py`
 
 ## Audio Processing
 
-1. **Browser sends WebM/Opus** chunks over WebSocket (~1s intervals)
-2. **Server accumulates** WebM bytes in `TranscriptionSession._webm_accumulator` (needs full container header)
-3. **ffmpeg converts** accumulated WebM → 16kHz mono WAV via subprocess (`nemo_session.py:233-280`)
-4. **Growing buffer strategy:** re-process full audio each chunk. VRAM grows with length (9 GB at 30s → 15.6 GB at 520s). Flush when approaching 15 GB.
-5. **AudioBuffer** (`nemo_session.py:56-79`) has a 15-minute safety cap to prevent unbounded memory growth
+1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `templates/scribe/index.html.twig`
+2. **Server expects `input_format="pcm"` by default** and appends the bytes directly to `AudioBuffer`
+3. **Growing buffer strategy:** re-process full buffered audio on each chunk via `TranscriptionSession.process_chunk()`
+4. **AudioBuffer** (`nemo_session.py`) has a 15-minute safety cap to prevent unbounded memory growth
+5. **Alternate WebM path still exists** in `TranscriptionSession._decode_webm_chunk()`, but it is not the current default and requires `NEMO_STREAM_INPUT_FORMAT=webm`
 
-See `docs/footguns.md` FG-5 for ffmpeg silent failure patterns.
+Any change to browser capture format, sample rate, or `NEMO_STREAM_INPUT_FORMAT` must update both sides of the contract together.
 
 ## Endpoint Contracts
 
@@ -34,7 +34,7 @@ See `docs/footguns.md` FG-5 for ffmpeg silent failure patterns.
 
 | Path | Protocol | Direction | Format |
 |---|---|---|---|
-| `/ws/transcribe/{session_id}` | WebSocket | Browser → Server | Binary ArrayBuffer (WebM/Opus) |
+| `/ws/transcribe/{session_id}` | WebSocket | Browser → Server | Binary ArrayBuffer (16kHz PCM by default; WebM only when explicitly configured) |
 
 No server-to-client WebSocket messages — segments are delivered via Mercure SSE.
 

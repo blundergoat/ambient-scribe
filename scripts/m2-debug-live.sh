@@ -24,8 +24,11 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 
 SESSION_ID="${1:-}"
-NEMO_URL="http://localhost:8001"
-MERCURE_URL="${MERCURE_PUBLIC_URL:-http://localhost:3701/.well-known/mercure}"
+APP_HOST_PORT="${APP_PORT:-48082}"
+AGENT_HOST_PORT="${AGENT_PORT:-48101}"
+MERCURE_HOST_PORT="${MERCURE_PORT:-48137}"
+NEMO_URL="${AGENT_ENDPOINT:-http://localhost:${AGENT_HOST_PORT}}"
+MERCURE_URL="${MERCURE_PUBLIC_URL:-http://localhost:${MERCURE_HOST_PORT}/.well-known/mercure}"
 
 # ── Header ──────────────────────────────────────────────────────
 echo ""
@@ -118,7 +121,7 @@ echo ""
 
 # ── Start Mercure SSE listener ──────────────────────────────────
 echo -e "  ${BOLD}Listening for Mercure events + nemo-agent logs${RESET}"
-echo -e "  ${DIM}  Open http://localhost:8082/scribe and click Start Consultation${RESET}"
+echo -e "  ${DIM}  Open http://localhost:${APP_HOST_PORT}/scribe and click Start Consultation${RESET}"
 echo -e "  ${DIM}  Press Ctrl+C to stop${RESET}"
 echo ""
 
