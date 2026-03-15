@@ -29,6 +29,20 @@ strands_agents/**/.venv/
 *.swp
 *.swo
 
+<<<<<<< Updated upstream
+=======
+# Claude Code
+.claude/settings.local.json
+tasks/todo.md
+tasks/handoff.md
+
+# Node
+node_modules/
+
+# Playwright / test output
+test-results/
+
+>>>>>>> Stashed changes
 # OS
 .DS_Store
 

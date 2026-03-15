@@ -7,6 +7,8 @@ NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock) — we test wrapp
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 from nemo_session import AudioBuffer, TranscriptionSession
 
@@ -129,8 +131,74 @@ class TestParseDiarStrings:
         assert result[1][0] == 5.0
 
 
+<<<<<<< Updated upstream
 class TestParseNemoOutput:
     """Tests for NemoPipeline._parse_nemo_output alignment logic."""
+=======
+class TestAudioFormatValidation:
+    """Tests for first-chunk audio format detection."""
+
+    def test_pcm_rejects_webm_bytes(self):
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        # WebM magic bytes
+        webm_data = b"\x1a\x45\xdf\xa3" + b"\x00" * 3196
+        with pytest.raises(ValueError, match="configured for PCM but received WebM"):
+            session.process_chunk(webm_data)
+
+    def test_pcm_rejects_wav_header(self):
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        wav_data = b"RIFF" + b"\x00" * 3196
+        with pytest.raises(ValueError, match="configured for raw PCM but received WAV"):
+            session.process_chunk(wav_data)
+
+    def test_pcm_accepts_valid_pcm(self):
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        # Regular PCM silence — should not raise
+        pcm_data = b"\x00" * 3200
+        session.process_chunk(pcm_data)
+        assert session._format_validated is True
+
+    def test_pcm_accepts_short_chunk(self):
+        """A very short PCM chunk (< 4 bytes) should not crash validation."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        # 2 bytes — too short for magic detection, but valid PCM
+        session.process_chunk(b"\x00\x00")
+        assert session._format_validated is True
+
+    def test_empty_chunk_skips_validation(self):
+        """Empty bytes skip validation entirely (handled by _decode_audio)."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        result = session.process_chunk(b"")
+        assert result == []
+        # Validation flag stays False — will validate on next non-empty chunk
+        assert session._format_validated is False
+
+    def test_format_validation_runs_only_once(self):
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("format-test", pipeline, input_format="pcm")
+
+        # First chunk: valid PCM
+        session.process_chunk(b"\x00" * 3200)
+        assert session._format_validated is True
+
+        # Second chunk: even WebM magic won't trigger validation again
+        webm_data = b"\x1a\x45\xdf\xa3" + b"\x00" * 3196
+        session.process_chunk(webm_data)  # Should not raise
+
+
+class TestNemoPipeline:
+    """Wrapper tests that avoid loading the real GPU models."""
+>>>>>>> Stashed changes
 
     def _make_pipeline(self) -> NemoPipeline:
         """Create a mock-mode pipeline for testing parse logic."""

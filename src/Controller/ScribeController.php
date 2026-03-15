@@ -55,12 +55,34 @@ class ScribeController extends AbstractController
         $wsUrl = $this->getParameter('nemo_websocket_url');
         $mercureUrl = $this->getParameter('mercure_url');
 
+        $devPanelEnabled = $this->getParameter('kernel.environment') === 'dev';
+        $scenarios = [];
+        if ($devPanelEnabled) {
+            /** @var string $projectDir */
+            $projectDir = $this->getParameter('kernel.project_dir');
+            $path = $projectDir . '/tests/fixtures/scribe/scenarios.json';
+            if (file_exists($path)) {
+                $contents = file_get_contents($path);
+                if (\is_string($contents)) {
+                    /** @var array{scenarios?: list<array<string, mixed>>} $decoded */
+                    $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+                    $scenarios = $decoded['scenarios'] ?? [];
+                }
+            }
+        }
+
         return $this->render('scribe/index.html.twig', [
             'session_id' => $sessionId,
             'ws_url' => $wsUrl,
             'mercure_url' => $mercureUrl,
             'mercure_topic_raw' => "scribe/session/{$sessionId}/raw",
             'mercure_topic_roles' => "scribe/session/{$sessionId}/roles",
+<<<<<<< Updated upstream
+=======
+            'enable_role_updates' => true,
+            'dev_panel_enabled' => $devPanelEnabled,
+            'scenarios' => $scenarios,
+>>>>>>> Stashed changes
         ]);
     }
 
@@ -138,6 +160,11 @@ class ScribeController extends AbstractController
     public function roles(string $sessionId): JsonResponse
     {
         $mapping = $this->roleInferenceService->getCurrentMapping($sessionId);
+
+        // Ensure empty mapping serializes as {} (object), not [] (array)
+        if (isset($mapping['mapping']) && \is_array($mapping['mapping']) && $mapping['mapping'] === []) {
+            $mapping['mapping'] = new \stdClass();
+        }
 
         return $this->json([
             'session_id' => $sessionId,

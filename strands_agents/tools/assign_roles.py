@@ -29,7 +29,9 @@ The tool encapsulates state management so the agent focuses on reasoning.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -96,28 +98,29 @@ class RoleMappingState:
         Returns:
             True if a flip was detected.
         """
-        if not self.current_mapping:
+        if not self.current_mapping or set(new_mapping) != set(self.current_mapping):
             return False
 
-        # Check if all speakers swapped roles
-        for speaker, new_role in new_mapping.items():
-            old_role = self.current_mapping.get(speaker)
-            if old_role and old_role != new_role:
-                # At least one role changed — check if it's a full swap
-                other_speakers_swapped = all(
-                    self.current_mapping.get(s) == new_mapping.get(
-                        [k for k in new_mapping if k != s][0] if len(new_mapping) > 1 else s
-                    )
-                    for s in new_mapping
-                    if s != speaker
-                )
-                return other_speakers_swapped
+        changed_speakers = [
+            speaker
+            for speaker, new_role in new_mapping.items()
+            if self.current_mapping.get(speaker) != new_role
+        ]
+        if len(changed_speakers) < 2:
+            return False
 
-        return False
+        previous_roles = {self.current_mapping[speaker] for speaker in changed_speakers}
+        next_roles = {new_mapping[speaker] for speaker in changed_speakers}
+
+        return previous_roles == next_roles and all(
+            self.current_mapping[speaker] != new_mapping[speaker]
+            for speaker in changed_speakers
+        )
 
 
 # Per-session state store for role mappings
 _session_states: dict[str, RoleMappingState] = {}
+_states_lock = threading.Lock()
 
 
 def get_or_create_state(session_id: str) -> RoleMappingState:
@@ -129,9 +132,31 @@ def get_or_create_state(session_id: str) -> RoleMappingState:
     Returns:
         The RoleMappingState for this session.
     """
-    if session_id not in _session_states:
-        _session_states[session_id] = RoleMappingState()
-    return _session_states[session_id]
+    with _states_lock:
+        if session_id not in _session_states:
+            _session_states[session_id] = RoleMappingState()
+        return _session_states[session_id]
+
+
+def apply_role_mapping_result(
+    session_id: str,
+    segments: list[dict[str, Any]],
+    mapping: dict[str, str],
+    confidence: float,
+    reasoning: str = "",
+) -> RoleMapping:
+    """Persist a mapping decision and return attributed segment payloads."""
+    state = get_or_create_state(session_id)
+    normalized_mapping = _normalize_mapping(mapping)
+    flip_detected = state.update(normalized_mapping, confidence)
+
+    return RoleMapping(
+        mapping=normalized_mapping,
+        attributed_segments=_attribute_segments(segments, normalized_mapping),
+        confidence=state.running_confidence,
+        flip_detected=flip_detected,
+        reasoning=reasoning,
+    )
 
 
 def cleanup_session(session_id: str) -> None:
@@ -142,4 +167,30 @@ def cleanup_session(session_id: str) -> None:
     Args:
         session_id: The session identifier to clean up.
     """
-    _session_states.pop(session_id, None)
+    with _states_lock:
+        _session_states.pop(session_id, None)
+
+
+def _normalize_mapping(mapping: dict[str, str]) -> dict[str, str]:
+    """Normalize agent output into the expected speaker->role shape."""
+    normalized: dict[str, str] = {}
+    for speaker_id, role in mapping.items():
+        normalized[str(speaker_id)] = str(role).upper()
+
+    return normalized
+
+
+def _attribute_segments(
+    segments: list[dict[str, Any]],
+    mapping: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Apply the current mapping to a list of raw transcript segments."""
+    attributed_segments: list[dict[str, Any]] = []
+    for segment in segments:
+        speaker_id = str(segment.get("speaker_id", ""))
+        attributed_segments.append({
+            **segment,
+            "role": mapping.get(speaker_id, "UNKNOWN"),
+        })
+
+    return attributed_segments

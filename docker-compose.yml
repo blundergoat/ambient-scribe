@@ -19,9 +19,9 @@
 #   Browser ──(HTTP)──► app (PHP) ──(HTTP)──► nemo-agent (session history)
 #
 # PORTS:
-#   http://localhost:8082  — Scribe UI (PHP app)
-#   http://localhost:8001  — NeMo agent API (for debugging)
-#   http://localhost:3701  — Mercure hub (for SSE subscriptions)
+#   http://localhost:48082  — Scribe UI (PHP app)
+#   http://localhost:48101  — NeMo agent API (for debugging)
+#   http://localhost:48137  — Mercure hub (for SSE subscriptions)
 #
 # GPU REQUIREMENT:
 #   The nemo-agent service requires an NVIDIA GPU with the NVIDIA Container
@@ -53,10 +53,22 @@ services:
               count: 1
               capabilities: [gpu]
     ports:
+<<<<<<< Updated upstream
       - "8001:8000"
     environment:
       # --- NeMo configuration ---
       - NEMO_MODEL_PROVIDER=${NEMO_MODEL_PROVIDER:-local}
+=======
+      - "${AGENT_PORT:-48101}:8000"
+    environment:
+      # --- NeMo configuration ---
+      - NEMO_MODEL_PROVIDER=${NEMO_MODEL_PROVIDER:-local}
+      - NEMO_STREAM_INPUT_FORMAT=${NEMO_STREAM_INPUT_FORMAT:-pcm}
+      - NEMO_MAX_WORKERS=${NEMO_MAX_WORKERS:-2}
+      - NEMO_BUFFER_MAX_DURATION=${NEMO_BUFFER_MAX_DURATION:-900}
+      - MAX_SESSIONS=${MAX_SESSIONS:-100}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-7200}
+>>>>>>> Stashed changes
 
       # --- Mercure publishing ---
       - MERCURE_HUB_URL=http://mercure:3701/.well-known/mercure
@@ -74,6 +86,8 @@ services:
     volumes:
       - ./strands_agents:/app  # Hot reload in dev
     healthcheck:
+      # /health returns 200 (ok) when models loaded or skipped, 503 (degraded)
+      # when model loading failed. 503 will cause Docker to mark unhealthy.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 10s
@@ -93,15 +107,25 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
+<<<<<<< Updated upstream
       - "8082:8080"
+=======
+      - "${APP_PORT:-48082}:8080"
+>>>>>>> Stashed changes
     environment:
       - APP_ENV=dev
       - APP_DEBUG=1
       - APP_SECRET=${APP_SECRET:-ambient-scribe-dev-secret-change-me}
       - AGENT_ENDPOINT=http://nemo-agent:8000
+<<<<<<< Updated upstream
       - NEMO_WEBSOCKET_URL=ws://localhost:8001
       - MERCURE_URL=http://mercure:3701/.well-known/mercure
       - MERCURE_PUBLIC_URL=http://localhost:3701/.well-known/mercure
+=======
+      - NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-48101}
+      - MERCURE_URL=http://mercure:3701/.well-known/mercure
+      - MERCURE_PUBLIC_URL=http://localhost:${MERCURE_PORT:-48137}/.well-known/mercure
+>>>>>>> Stashed changes
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
     depends_on:
       nemo-agent:
@@ -120,11 +144,22 @@ services:
   mercure:
     image: dunglas/mercure
     ports:
+<<<<<<< Updated upstream
       - "3701:3701"
+=======
+      - "${MERCURE_PORT:-48137}:3701"
+>>>>>>> Stashed changes
     environment:
       MERCURE_PUBLISHER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       MERCURE_SUBSCRIBER_JWT_KEY: ${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
       SERVER_NAME: ":3701"
+      # CORS: In dev mode, allow all origins to avoid port mismatch issues
+      # when APP_PORT changes after Mercure starts. For production, restrict
+      # to the actual app origin.
       MERCURE_EXTRA_DIRECTIVES: |
         anonymous
+<<<<<<< Updated upstream
         cors_origins http://localhost:8082
+=======
+        cors_origins *
+>>>>>>> Stashed changes

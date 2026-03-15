@@ -139,7 +139,26 @@ else
     done
 fi
 
-# 3. Code style (PHP-CS-Fixer)
+# 3. Dangerous policy (repo diff)
+step "Danger policy (repo diff)"
+t=$(date +%s%N)
+danger_script="$REPO_ROOT/scripts/deny-dangerous.sh"
+if [[ -x "$danger_script" ]]; then
+    danger_output=$("$danger_script" --check-repo 2>&1)
+    danger_exit=$?
+    if [[ $danger_exit -eq 0 ]]; then
+        pass "$(elapsed_since $t)"
+    else
+        fail "Danger policy"
+        echo "$danger_output" | head -10 | while read -r line; do
+            echo -e "    ${DIM}${line}${RESET}"
+        done
+    fi
+else
+    skip "scripts/deny-dangerous.sh not found"
+fi
+
+# 4. Code style (PHP-CS-Fixer)
 step "Code style (PHP-CS-Fixer)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/php-cs-fixer ]]; then
@@ -155,7 +174,7 @@ else
     skip "php-cs-fixer not installed"
 fi
 
-# 4. Cyclomatic complexity
+# 5. Cyclomatic complexity
 step "Cyclomatic complexity (max 20)"
 t=$(date +%s%N)
 complexity_script="$REPO_ROOT/scripts/check-cyclomatic-complexity.php"
@@ -175,7 +194,7 @@ else
     skip "scripts/check-cyclomatic-complexity.php not found"
 fi
 
-# 5. Mess detector (PHPMD)
+# 6. Mess detector (PHPMD)
 step "Mess detector (PHPMD)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/phpmd ]]; then
@@ -198,7 +217,7 @@ else
     skip "phpmd not installed"
 fi
 
-# 6. PHPStan
+# 7. PHPStan
 step "Static analysis (PHPStan L10)"
 t=$(date +%s%N)
 if [[ -x vendor/bin/phpstan ]]; then
@@ -221,7 +240,7 @@ else
     skip "phpstan not installed"
 fi
 
-# 7. Twig lint
+# 8. Twig lint
 step "Twig templates lint"
 t=$(date +%s%N)
 if [[ -d templates ]]; then
@@ -245,7 +264,7 @@ else
     skip "no templates/ directory"
 fi
 
-# 8. Python agent syntax check
+# 9. Python agent syntax check
 step "Python agent syntax"
 t=$(date +%s%N)
 agent_dir="$REPO_ROOT/strands_agents"
@@ -277,6 +296,7 @@ else
     skip "python3 not available"
 fi
 
+<<<<<<< Updated upstream
 # 9. Python lint (ruff)
 step "Python lint (ruff)"
 t=$(date +%s%N)
@@ -332,6 +352,9 @@ else
 fi
 
 # 11. Docker Compose validate
+=======
+# 10. Docker Compose validate
+>>>>>>> Stashed changes
 step "Docker Compose config"
 t=$(date +%s%N)
 compose_file="$REPO_ROOT/docker-compose.yml"
@@ -353,7 +376,11 @@ else
     skip "docker not available"
 fi
 
+<<<<<<< Updated upstream
 # 12. PHPUnit
+=======
+# 11. PHPUnit
+>>>>>>> Stashed changes
 step "Tests (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -x vendor/bin/phpunit ]]; then
@@ -378,7 +405,11 @@ else
     fi
 fi
 
+<<<<<<< Updated upstream
 # 13. Coverage
+=======
+# 12. Coverage
+>>>>>>> Stashed changes
 step "Coverage (PHPUnit)"
 t=$(date +%s%N)
 if [[ ! -f phpunit.xml && ! -f phpunit.xml.dist ]]; then
@@ -429,7 +460,11 @@ else
     fi
 fi
 
+<<<<<<< Updated upstream
 # 14. Mutation testing (optional)
+=======
+# 13. Mutation testing (optional)
+>>>>>>> Stashed changes
 if [[ "$RUN_MUTATE" == true ]]; then
     step "Mutation testing (Infection)"
     t=$(date +%s%N)

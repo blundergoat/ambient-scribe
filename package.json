@@ -1,0 +1,27 @@
+{
+  "name": "ambient-scribe",
+  "version": "1.0.0",
+  "description": "Real-time medical transcription system that captures clinical conversations, performs speaker diarization and automatic speech recognition, and infers DOCTOR/PATIENT roles -- delivering labeled transcripts to the browser in real time.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blundergoat/ambient-scribe.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/blundergoat/ambient-scribe/issues"
+  },
+  "homepage": "https://github.com/blundergoat/ambient-scribe#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

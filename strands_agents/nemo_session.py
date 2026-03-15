@@ -124,22 +124,39 @@ class TranscriptionSession:
     asyncio.run_in_executor() to avoid blocking the event loop.
     """
 
+<<<<<<< Updated upstream
     CHUNK_INTERVAL_SECONDS = 5.0  # Browser sends chunks every 5 seconds
 
     def __init__(self, session_id: str, pipeline: NemoPipeline) -> None:
+=======
+    def __init__(
+        self,
+        session_id: str,
+        pipeline: NemoPipeline,
+        input_format: str = "pcm",
+        max_buffer_duration: float = 900.0,
+    ) -> None:
+>>>>>>> Stashed changes
         """Create a new transcription session.
 
         Args:
             session_id: Unique session identifier (UUID)
             pipeline: Shared NemoPipeline singleton (loaded at startup)
+            input_format: Audio input format ("pcm" or "webm")
+            max_buffer_duration: Maximum audio buffer duration in seconds.
         """
         self.session_id = session_id
         self.pipeline = pipeline
-        self.buffer = AudioBuffer()
+        self.buffer = AudioBuffer(max_duration_seconds=max_buffer_duration)
         self.accumulated_transcript: list[Segment] = []
         self.chunk_count: int = 0
         self.started_at: float = time.time()
+<<<<<<< Updated upstream
         self._webm_accumulator: bytearray = bytearray()
+=======
+        self._seen_segment_keys: set[tuple[str, int, int, str]] = set()
+        self._format_validated: bool = False
+>>>>>>> Stashed changes
 
         logger.info("transcription_session.created", extra={
             "session_id": session_id,
@@ -165,8 +182,22 @@ class TranscriptionSession:
         self.chunk_count += 1
         chunk_started_at = time.time()
 
+<<<<<<< Updated upstream
         # Accumulate raw WebM bytes
         self._webm_accumulator.extend(raw_audio)
+=======
+        if not self._format_validated and raw_audio != b"":
+            self._validate_audio_format(raw_audio)
+            self._format_validated = True
+
+        pcm_audio = self._decode_audio(raw_audio)
+        if pcm_audio == b"":
+            logger.info("transcription_session.chunk_skipped", extra={
+                "session_id": self.session_id,
+                "reason": "empty_after_decode",
+            })
+            return []
+>>>>>>> Stashed changes
 
         # Convert full accumulated WebM to WAV, then transcribe
         wav_path = None
@@ -218,7 +249,58 @@ class TranscriptionSession:
             return self.accumulated_transcript
 
         # Final pass on complete audio
+<<<<<<< Updated upstream
         wav_path = None
+=======
+        result = self.pipeline.transcribe_buffer(self.buffer.full_audio())
+        new_segments = self._filter_new_segments(result.segments)
+        self.accumulated_transcript.extend(new_segments)
+
+        return list(self.accumulated_transcript)
+
+    def _validate_audio_format(self, raw_audio: bytes) -> None:
+        """Validate that the first audio chunk matches the configured input format."""
+        _WEBM_MAGIC = b"\x1a\x45\xdf\xa3"
+        _WAV_MAGIC = b"RIFF"
+
+        if self.input_format == "pcm":
+            if raw_audio[:4] == _WEBM_MAGIC:
+                raise ValueError(
+                    f"Audio format mismatch: configured for PCM but received WebM data. "
+                    f"Set NEMO_STREAM_INPUT_FORMAT=webm or fix the browser audio encoding."
+                )
+            if raw_audio[:4] == _WAV_MAGIC:
+                raise ValueError(
+                    f"Audio format mismatch: configured for raw PCM but received WAV "
+                    f"(container with headers). Send headerless 16kHz mono s16le PCM."
+                )
+        elif self.input_format == "webm":
+            if len(raw_audio) >= 4 and raw_audio[:4] != _WEBM_MAGIC:
+                logger.warning("audio_format.webm_magic_missing", extra={
+                    "session_id": self.session_id,
+                    "first_bytes": raw_audio[:4].hex(),
+                })
+
+    def _decode_audio(self, raw_audio: bytes) -> bytes:
+        """Decode the incoming browser chunk into 16kHz mono PCM."""
+        if raw_audio == b"":
+            return b""
+
+        if self.input_format == "pcm":
+            return raw_audio
+
+        if self.input_format == "webm":
+            return self._decode_webm_chunk(raw_audio)
+
+        raise ValueError(f"Unsupported transcription input format: {self.input_format}")
+
+    def _decode_webm_chunk(self, raw_audio: bytes) -> bytes:
+        """Decode a MediaRecorder WebM/Opus chunk into raw PCM bytes."""
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
+            input_file.write(raw_audio)
+            input_path = input_file.name
+
+>>>>>>> Stashed changes
         try:
             wav_path = self._convert_webm_to_wav(bytes(self._webm_accumulator))
             if wav_path is None:

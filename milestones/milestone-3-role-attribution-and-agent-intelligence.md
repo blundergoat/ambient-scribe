@@ -1,7 +1,7 @@
 # Milestone 3 — Role Attribution + Agent Intelligence
 
 **Timeline:** Weekend 3 (~4-5 hours across 2 sessions)
-**Status:** Not Started
+**Status:** In Progress (live queue + Mercure role publishing implemented; end-to-end verification and agent/tool hardening still pending)
 **Dependencies:** Milestone 2 complete (end-to-end audio pipeline with `spk_0`/`spk_1` working)
 
 ---
@@ -10,13 +10,16 @@
 
 Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. Implement progressive confidence with retroactive relabeling. This is the demo's centrepiece and the strongest content for the blog.
 
+> **Implementation snapshot (2026-03-15):** The Python-side per-session inference queue, Mercure role publication, browser role-topic subscription, and controller wiring are now in place. The remaining work is validating the live Bedrock-backed flow end-to-end, attaching the state-management tool to the Strands agent itself, and hardening edge cases.
+
 ---
 
 ## Tasks
 
 ### 3.1 Strands Role Inference Agent (Session A, ~2 hours)
 
-- [ ] Create `strands_agents/transcription_agent.py`:
+- [x] Create `strands_agents/agents/transcription_agent.py` with model factory + system prompt
+  - **Note:** the current implementation uses a `create_role_inference_agent()` factory and the target `tools=[assign_roles_tool]` wiring shown below is still pending.
   ```python
   from strands import Agent
 
@@ -50,7 +53,9 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
   )
   ```
 
-- [ ] **Clarify the `assign_roles` tool boundary.** This tool does **programmatic state management**, not LLM reasoning (the agent's system prompt handles reasoning). The tool:
+- [x] Create `strands_agents/tools/assign_roles.py` for state management (mapping history, running confidence, flip detection)
+- [ ] **Attach the `assign_roles` tool to the live Strands agent.** The current agent still uses `tools=[]`, so the tool boundary is documented in code but not enforced by the SDK yet.
+- [ ] **Clarify the `assign_roles` tool boundary in the live invocation path.** This tool should do **programmatic state management**, not LLM reasoning (the agent's system prompt handles reasoning). The tool must:
   1. Persists the speaker→role mapping across invocations
   2. Detects label flips by comparing new mapping against mapping history
   3. Returns structured output (Pydantic model, not free-text)
@@ -92,11 +97,11 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
 >
 > **But it must be sequenced per session.** Fire-and-forget `asyncio.create_task` per chunk creates race conditions: two concurrent agent calls reading/writing `role_mapping` simultaneously causes mapping flips and inconsistent UI relabels.
 
-- [ ] **Two Mercure topic pattern:**
+- [x] **Two Mercure topic pattern:**
   - `scribe/session/{id}/raw` — immediate `spk_0`/`spk_1` segments from NeMo (low latency)
   - `scribe/session/{id}/roles` — role attribution updates from Strands agent (higher latency, ok)
-- [ ] Raw segments published immediately after NeMo processing (no agent in the hot path)
-- [ ] **Per-session inference queue** (not fire-and-forget):
+- [x] Raw segments published immediately after NeMo processing (no agent in the hot path)
+- [x] **Per-session inference queue** (not fire-and-forget):
   ```python
   import asyncio
   from collections import defaultdict
@@ -150,7 +155,7 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
               logger.error("role_inference_failed", session_id=session_id, error=str(e))
               # Raw segments remain visible — graceful degradation
   ```
-- [ ] Wire into the WebSocket handler:
+- [x] Wire the role queue into the WebSocket handler:
   ```python
   segments = await loop.run_in_executor(nemo_executor, session.process_chunk, audio_chunk)
 
@@ -161,6 +166,8 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
   # Enqueue role inference (sequential per session, non-blocking)
   await enqueue_role_inference(session_id, segments)
   ```
+
+> **Current state:** the live path now publishes role updates to Mercure from Python. The older `/session/{id}/roles/stream` SSE endpoint remains as a compatibility/debugging path but is no longer the primary architecture.
 
 ### 3.3 Progressive Confidence UX
 
@@ -180,9 +187,11 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
   - Do not reduce confidence during monologues — absence of turn-taking is not evidence of wrong mapping
   - If extended silence, skip agent invocation entirely (nothing to infer)
 
+> **Current state:** the browser now subscribes to live role updates and shows the low-confidence “Identifying speakers...” state immediately. Real confidence progression still needs live-agent validation.
+
 ### 3.4 Colour-Coded Transcript UI (Session B, ~1-2 hours)
 
-- [ ] Role-specific styling:
+- [x] Role-specific styling:
   ```css
   .segment--DOCTOR {
       border-left: 3px solid #2563eb;  /* blue */
@@ -197,20 +206,20 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
       opacity: 0.7;
   }
   ```
-- [ ] Dark mode variants for all role colours
+- [x] Dark mode variants for all role colours
 
-- [ ] Confidence badge in the UI header:
+- [x] Confidence badge in the UI header:
   - `"Identifying speakers..."` (grey, pulsing)
   - `"Roles identified"` (green, with confidence percentage)
 
-- [ ] Segment rendering handles both raw and role-attributed data:
+- [x] Segment rendering handles both raw and role-attributed data:
   - Initially renders with `spk_0`/`spk_1` and `segment--UNKNOWN` class
   - When role update arrives, finds matching segments by timestamp and relabels
   - Assigns `data-segment-id` attributes for efficient DOM updates
 
 ### 3.5 Session Controls via Symfony
 
-- [ ] `ScribeController.php`:
+- [x] `ScribeController.php`:
   ```php
   #[Route('/scribe', name: 'scribe_index')]
   public function index(): Response
@@ -234,16 +243,16 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
       return $this->json($response->getContent());
   }
   ```
-- [ ] Pass both Mercure topics to the Twig template
-- [ ] Browser subscribes to both SSE topics simultaneously
+- [x] Pass both Mercure topics to the Twig template
+- [x] Browser subscribes to both SSE topics simultaneously in the live path
 
 ### 3.6 Agent Error Handling
 
-- [ ] If Strands agent call fails, raw `spk_0`/`spk_1` segments remain visible (graceful degradation)
-- [ ] Log agent errors with correlation ID and timing for debugging
+- [x] If Strands agent call fails, raw `spk_0`/`spk_1` segments remain visible (graceful degradation)
+- [x] Log agent errors with correlation ID / session context for debugging
 - [ ] If agent is consistently slow (>5s), the queue naturally batches — next dequeue gets accumulated segments
-- [ ] Add timeout on agent invocation (10 second max)
-- [ ] Clean up inference workers and queues on WebSocket disconnect
+- [x] Add timeout on agent invocation (current PHP-side timeout: 15s)
+- [x] Clean up inference workers and queues on WebSocket disconnect
 
 ### 3.7 Tests for Role Inference
 
@@ -256,11 +265,14 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
   - [ ] Test flip detection: send mapping A, then reversed mapping → verify `flip_detected=True`
   - [ ] Test progressive confidence: sequential invocations → verify confidence increases
   - [ ] Test single-speaker input: only `spk_0` segments → verify stable mapping
-- [ ] Create `tests/python/test_inference_queue.py`:
-  - Test sequential processing: enqueue 3 items → verify processed in order
-  - Test worker cleanup: no work for 60s → verify worker terminates
-  - Test concurrent sessions: two sessions → verify independent queues
-- [ ] Add `tests/php/Controller/ScribeControllerTest.php`:
+- [x] Create `tests/python/test_inference_queue.py`:
+  - [x] Test sequential processing for one session
+  - [x] Test live role publication + session mapping application
+  - [x] Test single-speaker sessions are skipped
+  - [ ] Test worker cleanup on idle timeout
+  - [ ] Test concurrent sessions: two sessions → verify independent queues
+- [x] Keep existing PHP unit coverage for `RoleInferenceService`
+- [ ] Add `tests/Unit/Controller/ScribeControllerTest.php`:
   - Test `GET /scribe` returns page with session ID and topic URLs
   - Test `GET /scribe/{id}/history` calls Strands client correctly
 
@@ -268,7 +280,7 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
 
 ## Exit Criteria
 
-- [ ] Strands agent receives raw segments and returns DOCTOR/PATIENT attributed text
+- [ ] Strands agent receives raw segments and returns DOCTOR/PATIENT attributed text in the live transcription flow
 - [ ] Role mapping improves over first 2-3 chunks (progressive confidence)
 - [ ] UI shows colour-coded DOCTOR/PATIENT transcript with timestamps
 - [ ] Raw segments appear immediately; role labels arrive asynchronously (no added latency on hot path)
@@ -277,6 +289,15 @@ Replace raw `spk_0`/`spk_1` with DOCTOR/PATIENT using Strands agent reasoning. I
 - [ ] **Single-speaker and silence handled without mapping degradation**
 - [ ] Full demo: start recording -> see speakers identified -> watch attributed transcript build in real-time
 - [ ] **Python and PHP tests pass**
+
+---
+
+## Next Slice (2026-03-15)
+
+1. Run the live role path against real services: browser -> WebSocket -> NeMo -> queue -> Bedrock/Ollama -> Mercure `roles`.
+2. Attach the `assign_roles` state-management tool to the Strands agent itself instead of only using helper functions around the agent output.
+3. Add the remaining queue hardening tests: idle-timeout cleanup and concurrent multi-session isolation.
+4. Decide whether to retire the older PHP-triggered `/roles/stream` compatibility path or keep it explicitly as a debugging endpoint.
 
 ---
 

@@ -14,7 +14,7 @@
 #                 (the "mercure" hostname resolves to the Mercure container)
 #
 #   public_url  - The PUBLIC Mercure hub URL (used by the browser to subscribe).
-#                 In Docker, this is http://localhost:3701/.well-known/mercure
+#                 In Docker, this is http://localhost:48137/.well-known/mercure
 #                 (the browser accesses Mercure via the host machine's port mapping)
 #
 #   jwt.secret  - A shared secret for signing JWTs. The PHP app signs publish tokens
