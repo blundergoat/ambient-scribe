@@ -1,8 +1,8 @@
 # Next Steps Plan
 
 **Created:** 2026-02-20
-**Updated:** 2026-02-26
-**Current state:** M0 code-complete, M1 complete, M2 GPU-verified, Priority 0 (preflight) next
+**Updated:** 2026-03-16
+**Current state:** M0–M2 complete, M3 code-complete (tool wired, Ollama default fixed, tests pass), live verification pending
 
 ---
 
@@ -99,14 +99,14 @@ Only after M3 is working end-to-end:
 ## Quick Reference: What's Blocking What
 
 ```
-Preflight green ←── PHP tests (Priority 0)        ← YOU ARE HERE
+Preflight green ←── PHP tests (Priority 0)        ✔ DONE
       │
       ▼
 M2 sign-off ←────── GPU verification (Priority 1) ✔ DONE
       │
       ▼
-M3 build ←───────── Agent + queue + UX (Priority 2)
+M3 build ←───────── Agent + queue + UX (Priority 2) ✔ CODE COMPLETE — live verification pending
       │
       ▼
-M4 polish ←──────── Demo mode + blog (Priority 3)
+M4 polish ←──────── Demo mode + blog (Priority 3)  ← NEXT
 ```

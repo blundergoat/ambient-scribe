@@ -9,7 +9,8 @@ Ambient Scribe is a browser -> Python -> Mercure -> browser transcription system
 - FastAPI agent (`strands_agents/api/server.py`): handles WebSocket ingest, batch upload, session history, legacy role SSE, and Mercure publishing.
 - NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`): singleton GPU diarization/ASR plus per-session audio buffering.
 - Role inference (`strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py`): sequential per-session DOCTOR/PATIENT mapping.
-- Mercure (`docker-compose.yml`): fan-out for `scribe/session/{id}/raw` and `scribe/session/{id}/roles`.
+- Summary generation (`strands_agents/agents/summary_agent.py`): mode-specific structured summaries (SOAP, action items, etc.) on session end.
+- Mercure (`docker-compose.yml`): fan-out for `scribe/session/{id}/raw`, `scribe/session/{id}/roles`, and `scribe/session/{id}/summary`.
 - Terraform (`infra/terraform/`): ECS/Fargate, ALB, Mercure, secrets, and DynamoDB scaffolding.
 
 ## Primary Flows

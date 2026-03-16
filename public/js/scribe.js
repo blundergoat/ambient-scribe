@@ -313,6 +313,8 @@ let reconnectTimer = null;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const segmentsBySpeaker = new Map();
 const manualOverrides = new Set();
+let lastSpeakerId = null;
+let lastSegmentBlock = null;
 let lowLevelCount = 0;
 
 // State is now declared — safe to apply mode (relabelSegments needs roleMapping)
@@ -446,6 +448,7 @@ function stopRecording() {
     if (segmentIndex > 0) {
         document.getElementById('downloadBtn').classList.remove('hidden');
         document.getElementById('resetBtn').classList.remove('hidden');
+        requestSummary();
     }
 }
 
@@ -459,6 +462,7 @@ function resetSession() {
     // Update Mercure topics for the new session
     CONFIG.topicRaw = `scribe/session/${CONFIG.sessionId}/raw`;
     CONFIG.topicRoles = `scribe/session/${CONFIG.sessionId}/roles`;
+    CONFIG.topicSummary = `scribe/session/${CONFIG.sessionId}/summary`;
 
     // Clear transcript
     const transcript = document.getElementById('transcript');
@@ -470,6 +474,19 @@ function resetSession() {
     confidence = 0;
     startTime = null;
     manualOverrides.clear();
+    lastSpeakerId = null;
+    lastSegmentBlock = null;
+    replayActive = false;
+    clearInterval(replayTimerInterval);
+    replayTimerInterval = null;
+    replayStartTime = null;
+    replayDuration = 0;
+    document.getElementById('replayProgress').classList.add('hidden');
+    document.getElementById('replayProgressFill').style.width = '0%';
+    document.getElementById('summaryPanel').classList.add('hidden');
+    document.getElementById('summaryPanel').classList.remove('summary-panel--open');
+    document.getElementById('summaryContent').innerHTML = '';
+    document.getElementById('summaryTitle').textContent = 'Session Summary';
     clearInterval(timerInterval);
     timerInterval = null;
 
@@ -515,6 +532,7 @@ function subscribeToMercure() {
     streams = new StreamOrchestrator(CONFIG.mercureUrl);
     streams.subscribe(CONFIG.topicRaw, handleRawSegment);
     if (CONFIG.enableRoleUpdates) streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
+    if (CONFIG.topicSummary) streams.subscribe(CONFIG.topicSummary, handleSummaryEvent);
 }
 
 // =========================================================================
@@ -604,14 +622,21 @@ async function downloadTranscript() {
             segments.push({
                 speaker_id: el.dataset.speakerId,
                 role: roleMapping[el.dataset.speakerId] || 'UNKNOWN',
-                text: el.querySelector('.segment__text')?.textContent?.trim() || '',
+                text: [...el.querySelectorAll('.segment__text')].map(s => s.textContent.trim()).join(' '),
                 start: parseFloat(el.dataset.start) || 0,
                 end: parseFloat(el.dataset.end) || 0,
             });
         });
     }
 
-    const exportData = { session_id: CONFIG.sessionId, exported_at: new Date().toISOString(), mode: currentMode, segments };
+    // Capture summary if available
+    const summaryContent = document.getElementById('summaryContent');
+    let summary = null;
+    if (summaryContent && summaryContent.innerHTML.trim()) {
+        summary = { title: document.getElementById('summaryTitle')?.textContent || '', html: summaryContent.innerHTML };
+    }
+
+    const exportData = { session_id: CONFIG.sessionId, exported_at: new Date().toISOString(), mode: currentMode, segments, summary };
     const jsonBlob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
 
     const textLines = segments.map(seg => {
@@ -643,7 +668,11 @@ function announce(message) {
 // Segment Rendering
 // =========================================================================
 function handleRawSegment(data) {
-    if (data.type === 'finalized') { document.getElementById('status').textContent = 'Transcript finalized'; return; }
+    if (data.type === 'finalized') {
+        if (replayActive) endReplay();
+        else document.getElementById('status').textContent = 'Transcript finalized';
+        return;
+    }
     if (data.type === 'error') { document.getElementById('status').textContent = `Transcription error: ${data.message}`; return; }
     if (data.type !== 'segment') return;
     const role = roleMapping[data.speaker_id] || 'UNKNOWN';
@@ -652,8 +681,32 @@ function handleRawSegment(data) {
 
 function appendSegment(segment, role) {
     const container = document.getElementById('transcript');
+    segmentIndex++;
+
+    // Merge consecutive segments from the same speaker into one block
+    if (lastSpeakerId === segment.speaker_id && lastSegmentBlock) {
+        const textContainer = lastSegmentBlock.querySelector('.segment__texts');
+        const span = document.createElement('span');
+        span.className = 'segment__text';
+        span.dataset.start = segment.start;
+        span.dataset.end = segment.end;
+        span.textContent = segment.text;
+        textContainer.appendChild(span);
+
+        // Update block end time
+        lastSegmentBlock.dataset.end = segment.end;
+
+        if (!segmentsBySpeaker.has(segment.speaker_id)) segmentsBySpeaker.set(segment.speaker_id, []);
+        segmentsBySpeaker.get(segment.speaker_id).push(lastSegmentBlock);
+
+        container.scrollTop = container.scrollHeight;
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    // New speaker — create a new block
     const el = document.createElement('div');
-    const id = `segment-${segmentIndex++}`;
+    const id = `segment-${segmentIndex}`;
 
     el.id = id;
     el.className = `segment segment--${role}`;
@@ -675,7 +728,7 @@ function appendSegment(segment, role) {
                 <span class="segment__speaker">${escapeHtml(speakerLabel)}${overrideIcon}</span>
                 <span class="segment__time">${formatTime(segment.start)}</span>
             </div>
-            <span class="segment__text">${escapeHtml(segment.text)}</span>
+            <div class="segment__texts"><span class="segment__text" data-start="${segment.start}" data-end="${segment.end}">${escapeHtml(segment.text)}</span></div>
         </div>
     `;
 
@@ -685,8 +738,7 @@ function appendSegment(segment, role) {
         label.style.cursor = 'pointer';
         label.title = 'Click to change role';
         label.addEventListener('click', () => {
-            const speakerId = el.dataset.speakerId;
-            cycleRole(speakerId);
+            cycleRole(el.dataset.speakerId);
         });
     }
 
@@ -694,6 +746,9 @@ function appendSegment(segment, role) {
 
     if (!segmentsBySpeaker.has(segment.speaker_id)) segmentsBySpeaker.set(segment.speaker_id, []);
     segmentsBySpeaker.get(segment.speaker_id).push(el);
+
+    lastSpeakerId = segment.speaker_id;
+    lastSegmentBlock = el;
 
     container.scrollTop = container.scrollHeight;
 
@@ -814,7 +869,7 @@ function relabelSegments() {
 
     for (const speakerId of changedSpeakers) {
         const newRole = roleMapping[speakerId] || 'UNKNOWN';
-        const elements = segmentsBySpeaker.get(speakerId) || [];
+        const elements = [...new Set(segmentsBySpeaker.get(speakerId) || [])];
 
         for (const el of elements) {
             const previousClass = el.className;
@@ -892,6 +947,191 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// =========================================================================
+// Replay Demo Mode
+// =========================================================================
+let replayActive = false;
+let replayDuration = 0;
+let replayStartTime = null;
+let replayTimerInterval = null;
+
+async function startReplay(file) {
+    if (!file) return;
+    // Reset the file input so the same file can be re-selected
+    document.getElementById('demoFileInput').value = '';
+
+    if (isRecording) stopRecording();
+
+    // Reset session for replay
+    resetSession();
+    // Small delay for reset to complete
+    await new Promise(r => setTimeout(r, 100));
+
+    replayActive = true;
+    const demoBtn = document.getElementById('demoBtn');
+    demoBtn.disabled = true;
+    demoBtn.textContent = 'Processing...';
+
+    document.getElementById('startBtn').classList.add('hidden');
+    document.getElementById('emptyState').classList.add('hidden');
+    document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span style="color:var(--color-speaker-a); font-weight:500;">Processing WAV...</span>';
+
+    // Subscribe to Mercure for this session
+    subscribeToMercure();
+
+    // Upload WAV to replay endpoint
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch(
+            `/session/${CONFIG.sessionId}/replay?speed=1.0&mode=${currentMode}`,
+            { method: 'POST', body: formData }
+        );
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: 'Upload failed' }));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        replayDuration = data.duration_seconds || 0;
+
+        // Show progress bar and start timer
+        document.getElementById('replayProgress').classList.remove('hidden');
+        document.getElementById('timer').classList.remove('hidden');
+        document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span style="color:var(--color-speaker-a); font-weight:500;">Replaying demo</span>';
+
+        replayStartTime = Date.now();
+        replayTimerInterval = setInterval(updateReplayProgress, 500);
+
+        demoBtn.textContent = 'Demo';
+        demoBtn.disabled = false;
+
+    } catch (err) {
+        console.error('Replay failed:', err);
+        document.getElementById('status').textContent = `Demo error: ${err.message}`;
+        demoBtn.textContent = 'Demo';
+        demoBtn.disabled = false;
+        replayActive = false;
+    }
+}
+
+function updateReplayProgress() {
+    if (!replayActive || !replayStartTime || !replayDuration) return;
+
+    const elapsed = (Date.now() - replayStartTime) / 1000;
+    const progress = Math.min(elapsed / replayDuration, 1);
+    document.getElementById('replayProgressFill').style.width = `${progress * 100}%`;
+    document.getElementById('timer').textContent = formatTime(elapsed);
+
+    if (progress >= 1) {
+        endReplay();
+    }
+}
+
+function endReplay() {
+    replayActive = false;
+    clearInterval(replayTimerInterval);
+    replayTimerInterval = null;
+    replayStartTime = null;
+
+    document.getElementById('replayProgress').classList.add('hidden');
+    document.getElementById('status').textContent = 'Demo complete';
+
+    if (segmentIndex > 0) {
+        document.getElementById('downloadBtn').classList.remove('hidden');
+        document.getElementById('resetBtn').classList.remove('hidden');
+        requestSummary();
+    }
+}
+
+// =========================================================================
+// Session Summary
+// =========================================================================
+async function requestSummary() {
+    if (segmentIndex === 0) return;
+
+    const panel = document.getElementById('summaryPanel');
+    const loading = document.getElementById('summaryLoading');
+    const content = document.getElementById('summaryContent');
+
+    panel.classList.remove('hidden');
+    panel.classList.add('summary-panel--open');
+    loading.classList.remove('hidden');
+    content.innerHTML = '';
+
+    try {
+        const response = await fetch(`/session/${CONFIG.sessionId}/summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (response.ok) {
+            const data = await response.json();
+            renderSummary(data);
+        } else {
+            content.innerHTML = '<p class="text-sm" style="color:var(--text-subtle)">Summary generation failed. Try downloading the transcript instead.</p>';
+        }
+    } catch (err) {
+        console.error('Summary request failed:', err);
+        content.innerHTML = '<p class="text-sm" style="color:var(--text-subtle)">Could not reach the summary service.</p>';
+    } finally {
+        loading.classList.add('hidden');
+    }
+}
+
+function handleSummaryEvent(data) {
+    if (data.type === 'summary') {
+        document.getElementById('summaryLoading')?.classList.add('hidden');
+        renderSummary(data);
+    }
+}
+
+function renderSummary(data) {
+    const content = document.getElementById('summaryContent');
+    if (!content) return;
+
+    const panel = document.getElementById('summaryPanel');
+    panel.classList.remove('hidden');
+    panel.classList.add('summary-panel--open');
+
+    let html = '';
+
+    if (data.title) {
+        document.getElementById('summaryTitle').textContent = data.title;
+    }
+
+    if (data.sections && data.sections.length > 0) {
+        for (const section of data.sections) {
+            html += `<div class="summary-section">
+                <div class="summary-section__heading">${escapeHtml(section.heading)}</div>
+                <div class="summary-section__content">${escapeHtml(section.content)}</div>
+            </div>`;
+        }
+    }
+
+    if (data.key_points && data.key_points.length > 0) {
+        html += '<div class="summary-section"><div class="summary-section__heading">Key Points</div><ul class="summary-key-points">';
+        for (const point of data.key_points) {
+            html += `<li>${escapeHtml(point)}</li>`;
+        }
+        html += '</ul></div>';
+    }
+
+    if (!html) {
+        html = '<p class="text-sm" style="color:var(--text-subtle)">No summary content available.</p>';
+    }
+
+    content.innerHTML = html;
+}
+
+function toggleSummary() {
+    const panel = document.getElementById('summaryPanel');
+    const toggle = panel.querySelector('.summary-panel__toggle');
+    const isOpen = panel.classList.toggle('summary-panel--open');
+    toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
 }
 
 // =========================================================================

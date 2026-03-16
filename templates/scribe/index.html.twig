@@ -171,11 +171,96 @@
             font-variant-numeric: tabular-nums;
         }
 
-        .segment__text {
+        .segment__texts {
             display: block;
             color: var(--text-strong);
             line-height: 1.6;
             font-size: 0.9375rem;
+        }
+        .segment__text {
+            display: inline;
+        }
+        .segment__text + .segment__text::before {
+            content: ' ';
+        }
+
+        /* ---- Summary Panel ---- */
+        .summary-panel {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface-bg);
+            margin-top: 0.75rem;
+            overflow: hidden;
+        }
+        .summary-panel__toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--text-strong);
+        }
+        .summary-panel__toggle:hover { background: var(--surface-hover); }
+        .summary-panel__chevron {
+            transition: transform 0.2s;
+            width: 16px; height: 16px;
+        }
+        .summary-panel--open .summary-panel__chevron { transform: rotate(180deg); }
+        .summary-panel__body {
+            padding: 0 1rem 1rem;
+            display: none;
+        }
+        .summary-panel--open .summary-panel__body { display: block; }
+        .summary-panel__loading {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            color: var(--text-subtle);
+            font-size: 0.875rem;
+        }
+        .summary-section { margin-bottom: 1rem; }
+        .summary-section:last-child { margin-bottom: 0; }
+        .summary-section__heading {
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--text-subtle);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.375rem;
+        }
+        .summary-section__content {
+            font-size: 0.9375rem;
+            line-height: 1.6;
+            color: var(--text-strong);
+        }
+        .summary-key-points {
+            list-style: disc;
+            padding-left: 1.25rem;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: var(--text-strong);
+        }
+
+        /* ---- Replay Progress ---- */
+        .replay-progress {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+        .replay-progress__fill {
+            height: 100%;
+            background: var(--color-speaker-a);
+            transition: width 0.5s linear;
+            border-radius: 2px;
         }
 
         /* ---- Recording Pulse ---- */
@@ -626,6 +711,12 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
                 New Session
             </button>
+            <span class="mx-1 text-xs muted-text">|</span>
+            <button id="demoBtn" onclick="document.getElementById('demoFileInput').click()" class="btn btn--ghost" aria-label="Demo: replay a WAV file">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Demo
+            </button>
+            <input id="demoFileInput" type="file" accept=".wav,audio/wav" style="display:none" onchange="startReplay(this.files[0])">
 
             <div class="flex items-center gap-3 ml-auto">
                 <span id="status" class="text-sm muted-text" aria-live="polite">Ready</span>
@@ -639,6 +730,11 @@
         <div id="systemBanner" class="hidden mb-4 px-4 py-3 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium border border-amber-300"></div>
         <div id="toastContainer" style="position:fixed; bottom:1.5rem; right:1.5rem; z-index:50;"></div>
 
+        {# Replay Progress #}
+        <div id="replayProgress" class="replay-progress hidden">
+            <div id="replayProgressFill" class="replay-progress__fill" style="width:0%"></div>
+        </div>
+
         {# Transcript #}
         <div id="transcript" role="log" aria-live="polite" class="panel p-4 overflow-y-auto" style="min-height:400px; max-height:calc(100vh - 220px);">
             <p id="emptyState" class="text-center py-16">
@@ -646,6 +742,21 @@
                 <span class="subtle-text block text-sm" id="emptyStateText">Click "Start Recording" to begin transcription.</span>
                 <span class="subtle-text block text-xs mt-1">Ensure microphone access is allowed.</span>
             </p>
+        </div>
+
+        {# Summary Panel #}
+        <div id="summaryPanel" class="summary-panel hidden">
+            <button class="summary-panel__toggle" onclick="toggleSummary()" aria-expanded="false" aria-controls="summaryBody">
+                <span id="summaryTitle">Session Summary</span>
+                <svg class="summary-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div id="summaryBody" class="summary-panel__body">
+                <div id="summaryLoading" class="summary-panel__loading hidden">
+                    <span class="recording-dot recording-pulse"></span>
+                    Generating summary...
+                </div>
+                <div id="summaryContent"></div>
+            </div>
         </div>
 
         {# Segment Count #}
@@ -717,6 +828,7 @@
         mercureUrl: '{{ mercure_url }}',
         topicRaw: '{{ mercure_topic_raw }}',
         topicRoles: '{{ mercure_topic_roles }}',
+        topicSummary: 'scribe/session/{{ session_id }}/summary',
         enableRoleUpdates: {{ enable_role_updates ? 'true' : 'false' }},
     };
     {% if dev_panel_enabled is defined and dev_panel_enabled %}

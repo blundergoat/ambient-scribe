@@ -394,6 +394,8 @@ class ScenarioRunner {
         const expected = scenario.expectedEndState;
         const errors = [];
 
+        const durationMs = Date.now() - startedAt;
+
         if (expected.segmentCount !== undefined && segmentIndex !== expected.segmentCount) errors.push(`segments: ${segmentIndex} (expected ${expected.segmentCount})`);
         if (expected.roleMapping && Object.keys(expected.roleMapping).length > 0) {
             for (const [spk, role] of Object.entries(expected.roleMapping)) {
@@ -403,7 +405,24 @@ class ScenarioRunner {
         if (expected.confidenceMin !== undefined && expected.confidenceMin > 0 && confidence < expected.confidenceMin) errors.push(`confidence: ${confidence} (min ${expected.confidenceMin})`);
         if (expected.flipDetected !== undefined && flipDetected !== expected.flipDetected) errors.push(`flip: ${flipDetected} (expected ${expected.flipDetected})`);
 
-        return { pass: errors.length === 0, errors, segmentCount: segmentIndex, roleMapping: { ...roleMapping }, confidence, flipDetected, durationMs: Date.now() - startedAt };
+        // Timing assertion: scenario must complete within budget
+        if (expected.maxDurationMs !== undefined && durationMs > expected.maxDurationMs) errors.push(`duration: ${durationMs}ms (max ${expected.maxDurationMs}ms)`);
+
+        // Content assertions: verify rendered segment text matches injected data
+        if (expected.contentCheck) {
+            const allSegments = document.querySelectorAll('#transcript .segment');
+            if (expected.contentCheck.firstSegmentText && allSegments.length > 0) {
+                const firstText = [...allSegments[0].querySelectorAll('.segment__text')].map(s => s.textContent.trim()).join(' ');
+                if (!firstText.includes(expected.contentCheck.firstSegmentText)) errors.push(`first segment text mismatch: "${firstText.substring(0, 60)}..."`);
+            }
+            if (expected.contentCheck.lastSegmentText && allSegments.length > 0) {
+                const lastEl = allSegments[allSegments.length - 1];
+                const lastText = [...lastEl.querySelectorAll('.segment__text')].map(s => s.textContent.trim()).join(' ');
+                if (!lastText.includes(expected.contentCheck.lastSegmentText)) errors.push(`last segment text mismatch: "${lastText.substring(0, 60)}..."`);
+            }
+        }
+
+        return { pass: errors.length === 0, errors, segmentCount: segmentIndex, roleMapping: { ...roleMapping }, confidence, flipDetected, durationMs };
     }
 
     _markScenario(id, status, result) {

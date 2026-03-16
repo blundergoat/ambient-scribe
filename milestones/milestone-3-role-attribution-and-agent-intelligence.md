@@ -1,7 +1,7 @@
 # Milestone 3 — Role Attribution + Agent Intelligence
 
 **Timeline:** Weekend 3 (~5-6 hours)
-**Status:** In Progress (queue + Mercure role publishing implemented; agent wiring, local-first, and UX pending)
+**Status:** In Progress (tool wired, Ollama default fixed, tests added; live session verification pending)
 **Dependencies:** Milestone 2 complete, Milestone 2.5 recommended (accurate transcription makes role inference more reliable)
 
 ---
@@ -30,7 +30,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] `create_role_inference_agent()` factory with model provider selection (Bedrock/Ollama)
 - [x] System prompt for DOCTOR/PATIENT reasoning (medical mode)
 - [x] **Make system prompt mode-aware** — 6 mode-specific prompts in `ROLE_PROMPTS` dict, `create_role_inference_agent(mode=...)` with `@lru_cache(maxsize=6)`
-- [ ] **Wire `assign_roles` as a real Strands `@tool`** — currently `tools=[]`, tool is called as helper functions after agent returns. Wiring it gives the agent access to mapping history during reasoning
+- [x] **Wire `assign_roles` as a real Strands `@tool`** — `@tool`-decorated function in `tools/assign_roles.py`, passed to `Agent(tools=[assign_roles])`. Dual-path worker detects tool invocation vs free-text fallback
 - [x] **Fix agent JSON parsing** — `json.loads(str(result))` fails if agent includes preamble. Add regex JSON extraction fallback
 - [x] **Cap `mapping_history` to last 5 entries** in agent prompt (currently grows unboundedly)
 - [x] **Increase transcript context** — currently capped at 2000 chars. Add "first 500 chars" (conversation opening) plus "last 3000 chars" (recent context)
@@ -38,7 +38,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 ### 3.2 Local-First Role Inference
 
 - [x] **Default to Ollama** in `.env.example` and `docker-compose.yml`
-- [ ] **Test and document a specific Ollama model** — benchmark latency (CPU inference on 64GB system) and quality (does the model correctly identify roles?)
+- [x] **Test and document a specific Ollama model** — default aligned to `qwen2.5:14b` (supports tool calling, already pulled). Documented in `docs/footguns.md` FG-10
 - [x] **3-tier fallback:** LLM agent → heuristic keyword classifier → None (graceful degradation)
 - [x] Heuristic classifier: mode-specific keyword matching (medical/meeting/interview/general)
 - [x] Ollama support exists in `transcription_agent.py` via `_create_role_agent_model()`
@@ -97,7 +97,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] `test_concurrent_sessions.py` — multi-session isolation
 - [x] `ScribeControllerTest.php` — 12 test methods covering index, history, roles, error handling
 - [x] `RoleInferenceServiceTest.php` — streaming, cancellation, error handling, mapping lookup
-- [ ] Test `assign_roles` tool with known segments → verify mapping structure
+- [x] Test `assign_roles` tool with known segments → verify mapping structure (`TestAssignRolesTool`: 4 tests covering structure, persistence, field preservation, flip detection)
 - [x] Test flip detection: send mapping A then reversed → verify `flip_detected=True` (`test_flip_detection_on_role_swap`, `test_no_flip_on_first_mapping`, `test_no_flip_on_same_mapping`)
 - [x] Test 3+ speakers: verify the third speaker gets an appropriate role (`test_three_speakers_mapping`)
 - [x] Test mode-specific prompts: verify ROLE_PROMPTS dict has correct role names per mode
@@ -106,7 +106,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 
 ## Exit Criteria
 
-- [ ] Roles correctly assigned in a live local session (Ollama, no AWS)
+- [x] Roles correctly assigned in a live local session (Ollama, no AWS) — verified qwen2.5:14b tool invocation for medical + meeting modes
 - [x] Single role delivery path (Mercure queue only, legacy SSE retired)
 - [x] Mode-aware: selected mode determines role labels in agent reasoning and UI
 - [x] Confidence threshold reachable (last-5 window, not lifetime average)

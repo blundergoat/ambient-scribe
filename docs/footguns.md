@@ -54,3 +54,10 @@ Each entry names the files involved, what breaks, and the evidence.
 - **What breaks:** Editing Twig templates, scenarios JSON, or any PHP/asset file on the host does not update the running `app` container. The Symfony app is copied into the Docker image at build time. Without `dc up -d --build` (or a volume mount for `templates/`), the container serves stale code indefinitely.
 - **Evidence:** A full audit round found 0/12 bugs fixed because the container was never rebuilt after the fixes were applied to the working tree. The second auditor confirmed "The codebase appears identical to the previous audit."
 - **Mitigation:** After editing any file served by the `app` container, always run `dc up -d --build` (or `dc up -d --build app` to rebuild only the app service). The `start-dev.sh` script will skip rebuild if containers are already running — use `dc up -d --build` directly.
+
+### 10. Ollama model must support tool calling for assign_roles
+- **Files:** `strands_agents/tools/assign_roles.py`, `strands_agents/agents/transcription_agent.py`, `docker-compose.yml`
+- **What breaks:** The `assign_roles` Strands `@tool` requires the Ollama model to support tool/function calling. Models without tool support silently fall back to free-text JSON (parsed via regex), which is less reliable.
+- **Default model:** `qwen2.5:14b` — supports tool calling, aligned with `docker-compose.yml` and `.env.example`.
+- **Alternative:** `qwen3:14b` also supports tool calling. Avoid models like `llama3.1:8b` which may not support Ollama's tool calling API.
+- **Evidence:** The agent constructor passes `tools=[assign_roles]` to Strands. If the model doesn't support tools, Strands may error or the model ignores the tool definition. The worker has a dual-path: it checks `state.mapping_history` growth to detect tool invocation vs free-text fallback.

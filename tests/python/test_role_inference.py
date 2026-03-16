@@ -2,12 +2,15 @@
 Tests for the role inference tools and state management.
 """
 
+import json
+
 from agents import ROLE_PROMPTS
 from api.server import _heuristic_role_inference
 from tools.assign_roles import (
     RoleMapping,
     RoleMappingState,
     apply_role_mapping_result,
+    assign_roles,
     cleanup_session,
     get_or_create_state,
 )
@@ -377,3 +380,107 @@ class TestHeuristicRoleInference:
         assert result is not None
         assert result["mapping"]["spk_0"] == "SPEAKER_A"
         assert result["mapping"]["spk_1"] == "SPEAKER_B"
+
+
+# =========================================================================
+# Task 3.8 — @tool assign_roles tests
+# =========================================================================
+
+
+class TestAssignRolesTool:
+    """Tests for the @tool-decorated assign_roles function."""
+
+    _SEGMENTS = [
+        {"speaker_id": "spk_0", "text": "What brings you in today?", "start": 0.0, "end": 2.0},
+        {"speaker_id": "spk_1", "text": "I have a bad headache", "start": 2.5, "end": 4.0},
+    ]
+
+    def test_tool_returns_complete_structure(self):
+        """assign_roles returns all required fields with correct values."""
+        cleanup_session("tool-struct-session")
+
+        result = assign_roles(
+            session_id="tool-struct-session",
+            mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.85,
+            reasoning="Doctor asks opening clinical question",
+        )
+
+        assert "mapping" in result
+        assert "attributed_segments" in result
+        assert "confidence" in result
+        assert "flip_detected" in result
+        assert "reasoning" in result
+        assert result["mapping"] == {"spk_0": "DOCTOR", "spk_1": "PATIENT"}
+        assert result["confidence"] == 0.85
+        assert result["flip_detected"] is False
+        assert result["reasoning"] == "Doctor asks opening clinical question"
+
+    def test_tool_persists_state(self):
+        """assign_roles updates mapping_history and current_mapping in state."""
+        cleanup_session("tool-persist-session")
+
+        assign_roles(
+            session_id="tool-persist-session",
+            mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.75,
+        )
+
+        state = get_or_create_state("tool-persist-session")
+        assert len(state.mapping_history) == 1
+        assert state.current_mapping == {"spk_0": "DOCTOR", "spk_1": "PATIENT"}
+
+        # Second call grows history
+        assign_roles(
+            session_id="tool-persist-session",
+            mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.9,
+        )
+
+        assert len(state.mapping_history) == 2
+
+    def test_tool_preserves_all_segment_fields(self):
+        """Original segment fields are preserved and role is added."""
+        cleanup_session("tool-fields-session")
+
+        result = assign_roles(
+            session_id="tool-fields-session",
+            mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.8,
+        )
+
+        seg = result["attributed_segments"][0]
+        assert seg["speaker_id"] == "spk_0"
+        assert seg["text"] == "What brings you in today?"
+        assert seg["start"] == 0.0
+        assert seg["end"] == 2.0
+        assert seg["role"] == "DOCTOR"
+
+        seg2 = result["attributed_segments"][1]
+        assert seg2["role"] == "PATIENT"
+
+    def test_tool_detects_flip(self):
+        """Second call with swapped roles sets flip_detected=True."""
+        cleanup_session("tool-flip-session")
+
+        # First call — establish mapping
+        assign_roles(
+            session_id="tool-flip-session",
+            mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.8,
+        )
+
+        # Second call — swap roles
+        result = assign_roles(
+            session_id="tool-flip-session",
+            mapping=json.dumps({"spk_0": "PATIENT", "spk_1": "DOCTOR"}),
+            segments=json.dumps(self._SEGMENTS),
+            confidence=0.9,
+        )
+
+        assert result["flip_detected"] is True

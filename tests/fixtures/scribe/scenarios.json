@@ -21,7 +21,8 @@
                 "segmentCount": 10,
                 "roleMapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidenceMin": 0.9,
-                "flipDetected": false
+                "flipDetected": false,
+                "contentCheck": {"firstSegmentText": "Good morning, how are you feeling today?", "lastSegmentText": "Thank you, doctor. I'll try that."}
             }
         },
         {
@@ -129,7 +130,9 @@
                 "segmentCount": 50,
                 "roleMapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidenceMin": 0.8,
-                "flipDetected": false
+                "flipDetected": false,
+                "maxDurationMs": 5000,
+                "contentCheck": {"firstSegmentText": "Segment 1: Patient presents with acute lower back pain.", "lastSegmentText": "Segment 50: I'll make an appointment on my way out."}
             }
         },
         {

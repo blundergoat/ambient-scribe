@@ -494,14 +494,34 @@ async def _role_inference_worker(session_id: str) -> None:
                 duration_ms = int((time.time() - started_at) * 1000)
 
                 if result:
-                    role_update = apply_role_mapping_result(
-                        session_id=session_id,
-                        segments=merged_segments,
-                        mapping=result.get("mapping", {}),
-                        confidence=float(result.get("confidence", 0.0)),
-                        reasoning=str(result.get("reasoning", "")),
-                    )
-                    sessions.apply_role_mapping(session_id, role_update.mapping)
+                    tool_invoked = result.get("_tool_invoked", False)
+
+                    if tool_invoked:
+                        # Tool already called apply_role_mapping_result
+                        state = get_or_create_state(session_id)
+                        mapping = state.current_mapping
+                        confidence = state.running_confidence
+                        flip_detected = state.last_flip_detected
+                        attributed_segments = [
+                            {**seg, "role": mapping.get(str(seg.get("speaker_id", "")), "UNKNOWN")}
+                            for seg in merged_segments
+                        ]
+                        reasoning = str(result.get("reasoning", ""))
+                    else:
+                        role_update = apply_role_mapping_result(
+                            session_id=session_id,
+                            segments=merged_segments,
+                            mapping=result.get("mapping", {}),
+                            confidence=float(result.get("confidence", 0.0)),
+                            reasoning=str(result.get("reasoning", "")),
+                        )
+                        mapping = role_update.mapping
+                        confidence = role_update.confidence
+                        flip_detected = role_update.flip_detected
+                        attributed_segments = role_update.attributed_segments
+                        reasoning = role_update.reasoning
+
+                    sessions.apply_role_mapping(session_id, mapping)
 
                     _mercure_event_ids.setdefault(session_id, 0)
                     _mercure_event_ids[session_id] += 1
@@ -509,11 +529,11 @@ async def _role_inference_worker(session_id: str) -> None:
                         f"scribe/session/{session_id}/roles",
                         {
                             "type": "role_update",
-                            "mapping": role_update.mapping,
-                            "attributed_segments": role_update.attributed_segments,
-                            "confidence": role_update.confidence,
-                            "flip_detected": role_update.flip_detected,
-                            "reasoning": role_update.reasoning,
+                            "mapping": mapping,
+                            "attributed_segments": attributed_segments,
+                            "confidence": confidence,
+                            "flip_detected": flip_detected,
+                            "reasoning": reasoning,
                             "session_id": session_id,
                         },
                         event_id=_mercure_event_ids[session_id],
@@ -521,8 +541,9 @@ async def _role_inference_worker(session_id: str) -> None:
                     logger.info("role_inference.completed", extra={
                         "session_id": session_id,
                         "segments": len(merged_segments),
-                        "confidence": role_update.confidence,
-                        "flip_detected": role_update.flip_detected,
+                        "confidence": confidence,
+                        "flip_detected": flip_detected,
+                        "tool_invoked": tool_invoked,
                         "duration_ms": duration_ms,
                     })
                 else:
@@ -853,6 +874,227 @@ async def roles_override(session_id: str, request: Request) -> dict:
     return {"status": "ok", "mapping": state.current_mapping}
 
 
+@app.post("/session/{session_id}/summary")
+async def generate_summary(session_id: str) -> dict:
+    """Generate a structured session summary.
+
+    Triggered by the frontend when the user ends a session. Runs the summary
+    agent against the full role-attributed transcript and publishes the result
+    to Mercure.
+    """
+    _validate_session_id(session_id)
+
+    stored_segments = sessions.get_segments(session_id)
+    if not stored_segments:
+        raise HTTPException(status_code=404, detail="No transcript found for session")
+
+    transcript = sessions.get_transcript_text(session_id, max_chars=8000)
+    mode = _session_modes.get(session_id, "medical")
+
+    loop = asyncio.get_running_loop()
+    started_at = time.time()
+    summary = await loop.run_in_executor(
+        None,
+        _run_summary_generation,
+        session_id,
+        transcript,
+        mode,
+    )
+    duration_ms = int((time.time() - started_at) * 1000)
+
+    if summary is None:
+        logger.warning("summary.generation_failed", extra={
+            "session_id": session_id,
+            "duration_ms": duration_ms,
+        })
+        raise HTTPException(status_code=502, detail="Summary generation failed")
+
+    # Publish to Mercure
+    _mercure_event_ids.setdefault(session_id, 0)
+    _mercure_event_ids[session_id] += 1
+    await publish_to_mercure(
+        f"scribe/session/{session_id}/summary",
+        {
+            "type": "summary",
+            "session_id": session_id,
+            **summary,
+        },
+        event_id=_mercure_event_ids[session_id],
+    )
+
+    logger.info("summary.completed", extra={
+        "session_id": session_id,
+        "mode": mode,
+        "sections": len(summary.get("sections", [])),
+        "duration_ms": duration_ms,
+    })
+
+    return {"session_id": session_id, **summary}
+
+
+def _run_summary_generation(
+    session_id: str,
+    transcript: str,
+    mode: str = "medical",
+) -> dict | None:
+    """Run the summary agent synchronously.
+
+    Called via run_in_executor() to avoid blocking the event loop.
+    """
+    try:
+        from agents import create_summary_agent
+
+        agent = create_summary_agent(mode=mode)
+        result = agent(
+            f"Generate a {mode} summary for this session transcript:\n\n{transcript}"
+        )
+
+        response_text = str(result)
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            logger.warning("summary.no_json_found", extra={
+                "session_id": session_id,
+                "response_preview": response_text[:200],
+            })
+            return None
+    except Exception as e:
+        logger.error("summary.agent_failed", extra={
+            "session_id": session_id,
+            "error_type": type(e).__name__,
+            "error": str(e)[:200],
+        })
+        return None
+
+
+_replay_tasks: dict[str, asyncio.Task[None]] = {}
+
+
+@app.post("/session/{session_id}/replay")
+async def replay_file(
+    session_id: str,
+    file: UploadFile,
+    speed: float = Query(1.0, ge=0.25, le=10.0),
+    mode: str = Query("medical"),
+) -> dict:
+    """Replay a WAV file through the pipeline with real-time pacing.
+
+    Processes the WAV through NeMo in batch, then replays segments to Mercure
+    with delays matching actual timestamps (adjusted by speed factor).
+    """
+    _validate_session_id(session_id)
+
+    if mode not in VALID_MODES:
+        mode = "medical"
+    _session_modes[session_id] = mode
+
+    # Save and process through NeMo
+    temp_fd = tempfile.NamedTemporaryFile(suffix=".wav", prefix="replay_", delete=False)
+    temp_path = Path(temp_fd.name)
+    temp_fd.close()
+    try:
+        content = await file.read()
+        temp_path.write_bytes(content)
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            nemo_executor,
+            app.state.nemo_pipeline.transcribe_file,
+            str(temp_path),
+        )
+        segments = [s.dict() for s in result.segments]
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    if not segments:
+        return {"session_id": session_id, "segments": 0, "duration_seconds": 0}
+
+    # Calculate total audio duration from segment timestamps
+    max_end = max(float(s.get("end", 0)) for s in segments)
+
+    # Cancel any existing replay for this session
+    existing = _replay_tasks.pop(session_id, None)
+    if existing and not existing.done():
+        existing.cancel()
+
+    # Spawn paced replay task
+    _replay_tasks[session_id] = asyncio.create_task(
+        _replay_segments(session_id, segments, speed, mode),
+        name=f"replay-{session_id}",
+    )
+
+    logger.info("replay.started", extra={
+        "session_id": session_id,
+        "segments": len(segments),
+        "duration_seconds": round(max_end, 1),
+        "speed": speed,
+        "mode": mode,
+    })
+
+    return {
+        "session_id": session_id,
+        "segments": len(segments),
+        "duration_seconds": round(max_end, 1),
+        "speed": speed,
+    }
+
+
+async def _replay_segments(
+    session_id: str,
+    segments: list[dict[str, Any]],
+    speed: float,
+    mode: str,
+) -> None:
+    """Replay segments to Mercure with real-time pacing."""
+    try:
+        clock_start = time.time()
+
+        for i, segment in enumerate(segments):
+            seg_start = float(segment.get("start", 0))
+            # Wait until the real-time moment for this segment
+            target_wall_time = clock_start + (seg_start / speed)
+            delay = target_wall_time - time.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            # Store and publish
+            sessions.append_segment(session_id, segment)
+            _mercure_event_ids.setdefault(session_id, 0)
+            _mercure_event_ids[session_id] += 1
+            await publish_to_mercure(
+                f"scribe/session/{session_id}/raw",
+                {"type": "segment", **segment},
+                event_id=_mercure_event_ids[session_id],
+            )
+
+            # Enqueue role inference periodically (every 3 segments)
+            if (i + 1) % 3 == 0 or i == len(segments) - 1:
+                recent = segments[max(0, i - 2):i + 1]
+                await enqueue_role_inference(session_id, recent, mode=mode)
+
+        # Publish finalized
+        _mercure_event_ids[session_id] += 1
+        await publish_to_mercure(
+            f"scribe/session/{session_id}/raw",
+            {"type": "finalized", "session_id": session_id},
+            event_id=_mercure_event_ids[session_id],
+        )
+
+        logger.info("replay.completed", extra={
+            "session_id": session_id,
+            "segments": len(segments),
+        })
+    except asyncio.CancelledError:
+        logger.info("replay.cancelled", extra={"session_id": session_id})
+    except Exception:
+        logger.exception("replay.failed", extra={"session_id": session_id})
+    finally:
+        _replay_tasks.pop(session_id, None)
+
+
 @app.api_route("/session/{session_id}/roles", methods=["GET", "POST"])
 async def roles_snapshot(session_id: str) -> dict:
     """Return the current role mapping for a session.
@@ -997,6 +1239,7 @@ def _run_role_inference(
 
         agent = create_role_inference_agent(mode=mode)
         state = get_or_create_state(session_id)
+        history_len_before = len(state.mapping_history)
         payload = {
             "session_id": session_id,
             "current_mapping": state.current_mapping,
@@ -1011,7 +1254,16 @@ def _run_role_inference(
             f"{json.dumps(payload)}"
         )
 
-        # Parse the agent's JSON response
+        # Check if the assign_roles tool was invoked (it persists state directly)
+        if len(state.mapping_history) > history_len_before:
+            return {
+                "mapping": state.current_mapping,
+                "confidence": state.running_confidence,
+                "reasoning": "",
+                "_tool_invoked": True,
+            }
+
+        # Fallback: parse the agent's free-text JSON response
         response_text = str(result)
         try:
             parsed = json.loads(response_text)

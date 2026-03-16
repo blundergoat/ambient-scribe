@@ -73,11 +73,17 @@ Edge cases:
 Maintain your speaker-to-role mapping across the session. If you become more
 confident over time, update the mapping.
 
-You MUST respond with valid JSON only. No explanation text outside the JSON.
+You MUST call the assign_roles tool with your decision. Pass:
+- session_id: from the input payload
+- mapping: JSON string of speaker→role mapping
+- segments: JSON string of the new_segments from the input
+- confidence: your confidence (0.0–1.0)
+- reasoning: brief explanation
+
+If the tool is unavailable, fall back to responding with valid JSON only:
 """
 
-_SHARED_OUTPUT_FORMAT = """Output format:
-{
+_SHARED_OUTPUT_FORMAT = """{
     "mapping": {"spk_0": "<ROLE_A>", "spk_1": "<ROLE_B>"},
     "attributed_segments": [{"role": "<ROLE>", "text": "...", "start": 0.0, "end": 1.0}],
     "confidence": 0.85,
@@ -163,9 +169,6 @@ Reasoning signals:
 {_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
 }
 
-# Backwards-compatible alias — existing imports still work
-ROLE_INFERENCE_SYSTEM_PROMPT = ROLE_PROMPTS["medical"]
-
 # Map each mode to its primary role pair (used for the agent invocation prompt)
 _MODE_ROLE_INSTRUCTIONS: dict[str, str] = {
     "medical": "Assign DOCTOR/PATIENT roles for this consultation transcript.",
@@ -200,13 +203,14 @@ def create_role_inference_agent(mode: str = "medical"):
     """
     try:
         from strands import Agent
+        from tools.assign_roles import assign_roles
 
         model = _create_role_agent_model()
         system_prompt = ROLE_PROMPTS.get(mode, ROLE_PROMPTS["general"])
 
         return Agent(
             model=model,
-            tools=[],  # Tools will be added in Milestone 3 (assign_roles tool)
+            tools=[assign_roles],
             system_prompt=system_prompt,
         )
     except Exception as e:
@@ -233,7 +237,7 @@ def _create_role_agent_model():
 
         return OllamaModel(
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "llama3.1:8b"),
+            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen2.5:14b"),
             max_tokens=1024,
         )
     else:
