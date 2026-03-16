@@ -6,11 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Dev workflow hardening, UI polish, client-side flip detection, and
-multi-mode scenario coverage.
+Dev workflow hardening, JS extraction, UI polish, client-side flip
+detection, and multi-mode scenario coverage.
 
 ### Added
 
+- **JS extracted from Twig template** — `public/js/scribe.js` (918
+  lines, core app) and `public/js/scribe-dev.js` (dev panel, zero prod
+  bytes); template drops from 2138 to 731 lines with only inline
+  Twig-dependent CONFIG/SCENARIOS declarations remaining
+- **Dev Panel WebSocket instrumentation** — `_instrumentWs()` wraps
+  `ws.send`/`onmessage` to track frame counts and byte totals in the
+  WS tab; auto-instruments on reconnect via `_devInstrumented` guard
 - **Docker hot reload** — volume-mount `.:/app` in `docker-compose.yml`
   so template, asset, and PHP changes are reflected without rebuilding
   the container
