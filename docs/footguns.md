@@ -48,3 +48,9 @@ Each entry names the files involved, what breaks, and the evidence.
 - **Files:** `infra/terraform/environments/prod/main.tf:82-90`, `infra/terraform/environments/prod/main.tf:142-146`, `strands_agents/session.py:28-29`, `strands_agents/session.py:37-39`
 - **What breaks:** Production infrastructure implies persisted session storage, but live code still uses an in-memory `SessionStore` with TTL/LRU limits and loses data on restart.
 - **Evidence:** Terraform exports a DynamoDB table name to the agent container, while `SessionStore` keeps transcript data in a Python `OrderedDict` only.
+
+### 9. Template changes require container rebuild to take effect
+- **Files:** `templates/scribe/index.html.twig`, `docker-compose.yml`
+- **What breaks:** Editing Twig templates, scenarios JSON, or any PHP/asset file on the host does not update the running `app` container. The Symfony app is copied into the Docker image at build time. Without `dc up -d --build` (or a volume mount for `templates/`), the container serves stale code indefinitely.
+- **Evidence:** A full audit round found 0/12 bugs fixed because the container was never rebuilt after the fixes were applied to the working tree. The second auditor confirmed "The codebase appears identical to the previous audit."
+- **Mitigation:** After editing any file served by the `app` container, always run `dc up -d --build` (or `dc up -d --build app` to rebuild only the app service). The `start-dev.sh` script will skip rebuild if containers are already running — use `dc up -d --build` directly.

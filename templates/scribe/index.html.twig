@@ -502,7 +502,7 @@
             background: var(--surface-hover);
             color: var(--text-strong);
         }
-        .dev-panel__btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .dev-panel__btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .dev-panel__btn--primary {
             background: var(--accent);
             color: #fff;
@@ -544,11 +544,11 @@
     {% if dev %}
     <aside id="scenarioPanel" class="scenario-panel">
         <div class="scenario-panel__header">
-            <div class="scenario-panel__title">Scenarios</div>
+            <div class="scenario-panel__title">Demo Scenarios</div>
             <div class="scenario-panel__controls">
                 <button onclick="scenarioRunner.runAll()" class="dev-panel__btn dev-panel__btn--primary" id="scenarioRunAllBtn">Run All</button>
                 <button onclick="scenarioRunner.runRandom()" class="dev-panel__btn">Random</button>
-                <button onclick="scenarioRunner.runFailed()" class="dev-panel__btn" id="scenarioRunFailedBtn" disabled>Failed</button>
+                <button onclick="scenarioRunner.runFailed()" class="dev-panel__btn" id="scenarioRunFailedBtn" disabled title="No failed scenarios to re-run">Failed</button>
                 <button onclick="scenarioRunner.stop()" class="dev-panel__btn dev-panel__btn--danger" id="scenarioStopBtn" disabled>Stop</button>
             </div>
         </div>
@@ -660,7 +660,7 @@
     {% if dev %}
     <aside id="devPanel" class="dev-panel">
         <div class="dev-panel__header">
-            <span class="dev-panel__title">Inspector</span>
+            <span class="dev-panel__title">Dev Panel</span>
         </div>
         <div class="dev-panel__tabs">
             <button class="dev-panel__tab dev-panel__tab--active" data-tab="segments" onclick="devPanel.switchTab('segments')">Segments</button>
@@ -731,9 +731,9 @@
         medical:   { name: 'Medical',   icon: '\u{1F3E5}', subtitle: 'Consultation transcription with speaker identification', roleLabels: { DOCTOR: 'Doctor', PATIENT: 'Patient' }, startLabel: 'Start Consultation', avatarLabels: { DOCTOR: 'Dr', PATIENT: 'Pt' } },
         meeting:   { name: 'Meeting',   icon: '\u{1F4CB}', subtitle: 'Meeting transcription with participant identification', roleLabels: { DOCTOR: 'Organiser', PATIENT: 'Participant' }, startLabel: 'Start Meeting', avatarLabels: { DOCTOR: 'Org', PATIENT: 'Att' } },
         interview: { name: 'Interview', icon: '\u{1F3A4}', subtitle: 'Interview transcription with role identification', roleLabels: { DOCTOR: 'Interviewer', PATIENT: 'Candidate' }, startLabel: 'Start Interview', avatarLabels: { DOCTOR: 'Int', PATIENT: 'Can' } },
-        tv:        { name: 'TV / Media',icon: '\u{1F4FA}', subtitle: 'Broadcast transcription with speaker identification', roleLabels: { DOCTOR: 'Host', PATIENT: 'Guest' }, startLabel: 'Start Recording', avatarLabels: { DOCTOR: 'Ho', PATIENT: 'Gu' } },
+        tv:        { name: 'TV / Media',icon: '\u{1F4FA}', subtitle: 'Broadcast transcription with speaker identification', roleLabels: { DOCTOR: 'Host', PATIENT: 'Guest' }, startLabel: 'Start Broadcast', avatarLabels: { DOCTOR: 'Ho', PATIENT: 'Gu' } },
         lecture:   { name: 'Lecture',   icon: '\u{1F393}', subtitle: 'Lecture transcription with speaker identification', roleLabels: { DOCTOR: 'Lecturer', PATIENT: 'Student' }, startLabel: 'Start Lecture', avatarLabels: { DOCTOR: 'Lc', PATIENT: 'St' } },
-        general:   { name: 'General',   icon: '\u{1F399}', subtitle: 'Real-time audio transcription with speaker identification', roleLabels: { DOCTOR: 'Speaker A', PATIENT: 'Speaker B' }, startLabel: 'Start Recording', avatarLabels: { DOCTOR: 'A', PATIENT: 'B' } },
+        general:   { name: 'General',   icon: '\u{1F399}', subtitle: 'Real-time audio transcription with speaker identification', roleLabels: { DOCTOR: 'Speaker A', PATIENT: 'Speaker B' }, startLabel: 'Start Transcription', avatarLabels: { DOCTOR: 'A', PATIENT: 'B' } },
     };
 
     let currentMode = localStorage.getItem('ambient-scribe-mode') || 'medical';
@@ -742,7 +742,7 @@
 
     function getRoleLabel(backendRole) {
         const mode = getMode();
-        return mode.roleLabels[backendRole] || backendRole;
+        return mode.roleLabels[backendRole] || backendRole.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
     }
 
     function getAvatarLabel(backendRole) {
@@ -821,7 +821,6 @@
     }
 
     applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || getCurrentTheme());
-    applyMode();
 
     // =========================================================================
     // StreamOrchestrator — manages EventSource connections to Mercure
@@ -1035,6 +1034,9 @@
     const manualOverrides = new Set();
     let lowLevelCount = 0;
 
+    // State is now declared — safe to apply mode (relabelSegments needs roleMapping)
+    applyMode();
+
     // =========================================================================
     // Audio Level Feedback
     // =========================================================================
@@ -1156,6 +1158,8 @@
         document.getElementById('reconnectBtn').classList.add('hidden');
         document.getElementById('status').textContent = 'Session ended';
         hideAudioLevel();
+        const badge = document.getElementById('confidenceBadge');
+        if (badge) badge.classList.remove('recording-pulse');
         announce('Recording stopped');
 
         if (segmentIndex > 0) {
@@ -1209,6 +1213,15 @@
         const banner = document.getElementById('systemBanner');
         banner.classList.add('hidden');
         banner.textContent = '';
+
+        // Clear dev panel tabs (match scenario _resetState behaviour)
+        if (typeof devPanel !== 'undefined') {
+            devPanel.clearSegmentLog();
+            devPanel.clearRawLog();
+            devPanel.clearMercureLog();
+        }
+        segmentsBySpeaker.clear();
+        manualOverrides.clear();
 
         announce('Session reset');
     }
@@ -1478,8 +1491,13 @@
         }
         confidence = data.confidence || 0;
 
-        if (data.flip_detected) {
-            showToast('Speaker labels corrected');
+        // Detect role flips client-side (works for both live and scenario modes)
+        const hadPreviousRoles = Object.keys(previousRoleMapping).length > 0;
+        if (hadPreviousRoles) {
+            const flipped = Object.keys(data.mapping).some(spk =>
+                previousRoleMapping[spk] && previousRoleMapping[spk] !== data.mapping[spk]
+            );
+            if (flipped) showToast('Speaker labels corrected');
         }
 
         const badge = document.getElementById('confidenceBadge');
@@ -1657,7 +1675,8 @@
             const entry = document.createElement('div');
             entry.className = 'dev-panel__entry';
             entry.dataset.speakerId = data.speaker_id || '';
-            const text = (data.text || '').substring(0, 60);
+            const raw = data.text || '';
+            const text = raw.length > 60 ? raw.substring(0, 57) + '\u2026' : raw;
             const badge = source === 'scenario' ? '<span style="color:#f59e0b">[S]</span> ' : '';
             entry.innerHTML = `${badge}<span data-role-label style="color:${getRoleColor(role)}">${getRoleLabel(role)}</span> <span class="subtle-text">${formatTime(data.start || 0)}</span><br>${escapeHtml(text)}`;
             log.appendChild(entry);
@@ -1676,8 +1695,9 @@
 
             const el = document.createElement('div');
             el.className = 'dev-panel__entry';
-            const preview = JSON.stringify(data).substring(0, 80);
-            el.innerHTML = `<span class="subtle-text">${entry.ts.substring(11, 23)}</span> <strong>${type}</strong><br>${escapeHtml(preview)}`;
+            const rawJson = JSON.stringify(data);
+            const preview = rawJson.length > 80 ? rawJson.substring(0, 77) + '\u2026' : rawJson;
+            el.innerHTML = `<span class="subtle-text">${entry.ts.substring(11, 23)}</span> <strong>${type}</strong>${rawJson.length > 80 ? ' <span class="subtle-text">\u25B8</span>' : ''}<br>${escapeHtml(preview)}`;
             el.style.cursor = 'pointer';
             el.onclick = () => {
                 const pre = el.querySelector('pre');
@@ -1798,6 +1818,9 @@
                     <div id="scenarioResult-${s.id}" class="scenario-item__result" style="display:none;"></div>
                 </div>
             `).join('');
+            // Initialize the progress counter directly (not on ScenarioRunner)
+            const progressText = document.getElementById('scenarioProgressText');
+            if (progressText) progressText.textContent = `0/${SCENARIOS.length}`;
         }
     }
 
@@ -1819,11 +1842,14 @@
             this._stopped = false;
             this._updateControls(true);
             this._markScenario(id, 'running');
+            this._showProgress(true);
+            this._updateProgress(0, 1);
 
             await this._resetState();
             const result = await this._executeScenario(scenario);
             this._results.set(id, result);
             this._markScenario(id, result.pass ? 'pass' : 'fail', result);
+            this._updateProgress(1, 1);
 
             this._running = false;
             this._updateControls(false);
@@ -2019,9 +2045,11 @@
         _showPostScenarioButtons() {
             if (segmentIndex > 0) {
                 document.getElementById('downloadBtn').classList.remove('hidden');
-                document.getElementById('resetBtn').classList.remove('hidden');
             }
+            document.getElementById('resetBtn').classList.remove('hidden');
             document.getElementById('status').textContent = 'Scenario complete';
+            const badge = document.getElementById('confidenceBadge');
+            if (badge) badge.classList.remove('recording-pulse');
         }
     }
 

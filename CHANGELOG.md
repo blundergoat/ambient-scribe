@@ -4,6 +4,59 @@ All notable changes to Ambient Scribe are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+Dev workflow hardening, UI polish, client-side flip detection, and
+multi-mode scenario coverage.
+
+### Added
+
+- **Docker hot reload** — volume-mount `.:/app` in `docker-compose.yml`
+  so template, asset, and PHP changes are reflected without rebuilding
+  the container
+- **Footgun FG-9** — documented "template changes require container
+  rebuild" pitfall and the volume-mount mitigation
+- **5 multi-mode test scenarios** — Meeting Daily Standup, Technical
+  Interview, TV Panel Discussion, Intro to CS Lecture, 3+ Speakers;
+  exercises mode-aware role inference for non-medical modes
+
+### Changed
+
+- **`start-dev.sh` simplified** — removed `--build`/`--no-logs` flags
+  and all flag-parsing logic; `dc up -d` always used (volume mount
+  removes the need for rebuild-on-edit); help text updated
+- **Role flip detection** — moved from server-side `flip_detected` flag
+  to client-side previous/current mapping comparison; works identically
+  in live and scenario modes
+- **Mode start labels** — TV mode: "Start Recording" to "Start
+  Broadcast"; General mode: "Start Recording" to "Start Transcription"
+- **`getRoleLabel()` fallback** — unknown backend roles are now
+  title-cased with underscores replaced (was raw backend string)
+- **`applyMode()` call order** — moved after state variable declarations
+  to prevent reference errors on `relabelSegments()`
+- **Dev panel text truncation** — segment log and raw log use ellipsis
+  at 57/77 chars instead of hard substring cuts; raw log entries show
+  expand indicator for long payloads
+
+### Fixed
+
+- **Confidence badge pulse** — `recording-pulse` class now cleared on
+  both `stopRecording()` and post-scenario cleanup (was left animating)
+- **Session reset** — now clears dev panel segment/raw/Mercure logs and
+  `segmentsBySpeaker`/`manualOverrides` maps (was leaving stale state)
+- **Scenario runner progress** — progress bar and counter shown for
+  single-scenario runs (was only shown during `runAll`)
+- **Scenario progress counter** — initialized to `0/N` on render
+  instead of showing `0/0` until first run
+- **Post-scenario reset button** — shown unconditionally after scenario
+  ends (was gated on `segmentIndex > 0`)
+- **Disabled button opacity** — `.dev-panel__btn:disabled` changed from
+  0.35 to 0.5 for better readability
+- **Dev panel titles** — "Scenarios" to "Demo Scenarios", "Inspector"
+  to "Dev Panel" for consistency
+- **Failed button tooltip** — added `title="No failed scenarios to
+  re-run"` for accessibility
+
 ## [0.2.0] - 2026-03-16
 
 Multi-mode role inference, local-first defaults, SQLite persistence,
@@ -205,5 +258,6 @@ without GPU hardware.
 - StreamOrchestrator `_active` flag ordering bug
 - Docker volume mount path for Python hot-reload
 
+[Unreleased]: https://github.com/user/ambient-scribe/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/user/ambient-scribe/releases/tag/v0.2.0
 [0.1.0]: https://github.com/user/ambient-scribe/releases/tag/v0.1.0

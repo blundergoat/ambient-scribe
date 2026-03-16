@@ -2,12 +2,7 @@
 # =============================================================================
 # Start Dev — Daily lightweight startup for Ambient Scribe
 # =============================================================================
-# Usage: ./scripts/start-dev.sh [OPTIONS]
-#
-# Options:
-#   --build, -b     Force Docker image rebuild
-#   --no-logs       Skip log streaming (exit after health checks)
-#   --help, -h      Show this help
+# Usage: ./scripts/start-dev.sh
 #
 #   ollama (default):
 #     1. Ollama (auto-starts via binary or Docker if needed)
@@ -79,24 +74,6 @@ dockerize_ollama_host() {
     # Replace localhost/127.0.0.1 with host.docker.internal for container access
     echo "$host" | sed -E 's#(localhost|127\.0\.0\.1)#host.docker.internal#'
 }
-
-# ── Parse flags ─────────────────────────────────────────────────────
-FORCE_BUILD=false
-NO_LOGS=false
-
-for arg in "$@"; do
-    case "$arg" in
-        --build|-b) FORCE_BUILD=true ;;
-        --no-logs)  NO_LOGS=true ;;
-        --help|-h)
-            echo "Usage: $0 [--build|-b] [--no-logs]"
-            echo ""
-            echo "  --build, -b     Force Docker image rebuild"
-            echo "  --no-logs       Skip log streaming"
-            exit 0
-            ;;
-    esac
-done
 
 # ── Cleanup on Ctrl+C ──────────────────────────────────────────────
 cleanup() {
@@ -445,7 +422,7 @@ EXPECTED_COUNT=$(dc config --services 2>/dev/null | wc -l)
 ALL_RUNNING=false
 
 step "Containers"
-if [[ "$RUNNING_COUNT" -eq "$EXPECTED_COUNT" && "$EXPECTED_COUNT" -gt 0 && "$FORCE_BUILD" == "false" ]]; then
+if [[ "$RUNNING_COUNT" -eq "$EXPECTED_COUNT" && "$EXPECTED_COUNT" -gt 0 ]]; then
     ALL_RUNNING=true
     pass "all ${RUNNING_COUNT}/${EXPECTED_COUNT} running — skipping to health checks"
 else
@@ -461,32 +438,24 @@ if [[ "$ALL_RUNNING" == "false" ]]; then
     echo -e "  ${BOLD}Starting containers${RESET}"
     echo ""
 
-    BUILD_FLAG=""
-    if [[ "$FORCE_BUILD" == "true" ]]; then
-        BUILD_FLAG="--build"
-        step "Build strategy"
-        pass "--build flag"
-    else
-        # Check if required images exist
-        MISSING=false
-        while IFS= read -r img; do
-            if [[ -z "$(docker images -q "$img" 2>/dev/null)" ]]; then
-                MISSING=true
-                break
-            fi
-        done < <(dc config --images 2>/dev/null | sort -u)
-
-        if [[ "$MISSING" == "true" ]]; then
-            step "Build strategy"
-            fail "images missing — run ./scripts/setup-initial.sh for first-time setup"
-            echo ""
-            exit 1
+    # Check if required images exist
+    MISSING=false
+    while IFS= read -r img; do
+        if [[ -z "$(docker images -q "$img" 2>/dev/null)" ]]; then
+            MISSING=true
+            break
         fi
+    done < <(dc config --images 2>/dev/null | sort -u)
+
+    if [[ "$MISSING" == "true" ]]; then
+        step "Build strategy"
+        fail "images missing — run ./scripts/setup-initial.sh for first-time setup"
+        echo ""
+        exit 1
     fi
 
-    # shellcheck disable=SC2086
-    echo -e "     ${DIM}Running: dc up -d ${BUILD_FLAG}${RESET}"
-    if dc up -d $BUILD_FLAG; then
+    echo -e "     ${DIM}Running: dc up -d${RESET}"
+    if dc up -d; then
         echo -e "  ${ARROW} Docker Compose             ${PASS}  ${DIM}containers started${RESET}"
     else
         echo -e "  ${ARROW} Docker Compose             ${FAIL}  ${RED}failed to start${RESET}"
@@ -530,7 +499,7 @@ echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT}${RE
 echo ""
 echo -e "  ${DIM}Useful commands:${RESET}"
 echo -e "    ${ARROW} Health check:  ${DIM}./scripts/health-checks.sh${RESET}"
-echo -e "    ${ARROW} Rebuild:       ${DIM}./scripts/start-dev.sh --build${RESET}"
+echo -e "    ${ARROW} Rebuild:       ${DIM}dc up -d --build${RESET}"
 echo -e "    ${ARROW} Service logs:  ${DIM}dc logs -f <service>${RESET}"
 echo -e "    ${ARROW} Stop:          ${DIM}dc stop${RESET}"
 echo -e "    ${ARROW} Remove:        ${DIM}dc down${RESET}"
@@ -539,10 +508,6 @@ echo ""
 # =============================================================================
 # STEP 6: Stream Logs + Wait
 # =============================================================================
-if [[ "$NO_LOGS" == "true" ]]; then
-    exit 0
-fi
-
 echo -e "  ${DIM}Streaming nemo-agent logs (Ctrl+C to stop)...${RESET}"
 echo ""
 

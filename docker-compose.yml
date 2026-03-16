@@ -110,6 +110,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${APP_PORT:-48082}:8080"
+    volumes:
+      - .:/app  # Hot reload in dev — source changes reflected immediately
     environment:
       - APP_ENV=dev
       - APP_DEBUG=1
