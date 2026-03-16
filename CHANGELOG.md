@@ -73,6 +73,26 @@ transcript grouping, scenario gate), plus prior JS extraction and UI polish.
   replay state
 - **Download fallback** — gathers text from all `.segment__text` spans in
   grouped blocks (was querying single `.segment__text`)
+- **E2E session IDs** — changed from `e2e-xxx-{hex}` to proper UUIDs
+  (UUID validation rejects non-UUID format)
+- **E2E stale endpoint reference** — replaced deleted `/roles/stream` with
+  `/summary` endpoint check
+- **E2E JS extraction assertions** — `test_scribe_has_reconnect_and_download`
+  checks for `scribe.js` reference instead of inline function names
+
+### Tests
+
+- **230 Python unit tests** (61 new): dual-path worker (tool vs free-text,
+  flip detection, attributed segments), assign_roles tool edges (dict/list
+  inputs, missing fields, invalid JSON, 3-speaker flip, confidence boundaries),
+  agent creation (provider selection, mode fallbacks, prompt content),
+  summary generation (mode passthrough, JSON extraction, agent failures),
+  replay (mode defaults, speed boundaries, duration, validation),
+  heuristic (tv/lecture fallback, 3-speaker general, no-keyword medical),
+  scenario fixture integrity (12 structural validations)
+- **25 E2E contract tests** — agent health, sessions, WebSocket, file
+  transcription, PHP proxy, Mercure pub/sub, session lifecycle, cross-service
+  shape matching
 
 ## [0.2.0] - 2026-03-16
 
