@@ -6,63 +6,73 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Dev workflow hardening, JS extraction, UI polish, client-side flip
-detection, and multi-mode scenario coverage.
+M3 completion (tool wiring, Ollama fix), M4 features (summaries, replay,
+transcript grouping, scenario gate), plus prior JS extraction and UI polish.
 
 ### Added
 
-- **JS extracted from Twig template** — `public/js/scribe.js` (918
-  lines, core app) and `public/js/scribe-dev.js` (dev panel, zero prod
-  bytes); template drops from 2138 to 731 lines with only inline
-  Twig-dependent CONFIG/SCENARIOS declarations remaining
+- **`@tool` assign_roles** — Strands `@tool`-decorated function for
+  programmatic role state management; passed to `Agent(tools=[assign_roles])`;
+  dual-path worker detects tool invocation vs free-text JSON fallback
+- **Session summary generation** — `summary_agent.py` with 6 mode-specific
+  prompts: Medical (SOAP note), Meeting (action items/decisions),
+  Interview (strengths/concerns), TV (key moments), Lecture (concepts),
+  General (key points); `POST /session/{id}/summary` endpoint; published
+  to Mercure topic `scribe/session/{id}/summary`; collapsible UI panel
+  auto-triggered on session end; included in transcript export
+- **Replay demo mode** — `POST /session/{id}/replay` accepts WAV upload,
+  processes through NeMo `transcribe_file()`, replays segments to Mercure
+  with real-time pacing (adjustable speed 0.25x–10x); "Demo" button with
+  file picker; progress bar + timer; role inference runs automatically
+- **Transcript segment grouping** — consecutive same-speaker segments
+  merge into unified chat blocks with flowing text; new speaker starts a
+  new block; relabeling and download handle grouped structure
+- **Scenario timing assertions** — `maxDurationMs` in `expectedEndState`;
+  high-volume stress must complete within 5s budget
+- **Scenario content assertions** — `contentCheck.firstSegmentText` /
+  `lastSegmentText` verifies rendered DOM text matches injected data
+- **Scenario fixture validation** — `test_scenarios.py` (12 tests)
+  validates JSON structure, unique IDs, event types, segment data,
+  expectedEndState consistency, contentCheck accuracy
+- **Footgun FG-10** — Ollama model must support tool calling for
+  `assign_roles`; recommends `qwen2.5:14b`, notes `qwen3:14b` alternative
+- **JS extracted from Twig template** — `public/js/scribe.js` (core app)
+  and `public/js/scribe-dev.js` (dev panel, zero prod bytes)
 - **Dev Panel WebSocket instrumentation** — `_instrumentWs()` wraps
-  `ws.send`/`onmessage` to track frame counts and byte totals in the
-  WS tab; auto-instruments on reconnect via `_devInstrumented` guard
+  `ws.send`/`onmessage` to track frame counts and byte totals
 - **Docker hot reload** — volume-mount `.:/app` in `docker-compose.yml`
-  so template, asset, and PHP changes are reflected without rebuilding
-  the container
-- **Footgun FG-9** — documented "template changes require container
-  rebuild" pitfall and the volume-mount mitigation
-- **5 multi-mode test scenarios** — Meeting Daily Standup, Technical
-  Interview, TV Panel Discussion, Intro to CS Lecture, 3+ Speakers;
-  exercises mode-aware role inference for non-medical modes
+- **Footgun FG-9** — documented template rebuild pitfall
+- **5 multi-mode test scenarios** — Meeting, Interview, TV, Lecture, 3+ Speakers
+- **37 new Python tests** — 4 tool tests, 10 summary tests, 5 replay
+  tests, 12 scenario validation tests, 6 summary prompt tests
 
 ### Changed
 
+- **Ollama model default** — `llama3.1:8b` → `qwen2.5:14b`; aligns with
+  `docker-compose.yml`, `.env.example`, and what is actually pulled locally
+- **Role inference worker** — snapshots `mapping_history` length before
+  agent call; if history grew (tool invoked), skips duplicate
+  `apply_role_mapping_result`; `last_flip_detected` field on
+  `RoleMappingState` for accurate Mercure reporting
+- **System prompt** — instructs agent to call `assign_roles` tool with
+  JSON fallback for models without tool support
+- **Agent constructor** — `tools=[assign_roles]` (was `tools=[]`)
 - **`start-dev.sh` simplified** — removed `--build`/`--no-logs` flags
-  and all flag-parsing logic; `dc up -d` always used (volume mount
-  removes the need for rebuild-on-edit); help text updated
-- **Role flip detection** — moved from server-side `flip_detected` flag
-  to client-side previous/current mapping comparison; works identically
-  in live and scenario modes
-- **Mode start labels** — TV mode: "Start Recording" to "Start
-  Broadcast"; General mode: "Start Recording" to "Start Transcription"
-- **`getRoleLabel()` fallback** — unknown backend roles are now
-  title-cased with underscores replaced (was raw backend string)
-- **`applyMode()` call order** — moved after state variable declarations
-  to prevent reference errors on `relabelSegments()`
-- **Dev panel text truncation** — segment log and raw log use ellipsis
-  at 57/77 chars instead of hard substring cuts; raw log entries show
-  expand indicator for long payloads
+- **Role flip detection** — moved to client-side mapping comparison
+- **Mode start labels** — TV: "Start Broadcast"; General: "Start Transcription"
+
+### Removed
+
+- **`ROLE_INFERENCE_SYSTEM_PROMPT`** — stale backwards-compat alias deleted
+  (no users, per project policy)
 
 ### Fixed
 
-- **Confidence badge pulse** — `recording-pulse` class now cleared on
-  both `stopRecording()` and post-scenario cleanup (was left animating)
-- **Session reset** — now clears dev panel segment/raw/Mercure logs and
-  `segmentsBySpeaker`/`manualOverrides` maps (was leaving stale state)
-- **Scenario runner progress** — progress bar and counter shown for
-  single-scenario runs (was only shown during `runAll`)
-- **Scenario progress counter** — initialized to `0/N` on render
-  instead of showing `0/0` until first run
-- **Post-scenario reset button** — shown unconditionally after scenario
-  ends (was gated on `segmentIndex > 0`)
-- **Disabled button opacity** — `.dev-panel__btn:disabled` changed from
-  0.35 to 0.5 for better readability
-- **Dev panel titles** — "Scenarios" to "Demo Scenarios", "Inspector"
-  to "Dev Panel" for consistency
-- **Failed button tooltip** — added `title="No failed scenarios to
-  re-run"` for accessibility
+- **Confidence badge pulse** — cleared on both stop and post-scenario cleanup
+- **Session reset** — clears dev panel logs, speaker maps, summary panel,
+  replay state
+- **Download fallback** — gathers text from all `.segment__text` spans in
+  grouped blocks (was querying single `.segment__text`)
 
 ## [0.2.0] - 2026-03-16
 
