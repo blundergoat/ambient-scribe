@@ -119,3 +119,86 @@ class TestSummaryEndpoint:
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post("/session/not-a-uuid/summary")
         assert response.status_code == 400
+
+    def test_summary_uses_session_mode(self):
+        """Summary should use the session's mode, not default."""
+        sessions.append_segment(TEST_SESSION_ID, {
+            "speaker_id": "spk_0", "text": "Let's review the agenda.", "start": 0.0, "end": 2.0,
+        })
+        api_server._session_modes[TEST_SESSION_ID] = "meeting"
+
+        mock_summary = {
+            "title": "Meeting Summary",
+            "sections": [{"heading": "Attendees", "content": "2 participants"}],
+            "key_points": [],
+        }
+
+        captured_mode = []
+        original = api_server._run_summary_generation
+
+        def capture_mode(sid, transcript, mode="medical"):
+            captured_mode.append(mode)
+            return mock_summary
+
+        with patch("api.server._run_summary_generation", side_effect=capture_mode):
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(f"/session/{TEST_SESSION_ID}/summary")
+
+        assert response.status_code == 200
+        assert captured_mode[0] == "meeting"
+
+    def test_summary_with_empty_sections(self):
+        """Summary with no sections or key_points still returns 200."""
+        sessions.append_segment(TEST_SESSION_ID, {
+            "speaker_id": "spk_0", "text": "Brief.", "start": 0.0, "end": 1.0,
+        })
+
+        with patch("api.server._run_summary_generation", return_value={
+            "title": "Brief",
+            "sections": [],
+            "key_points": [],
+        }):
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(f"/session/{TEST_SESSION_ID}/summary")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sections"] == []
+        assert data["key_points"] == []
+
+
+class TestRunSummaryGeneration:
+    """Tests for the _run_summary_generation helper."""
+
+    def test_returns_none_on_agent_exception(self):
+        with patch("agents.create_summary_agent", side_effect=RuntimeError("boom")):
+            result = api_server._run_summary_generation("sid", "transcript", "medical")
+        assert result is None
+
+    def test_parses_json_from_agent_response(self):
+        mock_agent = MagicMock()
+        mock_agent.return_value = '{"title": "Test", "sections": [], "key_points": []}'
+
+        with patch("agents.create_summary_agent", return_value=mock_agent):
+            result = api_server._run_summary_generation("sid", "transcript", "medical")
+
+        assert result["title"] == "Test"
+
+    def test_extracts_json_from_preamble(self):
+        """Agent may include text before JSON — regex fallback should work."""
+        mock_agent = MagicMock()
+        mock_agent.return_value = 'Here is the summary:\n{"title": "Extracted", "sections": []}'
+
+        with patch("agents.create_summary_agent", return_value=mock_agent):
+            result = api_server._run_summary_generation("sid", "transcript", "medical")
+
+        assert result["title"] == "Extracted"
+
+    def test_returns_none_on_no_json(self):
+        mock_agent = MagicMock()
+        mock_agent.return_value = "I cannot generate a summary for this transcript."
+
+        with patch("agents.create_summary_agent", return_value=mock_agent):
+            result = api_server._run_summary_generation("sid", "transcript", "medical")
+
+        assert result is None

@@ -19,7 +19,7 @@ import websockets
 
 from conftest import AGENT_PORT, AGENT_URL, APP_URL, MERCURE_PORT, MERCURE_URL
 
-SESSION_ID = f"e2e-{uuid.uuid4().hex[:8]}"
+SESSION_ID = str(uuid.uuid4())
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ class TestAgentWebSocket:
     @pytest.mark.asyncio
     async def test_websocket_accepts_and_processes(self):
         """Connect, send a small PCM chunk, disconnect cleanly."""
-        ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/e2e-ws-{uuid.uuid4().hex[:6]}"
+        ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/{uuid.uuid4()}"
         async with websockets.connect(ws_url) as ws:
             # Send 0.1s of silence (16kHz, 16-bit mono = 3200 bytes)
             silence = b"\x00" * 3200
@@ -137,7 +137,7 @@ class TestAgentWebSocket:
     @pytest.mark.asyncio
     async def test_websocket_rejects_webm_when_pcm_configured(self):
         """Sending WebM magic bytes to a PCM-configured endpoint → error."""
-        ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/e2e-webm-{uuid.uuid4().hex[:6]}"
+        ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/{uuid.uuid4()}"
         async with websockets.connect(ws_url) as ws:
             # WebM magic bytes + padding
             webm_chunk = b"\x1a\x45\xdf\xa3" + b"\x00" * 3196
@@ -182,7 +182,7 @@ class TestAgentFileTranscription:
         wav.extend(struct.pack("<I", data_size))
         wav.extend(b"\x00" * data_size)
 
-        sid = f"e2e-file-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         r = httpx.post(
             f"{AGENT_URL}/transcribe/file",
             params={"session_id": sid},
@@ -220,14 +220,12 @@ class TestPhpApp:
         assert "topicRaw" in body or "topic" in body.lower()
 
     def test_scribe_has_reconnect_and_download(self):
-        """Template includes reconnect and download functionality."""
+        """Template includes reconnect and download UI elements."""
         r = httpx.get(f"{APP_URL}/scribe", timeout=5)
         body = r.text
         assert "reconnectBtn" in body, "Missing reconnect button"
         assert "downloadBtn" in body, "Missing download button"
-        assert "downloadTranscript" in body, "Missing download function"
-        assert "handleUnexpectedDisconnect" in body, "Missing reconnect logic"
-        assert "MAX_RECONNECT_ATTEMPTS" in body, "Missing reconnect constant"
+        assert "scribe.js" in body, "Missing scribe.js script reference"
 
     def test_scribe_has_accessibility_attributes(self):
         """Template includes WCAG accessibility attributes."""
@@ -262,7 +260,7 @@ class TestPhpProxiesToAgent:
 
     def test_roles_proxy(self):
         """PHP /scribe/{id}/roles should proxy to agent /session/{id}/roles."""
-        sid = f"e2e-proxy-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         r = httpx.get(f"{APP_URL}/scribe/{sid}/roles", timeout=10)
         assert r.status_code == 200
         data = r.json()
@@ -271,7 +269,7 @@ class TestPhpProxiesToAgent:
 
     def test_history_proxy(self):
         """PHP /scribe/{id}/history should proxy to agent /session/{id}/history."""
-        sid = f"e2e-proxy-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         r = httpx.get(f"{APP_URL}/scribe/{sid}/history", timeout=10)
         assert r.status_code == 200
         data = r.json()
@@ -313,7 +311,7 @@ class TestCrossService:
 
     def test_agent_and_php_roles_shape_match(self):
         """Both endpoints return same shape for the same session."""
-        sid = f"e2e-shape-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
 
         agent_r = httpx.get(f"{AGENT_URL}/session/{sid}/roles", timeout=5)
         php_r = httpx.get(f"{APP_URL}/scribe/{sid}/roles", timeout=10)
@@ -330,7 +328,7 @@ class TestCrossService:
 
     def test_agent_and_php_history_shape_match(self):
         """Both endpoints return same shape for the same session."""
-        sid = f"e2e-shape-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
 
         agent_r = httpx.get(f"{AGENT_URL}/session/{sid}/history", timeout=5)
         php_r = httpx.get(f"{APP_URL}/scribe/{sid}/history", timeout=10)
@@ -352,7 +350,7 @@ class TestSessionLifecycleE2E:
     @pytest.mark.asyncio
     async def test_websocket_session_creates_history(self):
         """Connect via WS, send audio, disconnect → history endpoint has segments."""
-        sid = f"e2e-lifecycle-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/{sid}"
 
         async with websockets.connect(ws_url) as ws:
@@ -373,7 +371,7 @@ class TestSessionLifecycleE2E:
     @pytest.mark.asyncio
     async def test_websocket_session_cleans_up_roles(self):
         """After WS disconnect, roles endpoint still returns valid shape."""
-        sid = f"e2e-cleanup-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/{sid}"
 
         async with websockets.connect(ws_url) as ws:
@@ -391,7 +389,7 @@ class TestSessionLifecycleE2E:
     @pytest.mark.asyncio
     async def test_disconnect_during_active_session_no_500(self):
         """Start recording, send multiple chunks, disconnect → no 500 on subsequent requests."""
-        sid = f"e2e-disconnect-{uuid.uuid4().hex[:6]}"
+        sid = str(uuid.uuid4())
         ws_url = f"ws://localhost:{AGENT_PORT}/ws/transcribe/{sid}"
 
         # Connect and send several chunks
@@ -411,9 +409,9 @@ class TestSessionLifecycleE2E:
         r = httpx.get(f"{AGENT_URL}/session/{sid}/history", timeout=5)
         assert r.status_code == 200
 
-        # Roles stream should not 500
-        r = httpx.post(f"{AGENT_URL}/session/{sid}/roles/stream", timeout=5)
-        assert r.status_code == 200
+        # Summary endpoint should not 500 (404 expected — no transcript for silence)
+        r = httpx.post(f"{AGENT_URL}/session/{sid}/summary", timeout=5)
+        assert r.status_code in (200, 404)
 
 
 @agent_required

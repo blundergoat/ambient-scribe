@@ -381,6 +381,56 @@ class TestHeuristicRoleInference:
         assert result["mapping"]["spk_0"] == "SPEAKER_A"
         assert result["mapping"]["spk_1"] == "SPEAKER_B"
 
+    def test_tv_mode_uses_general_fallback(self):
+        """TV mode falls through to SPEAKER_A/B ordering (no tv-specific heuristic)."""
+        segments = [
+            {"speaker_id": "spk_0", "text": "Welcome to the show", "start": 0.0, "end": 2.0},
+            {"speaker_id": "spk_1", "text": "Thanks for having me", "start": 2.0, "end": 4.0},
+        ]
+        result = _heuristic_role_inference(segments, "", "tv")
+        assert result is not None
+        assert result["mapping"]["spk_0"] == "SPEAKER_A"
+
+    def test_lecture_mode_uses_general_fallback(self):
+        """Lecture mode falls through to SPEAKER_A/B ordering."""
+        segments = [
+            {"speaker_id": "spk_0", "text": "Today we discuss algorithms", "start": 0.0, "end": 3.0},
+            {"speaker_id": "spk_1", "text": "Is this on the exam?", "start": 3.0, "end": 4.0},
+        ]
+        result = _heuristic_role_inference(segments, "", "lecture")
+        assert result is not None
+        assert result["mapping"]["spk_0"] == "SPEAKER_A"
+
+    def test_three_speakers_general_mode(self):
+        """General mode assigns SPEAKER_A/B/C to three speakers."""
+        segments = [
+            {"speaker_id": "spk_0", "text": "First", "start": 0.0, "end": 1.0},
+            {"speaker_id": "spk_1", "text": "Second", "start": 1.0, "end": 2.0},
+            {"speaker_id": "spk_2", "text": "Third", "start": 2.0, "end": 3.0},
+        ]
+        result = _heuristic_role_inference(segments, "", "general")
+        assert result is not None
+        assert result["mapping"]["spk_0"] == "SPEAKER_A"
+        assert result["mapping"]["spk_1"] == "SPEAKER_B"
+        assert result["mapping"]["spk_2"] == "SPEAKER_C"
+
+    def test_medical_no_keywords_assigns_by_order(self):
+        """Speakers with no keyword match get first-available roles."""
+        segments = [
+            {"speaker_id": "spk_0", "text": "Hello", "start": 0.0, "end": 1.0},
+            {"speaker_id": "spk_1", "text": "Hi", "start": 1.0, "end": 2.0},
+        ]
+        result = _heuristic_role_inference(segments, "", "medical")
+        assert result is not None
+        # First speaker gets DOCTOR (first available), second gets PATIENT
+        assert result["mapping"]["spk_0"] == "DOCTOR"
+        assert result["mapping"]["spk_1"] == "PATIENT"
+
+    def test_heuristic_with_transcript_only(self):
+        """Segments empty but transcript non-empty — returns None (no speaker_ids)."""
+        result = _heuristic_role_inference([], "some transcript", "medical")
+        assert result is None
+
 
 # =========================================================================
 # Task 3.8 — @tool assign_roles tests

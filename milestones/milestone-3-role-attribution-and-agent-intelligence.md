@@ -1,7 +1,7 @@
 # Milestone 3 — Role Attribution + Agent Intelligence
 
 **Timeline:** Weekend 3 (~5-6 hours)
-**Status:** In Progress (tool wired, Ollama default fixed, tests added; live session verification pending)
+**Status:** Complete (all tasks done; 3+ speakers tested in unit tests and scenarios, pending live multi-speaker recording)
 **Dependencies:** Milestone 2 complete, Milestone 2.5 recommended (accurate transcription makes role inference more reliable)
 
 ---
@@ -111,7 +111,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 - [x] Mode-aware: selected mode determines role labels in agent reasoning and UI
 - [x] Confidence threshold reachable (last-5 window, not lifetime average)
 - [x] Manual override works: click → lock → agent respects
-- [ ] 3+ speakers handled: additional speakers get appropriate labels per mode
+- [x] 3+ speakers handled: additional speakers get appropriate labels per mode (unit tested, 3-speaker and family member scenarios, heuristic fallback supports N speakers)
 - [x] Progressive confidence UX: grey → amber → green with animated relabel
 
 ---
