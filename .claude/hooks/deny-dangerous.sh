@@ -1,20 +1,50 @@
 #!/usr/bin/env bash
-# PreToolUse hook: block dangerous commands before execution.
+# PreToolUse hook: block dangerous commands and file modifications.
+# Fires on Bash, Edit, and Write tool calls.
 # Exit 2 = block with error message. Exit 0 = allow.
 
 set -euo pipefail
 
-# The command being executed is passed via stdin for Bash tool
 INPUT=$(cat)
 
-# Extract the command from the tool input
+# Extract fields from tool input
 COMMAND=$(echo "$INPUT" | jq -r '.command // empty' 2>/dev/null)
+FILE_PATH=$(echo "$INPUT" | jq -r '.file_path // empty' 2>/dev/null)
 
+# --- File path checks (Edit/Write tools) ---
+
+if [ -n "$FILE_PATH" ]; then
+  # .env file modifications
+  if echo "$FILE_PATH" | grep -qE '(^|/)\.env($|\.)'; then
+    echo "BLOCKED: Direct .env modification. Edit .env.example instead and document the change." >&2
+    exit 2
+  fi
+
+  # Lockfile modifications
+  if echo "$FILE_PATH" | grep -qE '(composer\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|Gemfile\.lock)$'; then
+    echo "BLOCKED: Lockfile modification. Lockfiles are managed by package managers, not edited directly." >&2
+    exit 2
+  fi
+
+  # Generated code / compiled artifacts
+  if echo "$FILE_PATH" | grep -qE '(^|/)(vendor|node_modules|var/cache|__pycache__|\.phpstan-cache)/'; then
+    echo "BLOCKED: Modification of generated/vendored code. These files are managed by tooling." >&2
+    exit 2
+  fi
+
+  # Migration files (avoid editing existing migrations)
+  if echo "$FILE_PATH" | grep -qE '(^|/)migrations/.*\.php$'; then
+    echo "BLOCKED: Direct migration file edit. Create a new migration instead." >&2
+    exit 2
+  fi
+fi
+
+# If no command, remaining checks are Bash-only
 if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
-# --- Universal deny rules ---
+# --- Bash command checks ---
 
 # rm -rf without explicit path scoping
 if echo "$COMMAND" | grep -qE 'rm\s+-[a-zA-Z]*r[a-zA-Z]*f|rm\s+-[a-zA-Z]*f[a-zA-Z]*r'; then
@@ -50,7 +80,7 @@ if echo "$COMMAND" | grep -qE 'curl\s+.*\|\s*(ba)?sh|wget\s+.*\|\s*(ba)?sh'; the
   exit 2
 fi
 
-# .env file modifications
+# .env file modifications via Bash
 if echo "$COMMAND" | grep -qE '(>|>>|tee|sed\s+-i|mv\s+.*)\s*\.env\b'; then
   echo "BLOCKED: Direct .env modification. Edit .env.example instead and document the change." >&2
   exit 2
@@ -62,9 +92,15 @@ if echo "$COMMAND" | grep -qE 'git\s+commit\s+.*(-n\b|--no-verify)'; then
   exit 2
 fi
 
+# Lockfile modifications via Bash
+if echo "$COMMAND" | grep -qE '(>|>>|tee|sed\s+-i|cp\s+.*)\s*(composer\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock)'; then
+  echo "BLOCKED: Direct lockfile modification. Use the package manager instead." >&2
+  exit 2
+fi
+
 # --- Project-specific deny rules ---
 
-# Direct edits to .nemo model files (too large, must be managed externally)
+# Direct edits to .nemo model files
 if echo "$COMMAND" | grep -qE '\.(nemo)\b.*(>|>>|cp|mv|sed|awk)|(>|>>|cp|mv|sed|awk).*\.(nemo)\b'; then
   echo "BLOCKED: Direct modification of .nemo model files. Models are managed externally." >&2
   exit 2

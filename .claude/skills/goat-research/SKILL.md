@@ -50,4 +50,5 @@ Before implementing any feature that:
 - MUST produce research output before any planning or implementation
 - MUST include minimum 3 risks with file:line evidence
 - MUST NOT proceed to planning until human reviews research
-- Every claim must be backed by a file read — do not fabricate
+- MUST back every claim by a file read — do not fabricate
+- SHOULD check all learning loop files (footguns, lessons, confusion-log) for prior art

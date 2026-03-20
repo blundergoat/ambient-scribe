@@ -6,17 +6,24 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/deny-dangerous.sh\""
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.php$'; then if [ -x vendor/bin/php-cs-fixer ] && vendor/bin/php-cs-fixer fix --quiet \"$CLAUDE_FILE_PATH\" >/dev/null 2>&1; then echo 'formatted php'; elif [ ! -x vendor/bin/php-cs-fixer ]; then echo 'php-cs-fixer not found; skipping PHP formatting' >&2; else echo \"php formatting failed: $CLAUDE_FILE_PATH\" >&2; fi; fi"
-          },
-          {
-            "type": "command",
-            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.py$'; then if command -v ruff >/dev/null 2>&1; then FORMATTER=ruff; elif [ -x strands_agents/.venv/bin/ruff ]; then FORMATTER=strands_agents/.venv/bin/ruff; else FORMATTER=''; fi; if [ -n \"$FORMATTER\" ] && \"$FORMATTER\" format --quiet \"$CLAUDE_FILE_PATH\" >/dev/null 2>&1; then echo 'formatted python'; elif [ -z \"$FORMATTER\" ]; then echo 'ruff not found; skipping Python formatting' >&2; else echo \"python formatting failed: $CLAUDE_FILE_PATH\" >&2; fi; fi"
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/format-file.sh\""
           }
         ]
       }
@@ -26,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; RUFF=$(command -v ruff || echo strands_agents/.venv/bin/ruff); $RUFF check strands_agents/ 2>&1 | head -10"
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/stop-lint.sh\""
           }
         ]
       }

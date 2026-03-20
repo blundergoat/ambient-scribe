@@ -30,10 +30,13 @@ infection.log
 *.tfstate
 *.tfstate.backup
 
-# Environment (may contain secrets)
-.env
-.env.local
-.env.*.local
+# Environment and secrets
+.env*
+**/secrets/
+**/*.pem
+**/*.key
+**/credentials*
+**/.git/
 
 # Docker override
 docker-compose.override.yml

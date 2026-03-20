@@ -1,53 +1,116 @@
-# CLAUDE.md
+# CLAUDE.md — v1.0 (2026-03-20)
 
-Real-time ambient medical scribe: captures doctor-patient audio via WebSocket, transcribes with NeMo GPU (Sortformer + Parakeet), attributes DOCTOR/PATIENT roles via Strands agent (Bedrock), streams results through Mercure SSE. Stack: Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure.
+Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure.
+
+## Execution Loop: READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG
+
+**READ** — MUST read relevant files first. Cross-boundary changes MUST read both sides (PHP + Python + Twig).
+
+```
+BAD:  "WebSocket publishes to topic 'transcribe'" (fabricated)
+GOOD: Read server.py:236 → publishes to 'scribe/session/{id}/raw'
+```
+
+**CLASSIFY** — Determine complexity and mode. Questions ≠ directives — if asked to explain, explain; don't implement.
+
+Complexity: Hotfix (2 reads / 3 turns), Standard (4 / 10), System (6 / 20), Infra (8 / 25).
+
+| Mode | Behaviour |
+|---|---|
+| Plan | Artefact only, no code. Exit on "LGTM" |
+| Implement | Code in 2–3 turns. 4th read without writing = start coding |
+| Explain | Walkthrough only, no changes |
+| Debug | Diagnosis + file:line. No fixes until human reviews |
+| Review | Investigate independently. Never blindly apply suggestions |
+
+Anti-BDUF: `BAD: Created IProvider (one impl). GOOD: Notifier handles it. Extract when second needed.`
+
+**SCOPE** — MUST declare before acting: files to change, non-goals, blast radius. Expanding scope = stop + re-scope.
+
+**ACT** — `State: [MODE] | Goal: [one line] | Exit: [condition]`
+No actions outside declared state. Mode switch: "Switching to [MODE] because [reason]."
+
+**VERIFY** — MUST run tests after each meaningful change.
+- Level 1 (note, continue): flaky test, unrelated failure, non-blocking lint warning
+- Level 2 (full stop, escalate): auth, API contracts, session state, Mercure, NeMo, cross-boundary
+- Revert-and-rescope: (1) Esc+restate (2) git revert+rescope (3) /clear+handoff. Two corrections = cut losses
+
+**LOG** — MUST update when tripped (DoD gate #4). SHOULD propagate footguns to local CLAUDE.md.
+
+| File | When |
+|---|---|
+| `docs/lessons.md` | Agent behavioural mistake |
+| `docs/footguns.md` | Cross-domain landmine (MUST include file:line) |
+| `docs/confusion-log.md` | Structural navigation difficulty |
+
+## Autonomy Tiers
+
+**Always:** run tests/lint/format, read any file, write within assigned scope, append to learning loop files.
+
+**Ask First** (MUST complete micro-checklist before proceeding):
+Auth, session lifecycle, API contracts (PHP↔Python), Mercure topics, NeMo pipeline, Docker/Terraform, CI/CD, new dirs.
+- [ ] Boundary: [name] | Code read: [y/n] | Footgun: [entry/none] | Local CLAUDE.md: [warnings/none] | Rollback: [cmd]
+
+**Never:** delete tests, modify .env/secrets, push main, chmod, commit unless asked, edit outside repo, modify lockfiles/generated code.
+
+## Definition of Done
+
+1. Relevant tests green
+2. MUST-level preflight items pass
+3. No cross-boundary change without Ask First
+4. If tripped: lessons/footguns updated
+5. Working Notes in `tasks/todo.md` current
+6. After renames: grep old pattern, confirm zero remaining refs
+
+## Working Memory
+
+5+ turn tasks → Working Notes in `tasks/todo.md`. Escalation: /compact after 15 turns → 2 compactions = split sub-tasks → /clear between unrelated tasks. Incomplete work → write `tasks/handoff.md`.
+
+## Sub-Agents
+
+One focused objective per sub-agent. MUST return: paths, evidence, confidence, next step. Budget: 5 tool calls.
+
+## When Blocked
+
+One question with recommended default: "Stuck on X. I suggest Y — should I proceed, or Z?"
+
+## Hard Constraints
+
+- GPU exclusivity: NeMo owns GPU. Role inference MUST use Bedrock or CPU Ollama — never local GPU
+- ThreadPoolExecutor: NeMo inference MUST use `run_in_executor`
+- Session ID coupling: UUID flows PHP → Twig → JS → WS → Mercure. All layers MUST match
 
 ## Commands
 
 ```bash
-composer preflight                     # All quality checks (tests, lint, analysis, coverage)
-composer test                          # PHPUnit tests
-pytest tests/python/                   # Python tests (from project root)
-docker compose up --build              # Full stack (requires NVIDIA GPU)
+./scripts/preflight-checks.sh   # All quality gates (MUST before done)
+composer test                   # PHPUnit
+composer analyse                # PHPStan Level 10
+pytest tests/python/            # Python tests (from project root)
+ruff check strands_agents/      # Python lint
+docker compose up --build       # Full stack (requires NVIDIA GPU)
 ```
 
-## Hard Rules
+## Router
 
-- **GPU exclusivity:** NeMo owns the GPU. Role inference uses Bedrock or CPU Ollama — never a local GPU model.
-- **ThreadPoolExecutor:** All NeMo inference must use `run_in_executor`. Synchronous GPU work blocks the async event loop.
-- **CUDA graph workaround:** After loading Parakeet, disable CUDA graphs (PyTorch 2.8 compat). See `docs/footguns.md` FG-1.
-- **Session ID coupling:** UUID flows PHP → Twig → JS → WebSocket URL → Mercure topics. All four layers must match. See `docs/footguns.md` FG-4.
-- **Preflight before done:** Always run `composer preflight` before reporting a task complete. Fix failures first.
-- **Read first, fix second:** When debugging, read actual code and trace ScribeController → WebSocket → NeMo → Mercure before proposing fixes.
-- **Log footguns:** If you discover a new cross-domain pitfall, add it to `docs/footguns.md`.
-
-## Context Router
-
-Read these files on demand — not every session needs every file.
-
-| File | Read when... |
+| Resource | Read when... |
 |---|---|
-| `docs/code-map.md` | Navigating the repo, finding entry points |
-| `docs/architecture.md` | Understanding data flow, Mermaid diagrams, design rationale, endpoint contracts |
-| `docs/footguns.md` | Debugging cross-domain issues, CUDA errors, Mercure failures, session coupling |
-| `docs/domain-php-symfony.md` | Working in `src/`, `config/`, `templates/` — conventions, commands, quality standards |
-| `docs/domain-python-nemo.md` | Working in `strands_agents/`, `tests/python/` — GPU rules, audio pipeline, Mercure publishing |
-| `docs/domain-infrastructure.md` | Working in `docker-compose.yml`, `docker/`, `infra/terraform/` — env vars, deployment |
-| `docs/nemo-api-notes.md` | NeMo API details, VRAM measurements, model classes, edge case behaviour |
-| `docs/troubleshooting.md` | Container compatibility, NeMo version matrix |
-| `docs/local-development.md` | Local setup, bare-metal vs Docker, environment config |
-| `docs/deployment.md` | AWS deployment scripts, ECR push, ECS redeploy |
-| `docs/terraform.md` | Terraform commands, bootstrap, module structure |
-| `docs/workflow.md` | Claude Code hooks, skills, quality automation |
-| `milestones/` | Task breakdowns for M0–M4 (M0–M1 complete, M2 next) |
-
-## Workflow Rules
-
-- **Plan before building:** Save plans to `docs/PLAN.md` with checkboxes before starting work.
-- **Feature checklist:** After implementing a feature, verify: service wiring, endpoint contracts, route registration, template updates, Docker env vars, PHP tests, Python tests, PHPStan Level 10. Full checklist in `docs/domain-php-symfony.md` and `docs/domain-python-nemo.md`.
-- **Stop-the-line:** If tests, builds, or analysis break — stop adding features. Fix before continuing.
-- **Control scope:** Fix only what's necessary. Log follow-ups as TODOs.
-- **Deep first pass:** Reviews and investigations must be thorough. Verify findings by reading surrounding code. "Look deeper" means the first pass was insufficient.
-- **Verify external suggestions:** Don't blindly apply Copilot/external review comments. Investigate against the actual codebase first.
-- **Full-stack awareness:** Changes may impact PHP, Python, Twig, Docker, and Mercure layers. Consider cross-layer effects.
-- **Git hygiene:** One logical change per commit. Atomic and describable.
+| `.claude/skills/goat-preflight/` | Running quality checks |
+| `.claude/skills/goat-debug/` | Debugging issues |
+| `.claude/skills/goat-audit/` | Auditing codebase |
+| `.claude/skills/goat-research/` | Pre-implementation research |
+| `.claude/skills/goat-review/` | Reviewing code changes |
+| `docs/architecture.md` | System design, data flows |
+| `docs/footguns.md` | Cross-domain issues, CUDA, Mercure, sessions |
+| `docs/lessons.md` | Past agent mistakes |
+| `docs/confusion-log.md` | Navigation difficulty |
+| `docs/domain-reference.md` | Domain knowledge |
+| `docs/domain-php-symfony.md` | PHP: `src/`, `config/`, `templates/` |
+| `docs/domain-python-nemo.md` | Python: `strands_agents/`, `tests/python/` |
+| `docs/domain-infrastructure.md` | Docker, Terraform, deployment |
+| `docs/nemo-api-notes.md` | NeMo API, VRAM measurements |
+| `docs/code-map.md` | Entry points, file roles |
+| `tasks/handoff-template.md` | Session handoff |
+| `agent-evals/` | Regression tests |
+| `.github/instructions/` | Per-language coding standards |
+| `milestones/` | Task breakdowns M0–M4 |

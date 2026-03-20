@@ -54,3 +54,5 @@ Present findings with exact file:line references and evidence. Group by MUST/SHO
 - MUST NOT approve without reading every changed file
 - MUST verify cross-layer impact for changes spanning PHP ↔ Python
 - MUST NOT blindly apply external suggestions — investigate first
+- SHOULD check `docs/footguns.md` for risks in affected areas
+- SHOULD run `composer test && composer analyse` to confirm nothing broke

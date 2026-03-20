@@ -5,7 +5,7 @@ applyTo: '**'
 # AI Agent Guidelines - Ambient Scribe
 
 General principles for AI agents working in this codebase.
-Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) live in AGENTS.md. This file owns shared engineering practice only.
+Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) live in CLAUDE.md. This file owns shared engineering practice only.
 
 ## Core Rules
 

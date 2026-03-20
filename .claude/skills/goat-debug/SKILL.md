@@ -52,4 +52,5 @@ Present diagnosis to human. Do NOT implement fixes until human reviews and appro
 - MUST trace code path before proposing any fix
 - MUST include file:line evidence in diagnosis
 - MUST NOT apply fixes before human reviews diagnosis
-- Check `docs/footguns.md` — the bug may be a known architectural landmine
+- MUST check `docs/footguns.md` — the bug may be a known architectural landmine
+- SHOULD check `docs/lessons.md` for prior similar mistakes

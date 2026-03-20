@@ -43,6 +43,7 @@ Remove anything uncertain. Remove anything fabricated.
 - MUST NOT propose fixes — findings only
 - MUST include file:line evidence for every finding
 - MUST remove findings that fail the Pass 4 self-check
+- SHOULD cross-reference `docs/lessons.md` for recurring patterns
 
 ## Output Format
 
