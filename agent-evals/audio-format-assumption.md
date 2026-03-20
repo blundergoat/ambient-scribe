@@ -1,5 +1,8 @@
 # Eval: Audio Format Assumption
 
+**Origin:** synthetic-seed (footgun #4, commit f7ba6b3)
+**Agents:** all
+
 ## Bug Description
 
 `AudioBuffer` in `nemo_session.py` hardcodes 16kHz 16-bit PCM format, but the browser's MediaRecorder sends WebM/Opus. Without format detection or conversion, NeMo receives garbage audio and produces nonsensical transcriptions — silently, with no error.

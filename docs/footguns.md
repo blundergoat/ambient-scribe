@@ -2,62 +2,49 @@
 
 Cross-domain architectural landmines with real coupling and file:line evidence.
 
----
+Each entry names the live files involved, what breaks, and the evidence.
 
-Each entry names the files involved, what breaks, and the evidence.
+### 1. Mercure publish failure only surfaces as a browser banner
+- **Files:** `strands_agents/api/server.py:335-395`, `strands_agents/api/server.py:710-725`, `public/js/scribe.js:392-395`, `public/js/scribe.js:940-944`
+- **What breaks:** If Mercure is down, transcription can still run on the server but live segments stop appearing in the browser. The user gets a one-time `system_error` banner, not a fallback delivery path.
+- **Evidence:** `publish_to_mercure()` returns `False` after retries, the WebSocket handler emits a `system_error` frame on the first failed raw publish, and the browser only renders that message into `#systemBanner`.
 
-**Symptoms:** ASR inference crashes with `ValueError: not enough values to unpack (expected 6, got 5)`.
+### 2. Session lifecycle is still split across active sessions, transcript storage, and role state
+- **Files:** `strands_agents/session_lifecycle.py:68-98`, `strands_agents/api/server.py:240-285`, `strands_agents/tools/assign_roles.py:170-179`, `strands_agents/session.py:104-133`
+- **What breaks:** `SessionLifecycle` owns active WebSocket sessions, `assign_roles` owns role state, and `SessionStore` owns transcript TTL eviction. Those stores are coordinated but not unified, so cleanup timing can diverge.
+- **Evidence:** `destroy()` cleans active sessions plus role state, `_periodic_cleanup()` separately reaps orphaned queue/mode/event-id entries, and `SessionStore` independently expires transcript data on access.
 
-### 1. Mercure publish failure ~~is log-only~~ (MITIGATED)
-- **Files:** `strands_agents/api/server.py:236-269`, `templates/scribe/index.html.twig`
-- **Status:** `publish_to_mercure()` now returns `bool`, logs at ERROR, and sends a `system_error` WebSocket text frame to the browser on first failure. The template shows a persistent amber banner. The UI still depends on Mercure for segment delivery, but silent data loss is now surfaced.
-- **Remaining risk:** No fallback data path — if Mercure is down, segments are transcribed but not displayed until reconnection.
+### 3. Audio format is a browser/env/Python contract
+- **Files:** `public/js/scribe.js:193-255`, `public/js/scribe.js:367-383`, `.env.example:28-33`, `docker-compose.yml:57-63`, `strands_agents/nemo_session.py:250-268`
+- **What breaks:** The browser always streams 16 kHz PCM through `PcmStreamer`, while the server trusts `NEMO_STREAM_INPUT_FORMAT`. If env/config drifts to `webm`, live sessions fail on the first chunk.
+- **Evidence:** `PcmStreamer` down-samples and emits 16-bit PCM bytes, Docker and `.env.example` expose `NEMO_STREAM_INPUT_FORMAT`, and `_validate_audio_format()` rejects mismatched magic bytes after the session starts.
 
-### 2. ~~Live role updates have two competing delivery paths~~ (RESOLVED)
-- **Files:** `strands_agents/api/server.py`, `src/Service/RoleInferenceService.php`, `src/Controller/ScribeController.php`
-- **Status:** The PHP SSE proxy endpoint (`POST /scribe/{id}/roles/stream`) has been deleted. `RoleInferenceService::streamRoleInference()` and the `RoleInferenceResult` class have been deleted. The Mercure queue is the single live role delivery path. `RoleInferenceService` now only provides `getCurrentMapping()` for snapshot lookups.
-- **Remaining risk:** None. Single delivery path.
+### 4. Browser-facing WebSocket and Mercure URLs are passed straight through
+- **Files:** `.env.example:19-23`, `.env.example:79-81`, `docker-compose.yml:119-123`, `src/Controller/ScribeController.php:54-56`, `src/Controller/ScribeController.php:81-90`, `templates/scribe/index.html.twig:825-833`, `public/js/scribe.js:373-380`, `public/js/scribe.js:530-535`
+- **What breaks:** Host-only defaults like `localhost:48101` and `localhost:48137` work on the developer machine but fail for remote clients or alternate hostnames unless every layer is overridden together.
+- **Evidence:** Symfony injects `ws_url` and `mercure_url` directly into `CONFIG`, and `public/js/scribe.js` uses those values as-is for the WebSocket and Mercure subscriptions.
 
-### 3. Session lifecycle ~~is split across three in-memory stores~~ (MITIGATED)
-- **Files:** `strands_agents/session_lifecycle.py`, `strands_agents/api/server.py:217-218`, `strands_agents/tools/assign_roles.py`
-- **Status:** `SessionLifecycle` class now coordinates registration and teardown with per-session `asyncio.Lock`. `lifecycle.destroy()` atomically cleans up active session + role state under lock. `assign_roles._session_states` access is protected by `threading.Lock`.
-- **Remaining risk:** `SessionStore` transcript data still has its own TTL eviction independent of lifecycle — long-idle sessions may have transcript data evicted while role state persists.
+### 5. NeMo is a fixed-capacity singleton with no in-process recovery
+- **Files:** `strands_agents/api/server.py:198-202`, `strands_agents/api/server.py:217-237`, `docker-compose.yml:48-54`, `docker-compose.yml:59-61`
+- **What breaks:** GPU exhaustion, model-load failure, or degraded model state requires a process restart. The executor is capped by `NEMO_MAX_WORKERS` and the service reserves exactly one GPU regardless of host capacity.
+- **Evidence:** FastAPI creates one `NemoPipeline()` during lifespan startup, one shared `ThreadPoolExecutor`, and the Compose service reserves a single NVIDIA device.
 
-### 4. Stream input format is a cross-layer contract ~~not auto-detected~~ (MITIGATED)
-- **Files:** `strands_agents/nemo_session.py:_validate_audio_format`, `.env.example`, `templates/scribe/index.html.twig`
-- **Status:** First-chunk format validation now rejects WebM/WAV bytes when configured for PCM (raises `ValueError` with clear message). WebM mode warns if magic bytes are missing. The browser still hardcodes PCM via `PcmStreamer`.
-- **Remaining risk:** Misconfiguration is detected on first chunk but causes session failure rather than auto-correction.
+### 6. The reconnect grace window keeps session state alive after disconnect
+- **Files:** `strands_agents/session_lifecycle.py:41-67`, `strands_agents/session_lifecycle.py:100-138`, `strands_agents/api/server.py:250-253`, `strands_agents/api/server.py:661-678`, `strands_agents/api/server.py:781-788`
+- **What breaks:** During the grace period, audio buffers, `_session_modes`, `_mercure_event_ids`, and role state remain alive so a reconnect can resume. Long grace windows trade resilience for memory growth.
+- **Evidence:** `register()` cancels pending destroys, `schedule_destroy()` stores delayed tasks in `_pending_destroys`, the server treats pending destroys as live sessions, and `transcribe_stream()` schedules cleanup instead of destroying immediately.
 
-### 5. Browser-facing WebSocket and Mercure URLs are passed through unchanged
-- **Files:** `.env.example:17-24`, `.env.example:53-55`, `docker-compose.yml:109-111`, `src/Controller/ScribeController.php:54-64`, `templates/scribe/index.html.twig:228-235`
-- **What breaks:** Host-only defaults such as `localhost:48101` and `localhost:48137` work for the developer machine but fail for remote clients or alternate hostnames unless explicitly overridden end to end.
-- **Evidence:** Symfony injects the configured URLs directly into the browser config object; the browser then uses them as-is for WebSocket and Mercure connections.
+### 7. Terraform still advertises DynamoDB while runtime persists only memory or SQLite
+- **Files:** `infra/terraform/environments/prod/main.tf:82-90`, `infra/terraform/environments/prod/main.tf:142-146`, `strands_agents/api/server.py:298-310`, `strands_agents/session.py:28-29`, `strands_agents/storage.py:54-76`
+- **What breaks:** Production infrastructure exports a DynamoDB table name, but runtime persistence only switches between the in-memory `SessionStore` and local SQLite. There is no DynamoDB-backed runtime path.
+- **Evidence:** Terraform sets `DYNAMODB_TABLE`, `create_storage_backend()` chooses only `SessionStore` or `SqliteBackend`, and the in-memory store still documents restart data loss.
 
-### 6. NeMo is a fixed-capacity singleton with no in-process recovery
-- **Files:** `strands_agents/api/server.py:123-127`, `strands_agents/api/server.py:180-201`, `docker-compose.yml:48-54`, `docker-compose.yml:83-88`
-- **What breaks:** GPU exhaustion, model-load failure, or degraded model state requires a process/container restart. Only two concurrent NeMo executor workers are allowed, regardless of hardware.
-- **Evidence:** The NeMo pipeline is created once during lifespan startup and shared for all sessions; the executor and GPU reservation are hardcoded.
+### 8. Bind-mounted local dev can hide image-only runtime issues
+- **Files:** `Dockerfile:36-43`, `docker-compose.yml:84-87`, `docker-compose.yml:108-114`
+- **What breaks:** Local Compose uses bind mounts for both the app and agent, so hot reload can look healthy even when the built images would still ship stale files or broken import paths.
+- **Evidence:** The Dockerfile bakes the app into `/app`, the agent image expects `/app`, and Compose overrides both services with host mounts during local development.
 
-### 7. WebSocket reconnect grace period keeps sessions alive after disconnect
-- **Files:** `strands_agents/session_lifecycle.py:schedule_destroy`, `strands_agents/api/server.py:transcribe_stream`, `strands_agents/api/server.py:_periodic_cleanup`
-- **Status:** On WebSocket disconnect, `schedule_destroy()` delays session cleanup by `SESSION_RECONNECT_GRACE_SECONDS` (default 30). If the same `session_id` reconnects within the window, `register()` cancels the pending destroy and the existing `TranscriptionSession` (audio buffer + transcript state) is reused.
-- **What could break:** During the grace window, `_session_modes`, `_mercure_event_ids`, and role state remain alive. The periodic cleanup treats sessions with pending destroys as "live" to avoid premature eviction. If the grace period is set very long, memory usage grows because audio buffers are not released.
-- **Evidence:** `lifecycle._pending_destroys` dict holds `asyncio.Task` objects for each scheduled destroy.
-
-### 8. Terraform provisions DynamoDB, but runtime session state is still memory-only
-- **Files:** `infra/terraform/environments/prod/main.tf:82-90`, `infra/terraform/environments/prod/main.tf:142-146`, `strands_agents/session.py:28-29`, `strands_agents/session.py:37-39`
-- **What breaks:** Production infrastructure implies persisted session storage, but live code still uses an in-memory `SessionStore` with TTL/LRU limits and loses data on restart.
-- **Evidence:** Terraform exports a DynamoDB table name to the agent container, while `SessionStore` keeps transcript data in a Python `OrderedDict` only.
-
-### 9. Template changes require container rebuild to take effect
-- **Files:** `templates/scribe/index.html.twig`, `docker-compose.yml`
-- **What breaks:** Editing Twig templates, scenarios JSON, or any PHP/asset file on the host does not update the running `app` container. The Symfony app is copied into the Docker image at build time. Without `dc up -d --build` (or a volume mount for `templates/`), the container serves stale code indefinitely.
-- **Evidence:** A full audit round found 0/12 bugs fixed because the container was never rebuilt after the fixes were applied to the working tree. The second auditor confirmed "The codebase appears identical to the previous audit."
-- **Mitigation:** After editing any file served by the `app` container, always run `dc up -d --build` (or `dc up -d --build app` to rebuild only the app service). The `start-dev.sh` script will skip rebuild if containers are already running — use `dc up -d --build` directly.
-
-### 10. Ollama model must support tool calling for assign_roles
-- **Files:** `strands_agents/tools/assign_roles.py`, `strands_agents/agents/transcription_agent.py`, `docker-compose.yml`
-- **What breaks:** The `assign_roles` Strands `@tool` requires the Ollama model to support tool/function calling. Models without tool support silently fall back to free-text JSON (parsed via regex), which is less reliable.
-- **Default model:** `qwen2.5:14b` — supports tool calling, aligned with `docker-compose.yml` and `.env.example`.
-- **Alternative:** `qwen3:14b` also supports tool calling. Avoid models like `llama3.1:8b` which may not support Ollama's tool calling API.
-- **Evidence:** The agent constructor passes `tools=[assign_roles]` to Strands. If the model doesn't support tools, Strands may error or the model ignores the tool definition. The worker has a dual-path: it checks `state.mapping_history` growth to detect tool invocation vs free-text fallback.
+### 9. The Ollama role model must support tool calling
+- **Files:** `.env.example:67-74`, `docker-compose.yml:73-77`, `strands_agents/agents/transcription_agent.py:76-84`, `strands_agents/agents/transcription_agent.py:205-215`, `strands_agents/agents/transcription_agent.py:235-240`, `strands_agents/tools/assign_roles.py:207-244`
+- **What breaks:** `assign_roles` is wired as a Strands tool. Models without tool/function calling support fall back to free-text JSON behaviour, which is slower and less reliable.
+- **Evidence:** The agent prompt explicitly says it MUST call `assign_roles`, the agent constructor passes `tools=[assign_roles]`, and the default Ollama model is pinned in both `.env.example` and `docker-compose.yml`.

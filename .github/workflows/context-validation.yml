@@ -3,9 +3,23 @@ name: Context Validation
 on:
   pull_request:
     paths:
+      - 'AGENTS.md'
       - 'CLAUDE.md'
-      - '.claude/**'
       - '**/CLAUDE.md'
+      - 'docs/codex-playbooks/**'
+      - 'docs/architecture.md'
+      - 'docs/domain-reference.md'
+      - 'docs/footguns.md'
+      - 'docs/lessons.md'
+      - 'docs/confusion-log.md'
+      - 'docs/guidelines-ownership-split.md'
+      - 'agent-evals/**'
+      - 'tasks/handoff-template.md'
+      - 'tasks/todo.md'
+      - 'scripts/context-validate.sh'
+      - 'scripts/deny-dangerous.sh'
+      - '.github/instructions/**'
+      - '.github/workflows/context-validation.yml'
 
 jobs:
   validate:
@@ -13,55 +27,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: CLAUDE.md line count
+      - name: AGENTS.md line count
         run: |
-          LINES=$(wc -l < CLAUDE.md)
-          echo "CLAUDE.md: $LINES lines"
+          LINES=$(wc -l < AGENTS.md)
+          echo "AGENTS.md: $LINES lines"
           if [ "$LINES" -gt 150 ]; then
-            echo "::error::CLAUDE.md is $LINES lines — MUST be under 150"
+            echo "::error::AGENTS.md is $LINES lines — hard limit is 150"
             exit 1
-          elif [ "$LINES" -gt 120 ]; then
-            echo "::warning::CLAUDE.md is $LINES lines — target is under 120 for apps"
+          elif [ "$LINES" -gt 135 ]; then
+            echo "::warning::AGENTS.md is $LINES lines — target is under 135"
           fi
 
-      - name: Router table references exist
-        run: |
-          ERRORS=0
-          # Check key referenced paths from router table
-          for path in \
-            docs/domain-reference.md \
-            docs/architecture.md \
-            docs/lessons.md \
-            docs/footguns.md \
-            docs/confusion-log.md \
-            tasks/handoff-template.md \
-            .github/instructions/ai-agent-guidelines.instructions.md; do
-            if [ ! -f "$path" ]; then
-              echo "::error::Router table references $path but file does not exist"
-              ERRORS=$((ERRORS + 1))
-            fi
-          done
-          if [ "$ERRORS" -gt 0 ]; then exit 1; fi
+      - name: Context validation script
+        run: ./scripts/context-validate.sh
 
-      - name: Skills directories have SKILL.md
+      - name: Local instruction files under 20 lines
         run: |
-          ERRORS=0
-          for dir in .claude/skills/*/; do
-            if [ ! -f "${dir}SKILL.md" ]; then
-              echo "::error::Skill directory $dir is missing SKILL.md"
-              ERRORS=$((ERRORS + 1))
-            fi
-          done
-          if [ "$ERRORS" -gt 0 ]; then exit 1; fi
-
-      - name: Local CLAUDE.md files under 20 lines
-        run: |
-          ERRORS=0
-          find . -name "CLAUDE.md" -not -path "./CLAUDE.md" -not -path "./vendor/*" -not -path "./.git/*" | while read -r f; do
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
             LINES=$(wc -l < "$f")
             if [ "$LINES" -gt 20 ]; then
-              echo "::error::$f is $LINES lines — local CLAUDE.md files MUST be under 20 lines"
-              ERRORS=$((ERRORS + 1))
+              echo "::error::$f is $LINES lines — local instruction files MUST stay under 20 lines"
+              exit 1
             fi
-          done
-          if [ "$ERRORS" -gt 0 ]; then exit 1; fi
+          done < <(find . \( -name "CLAUDE.md" -o -name "AGENTS.md" \) \
+            -not -path "./CLAUDE.md" \
+            -not -path "./AGENTS.md" \
+            -not -path "./vendor/*" \
+            -not -path "./.git/*" \
+            | sort)

@@ -1,5 +1,8 @@
 # Eval: Question Misinterpreted as Directive
 
+**Origin:** synthetic-seed (common CLASSIFY failure mode)
+**Agents:** all
+
 ## Bug Description
 
 Common failure mode: agent treats a question about the codebase as an instruction to implement something. "How does the session cleanup work?" should produce an explanation, not code changes.

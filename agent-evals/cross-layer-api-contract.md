@@ -1,5 +1,8 @@
 # Eval: Cross-Layer API Contract Change
 
+**Origin:** synthetic-seed (footgun #4, common stack failure mode)
+**Agents:** all
+
 ## Bug Description
 
 Common failure mode for this stack: changing the Python API response format without updating the PHP consumer. `RoleInferenceService.php` accesses `$event['mapping']` and `$event['confidence']` without validation. If the Python endpoint changes these keys, PHP breaks silently.

@@ -1,5 +1,8 @@
 # Eval: Docker Volume Mount Path Mismatch
 
+**Origin:** real-incident (commit 9e59867)
+**Agents:** all
+
 ## Bug Description
 
 Docker volume mount `./strands_agents:/app/strands_agents` was incorrect — the Python modules expected to be at `/app`, not `/app/strands_agents`. Container startup failed with `ModuleNotFoundError`. Required reading both `docker-compose.yml` and `docker/nemo/Dockerfile` to understand the expected path.

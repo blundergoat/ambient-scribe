@@ -36,6 +36,7 @@ strands_agents/**/.venv/
 tasks/todo.md
 tasks/handoff.md
 /commit.md
+/release.md
 
 # Node
 node_modules/

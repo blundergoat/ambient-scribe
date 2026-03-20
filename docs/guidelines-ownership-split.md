@@ -1,39 +1,34 @@
 # Guidelines Ownership Split
 
-Audit date: 2026-03-20 (updated from 2026-03-15)
+Audit date: 2026-03-21
 
 ## Scope
 
-- Runtime workflow (execution loop, autonomy tiers, DoD) lives in `CLAUDE.md`.
+- `CLAUDE.md` owns the Claude Code runtime workflow.
+- `AGENTS.md` owns the Codex runtime workflow.
 - Shared engineering practice stays in `.github/instructions/ai-agent-guidelines.instructions.md`.
-- Project structure and domain detail live in `docs/domain-reference.md` and `docs/architecture.md`.
+- Project structure and domain detail stay in `docs/domain-reference.md` and `docs/architecture.md`.
 
-## CLAUDE.md Migration
+## Runtime Ownership
 
-Moved out of the original CLAUDE.md:
-- Project structure/module map -> `docs/domain-reference.md`
-- Architecture/runtime notes -> `docs/architecture.md` and `docs/domain-reference.md`
-- Domain-specific hard rules (GPU, ThreadPoolExecutor, session coupling) remain as Hard Constraints in CLAUDE.md
-
-Kept in CLAUDE.md (GOAT Flow v1.0):
-- Execution loop (READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG)
-- Autonomy tiers (Always / Ask First / Never)
-- Definition of Done (6 gates)
-- Working Memory + Sub-Agents + When Blocked
-- Hard Constraints (project-specific safety rules)
-- Essential commands
-- Router table
+- Shared between `CLAUDE.md` and `AGENTS.md`: execution loop, autonomy tiers, definition of done, working-memory/handoff rules, learning-loop references, router tables, and essential commands.
+- `CLAUDE.md` keeps Claude-specific mechanics such as local `CLAUDE.md` propagation and Claude eval routing.
+- `AGENTS.md` keeps Codex-specific mechanics such as playbook files in `docs/codex-playbooks/`, `apply_patch`, and explicit acknowledgement that `scripts/deny-dangerous.sh` is policy verification rather than a runtime hook.
 
 ## Guidelines Audit
 
 Audited file: `.github/instructions/ai-agent-guidelines.instructions.md`
 
-Sections kept in guidelines (cross-project engineering practice):
-- Core Principles
+Sections kept in guidelines:
+- Core Rules
 - Project-Specific Constraints
-- Engineering Practices
-- Testing Conventions
+- Architecture
+- Cross-Layer Impact
 - Git Hygiene
+- Testing Conventions
 - Commit Messages
 
-The guidelines intro references CLAUDE.md for workflow ownership. No content overlap with CLAUDE.md execution loop, DoD, or autonomy tiers.
+Sections trimmed or rewritten to avoid workflow overlap:
+- Intro now points to both `CLAUDE.md` and `AGENTS.md` for runtime rules.
+- Removed the `Working Discipline` section because stop-the-line, scope control, and delivery sequencing belong to the instruction files.
+- Removed `Before Marking Done` because verification/DoD rules belong to the instruction files and preflight playbooks.

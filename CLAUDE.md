@@ -20,7 +20,7 @@ Complexity: Hotfix (2 reads / 3 turns), Standard (4 / 10), System (6 / 20), Infr
 | Plan | Artefact only, no code. Exit on "LGTM" |
 | Implement | Code in 2–3 turns. 4th read without writing = start coding |
 | Explain | Walkthrough only, no changes |
-| Debug | Diagnosis + file:line. No fixes until human reviews |
+| Debug | Diagnosis + file:line. No fixes until human reviews diagnosis |
 | Review | Investigate independently. Never blindly apply suggestions |
 
 Anti-BDUF: `BAD: Created IProvider (one impl). GOOD: Notifier handles it. Extract when second needed.`
@@ -50,7 +50,11 @@ Mechanical trigger: if VERIFY caught a failure in your code, or you corrected co
 
 **Ask First** (MUST complete micro-checklist before proceeding):
 Auth, session lifecycle, API contracts (PHP↔Python), Mercure topics, NeMo pipeline, Docker/Terraform, CI/CD, new dirs.
-- [ ] Boundary: [name] | Code read: [y/n] | Footgun: [entry/none] | Local CLAUDE.md: [warnings/none] | Rollback: [cmd]
+1. Boundary touched: [name it]
+2. Related code read: [yes/no]
+3. Footgun entry checked: [relevant entry, or "none"]
+4. Local instruction checked: [local CLAUDE.md / .github/instructions/ file, or "none"]
+5. Rollback command: [exact command]
 
 **Never:** delete tests, modify .env/secrets, push main, chmod, commit unless asked, edit outside repo, modify lockfiles/generated code.
 
@@ -110,6 +114,5 @@ docker compose up --build       # Full stack (requires NVIDIA GPU)
 | `tasks/handoff-template.md` | Session handoff |
 | `agent-evals/` | Regression tests |
 | `AGENTS.md` | Codex workflow (dual-agent) |
-| `codex-evals/` | Codex regression tests |
 | `.github/instructions/` | Per-language coding standards |
 | `milestones/` | Task breakdowns M0–M4 |

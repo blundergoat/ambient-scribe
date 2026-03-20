@@ -1,5 +1,8 @@
 # Eval: EventSource Ordering Bug
 
+**Origin:** real-incident (commit 0125a6b)
+**Agents:** all
+
 ## Bug Description
 
 `StreamOrchestrator._active` was set to `true` after calling `_connect()`, causing the first EventSource topic (`/raw`) to be silently skipped. The Mercure SSE subscription appeared to work but dropped the first topic's events.

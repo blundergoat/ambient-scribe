@@ -5,7 +5,7 @@ applyTo: '**'
 # AI Agent Guidelines - Ambient Scribe
 
 General principles for AI agents working in this codebase.
-Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) live in CLAUDE.md. This file owns shared engineering practice only.
+Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) live in `CLAUDE.md` for Claude Code and `AGENTS.md` for Codex. This file owns shared engineering practice only.
 
 ## Core Rules
 
@@ -55,29 +55,11 @@ When changing any layer, check:
 6. PHPUnit tests covering the changed code path
 7. PHPStan passes at Level 10
 
-Do NOT consider a feature done until all affected layers are covered.
-
-## Working Discipline
-
-- **Stop-the-line**: If tests or builds break mid-task, stop adding features. Fix the breakage first.
-- **Control scope**: If a change reveals deeper issues, fix only what's necessary. Log follow-ups as TODOs, don't expand the current task.
-- **Incremental delivery**: Implement -> test -> verify -> then expand. Prefer thin vertical slices over big-bang changes.
-- **Bug triage order**: Reproduce -> Localize (which layer) -> Reduce (minimal case) -> Fix root cause -> Add regression test -> Verify end-to-end.
-
 ## Git Hygiene
 
 - Keep commits atomic — one logical change per commit.
 - Don't mix formatting-only changes with behavioral changes.
 - Don't rewrite history unless explicitly asked.
-
-## Before Marking Done
-
-- `composer test` passes
-- `composer analyse` passes (PHPStan level 10, zero errors)
-- `composer cs:check` passes (PHP-CS-Fixer)
-- If Docker config changed: `docker compose config` validates
-- If Python agent changed: WebSocket/API contract matches Twig client expectations
-- If environment variables added: `.env.example`, `docker-compose.yml`, and `scripts/start-dev.sh` all updated
 
 ## Testing Conventions
 
