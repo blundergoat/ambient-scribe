@@ -35,7 +35,8 @@ No actions outside declared state. Mode switch: "Switching to [MODE] because [re
 - Level 2 (full stop, escalate): auth, API contracts, session state, Mercure, NeMo, cross-boundary
 - Revert-and-rescope: (1) Esc+restate (2) git revert+rescope (3) /clear+handoff. Two corrections = cut losses
 
-**LOG** — MUST update when tripped (DoD gate #4). SHOULD propagate footguns to local CLAUDE.md.
+**LOG** — MUST update when tripped (DoD gate #4). SHOULD log after routine sessions. SHOULD propagate footguns to local CLAUDE.md.
+Mechanical trigger: if VERIFY caught a failure in your code, or you corrected course, lessons.md entry required before DoD. After human correction: MUST log immediately. Dual-agent: read shared files before appending.
 
 | File | When |
 |---|---|
@@ -66,13 +67,9 @@ Auth, session lifecycle, API contracts (PHP↔Python), Mercure topics, NeMo pipe
 
 5+ turn tasks → Working Notes in `tasks/todo.md`. Escalation: /compact after 15 turns → 2 compactions = split sub-tasks → /clear between unrelated tasks. Incomplete work → write `tasks/handoff.md`.
 
-## Sub-Agents
+## Sub-Agents / When Blocked
 
-One focused objective per sub-agent. MUST return: paths, evidence, confidence, next step. Budget: 5 tool calls.
-
-## When Blocked
-
-One question with recommended default: "Stuck on X. I suggest Y — should I proceed, or Z?"
+Sub-agents: one objective, MUST return paths/evidence/confidence/next-step. Budget: 5 calls. When blocked: one question with default — "Stuck on X. I suggest Y — proceed or Z?"
 
 ## Hard Constraints
 
@@ -112,5 +109,7 @@ docker compose up --build       # Full stack (requires NVIDIA GPU)
 | `docs/code-map.md` | Entry points, file roles |
 | `tasks/handoff-template.md` | Session handoff |
 | `agent-evals/` | Regression tests |
+| `AGENTS.md` | Codex workflow (dual-agent) |
+| `codex-evals/` | Codex regression tests |
 | `.github/instructions/` | Per-language coding standards |
 | `milestones/` | Task breakdowns M0–M4 |

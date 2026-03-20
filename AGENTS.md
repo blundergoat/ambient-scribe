@@ -1,10 +1,10 @@
-# Ambient Scribe AGENTS
+# Ambient Scribe AGENTS — v1.0 (2026-03-20)
 
 Codex runtime workflow for this repo. Project structure and conventions live in `docs/domain-reference.md`, system shape lives in `docs/architecture.md`, and shared engineering practice stays in `.github/instructions/ai-agent-guidelines.instructions.md`.
 
 Use repo scripts for local stack work. Prefer `./scripts/start-dev.sh` and related helpers over raw `docker compose` unless the user explicitly asks otherwise.
 
-## Default Loop
+## Default Loop: READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG
 
 ### READ
 - Read the files you will change before proposing or editing.
@@ -15,11 +15,12 @@ Bad: "The browser records WebM/Opus" without reading the current template.
 Good: Read `templates/scribe/index.html.twig` first, then say "the live path uses `PcmStreamer` and the repo default is `NEMO_STREAM_INPUT_FORMAT=pcm`."
 
 ### CLASSIFY
-- Start each task with a clear state declaration in your reasoning: `Mode=<Answer|Plan|Implement|Debug|Review> | Complexity=<Low|Medium|High>`.
+- Complexity: Hotfix (2 reads / 3 turns), Standard (4 / 10), System (6 / 20), Infra (8 / 25). Over budget = re-classify.
+- State declaration: `Mode=<Answer|Plan|Implement|Debug|Review> | Complexity=<tier> | Boundary=<if crossing>`
 - Questions get answers. Directives get action. Do not edit files when the user asked for explanation or review only.
-- If the task crosses a named boundary, call it out before acting.
 
-Example state: `Mode=Implement | Complexity=High | Boundary=PHP<->Python API`
+### SCOPE
+- Declare before acting: files to change, non-goals, blast radius. Expanding scope = stop and re-scope.
 
 ### ACT
 
@@ -33,6 +34,7 @@ Example state: `Mode=Implement | Complexity=High | Boundary=PHP<->Python API`
 
 - Anti-planning-loop: in Implement mode, stop reading once you have enough to change the file or explain the blocker.
 - Anti-BDUF: prefer the thinnest vertical slice that proves the path.
+- Mode switch: "Switching to [NEW MODE] because [reason]." No actions outside declared state.
 
 Bad: "I rewrote the streaming stack before confirming the broken contract."
 Good: "I patched the failing contract, added the narrow test, and stopped."
@@ -44,12 +46,12 @@ Good: "I patched the failing contract, added the narrow test, and stopped."
 - Cross-boundary, security, or runtime failure: stop, diagnose, and report before proceeding.
 - Two failed approaches on the same fix path means stop and report the dead end.
 
-### RECORD
-- `docs/lessons.md`: behavioural mistakes or wasted loops.
-- `docs/footguns.md`: real cross-domain landmines with evidence.
-- Load `docs/lessons.md` when starting features/refactors or after a failed attempt.
-- Load `docs/footguns.md` before touching Ask First boundaries.
-- Keep `tasks/todo.md` current during multi-step work. If you pause unfinished work, update `tasks/handoff.md`.
+### LOG
+- MUST update when tripped (DoD gate #4). SHOULD log after routine sessions.
+- Mechanical trigger: if VERIFY caught a failure in your code, or you corrected course, lessons.md entry required before DoD. After human correction: MUST log immediately.
+- `docs/lessons.md`: behavioural mistakes. `docs/footguns.md`: cross-domain landmines (file:line). `docs/confusion-log.md`: navigation difficulty.
+- Load lessons.md when starting features/refactors. Load footguns.md before touching Ask First boundaries.
+- Dual-agent: read shared files before appending. Keep `tasks/todo.md` current; incomplete work → `tasks/handoff.md`.
 
 ## Autonomy Tiers
 
@@ -85,6 +87,10 @@ Ask First checklist:
 5. `tasks/todo.md` and `tasks/handoff.md` reflect the current state when work spans sessions.
 6. After renames or contract edits, `rg` confirms the old pattern is gone or intentionally retained.
 
+## Sub-Agents / When Blocked
+
+Sub-agents: one objective, return paths/evidence/confidence/next-step. Budget: 5 calls. When blocked: one question with default.
+
 ## Router
 
 | Need | File |
@@ -93,6 +99,8 @@ Ask First checklist:
 | Project structure, environment, conventions | `docs/domain-reference.md` |
 | Cross-domain landmines | `docs/footguns.md` |
 | Behavioural lessons | `docs/lessons.md` |
+| Navigation difficulty | `docs/confusion-log.md` |
+| Session handoff | `tasks/handoff-template.md` |
 | Guidelines ownership split | `docs/guidelines-ownership-split.md` |
 | Preflight procedure | `docs/codex-playbooks/preflight.md` |
 | Deep read before planning | `docs/codex-playbooks/research.md` |
@@ -102,6 +110,8 @@ Ask First checklist:
 | Eval suite | `codex-evals/README.md` |
 | Workflow validation | `scripts/context-validate.sh` |
 | Dangerous-command policy | `scripts/deny-dangerous.sh` |
+| Claude Code workflow | `CLAUDE.md` |
+| Claude Code evals | `agent-evals/` |
 
 ## Essential Commands
 
