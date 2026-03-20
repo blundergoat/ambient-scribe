@@ -1,6 +1,6 @@
-# Research Skill
+# Investigate Skill
 
-Deep codebase research before planning any non-trivial feature. Hard gate: do NOT proceed to planning until human reviews research output.
+Deep codebase investigation before planning any non-trivial feature. Hard gate: do NOT proceed to planning until human reviews investigation output.
 
 ## When to Use
 
@@ -15,12 +15,12 @@ Before implementing any feature that:
 1. Read all files involved in the target area — both sides of every boundary
 2. Check `docs/footguns.md` for known landmines in the affected area
 3. Check `docs/architecture.md` and `docs/domain-reference.md` for design constraints
-4. Produce `research.md` (or present inline) with the template below
+4. Produce `investigation.md` (or present inline) with the template below
 
 ## Output Template
 
 ```
-## Research: [Feature/Area Name]
+## Investigation: [Feature/Area Name]
 
 ### Files Involved
 - [file:line range] — [what this file does in the context of this feature]
@@ -47,8 +47,8 @@ Before implementing any feature that:
 
 ## Constraints
 
-- MUST produce research output before any planning or implementation
+- MUST produce investigation output before any planning or implementation
 - MUST include minimum 3 risks with file:line evidence
-- MUST NOT proceed to planning until human reviews research
+- MUST NOT proceed to planning until human reviews investigation
 - MUST back every claim by a file read — do not fabricate
 - SHOULD check all learning loop files (footguns, lessons, confusion-log) for prior art

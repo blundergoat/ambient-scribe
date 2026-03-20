@@ -1,34 +1,29 @@
-# Guidelines Ownership Split
+# Guidelines Ownership Split — Ambient Scribe
 
-Audit date: 2026-03-21
+This document records the migration of domain knowledge and agent instructions to separate files.
 
-## Scope
+## Migration Summary (2026-03-21)
 
-- `CLAUDE.md` owns the Claude Code runtime workflow.
-- `AGENTS.md` owns the Codex runtime workflow.
-- Shared engineering practice stays in `.github/instructions/ai-agent-guidelines.instructions.md`.
-- Project structure and domain detail stay in `docs/domain-reference.md` and `docs/architecture.md`.
+- **Source:** `GEMINI.md` (original)
+- **Destination 1:** `GEMINI.md` (Workflow instructions for Gemini CLI)
+- **Destination 2:** `docs/domain-reference.md` (Domain knowledge and technical reference)
+- **Destination 3:** `docs/architecture.md` (High-level system design)
 
-## Runtime Ownership
+## Ownership Split
 
-- Shared between `CLAUDE.md` and `AGENTS.md`: execution loop, autonomy tiers, definition of done, working-memory/handoff rules, learning-loop references, router tables, and essential commands.
-- `CLAUDE.md` keeps Claude-specific mechanics such as local `CLAUDE.md` propagation and Claude eval routing.
-- `AGENTS.md` keeps Codex-specific mechanics such as playbook files in `docs/codex-playbooks/`, `apply_patch`, and explicit acknowledgement that `scripts/deny-dangerous.sh` is policy verification rather than a runtime hook.
+### Gemini CLI (`GEMINI.md`)
+- **Owns:** Workflow loop (READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG), autonomy tiers, definition of done, and the router table.
+- **Rules:** No domain knowledge here. If you need to know *how* something works, consult the Router.
 
-## Guidelines Audit
+### Domain Reference (`docs/domain-reference.md`)
+- **Owns:** Core technologies, component descriptions, data flow details, environment variables, and quality standards.
+- **Rules:** This is a reference only. It does not command the agent's behavior.
 
-Audited file: `.github/instructions/ai-agent-guidelines.instructions.md`
+### Architecture (`docs/architecture.md`)
+- **Owns:** High-level system design, cross-layer interactions, and long-term architectural decisions.
 
-Sections kept in guidelines:
-- Core Rules
-- Project-Specific Constraints
-- Architecture
-- Cross-Layer Impact
-- Git Hygiene
-- Testing Conventions
-- Commit Messages
+### Shared Guidelines (`.github/instructions/ai-agent-guidelines.instructions.md`)
+- **Owns:** Engineering standards and shared practices across both agents (Gemini and Codex).
 
-Sections trimmed or rewritten to avoid workflow overlap:
-- Intro now points to both `CLAUDE.md` and `AGENTS.md` for runtime rules.
-- Removed the `Working Discipline` section because stop-the-line, scope control, and delivery sequencing belong to the instruction files.
-- Removed `Before Marking Done` because verification/DoD rules belong to the instruction files and preflight playbooks.
+## Rationale
+Separating workflow from domain knowledge reduces context noise and ensures that the agent's behavioral rules remain stable even as the project's technical details evolve.

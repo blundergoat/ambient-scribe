@@ -1,11 +1,3 @@
-# Confusion Log
+# Confusion Log — Ambient Scribe
 
-Structural navigation difficulty — places where the codebase is hard to reason about.
-
-## Format
-
-Each entry: date, what was confusing, where it is, suggested clarification.
-
-## Entries
-
-_(none yet)_
+Records of navigation or ownership difficulties that slowed the task.

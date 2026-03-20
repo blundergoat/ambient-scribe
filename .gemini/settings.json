@@ -1,0 +1,50 @@
+{
+  "hooksConfig": {
+    "enabled": true,
+    "notifications": true
+  },
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "(run_shell_command|write_file|replace)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".gemini/hooks/deny-dangerous.sh",
+            "name": "deny-dangerous"
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "(write_file|replace)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".gemini/hooks/format-file.sh",
+            "name": "format-file"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".gemini/hooks/stop-lint.sh",
+            "name": "stop-lint"
+          }
+        ]
+      }
+    ]
+  },
+  "policy": {
+    "deny": [
+      "Bash(*git commit*)",
+      "Bash(*git push*)",
+      "Bash(*rm -rf / *)"
+    ]
+  }
+}

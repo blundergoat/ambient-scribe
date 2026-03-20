@@ -1,6 +1,7 @@
 # CLAUDE.md — v1.0 (2026-03-20)
 
 Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure.
+Truth order: (1) user instruction > (2) this file > (3) setup templates > (4) system spec > (5) skills.
 
 ## Execution Loop: READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG
 
@@ -11,9 +12,7 @@ BAD:  "WebSocket publishes to topic 'transcribe'" (fabricated)
 GOOD: Read server.py:236 → publishes to 'scribe/session/{id}/raw'
 ```
 
-**CLASSIFY** — Determine complexity and mode. Questions ≠ directives — if asked to explain, explain; don't implement.
-
-Complexity: Hotfix (2 reads / 3 turns), Standard (4 / 10), System (6 / 20), Infra (8 / 25).
+**CLASSIFY** — Before acting, declare: (1) Intent: question → answer; directive → act. (2) Complexity: Hotfix (2/3), Standard (4/10), System (6/20), Infra (8/25). (3) Mode:
 
 | Mode | Behaviour |
 |---|---|
@@ -34,6 +33,7 @@ No actions outside declared state. Mode switch: "Switching to [MODE] because [re
 - Level 1 (note, continue): flaky test, unrelated failure, non-blocking lint warning
 - Level 2 (full stop, escalate): auth, API contracts, session state, Mercure, NeMo, cross-boundary
 - Revert-and-rescope: (1) Esc+restate (2) git revert+rescope (3) /clear+handoff. Two corrections = cut losses
+- Recovery: missing context → read before retrying; out-of-scope → name boundary, redirect; conflicting instructions → flag and ask
 
 **LOG** — MUST update when tripped (DoD gate #4). SHOULD log after routine sessions. SHOULD propagate footguns to local CLAUDE.md.
 Mechanical trigger: if VERIFY caught a failure in your code, or you corrected course, lessons.md entry required before DoD. After human correction: MUST log immediately. Dual-agent: read shared files before appending.
@@ -43,6 +43,7 @@ Mechanical trigger: if VERIFY caught a failure in your code, or you corrected co
 | `docs/lessons.md` | Agent behavioural mistake |
 | `docs/footguns.md` | Cross-domain landmine (MUST include file:line) |
 | `docs/confusion-log.md` | Structural navigation difficulty |
+| `docs/decisions/` | Significant technical decision with rationale |
 
 ## Autonomy Tiers
 
@@ -99,17 +100,15 @@ docker compose up --build       # Full stack (requires NVIDIA GPU)
 | `.claude/skills/goat-preflight/` | Running quality checks |
 | `.claude/skills/goat-debug/` | Debugging issues |
 | `.claude/skills/goat-audit/` | Auditing codebase |
-| `.claude/skills/goat-research/` | Pre-implementation research |
+| `.claude/skills/goat-investigate/` | Pre-implementation investigation |
 | `.claude/skills/goat-review/` | Reviewing code changes |
+| `.claude/skills/goat-plan/` | Planning (brief → elaboration → milestones) |
+| `.claude/skills/goat-test/` | Test instructions (automated + AI verify + manual) |
 | `docs/architecture.md` | System design, data flows |
 | `docs/footguns.md` | Cross-domain issues, CUDA, Mercure, sessions |
 | `docs/lessons.md` | Past agent mistakes |
 | `docs/confusion-log.md` | Navigation difficulty |
-| `docs/domain-reference.md` | Domain knowledge |
-| `docs/domain-php-symfony.md` | PHP: `src/`, `config/`, `templates/` |
-| `docs/domain-python-nemo.md` | Python: `strands_agents/`, `tests/python/` |
-| `docs/domain-infrastructure.md` | Docker, Terraform, deployment |
-| `docs/nemo-api-notes.md` | NeMo API, VRAM measurements |
+| `docs/domain-*.md`, `docs/nemo-api-notes.md` | Domain docs: PHP, Python, infra, NeMo API |
 | `docs/code-map.md` | Entry points, file roles |
 | `tasks/handoff-template.md` | Session handoff |
 | `agent-evals/` | Regression tests |
