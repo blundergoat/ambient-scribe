@@ -50,7 +50,7 @@ Mechanical trigger: if VERIFY caught a failure in your code, or you corrected co
 **Always:** run tests/lint/format, read any file, write within assigned scope, append to learning loop files.
 
 **Ask First** (MUST complete micro-checklist before proceeding):
-Auth, session lifecycle, API contracts (PHP↔Python), Mercure topics, NeMo pipeline, Docker/Terraform, CI/CD, new dirs.
+Auth (`src/Controller/ScribeController.php`, `config/packages/framework.yaml`), session lifecycle (`strands_agents/session_lifecycle.py`, `strands_agents/nemo_session.py`), API contracts PHP↔Python (`src/Service/RoleInferenceService.php` ↔ `strands_agents/api/`), Mercure topics (`config/packages/mercure.yaml`, `docker-compose.yml`), NeMo pipeline (`strands_agents/nemo_pipeline.py`, `docker/nemo/`), Docker/Terraform (`docker-compose.yml`, `infra/terraform/`), CI/CD (`.github/workflows/`), new dirs.
 1. Boundary touched: [name it]
 2. Related code read: [yes/no]
 3. Footgun entry checked: [relevant entry, or "none"]

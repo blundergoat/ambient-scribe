@@ -20,6 +20,9 @@ on:
       - 'scripts/deny-dangerous.sh'
       - '.github/instructions/**'
       - '.github/workflows/context-validation.yml'
+      - '.github/git-commit-instructions.md'
+      - 'ai/**'
+      - '.claude/skills/**'
 
 jobs:
   validate:
@@ -56,3 +59,47 @@ jobs:
             -not -path "./vendor/*" \
             -not -path "./.git/*" \
             | sort)
+
+      - name: Router table targets exist
+        run: |
+          FAIL=0
+          while IFS='|' read -r _ resource _ ; do
+            # Extract backtick-wrapped path(s) from the Resource column
+            paths="$(echo "$resource" | grep -oP '`[^`]+`' | sed 's/`//g' || true)"
+            [ -z "$paths" ] && continue
+            while IFS= read -r path; do
+              [ -z "$path" ] && continue
+              # Skip glob patterns (e.g., docs/domain-*.md)
+              [[ "$path" == *"*"* ]] && continue
+              # Strip trailing slash for directory checks
+              clean="${path%/}"
+              if [ ! -e "$clean" ] && [ ! -d "$path" ]; then
+                echo "::error::Router target missing: $path"
+                FAIL=1
+              fi
+            done <<< "$paths"
+          done < <(sed -n '/^## Router/,/^## /p' CLAUDE.md | grep '^|' | tail -n +3)
+          if [ "$FAIL" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Router targets: OK"
+
+      - name: Skills directories have SKILL.md
+        run: |
+          FAIL=0
+          for skill_dir in .claude/skills/goat-*/; do
+            [ -d "$skill_dir" ] || continue
+            if [ ! -f "${skill_dir}SKILL.md" ]; then
+              echo "::error::Missing SKILL.md in $skill_dir"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            exit 1
+          fi
+          SKILL_COUNT=$(find .claude/skills -maxdepth 1 -type d -name 'goat-*' | wc -l | tr -d ' ')
+          if [ "$SKILL_COUNT" -lt 1 ]; then
+            echo "::error::No skills found in .claude/skills/goat-*/"
+            exit 1
+          fi
+          echo "Skills check: $SKILL_COUNT skills found, all have SKILL.md"

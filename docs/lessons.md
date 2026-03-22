@@ -10,6 +10,14 @@ Behavioral lessons learned from agent performance and user corrections.
 
 ## Entries
 
-- **2026-03-21 (Audio Format):** AudioBuffer in `nemo_session.py` assumed PCM while the browser sent WebM/Opus. Lesson: Check `docs/footguns.md` (entry #3) and read both browser (`templates/scribe/index.html.twig`) and server (`nemo_session.py`) code.
-- **2026-03-21 (Question vs Directive):** Questions like "How does session cleanup work?" are Inquiries. Do NOT migrate to Implement mode unless a Directive is issued.
-- **2026-03-21 (Renames):** After renaming `mercure_topic_raw` to `mercure_topic_segments`, stale references might remain. Lesson: Always `rg` for the old symbol.
+### Entry: Audio format mismatch — read both pipeline ends (2026-03-21)
+
+AudioBuffer in `nemo_session.py` assumed 16kHz 16-bit PCM while the browser MediaRecorder sent WebM/Opus. NeMo received garbage audio and produced nonsensical transcriptions with no errors in logs. Root cause found by reading both `templates/scribe/index.html.twig` (producer) and `nemo_session.py` (consumer). Lesson: always read both ends of a data pipeline before diagnosing silent failures. Related: `docs/footguns.md` entry #3, commit f7ba6b3.
+
+### Entry: Question misclassified as directive (2026-03-21)
+
+"How does session cleanup work?" was treated as a directive to implement changes to session cleanup. The CLASSIFY step should have identified this as an Inquiry. Lesson: questions get explanations, not edits — do NOT migrate to Implement mode unless a Directive is issued.
+
+### Entry: Stale references after rename (2026-03-21)
+
+After renaming `mercure_topic_raw` to `mercure_topic_segments`, stale references remained in config and docs. Lesson: always run `rg <old_symbol>` after renames and confirm zero remaining refs (DoD gate #6).

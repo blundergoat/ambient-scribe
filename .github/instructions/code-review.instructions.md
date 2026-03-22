@@ -16,7 +16,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - Strands agent for DOCTOR/PATIENT role inference (AWS Bedrock)
 - WebSocket audio pipeline: browser captures audio and sends it to the Python backend
 - Real-time transcript delivery via Mercure (JWT-authenticated SSE)
-- `blundergoat/strands-client` is a local path dependency at `../strands-php-client`
+- `blundergoat/strands-php-client` is a local path dependency at `../strands-php-client`
 
 ## What to Flag
 

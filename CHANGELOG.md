@@ -11,6 +11,46 @@ transcript grouping, scenario gate), plus prior JS extraction and UI polish.
 
 ### Added
 
+- **Agent-neutral instruction layer** — `ai/instructions/base.md` (stack,
+  architecture, hard constraints), `ai/instructions/code-review.md` (review
+  priorities, approval criteria, anti-patterns from footguns), `ai/instructions/
+  git-commit.md` (commit format, project-specific areas and examples),
+  `ai/README.md` routing table; usable by any AI coding agent without
+  depending on Claude Code or Codex runtime files
+- **CI: Router table validation** — new workflow step parses CLAUDE.md Router
+  table and verifies every backtick-wrapped path exists on disk (skips globs)
+- **CI: Skills directory validation** — new workflow step ensures each
+  `.claude/skills/goat-*/` contains a `SKILL.md` file
+- **`.github/git-commit-instructions.md`** — quick-reference commit format
+  summary pointing to full `ai/instructions/git-commit.md`
+
+### Changed
+
+- **CLAUDE.md Ask First** — expanded generic area names to real file paths;
+  replaced nonexistent `config/packages/security.yaml` with verified
+  `config/packages/framework.yaml`
+- **`.github/instructions/commit-messages.instructions.md`** — replaced
+  Forge/WSL boilerplate areas and examples with project-specific ones
+  (Backend, Agent, NeMo, Frontend, Infra, Scripts, CI)
+- **Agent evals** (8 files) — restructured from flat bullets to headed
+  sections (Bug Description, Replay Prompt, Expected Outcome, Failure Mode
+  Tested) with numbered pass/fail steps
+- **`docs/lessons.md`** — expanded terse bullets into full narrative entries
+  with root cause, evidence, and cross-references
+- **`tasks/.gitignore`** — switched from explicit file ignores to allowlist
+  pattern (keep only `.gitignore` and `handoff-template.md`)
+
+### Fixed
+
+- **Package name in code-review instructions** — `blundergoat/strands-client`
+  → `blundergoat/strands-php-client` (matches `composer.json`)
+- **Footgun cross-reference** — `docs/lessons.md` audio format entry now
+  correctly references footgun #3 (was #6)
+- **CI path triggers** — added missing paths (`.github/git-commit-instructions.md`,
+  `ai/**`, `.claude/skills/**`) so workflow runs on instruction file changes
+
+### Added (continued from above)
+
 - **`@tool` assign_roles** — Strands `@tool`-decorated function for
   programmatic role state management; passed to `Agent(tools=[assign_roles])`;
   dual-path worker detects tool invocation vs free-text JSON fallback
