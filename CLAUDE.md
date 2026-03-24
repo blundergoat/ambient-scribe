@@ -97,7 +97,6 @@ docker compose up --build       # Full stack (requires NVIDIA GPU)
 
 | Resource | Read when... |
 |---|---|
-| `.claude/skills/goat-preflight/` | Running quality checks |
 | `.claude/skills/goat-debug/` | Debugging issues |
 | `.claude/skills/goat-audit/` | Auditing codebase |
 | `.claude/skills/goat-investigate/` | Pre-implementation investigation |

@@ -4,11 +4,11 @@ description: "Diagnose a bug with evidence before proposing fixes"
 ---
 # /goat-debug
 
-Diagnosis-first debugging. Investigate before fixing. The agent MUST NOT propose fixes until the human reviews the diagnosis.
-
 ## When to Use
 
 Use when diagnosing a bug or unexpected behavior — especially when the root cause is unclear or spans multiple components.
+
+Diagnosis-first debugging. Investigate before fixing. The agent MUST NOT propose fixes until the human reviews the diagnosis.
 
 ---
 

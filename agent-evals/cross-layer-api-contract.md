@@ -1,5 +1,8 @@
 # Eval: Cross-Layer API Contract Change
 
+**Skill:** goat-review
+**Agents:** all
+
 **Origin:** synthetic-seed (footgun #4, common stack failure mode)
 **Agents:** all
 

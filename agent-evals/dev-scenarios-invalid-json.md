@@ -1,5 +1,8 @@
 # Dev Scenarios Invalid JSON
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** real-incident (commit `4a3046e`)
 **Agents:** all
 

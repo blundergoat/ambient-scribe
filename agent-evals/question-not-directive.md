@@ -1,5 +1,8 @@
 # Eval: Question Misinterpreted as Directive
 
+**Skill:** goat-investigate
+**Agents:** all
+
 **Origin:** synthetic-seed (common CLASSIFY failure mode)
 **Agents:** all
 

@@ -1,5 +1,8 @@
 # Transcribe File Form Session ID
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** real-incident (commit `35bceb4`)
 **Agents:** all
 

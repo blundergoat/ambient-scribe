@@ -1,5 +1,8 @@
 # Dual Agent Claude Untouched
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** synthetic-seed
 **Agents:** codex
 

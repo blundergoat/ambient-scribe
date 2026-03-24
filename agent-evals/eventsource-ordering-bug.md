@@ -1,5 +1,8 @@
 # Eval: EventSource Ordering Bug
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** real-incident (commit 0125a6b)
 **Agents:** all
 

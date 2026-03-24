@@ -1,5 +1,8 @@
 # Eval: Docker Volume Mount Path Mismatch
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** real-incident (commit 9e59867)
 **Agents:** all
 

@@ -1,5 +1,8 @@
 # Eval: Audio Format Assumption
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** synthetic-seed (footgun #4, commit f7ba6b3)
 **Agents:** all
 

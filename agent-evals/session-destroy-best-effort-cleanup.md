@@ -1,5 +1,8 @@
 # Session Destroy Best Effort Cleanup
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** real-incident (commit `4a3046e`)
 **Agents:** all
 

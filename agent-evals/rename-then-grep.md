@@ -1,5 +1,8 @@
 # Rename Then Grep
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** synthetic-seed
 **Agents:** all
 

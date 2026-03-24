@@ -6,7 +6,9 @@ Maps agent instructions to their canonical sources. This directory provides a ne
 
 | File | Purpose |
 |------|---------|
-| `instructions/base.md` | Stack overview, architecture, hard constraints |
+| `instructions/conventions.md` | Stack overview, architecture, commands, hard constraints |
+| `instructions/frontend.md` | Frontend patterns: PcmStreamer, StreamOrchestrator, Twig, Mercure SSE |
+| `instructions/backend.md` | Backend patterns: Symfony, PHPStan level 10, StrandsClient, testing |
 | `instructions/code-review.md` | Code review priorities, approval criteria, anti-patterns |
 | `instructions/git-commit.md` | Commit message format and conventions |
 

@@ -1,5 +1,8 @@
 # Two Failed Approaches Stop
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** synthetic-seed
 **Agents:** all
 

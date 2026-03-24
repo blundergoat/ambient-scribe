@@ -1,5 +1,8 @@
 # No Slash Commands Use Playbooks
 
+**Skill:** goat-debug
+**Agents:** all
+
 **Origin:** synthetic-seed
 **Agents:** codex
 
