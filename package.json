@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/blundergoat/ambient-scribe#readme",
   "devDependencies": {
+    "@blundergoat/goat-flow": "^0.9.4",
     "@playwright/test": "^1.58.2"
   }
 }
