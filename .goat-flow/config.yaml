@@ -1,0 +1,10 @@
+version: "1.2.0"
+
+agents:
+  - claude
+  - codex
+  - gemini
+  - copilot
+
+skills:
+  install: all

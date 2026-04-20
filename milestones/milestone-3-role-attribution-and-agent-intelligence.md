@@ -38,7 +38,7 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 ### 3.2 Local-First Role Inference
 
 - [x] **Default to Ollama** in `.env.example` and `docker-compose.yml`
-- [x] **Test and document a specific Ollama model** — default aligned to `qwen2.5:14b` (supports tool calling, already pulled). Documented in `docs/footguns.md` FG-10
+- [x] **Test and document a specific Ollama model** — default aligned to `qwen2.5:14b` (supports tool calling, already pulled). Documented in `.goat-flow/footguns/role-agent.md`
 - [x] **3-tier fallback:** LLM agent → heuristic keyword classifier → None (graceful degradation)
 - [x] Heuristic classifier: mode-specific keyword matching (medical/meeting/interview/general)
 - [x] Ollama support exists in `transcription_agent.py` via `_create_role_agent_model()`
@@ -55,12 +55,12 @@ Replace raw `spk_0`/`spk_1` labels with context-appropriate roles using Strands 
 
 ### 3.4 Retire Legacy PHP Role SSE Path
 
-> **Why:** Two competing role inference paths (Mercure queue + PHP `/roles/stream` SSE proxy) produce divergent mappings and duplicate LLM calls. This is documented in `docs/footguns.md` FG-2.
+> **Why:** Two competing role inference paths (Mercure queue + PHP `/roles/stream` SSE proxy) produce divergent mappings and duplicate LLM calls. This is documented in `.goat-flow/footguns/runtime.md`.
 
 - [x] **Retire `POST /session/{id}/roles/stream`** as a live inference path (endpoint deleted)
 - [x] Remove `RoleInferenceService::streamRoleInference()` — deleted `RoleInferenceResult` class and `streamRoleInference` method
 - [x] Update `ScribeController::rolesStream()` to return current cached state instead of re-running inference
-- [x] Update `docs/footguns.md` FG-2 to mark as resolved
+- [x] Update `.goat-flow/footguns/runtime.md` to mark as resolved
 
 ### 3.5 Progressive Confidence UX
 

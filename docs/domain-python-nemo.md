@@ -5,9 +5,9 @@ Rules and patterns for the Python layer. This service owns the GPU, runs NeMo in
 ## GPU Rules (Non-Negotiable)
 
 1. **NeMo owns the GPU exclusively.** No other GPU workload may run in the same container or on the same card.
-2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `docs/footguns.md` FG-2.
+2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `.goat-flow/footguns/runtime.md`.
 3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous — without `run_in_executor`, the async event loop freezes. See `api/server.py:131-134` for the executor and `:243-250`, `:307-311` for usage.
-4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `docs/footguns.md` FG-1.
+4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `.goat-flow/footguns/runtime.md`.
 
 ## NeMo Models
 
@@ -63,7 +63,7 @@ Published from `api/server.py` via `publish_to_mercure()` (`server.py:187-213`):
 | `scribe/session/{id}/raw` | `finalized` | On WebSocket close |
 | `scribe/session/{id}/roles` | `role_update` | After Strands agent completes role inference |
 
-Requires `MERCURE_JWT` env var (pre-signed JWT). See `docs/footguns.md` FG-6 for JWT mismatch issues.
+Requires `MERCURE_JWT` env var (pre-signed JWT). See `.goat-flow/footguns/runtime.md` for Mercure publish-failure debugging.
 
 ## Session Management
 

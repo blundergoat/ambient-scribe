@@ -1,6 +1,6 @@
 # infra/ — Local Context
 
-## Footguns (from docs/footguns.md)
+## Footguns (see `.goat-flow/footguns/`)
 
 - **DynamoDB provisioned but unused:** Terraform creates DynamoDB table; code uses in-memory `SessionStore`. Production will hit memory limits.
 

@@ -38,17 +38,17 @@ GOOD: "I patched the failing contract, added the narrow test, and stopped."
 - MUST use revert-and-rescope when the current path is wrong, and MUST stop after two failed approaches on the same fix path.
 - MUST run `rg` after renames or contract edits to confirm the old symbol, route, or topic is gone or intentionally retained.
 ### LOG
-| File | Use when |
+| Directory | Use when |
 | --- | --- |
-| `docs/lessons.md` | agent behaviour caused the miss |
-| `docs/footguns.md` | a cross-domain landmine needs file:line evidence |
-| `docs/confusion-log.md` | navigation or ownership slowed the task |
+| `.goat-flow/lessons/` | agent behaviour caused the miss |
+| `.goat-flow/footguns/` | a cross-domain landmine needs file:line evidence |
+| `.goat-flow/logs/sessions/` | navigation or ownership slowed the task; session handoff |
 - MUST update when tripped (DoD gate #4). SHOULD log after routine sessions.
-- If VERIFY caught a failure in code you wrote this session, or you corrected course mid-task, a `docs/lessons.md` entry is required before DoD can be satisfied.
+- If VERIFY caught a failure in code you wrote this session, or you corrected course mid-task, a `.goat-flow/lessons/` entry is required before DoD can be satisfied.
 - After human correction of agent behaviour, MUST log the lesson immediately.
 - Footgun propagation: SHOULD propagate active footguns to the nearest routed instruction doc.
-- MUST load `docs/lessons.md` for features/refactors and `docs/footguns.md` before Ask First work.
-- Dual-agent projects: learning loop files are shared. Read shared files before appending.
+- MUST load `.goat-flow/lessons/` for features/refactors and `.goat-flow/footguns/` before Ask First work.
+- Dual-agent projects: learning loop directories are shared. Read existing bucket files before appending.
 ## Autonomy Tiers
 ### Always
 - MUST read, search, diff, run focused tests, run `./scripts/context-validate.sh`, and update docs/tests that are directly required by the change.
@@ -75,14 +75,14 @@ Ask First checklist:
 1. Relevant tests/checks pass, or any unresolved failure is explicitly explained.
 2. `./scripts/context-validate.sh` passes after workflow-file changes.
 3. No Ask First boundary was changed without approval or a clear user instruction.
-4. `docs/lessons.md` or `docs/footguns.md` is updated if you tripped a behavioural or architectural issue.
-5. `tasks/todo.md` and `tasks/handoff.md` reflect the current state when work spans sessions.
+4. `.goat-flow/lessons/` or `.goat-flow/footguns/` is updated if you tripped a behavioural or architectural issue.
+5. `.goat-flow/logs/sessions/` reflects the current state when work spans sessions.
 6. After renames or contract edits, `rg` confirms the old pattern is gone or intentionally retained.
 ## Working Memory
-- 5+ turn tasks SHOULD keep `tasks/todo.md` current.
-- Context ladder: summarize current state, trim it into working notes, then split the task if context still grows.
+- 5+ turn tasks SHOULD keep `.goat-flow/logs/sessions/YYYY-MM-DD-<slug>.md` current.
+- Context ladder: summarize current state, trim it into the session log, then split the task if context still grows.
 - Codex has no native profiles; use lanes: App (`src/`, `templates/`, `public/js/`), Agent (`strands_agents/`), Infra (`docker-compose.yml`, `infra/`); crossing lanes into Ask First work REQUIRES re-scope.
-- Incomplete work MUST update `tasks/handoff.md`, and shared notes MUST be read before appending.
+- Incomplete work MUST update the active `.goat-flow/logs/sessions/` file, and shared notes MUST be read before appending.
 ## Sub-Agent Objectives
 Sub-agents MUST get one focused objective and MUST return paths, evidence, confidence, and next step. Budget: 5 calls.
 ## Communication When Blocked
@@ -94,9 +94,10 @@ When blocked, ask one question and include the recommended default path.
 | Project structure and conventions | `docs/domain-reference.md` |
 | Shared engineering practice | `.github/instructions/ai-agent-guidelines.instructions.md` |
 | Guidelines ownership split | `docs/guidelines-ownership-split.md` |
-| Behavioural lessons | `docs/lessons.md` |
-| Cross-domain landmines | `docs/footguns.md` |
-| Navigation difficulty | `docs/confusion-log.md` |
+| Behavioural lessons | `.goat-flow/lessons/` |
+| Cross-domain landmines | `.goat-flow/footguns/` |
+| Architectural decisions | `.goat-flow/decisions/` |
+| Session continuity | `.goat-flow/logs/sessions/` |
 | Session handoff | `tasks/handoff-template.md` |
 | Preflight playbook | `docs/codex-playbooks/goat-preflight.md` |
 | Research playbook | `docs/codex-playbooks/goat-research.md` |
@@ -105,7 +106,7 @@ When blocked, ask one question and include the recommended default path.
 | Review playbook | `docs/codex-playbooks/goat-review.md` |
 | Eval suite | `agent-evals/` |
 | Workflow validation | `scripts/context-validate.sh` |
-| Dangerous-command policy | `scripts/deny-dangerous.sh` |
+| Dangerous-command policy | `.claude/hooks/deny-dangerous.sh` |
 | Claude Code workflow | `CLAUDE.md` |
 | Claude Code evals | `agent-evals/` |
 ## Essential Commands

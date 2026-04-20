@@ -1,144 +1,134 @@
 ---
 name: goat-debug
-description: "Diagnose a bug with evidence before proposing fixes"
+description: "Use when diagnosing a bug, unexpected behaviour, or system failure that needs structured investigation."
+goat-flow-skill-version: "1.2.0"
 ---
 # /goat-debug
 
+## Shared Conventions
+
+Read `.goat-flow/skill-reference/skill-preamble.md` for shared conventions.
+On full-depth, also read `.goat-flow/skill-reference/skill-conventions.md`.
+
 ## When to Use
 
-Use when diagnosing a bug or unexpected behavior — especially when the root cause is unclear or spans multiple components.
+Use when diagnosing a bug or understanding unfamiliar code. For onboarding, use investigate mode.
+- Bug/symptom --> **Diagnose mode**. Exploring, no bug --> **Investigate mode**.
 
-Diagnosis-first debugging. Investigate before fixing. The agent MUST NOT propose fixes until the human reviews the diagnosis.
+**If you want to "just try something" before tracing the code path, STOP.** That is the failure mode this skill exists to prevent.
 
----
+| Excuse | Reality |
+|--------|---------|
+| "The user already diagnosed it, hypotheses are ceremony" | A confidently stated cause is data, not diagnosis. Trace it or eliminate it before acting. |
+| "Prod is on fire, D1 is a luxury" | Untraced fixes at 2am are how you get a 3-fix abort at 4am. D1 is the shortest path to a working fix. |
+| "Type/config mismatch is a really clean story" | Clean stories that don't mechanically match the symptom (e.g. value-dependent failure from a value-blind cause) are wrong stories. |
+| "The specific number in the bug report is probably just phrasing" | Treat every specific number, threshold, or boundary in a bug report as a clue, not rhetoric. |
+| "Reading the footgun during an incident looks like second-guessing" | Reading the footgun IS doing your job. Not reading it is what looks bad at post-mortem. |
+| "Adding the field is zero-risk - worst case we try the next thing" | This is how you enter the 3-fix abort loop. Hypothesis before code, always. |
 
-## Step 0 — Gather Context
+**NOT this skill:** Reviewing → /goat-review. Test plans → /goat-qa. Planning milestones → /goat-plan. Feature briefs → dispatcher Planning Route.
 
-Ask the user before investigating:
+## Step 0 - Choose Depth
 
-1. **What's the symptom?** (error message, unexpected behaviour, test failure)
-2. **How do you reproduce it?** (steps, command, or "it happens intermittently")
-3. **When did it start?** (after a specific change, always been there, or unknown)
-4. **What have you already tried?** (so the agent doesn't repeat dead ends)
-5. **How long before escalating?** (default: 15 min or 10 turns — after that, present what you have even if incomplete)
+If depth is pre-decided, proceed. Otherwise confirm quick vs full, or auto-detect from available input.
+If vague, ask about: goal, symptom/error message, area involved.
 
-Do NOT start investigating until the user has answered. If the user says "it's broken, fix it", ask these questions first — blind debugging is the failure mode this skill prevents.
+**Quick path:** diagnose and report; **full path:** run D1–D4.
+**Footgun check:** Use the preamble's grep-first learning-loop retrieval on `.goat-flow/footguns/` and `.goat-flow/lessons/` for the target area. Surface matches or an explicit retrieval miss; do not broad-load either bucket.
 
----
 
-## Phase 1 — Investigate (no fixes)
+## Diagnose Mode
 
-**If you want to "just try something" before tracing the code path, STOP.** That impulse is the failure mode this skill prevents.
+### D1 - Investigate (no fixes)
 
-### Recurrence Check
+After reading the primary file, write 2-3 hypotheses spanning at least 2 of: Data, Logic, Timing, Environment, Configuration. If the bug involves loops, indices, or pagination, include a boundary/counting hypothesis. After tracing, mark each: CONFIRMED / ELIMINATED / UNRESOLVED with `file:line` evidence.
 
-Before investigating, search `docs/footguns.md` + `docs/lessons.md` + `agent-evals/` for the symptom or area. If a match is found, present it first: "This area has a known issue: [footgun]. Is this the same problem?" Only proceed to fresh investigation after the user confirms it's a new issue.
+**Multi-component failures** (CI → build → deploy, request → middleware → handler → DB, etc.): instrument each boundary before proposing any fix. For each component boundary, log what data enters and what exits, run once to gather evidence showing WHERE the chain breaks, THEN investigate the specific failing component. Do not guess the failing layer.
 
-### Hypothesis Tracking
+**Can't reproduce after 5 file reads?** Log what you checked, suggest logging additions, ask for more context.
 
-Write 2-3 hypotheses before tracing. After tracing, mark each as CONFIRMED, ELIMINATED, or UNRESOLVED with evidence.
+### D2 - Diagnosis
 
-### Investigation Steps
+Present: root cause + confidence (HIGH = reproduced, MEDIUM = traced, LOW = inferred) + hypothesis table + reproduction steps. **Confidence floor:** All LOW --> return to D1 or present partial findings.
 
-- Read the actual files involved, tracing references end-to-end
-- Identify the failure point with file:line evidence
-- Check related files for cascading effects
-- Document the chain: trigger → propagation → symptom
-- Check `docs/footguns.md` — has this area bitten someone before?
+**Root cause validation before claiming HIGH confidence.** For each candidate root cause, run a causation / necessity / sufficiency check:
+- **Causation** - does the proposed cause mechanically produce the observed symptom? Trace the path with `file:line`.
+- **Necessity** - without this cause, does the symptom still occur? If yes, the cause is insufficient or incomplete.
+- **Sufficiency** - is this cause alone enough, or are there co-factors? Name them.
 
----
+For high-stakes diagnoses, run a 5-Whys chain. Every "because" MUST cite `file:line` or a reproduction step, not just prose.
 
-## Phase 2 — Report findings
+**BLOCKING GATE:** Present diagnosis, then pause. Human decides: dig deeper, propose fix, or stop. If confidence is MEDIUM or LOW with multiple competing hypotheses, consider `/goat-critique` on the hypothesis set before choosing a fix direction.
 
-Present the diagnosis to the user. For every claim, provide file:line evidence.
+### D3 - Fix Plan (only if human approved)
 
-- State the root cause (not just the symptom)
-- List all affected files
-- Rank by severity: SECURITY > CORRECTNESS > INTEGRATION > PERFORMANCE > STYLE
-- Note uncertainty: "I believe X because Y, but haven't verified Z"
-- Rate confidence:
-  - **High** = reproduced with a test
-  - **Medium** = traced with file:line evidence, not yet reproduced
-  - **Low** = inferred from code reading
+What changes (files + functions), blast radius, architecture check (`.goat-flow/architecture.md`), verification method. "Should I implement?" If yes --> implement, then D4.
 
-### Can't Reproduce?
+### D4 - Post-Fix Verification
+Rerun the **original reproduction** from D2 - a code change is not a fix until the symptom is gone. Then run D3 verification, check adjacent regressions, and grep for old patterns after renames.
 
-If the bug cannot be reproduced: document what was checked, conditions ruled out, and what information is still needed. Don't guess — say what you know and what you don't.
+**3-fix abort rule:** If three independent fixes have failed to resolve the symptom, STOP and reconsider whether the architecture or the root-cause hypothesis is wrong. Do not attempt a fourth patch without first re-entering D1 with a fresh hypothesis set.
 
-**HUMAN GATE:** Present your findings. Then ask: "Want me to (a) trace deeper into a specific area, (b) check related code for cascading effects, (c) propose a fix, or (d) check footguns for similar past issues?"
+**Proof Gate:** Apply the Proof Gate from `skill-preamble.md` to the "fixed" claim - rerun the original repro, cite the literal output, and downgrade to **UNVERIFIED** if the session cannot execute the proof.
 
-Do NOT auto-advance to Phase 3. Let the human challenge the diagnosis, ask about alternatives, or redirect the investigation.
+## Investigate Mode
 
----
+### I1 - Scope
 
-## Phase 3 — Propose fix (only after human approves Phase 2)
+Declare: **In scope** [files/dirs], **Out of scope** [what we skip], **Read estimate** [N files, pause at 3x].
 
-- Propose a fix plan (not the fix itself — this is still Plan mode)
-- If the human disagrees with the diagnosis, return to Phase 1
-- If the human approves, ask: "Should I implement this fix, or do you want to do it?"
+**BLOCKING GATE:** "I'll investigate [scope] reading up to [N] files. Adjust?"
 
----
+### I2 - Read (Progressive Depth)
 
-## Phase 4 — Post-Fix Verification (only after human says fix is applied)
+Read in layers: (1) entry points, (2) critical path, (3) supporting files.
+For each file log: role, connections, evidence tag (OBSERVED / INFERRED).
 
-This phase activates ONLY when the human confirms a fix has been applied. Do not enter this phase unprompted.
+### I3 - Report
 
-- Re-run the investigation trace from Phase 1
-- Confirm the divergence point is resolved
-- If resolved: confirm fix and note which hypothesis was correct
-- If NOT resolved: report what changed and what didn't, then return to Phase 1
+Required: **What I Didn't Read** (skipped files + reasons), **Current vs Expected State**, **Evidence tags** (OBSERVED/INFERRED).
 
----
+**BLOCKING GATE:** Present report, pause. Human decides: go deeper, switch to diagnose, or close.
 
 ## Constraints
 
-- MUST gather context before investigating (Step 0)
-- MUST check for recurrence before fresh investigation (Phase 1)
-- MUST read actual files before forming hypotheses
-- MUST provide file:line evidence for every finding
-- MUST complete Phase 2 before entering Phase 3
-- MUST stop and wait for human review between Phase 2 and Phase 3
-- MUST NOT skip to fixing without completing investigation
-- MUST NOT fabricate file paths or line numbers
-- MUST NOT apply fixes without human approval of diagnosis
-- MUST NOT enter Phase 4 unless the human says a fix was applied
+- MUST write hypotheses AFTER initial read of the primary file
+- MUST include at least 2 hypothesis categories
+- MUST NOT propose fixes until human reviews diagnosis (D2 to D3 gate)
+- MUST declare scope before deep reading (investigate mode)
+- MUST tag evidence as OBSERVED or INFERRED
+- MUST include "What I Didn't Read" in every investigation report
+- MUST check recurrence against footguns + lessons
+- Universal constraints from skill-preamble.md apply.
+- MUST verify fix doesn't violate architecture constraints
 
 ## Output Format
 
-```
-## Investigation: [description]
+Diagnose and investigate modes produce different artifacts. Use the block that matches the mode you actually ran.
 
-### Hypotheses
-1. [hypothesis] — [CONFIRMED/ELIMINATED/UNRESOLVED] — [evidence]
+### Diagnose mode (D1–D4)
 
-### Root Cause
-[One sentence with file:line reference]
-
-### Evidence Trail
-1. [file:line] - [what this shows and why it matters]
-2. [file:line] - [how the issue propagates]
-3. [file:line] - [where the symptom appears]
-
-### Affected Files
-- [file] - [how it's affected]
-
-### Severity
-[SECURITY/CORRECTNESS/INTEGRATION/PERFORMANCE/STYLE]
-
-### Confidence
-[High/Medium/Low] - [what's verified vs hypothesised]
-
-### Proposed Fix (pending human review)
-[Fix plan — only after human approves diagnosis]
+```markdown
+## TL;DR       <!-- 1 sentence: root cause + confidence -->
+## Hypotheses  <!-- table: #, Hypothesis, Category, Status, Evidence (file:line) -->
+## Root Cause  <!-- Confidence + Location (file:line) + Description -->
+## Reproduction Steps  <!-- numbered, with Expected vs Actual -->
+## Fix Plan    <!-- only if human approved D3 -->
 ```
 
-## Learning Loop
+### Investigate mode (I1–I3)
 
-If this run uncovered a lesson or footgun, update the relevant doc before closing:
-- Behavioural mistake → `docs/lessons.md`
-- Architectural trap with file:line evidence → `docs/footguns.md`
-
-## Chains With
-
-- goat-investigate — dig deeper into the root cause area
-- goat-test — regression test after fix is applied
+```markdown
+## TL;DR  <!-- 1 sentence: what this area does + top signal found -->
+## Scope
+- **In scope:** [files / dirs]
+- **Out of scope:** [what was deliberately skipped]
+- **Read estimate vs actual:** [N planned / M actually read]
+## Reading  <!-- one row per file read -->
+| File | Role | Connections | Evidence |
+| --- | --- | --- | --- |
+| `path:line` | [role] | [what calls / is called by this] | OBSERVED/INFERRED |
+## Current vs Expected State  <!-- where the code matches and diverges from the mental model -->
+## What I Didn't Read  <!-- every skipped file plus one-line reason -->
+## Open Questions  <!-- genuine unknowns to resolve next -->
+```

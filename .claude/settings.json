@@ -26,7 +26,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CONTEXT AFTER COMPACTION:' && echo 'Modified files:' && git diff --name-only 2>/dev/null && echo '---' && cat tasks/todo.md 2>/dev/null || echo 'No active tasks' && echo '---' && echo 'Constraints: read CLAUDE.md Autonomy Tiers before proceeding'"
+            "command": "echo 'CONTEXT AFTER COMPACTION:' && echo 'Modified files:' && git diff --name-only 2>/dev/null && echo '---' && ls -1t .goat-flow/logs/sessions/*.md 2>/dev/null | head -1 | xargs -r cat 2>/dev/null || echo 'No active session log' && echo '---' && echo 'Constraints: read CLAUDE.md Autonomy Tiers before proceeding'"
           }
         ]
       }

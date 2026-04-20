@@ -27,8 +27,8 @@ Gemini CLI has no hooks or native profiles here; safety relies on these rules pl
 - MUST use revert-and-rescope when the current path is wrong. Stop after two failed approaches on same fix.
 - MUST run `rg` after renames or contract edits to confirm old pattern is gone.
 ### LOG
-- Update `docs/lessons.md`, `docs/footguns.md`, or `docs/confusion-log.md` when tripped (DoD gate #4).
-- Dual-agent project: Learning loop files are shared with `AGENTS.md` (Codex). Read before appending.
+- Update `.goat-flow/lessons/`, `.goat-flow/footguns/`, or `.goat-flow/decisions/` when tripped (DoD gate #4).
+- Multi-agent project: Learning loop directories are shared with `AGENTS.md` (Codex) and `CLAUDE.md` (Claude). Read existing bucket files before appending.
 ## Autonomy Tiers
 ### Always
 - Read, search, diff, run focused tests, and update docs/tests required by the change.
@@ -43,11 +43,11 @@ Gemini CLI has no hooks or native profiles here; safety relies on these rules pl
 1. Relevant tests pass, or failure is explained.
 2. `scripts/preflight-checks.sh` passes after meaningful changes.
 3. No Ask First boundary was changed without approval.
-4. `docs/lessons.md` or `docs/footguns.md` updated if you tripped a behavioral or architectural issue.
-5. `tasks/todo.md` and `tasks/handoff.md` reflect current state.
+4. `.goat-flow/lessons/` or `.goat-flow/footguns/` updated if you tripped a behavioral or architectural issue.
+5. `.goat-flow/logs/sessions/` reflects current state when work spans sessions.
 ## Working Memory
-- 5+ turn tasks SHOULD keep `tasks/todo.md` current.
-- Incomplete work MUST update `tasks/handoff.md` from `tasks/handoff-template.md`.
+- 5+ turn tasks SHOULD keep `.goat-flow/logs/sessions/YYYY-MM-DD-<slug>.md` current.
+- Incomplete work MUST update the active session file (see `tasks/handoff-template.md` for the shape).
 ## Sub-Agent Objectives
 Sub-agents MUST get one focused objective and return paths, evidence, and next step. Budget: 5 calls.
 ## Communication When Blocked
@@ -59,7 +59,7 @@ Ask one question and include the recommended default path.
 | Project structure / Technical ref | `docs/domain-reference.md` |
 | Shared engineering practice | `.github/instructions/ai-agent-guidelines.instructions.md` |
 | Ownership split report | `docs/guidelines-ownership-split.md` |
-| Learning Loop | `docs/lessons.md`, `docs/footguns.md`, `docs/confusion-log.md` |
+| Learning Loop | `.goat-flow/lessons/`, `.goat-flow/footguns/`, `.goat-flow/decisions/` |
 | GOAT Skills | `.gemini/skills/` |
 | Codex Agent (Codex) | `AGENTS.md` |
 | Claude Agent (Claude Code) | `CLAUDE.md` |

@@ -1,187 +1,199 @@
 ---
 name: goat-review
-description: "Review diffs and PRs with structured severity levels, diff-aware analysis, and footgun matching"
+description: "Use when reviewing a diff, PR, or set of code changes, or auditing a codebase area for quality issues. Triggers: 'review this', 'code review', 'audit X', 'look at these changes'."
+goat-flow-skill-version: "1.2.0"
 ---
 # /goat-review
 
+## Shared Conventions
+
+Read `.goat-flow/skill-reference/skill-preamble.md` for shared conventions.
+On full-depth, also read `.goat-flow/skill-reference/skill-conventions.md`.
+
 ## When to Use
 
-Use when reviewing a diff, PR, or specific set of changes before they ship.
-goat-review = diff/PR review. For codebase-wide quality sweeps, use goat-audit instead.
+Use when reviewing a diff, PR, or set of changes. Also for quality audits of a codebase area.
 
-Structured review of changes with RFC 2119 severity levels. The agent reviews independently — it investigates the code, doesn't blindly apply external suggestions.
+**Boundary:** goat-review owns code quality, style, correctness. goat-security owns threat models, compliance, CVEs, auth boundaries. If you find a security issue, flag it and suggest `/goat-security`.
 
----
+**NOT this skill:** OWASP assessment → /goat-security. Understanding code → /goat-debug. Generating tests → /goat-qa. Planning milestones → /goat-plan. Feature briefs → dispatcher Planning Route.
 
-## Step 0 — Gather Context
+## Step 0 - Scope, Size, Spec
 
-Ask the user before reviewing:
+> "Reviewing [X] -- diff review (quick), or area audit with DoD cross-checks (full)?"
 
-1. **What should I review?** (PR, recent commits, specific files, or "everything since last milestone")
-2. **Any specific concerns?** (performance, security, a tricky area)
-3. **Is this responding to external feedback?** (Copilot review, another agent's review, team comments)
-4. **Riskiest change first, or full sweep?** (Lets the human direct the review toward what matters most.)
+- If user already says "quick" or "full", confirm and continue.
+- If arriving from the dispatcher with depth already chosen, skip the depth question.
+- If vague, ask one follow-up covering: which files, what concerns you, diff or audit.
+- Auto-detect scope: (1) explicit input, (2) staged changes, (3) unstaged changes, (4) git diff.
 
-If reviewing external feedback, ask the user to paste or point to it.
+**Size sizing (before Pass 1):** measure the diff. If it exceeds **20 files OR 3000 changed lines**, propose chunking by file group and ask. If the user proceeds un-chunked, record as `large-diff-unchunked` for Review Integrity.
 
-Do NOT start reviewing until the user has answered. A review without scope is a waste of time.
+**Spec source (opt-in):** if `.goat-flow/tasks/.active` exists, read it to find the active plan subdir and scan for a milestone file with `Status: in-progress` or `testing-gate`. If found, offer: "Include Spec Drift check against M[NN] exit criteria?" Default: skip for quick, offer for full. Note the choice in Review Integrity.
 
-If `ai/instructions/code-review.md` exists, load it and apply project-specific review standards alongside these defaults.
+**Footgun check:** Use the preamble's grep-first learning-loop retrieval on `.goat-flow/footguns/` for the target area. Present matches or an explicit retrieval miss; do not broad-load the bucket.
 
----
+## Diff Review (Quick) - Two-Pass Discipline
 
-## Phase 0 — Spec Compliance (conditional)
+The review runs two sequential passes. This is a deliberate reading discipline, not a doer-verifier split: you are the reviewer throughout, Pass 2 is the source of truth, and findings are only surfaced after Pass 2.
 
-If `requirements-{feature}.md` exists in the project root or `docs/requirements/`, check each acceptance criterion against the diff before starting code quality review. Report: **PASS** / **FAIL** / **NOT TESTED** for each criterion.
+### Pass 1 - Blind Suspicion (diff only)
 
-If no spec exists, skip this phase entirely.
+Read the diff **without opening full files**. The point is to see what the diff itself reveals before the author's surrounding code anchors you.
 
----
+Scan for:
+- **Severity cues:** auth/permission checks, secret handling, SQL/shell/API calls, data mutation, state transitions
+- **Edge-case sweep - 5 meta-categories, specifics bubble up as the diff warrants:**
+  - *Boundary conditions* - off-by-one, pagination/index bounds, empty collections, integer overflow
+  - *Nullish values* - null / undefined / default branches, missing optional fields
+  - *Concurrency* - race windows, shared state, concurrent access
+  - *Error handling* - timeouts, retries/backoff, silent exception swallowing
+  - *Contract changes* - signature, return type, error channel, status code, event shape
 
-## Phase 1 — Scope
+Write raw suspicions with `file:line` drawn from the diff. Do NOT verify, confirm, or dismiss in this pass. Over-capture is fine; Pass 2 filters.
 
-Identify what changed:
-- Read the diff or list of changed files
-- Understand the intent: what was this change trying to do?
-- Identify the blast radius: what else could be affected?
+### Pass 2 - Grounded Verification (full files)
 
-**Diff-aware mode:** Review the DIFF for issues. Read FULL FILES for context. Don't flag pre-existing issues that aren't part of this change. If something was already broken before this diff, note it separately as "pre-existing" but do not count it against this change.
+Now read full files for context. For each Pass-1 suspicion:
 
-Tell the user: "I'll be reviewing [N] files. The changes appear to be about [intent]. I'll also check [related areas] for blast radius."
+- **Try to DISPROVE it** (negative verification). Re-read the `file:line`, look for a guard, an upstream check, a framework mitigation, or a contract that removes the risk.
+- Mark each suspicion: **CONFIRMED** / **REFUTED** / **UNRESOLVED**. Drop REFUTED.
+- Add findings that only became visible with file context (integration breakage, call-site contract mismatch, regression in a sibling file).
+- Re-verify every `file:line` reference exists before writing the final output.
 
----
+| Excuse | Reality |
+|--------|---------|
+| "Trusted author wrote it, Pass 2 will just refute everything - skip it" | In-group trust has historically produced the worst misses in auth/signing/rate-limit code. Open the files. |
+| "CI is green, so boundary and signing edges are already covered" | CI tests what was thought of. Review looks for what wasn't. Green CI raises, not answers, the Pass-2 question. |
+| "N clean reviews of this author = pattern, this one is probably clean too" | Pattern matching on authorship is not evidence about this diff. Each Pass-1 suspicion still needs Pass-2 disprove. |
+| "Tight window + demo tomorrow - MAY-only cosmetic pass is proportionate" | An incomplete review merged into a demo window is worse than a `coverage-degraded` conclusion returned on time. |
+| "Findings would be zero anyway, so Review Integrity is paperwork" | Review Integrity IS the zero-findings signal. `files-not-opened` tells the reader you stopped early. |
+| "Footgun file is probably stale, reading it is ceremony" | Footguns are memory. Treating them as ceremony is how the same mistake ships twice. |
 
-## Phase 2 — Review
+### Severity + Action Tagging
 
-Read changed files in **full context** (not just the diff).
+Every surfaced finding gets two orthogonal tags:
 
-**Severity ranking order:** SECURITY > CORRECTNESS > INTEGRATION > PERFORMANCE > STYLE. Review in that order.
+| Severity | Meaning |
+|----------|---------|
+| MUST | fix before merge; blocks approval |
+| SHOULD | fix before merge unless disputed |
+| MAY | nice-to-have |
 
-- Check correctness — does the code do what it's supposed to?
-- Check cross-reference integrity — did renames break anything?
-- Check test coverage — are the changes tested?
-- Check for edge cases the author might have missed
-- Check consistency with existing patterns
-- Check autonomy tier violations — did the change cross a boundary without Ask First?
-- Cross-reference with `docs/footguns.md` for known landmines
+| Action | Meaning |
+|--------|---------|
+| patch | fix direction is unambiguous - a coding agent can apply it |
+| needs-decision | correct fix requires human input (policy, product call, trade-off) |
+| pre-existing | bug exists in unchanged code (see separation below) |
 
-**Pattern drift detection:** Flag when new code uses a different pattern than the rest of the codebase: "This file uses X, but the codebase convention is Y. Intentional?" Don't assume drift is wrong — ask.
+Finding line prefix: `[SEVERITY:ACTION]`. Example: `[MUST:needs-decision]`.
 
-**"What I'd break" analysis:** For each significant change, state what could break downstream: "If this auth change is wrong, it would affect: [list of consumers]."
+### Pre-existing Separation
 
-**Footgun matching:** For each finding, check `docs/footguns.md` for matches. Output: `MATCH: footguns.md entry [name]` or `CLEAR: no known footguns in this area.`
+- **Pre-existing Nearby** (in-scope surface): a pre-existing bug in the same function or tightly-coupled call-site the diff touches. Surface as a one-line pointer under `## Pre-existing Nearby`. Does not block.
+- **Pre-existing Issues** (out-of-scope): pre-existing bugs outside the diff's surface. List under `## Pre-existing Issues` without severity tags. Does not block.
 
-**External review triage:** When reviewing external feedback (Copilot PR review, other tool output), categorize each finding:
-- **AGREE** — real issue, explain why
-- **DISAGREE** — false positive, explain why
-- **INVESTIGATE** — needs more context before deciding
+### Footgun Cross-Check
 
-Do NOT blindly agree with external suggestions — investigate each independently.
+Check each finding with targeted grep-first retrieval against `.goat-flow/footguns/`. When a direct match exists, include it. Omit the footgun tag when no direct match is found after the one allowed reword.
 
----
+**BLOCKING GATE:** Present findings using Output Format below, then pause for human to drill in.
 
-## Phase 3 — Report
+**DoD gate:** (1) tests/lint pass (2) no broken cross-references (3) no unapproved boundary changes (4) grep old pattern after renames.
 
-Present findings with RFC 2119 severity:
+**Proof Gate:** Apply the Proof Gate from `skill-preamble.md` to every surfaced finding - each `file:line` must be re-read fresh in this session before presentation; downgrade any finding whose evidence cannot be re-verified to UNVERIFIED.
 
-**MUST fix (blocking):** Issues that must be resolved before merge. Security bugs, data loss risk, broken functionality.
+## Area Audit (Full)
 
-**SHOULD fix (recommended):** Issues that are worth fixing but don't block merge. Code quality, minor edge cases, inconsistencies.
+When the target is a codebase area (not a diff). For >20 files, recommend splitting. Two-pass discipline still applies per file cluster: skim the surface for suspicions, then open files for verification. Pre-existing issues ARE in scope (they are the point of an area audit).
 
-**MAY improve (optional):** Nice-to-haves. Style, minor refactors, documentation gaps.
+**BLOCKING GATE:** Present findings and pause. If calibration is uncertain, consider `/goat-critique`.
 
-**What's good:** Specific positive observations. Not filler — real things done well.
+## Spec Drift (opt-in)
 
-For each finding: file:line evidence + why it matters + footgun match status.
+Only emitted when the Step 0 prompt was accepted and a live milestone file was found. Reads the milestone's **Exit Criteria** and **Assumptions** blocks, then splits output by direction - the two cases surface under different sections and carry different weight:
 
-**HUMAN GATE** — After presenting findings, ask: "Want me to (a) dig into the riskiest change, (b) check a specific file more deeply, (c) compare against spec requirements, (d) finalize the review verdict?"
+- **Exit-criteria drift → advisory, no severity tag.** A criterion is marked `- [x]` (done) in the milestone but the diff does not support it. The *milestone* is stale. Surface under `## Spec Drift` prefixed `[advisory]`. Do NOT tag MUST/SHOULD/MAY - this is milestone hygiene for the human to reconcile, not a code defect.
+- **Assumption invalidation → review finding with severity.** The diff makes a milestone Assumption false. The *plan* is now broken and the human must choose (update the assumption, fix the diff, or abandon). Surface under `## Findings` as `[MUST:needs-decision]`, **not** under `## Spec Drift`.
+- **Open criterion now satisfied → ready-to-tick note.** An open `- [ ]` criterion is now supported by the diff. Surface under `## Spec Drift` prefixed `[ready-to-tick]`. Advisory only - human ticks the milestone file.
 
-Do NOT auto-advance. Let the human drill into specific findings, challenge severity levels, or redirect focus.
+If no drift, no invalidation, and no ready-to-tick criteria, still emit the section with "No drift detected against M[NN]" so the reader knows the check ran.
 
----
+## Review Integrity (confidence signal)
 
-## Phase 4 — DoD Gate Check
+Every review ends with this section. It is the anti-hallucination surface - the reader should be able to tell at a glance how confident the review is.
 
-Check each Definition of Done item and output pass/fail:
+List:
+- **Files opened in Pass 2:** count / total in diff. List paths that were read diff-only.
+- **Evidence tags:** N OBSERVED / M INFERRED across findings.
+- **Size:** lines changed, files changed. If chunked, state which group was reviewed and which are pending.
+- **Degradation flags** (any that apply): `chunked-partial`, `large-diff-unchunked`, `high-inference-ratio`, `files-not-opened`, `unfamiliar-area`, `missing-types`, `spec-drift-skipped`, `footguns-unread`.
+- **Conclusion:** `confident` | `coverage-degraded` | `high-inference` | `partial`.
 
-1. **Lint passes** — shellcheck on changed .sh files
-2. **No broken cross-references** — all internal links resolve
-3. **No unapproved boundary changes** — autonomy tiers respected
-4. **Logs updated if tripped** — lessons.md / footguns.md entries added if needed
-5. **Working notes current** — tasks/todo.md reflects actual state
-6. **Post-rename grep clean** — no stale references to old paths/names
-
-Output: **PASS** or **FAIL** for each gate, with file:line evidence for failures.
-
----
+Never leave this section empty. "confident - no degradation flags" is the minimum.
 
 ## Constraints
 
-- MUST gather context before reviewing (Step 0)
-- MUST review the DIFF for issues, read FULL FILES for context
-- MUST NOT flag pre-existing issues as part of this change
-- MUST provide file:line evidence for every finding
-- MUST use RFC 2119 severity: MUST / SHOULD / MAY
-- MUST rank: SECURITY > CORRECTNESS > INTEGRATION > PERFORMANCE > STYLE
-- MUST separate blocking (MUST) from non-blocking (SHOULD/MAY)
-- MUST check `docs/footguns.md` for matches on each finding
-- MUST state downstream impact for significant changes
-- MUST check the Definition of Done gates
-- MUST NOT apply fixes directly (review only, not implementation)
-- MUST NOT blindly agree with external review suggestions — investigate each independently
+**Diff review (quick):**
+- MUST run Pass 1 (diff only) before opening any full files in Pass 2
+- MUST NOT surface Pass-1 suspicions that Pass 2 refuted
+- MUST NOT flag pre-existing issues as blocking the change
+
+**Area audit (full):**
+- MUST scan the declared area regardless of recent changes
+- Pre-existing issues ARE in scope
+
+**Both modes:**
+- MUST tag every surfaced finding with `[SEVERITY:ACTION]`
+- MUST check each finding with targeted grep-first retrieval against `.goat-flow/footguns/`; omit the tag when no direct match after the allowed reword
+- MUST order findings by severity, not by file or discovery order
+- MUST emit Review Integrity on every run
+- MUST propose chunking when the diff exceeds 20 files OR 3000 changed lines
+- MUST emit Spec Drift only when opt-in triggered; if skipped, log `spec-drift-skipped` in Review Integrity
+- MUST split Spec Drift output by direction: exit-criteria drift as `[advisory]` (no severity tag), assumption invalidation as `[MUST:needs-decision]` under `## Findings`, open-criterion satisfaction as `[ready-to-tick]`
+- MUST attempt to disprove each Pass-1 suspicion during Pass 2
+- MUST group 3+ related findings as systemic patterns
+- MUST NOT make file edits in review or audit mode unless the user says "implement"
+- MUST NOT frame Pass 1/Pass 2 as doer/verifier - same reviewer, structured reading discipline (ADR-005)
+- **Zero-findings HALT:** If Pass 2 produces zero findings across MUST/SHOULD/MAY, do not silently approve. State explicitly what was checked (boundary conditions, null/undefined, concurrency, error handling, contract changes) and why no issues surfaced. Zero findings must be defended, not assumed.
+- Universal constraints from skill-preamble.md apply.
 
 ## Output Format
 
+```markdown
+## TL;DR  <!-- what was reviewed, found, matters most -->
+
+## Review Integrity
+- Files opened in Pass 2: <k>/<n>  (diff-only: <list or "none">)
+- Evidence: <N> OBSERVED / <M> INFERRED
+- Size: <files> files, <lines> lines  (chunked: <group or "no">)
+- Degradation flags: <list or "none">
+- Conclusion: <confident | coverage-degraded | high-inference | partial>
+
+## Findings
+
+### MUST
+- [MUST:patch] **[title]** `file:line` - [desc] | Footgun: [entry or none] | Evidence: OBSERVED/INFERRED
+- [MUST:needs-decision] **[title]** `file:line` - [desc] | ...
+
+### SHOULD
+- [SHOULD:patch] ...
+
+### MAY
+- [MAY:patch] ...
+
+## Spec Drift   <!-- only when opt-in triggered; otherwise omit and log spec-drift-skipped -->
+<!-- advisory-only entries (exit-criteria drift, ready-to-tick); assumption invalidation goes under ## Findings as [MUST:needs-decision] -->
+- [advisory] **[criterion title]** - claimed done in M[NN] but not supported by diff
+- [ready-to-tick] **[criterion title]** - now satisfied by diff, milestone still shows `- [ ]`
+
+## Pre-existing Nearby  <!-- in-function only; one-liners; no blocking tags -->
+
+## Pre-existing Issues  <!-- out-of-scope pre-existing bugs -->
+
+## Breaking Changes
+
+## What's Good
+
+## What I Didn't Examine
 ```
-## Code Review: [change description]
-
-### Spec Compliance (if requirements file exists)
-- [criterion] — PASS / FAIL / NOT TESTED
-
-### Changes Reviewed
-- [file] - [what changed and why]
-
-### Blocking Issues (MUST fix before merge)
-- **[title]** - [file:line] - [what's wrong and why it matters]
-  Footgun: MATCH [entry name] / CLEAR
-  Impact: [what breaks downstream if this is wrong]
-
-### Recommended Changes (SHOULD fix)
-- **[title]** - [file:line] - [suggestion with reasoning]
-  Footgun: MATCH [entry name] / CLEAR
-
-### Optional Improvements (MAY improve)
-- **[title]** - [file:line] - [nice-to-have with reasoning]
-
-### Pattern Drift
-- [file] uses [pattern X], codebase convention is [pattern Y]. Intentional?
-
-### External Review Triage (if applicable)
-- [finding] — AGREE / DISAGREE / INVESTIGATE — [reasoning]
-
-### What's Good
-- [positive observation]
-
-### Definition of Done
-- [ ] Lint/shellcheck passes — PASS / FAIL
-- [ ] No broken cross-references — PASS / FAIL
-- [ ] No unapproved boundary changes — PASS / FAIL
-- [ ] Logs updated if tripped — PASS / FAIL / N/A
-- [ ] Working notes current — PASS / FAIL / N/A
-- [ ] Post-rename grep clean — PASS / FAIL / N/A
-
-### Verdict: ACCEPT / REQUEST CHANGES / BLOCK
-```
-
-## Learning Loop
-
-If this review uncovered a lesson or footgun, update the relevant doc before closing:
-- Behavioural mistake → `docs/lessons.md`
-- Architectural trap with file:line evidence → `docs/footguns.md`
-
-## Chains With
-
-- goat-audit — codebase-wide sweeps (review is for diffs, audit is for repos)
-- goat-debug — investigate bugs found during review
-- goat-plan — review a plan before implementation begins
-- goat-test — verify test coverage gaps found during review
