@@ -10,7 +10,7 @@ ambient-scribe/
 │   ├── Controller/
 │   │   └── ScribeController.php      # 4 endpoints: UI, history, role stream, roles
 │   ├── Service/
-│   │   ├── RoleInferenceService.php   # Wraps Strands agent for DOCTOR/PATIENT attribution
+│   │   ├── RoleInferenceService.php   # Wraps Strands role attribution calls
 │   │   └── RoleInferenceResult.php    # Data model for role inference results
 │   └── Kernel.php                     # Symfony application kernel
 │
@@ -38,7 +38,7 @@ ambient-scribe/
 │
 ├── templates/
 │   └── scribe/
-│       └── index.html.twig            # Main UI: MediaRecorder capture + WebSocket + Mercure SSE
+│       └── index.html.twig            # Main UI shell: session config + external JS assets
 │
 ├── tests/
 │   ├── python/                        # pytest suite
@@ -80,7 +80,7 @@ ambient-scribe/
 |---|---|
 | Add a Symfony route or endpoint | `src/Controller/ScribeController.php` |
 | Change service wiring or DI | `config/services.yaml`, `config/packages/*.yaml` |
-| Modify the UI (audio capture, display) | `templates/scribe/index.html.twig` |
+| Modify the UI (audio capture, display) | `templates/scribe/index.html.twig`, `public/js/scribe.js` |
 | Change WebSocket or HTTP endpoints | `strands_agents/api/server.py` |
 | Modify NeMo inference (models, VRAM) | `strands_agents/nemo_pipeline.py` |
 | Change audio buffering or ffmpeg conversion | `strands_agents/nemo_session.py` |

@@ -102,7 +102,7 @@ self_test() {
     expect_deny "terraform apply"
     expect_deny "rm -rf /"
     expect_deny "sed -i .env"
-    expect_allow "pytest tests/python -q"
+    expect_allow "strands_agents/.venv/bin/pytest tests/python/ -q"
     expect_allow "git status"
 
     echo "deny-dangerous: self-test passed"

@@ -1,10 +1,12 @@
 ---
 category: role-agent
+last_reviewed: 2026-04-22
 ---
 
 # Role-Attribution Agent Footguns
 
 ## Footgun: The Ollama role model must support tool calling
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `.env.example:67-74`
 - **Files:** `docker-compose.yml:73-77`

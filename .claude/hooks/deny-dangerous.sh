@@ -207,6 +207,8 @@ run_self_test() {
   run_case "grep pipe bash" 'grep pattern file | bash' 2
   # Secret-file reads must block (Bash bypass of settings.json Read() deny).
   run_case "cat .env" "cat .env" 2
+  run_case "cat env example" "cat .env.example" 0
+  run_case "cat nested env example" "cat config/.env.example" 0
   run_case "source .env" "source .env" 2
   run_case "dot-source .env" ". .env" 2
   run_case "less .env.local" "less .env.local" 2
@@ -272,7 +274,10 @@ fi
 # defence against shell-based secret exfil (cat/less/source/base64/etc.).
 is_secret_path_touch() {
   local c="$1"
-  if [[ "$c" =~ (^|[[:space:]]|=|:|/)(\.env)([[:space:]]|$|\.[a-zA-Z0-9_-]+) ]]; then return 0; fi
+  local env_scan="$c"
+  env_scan="${env_scan//.env.example/}"
+  env_scan=$(printf '%s' "$env_scan" | sed -E "s/(^|[[:space:]=:/])\\.env\\.example([[:space:]'\"]|$)/ /g")
+  if [[ "$env_scan" =~ (^|[[:space:]]|=|:|/)(\.env)([[:space:]]|$|\.[a-zA-Z0-9_-]+) ]]; then return 0; fi
   if [[ "$c" =~ /\.ssh/|/\.aws/|/\.gnupg/|/\.docker/config\.json|/\.kube/config ]]; then return 0; fi
   if [[ "$c" =~ (^|[[:space:]]|=|:)[^[:space:]]*\.(pem|key|pfx)([[:space:]]|$) ]]; then return 0; fi
   if [[ "$c" =~ (^|[[:space:]]|=|:|/)(credentials|\.npmrc|\.pypirc)([[:space:]]|$|\.) ]]; then return 0; fi

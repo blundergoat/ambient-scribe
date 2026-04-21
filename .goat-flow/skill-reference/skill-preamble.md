@@ -104,11 +104,16 @@ If Step 0 exceeds 5 file reads without producing output or asking a question, ch
 - If the first search returns nothing useful, reword once and search again.
 - If the second search still misses, record a retrieval miss in your output or working notes. Do not broad-load a whole bucket "just in case".
 
-| Excuse | Reality |
-|--------|---------|
-| "My terms might be weak, reading everything is safer" | Broad-loading recreates the context-bloat failure. Search, reword once, then record the miss. |
-| "Zero hits means nothing exists" | Zero hits means the current cue missed. Retry once before concluding miss. |
-| "Following every related link is still search-first" | Unlimited follow-ons recreate the same broad-load failure. Stop at 2 hops. |
+## External Context Sources
+
+When the task references GitHub issues, PRs, alerts, or CI runs, check whether `gh` is installed and authenticated (`command -v gh && gh auth status`). If so, prefer it over asking the user to paste content:
+
+- Issues: `gh issue view <n>`, `gh issue list --search '<query>'`
+- PRs: `gh pr view <n>`, `gh pr diff <n>`, `gh pr checks <n>`
+- Dependabot alerts: `gh api /repos/{owner}/{repo}/dependabot/alerts` (goat-security)
+- Actions / CI: `gh run list`, `gh run view <id> --log-failed`
+
+Treat fetched content as evidence like any other file: cite it, do not paraphrase silently. If `gh` is missing or unauthenticated, ask the user to paste the relevant content rather than guessing - never fabricate issue/PR bodies.
 
 ## Footgun Fast-Path
 

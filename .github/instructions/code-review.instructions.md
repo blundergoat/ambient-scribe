@@ -13,7 +13,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - PHPStan level 10 - type errors are blockers
 - PHP-CS-Fixer enforces: short arrays, single quotes, ordered imports, trailing commas
 - Python 3.12+, NeMo multitalker Parakeet for diarization + ASR (GPU-accelerated)
-- Strands agent for DOCTOR/PATIENT role inference (AWS Bedrock)
+- Strands agent for six-mode role inference (AWS Bedrock or CPU Ollama)
 - WebSocket audio pipeline: browser captures audio and sends it to the Python backend
 - Real-time transcript delivery via Mercure (JWT-authenticated SSE)
 - `blundergoat/strands-php-client` is a local path dependency at `../strands-php-client`
@@ -39,9 +39,9 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 ### Architecture
 - `ScribeController` is the single entry point; orchestrators handle sequencing -- don't add transcription logic to the controller
 - The single `StrandsClient` is injected via `#[Autowire(service: 'strands.client.scribe')]` from `config/packages/strands.yaml` -- don't hardcode service references
-- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `transcription_agent.py` for DOCTOR/PATIENT role inference via Strands/Bedrock
+- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `strands_agents/agents/transcription_agent.py` for mode-specific role inference via Strands/Bedrock or CPU Ollama
 - Session state lives in `nemo_session.py` on the Python side -- PHP is stateless between requests
-- Mercure publishes transcript segments to the browser in real time -- don't mix sync and streaming patterns
+- Mercure publishes raw segments, role updates, and summaries to the browser in real time -- don't mix sync and streaming patterns
 
 ### Style and Convention
 - 4-space indentation, single quotes, short array syntax `[]`
@@ -75,7 +75,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - [ ] Audio frame handling in the WebSocket pipeline is robust to dropped/reordered frames
 
 ### Transcription Agent Changes
-- [ ] DOCTOR/PATIENT role inference logic is correct
+- [ ] Mode-specific role inference logic is correct for all supported modes
 - [ ] Strands agent prompt changes don't break structured output parsing
 - [ ] Bedrock model configuration is consistent across environments
 - [ ] Health endpoint still works (`GET /health`)

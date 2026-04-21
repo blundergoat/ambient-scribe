@@ -1,11 +1,13 @@
 ---
 category: audio
 hallucination-risk: high
+last_reviewed: 2026-04-22
 ---
 
 # Audio Pipeline Footguns
 
 ## Footgun: Audio format is a browser/env/Python contract
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `public/js/scribe.js:193-255`
 - **Files:** `public/js/scribe.js:367-383`

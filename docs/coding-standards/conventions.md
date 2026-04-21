@@ -41,8 +41,7 @@ composer preflight:coverage    # Preflight with 80% coverage gate
 composer mutate                # Infection mutation testing
 
 # Python
-pytest tests/python/           # Python tests
-ruff check strands_agents/     # Python lint
+strands_agents/.venv/bin/pytest tests/python/ -q  # Python tests
 
 # E2E
 npx playwright test            # Browser tests (uses fake media devices)

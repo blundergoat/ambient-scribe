@@ -63,10 +63,9 @@ Ask one question and include the recommended default path.
 | GOAT Skills | `.gemini/skills/` |
 | Codex Agent (Codex) | `AGENTS.md` |
 | Claude Agent (Claude Code) | `CLAUDE.md` |
-| Eval suite | `agent-evals/` |
 ## Essential Commands
 ```bash
 cp .env.example .env && ./scripts/start-dev.sh
-composer test && python3 -m pytest tests/python -q
+composer test && strands_agents/.venv/bin/pytest tests/python/ -q
 ./scripts/preflight-checks.sh
 ```

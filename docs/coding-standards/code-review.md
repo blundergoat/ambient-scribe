@@ -10,7 +10,7 @@
 ## Approval Criteria
 
 - [ ] PHPStan level 10 passes
-- [ ] `ruff check` passes
+- [ ] Python tests pass through `strands_agents/.venv/bin/pytest tests/python/ -q`
 - [ ] No hardcoded credentials or patient data in logs
 - [ ] Cross-service contracts (PHP ↔ Python) validated
 - [ ] Docker Compose builds and runs

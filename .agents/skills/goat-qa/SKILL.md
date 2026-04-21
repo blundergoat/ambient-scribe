@@ -1,7 +1,7 @@
 ---
 name: goat-qa
 description: "Use when evaluating test coverage gaps, planning test strategy, or assessing testing risk for code changes."
-goat-flow-skill-version: "1.2.0"
+goat-flow-skill-version: "1.2.2"
 ---
 # /goat-qa
 
@@ -40,6 +40,8 @@ Output: prioritized "must test / safe to skip / should test" guidance.
 Confirm: "Running [mode] on [scope]. Correct?"
 
 **Gather:** changed scope, existing test plan (if any), audience, footgun context. Check the instruction file's Essential Commands section or `package.json` scripts for test/lint commands.
+
+**PR / issue link (strongly encouraged):** if the change is tied to a GitHub PR or issue, ask for the URL or number before Phase 1 - stated acceptance criteria are the benchmark gap analysis maps against, so without them "must test vs safe to skip" is inferred from code shape alone. If `gh` is available (see preamble External Context Sources), resolve it with `gh pr view <ref> --json title,body,url` or `gh issue view <ref> --json title,body,url`, plus `gh pr diff <ref>` for PR mode. Treat the description and any linked issues as the intent spec - gaps surface against both the code and that intent. If `gh` is missing or the user declines, note `no-intent-spec` in Verification Integrity so the reader knows gaps were derived from code shape only.
 
 If arriving from the dispatcher with context already gathered, confirm and proceed.
 

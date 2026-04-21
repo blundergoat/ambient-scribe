@@ -1,7 +1,7 @@
 ---
 name: goat-review
 description: "Use when reviewing a diff, PR, or set of code changes, or auditing a codebase area for quality issues. Triggers: 'review this', 'code review', 'audit X', 'look at these changes'."
-goat-flow-skill-version: "1.2.0"
+goat-flow-skill-version: "1.2.2"
 ---
 # /goat-review
 
@@ -20,16 +20,22 @@ Use when reviewing a diff, PR, or set of changes. Also for quality audits of a c
 
 ## Step 0 - Scope, Size, Spec
 
-> "Reviewing [X] -- diff review (quick), or area audit with DoD cross-checks (full)?"
+> "Reviewing [X] -- diff review (quick), PR review against a base branch, or area audit with DoD cross-checks (full)?"
 
-- If user already says "quick" or "full", confirm and continue.
+- If user already says "quick", "PR", or "full", confirm and continue.
 - If arriving from the dispatcher with depth already chosen, skip the depth question.
-- If vague, ask one follow-up covering: which files, what concerns you, diff or audit.
-- Auto-detect scope: (1) explicit input, (2) staged changes, (3) unstaged changes, (4) git diff.
+- If vague, ask one follow-up covering: which files, what concerns you, diff / PR / audit.
+- Auto-detect scope: (1) explicit input, (2) staged changes, (3) unstaged changes, (4) PR-style when HEAD is on a non-default branch with commits ahead of `origin/main`, (5) git diff.
+
+**PR mode (prefer PR link):** when the user picks PR, first ask for the PR URL or number rather than the base branch - it collapses base, head, description, and linked issues into one input. Prompt: "PR URL or number? (e.g. `#123` or `https://github.com/owner/repo/pull/123`) - or say 'local' if the branch isn't pushed." If the user supplies a PR reference and `gh` is available (see preamble External Context Sources), resolve it with `gh pr view <ref> --json baseRefName,headRefName,headRefOid,url,title,body` and source the diff via `gh pr diff <ref>`. Record the PR URL and base SHA in Review Integrity's Size line. The description/linked issues are treated as spec context, not as findings.
+
+**PR mode (branch vs base, fallback):** when no PR link is supplied or `gh` is unavailable, ask: "Base branch? (default: `main`. Current: `$(git branch --show-current)`. I'll `git fetch origin <base>` first so the review is against the latest upstream tip.)" Then run `git fetch origin <base> --quiet` (best-effort; do not fail the review if offline or the remote is unreachable). Source the diff via `git diff origin/<base>...HEAD` (three-dot merge-base; matches what GitHub/GitLab PR UIs show). If the fetch fails or `origin/<base>` is not resolvable, fall back to local `<base>` and record `base-fetch-failed` as a degradation flag in Review Integrity so the reader knows the comparison was against stale local state. Record the resolved base and its short SHA in Review Integrity's Size line.
 
 **Size sizing (before Pass 1):** measure the diff. If it exceeds **20 files OR 3000 changed lines**, propose chunking by file group and ask. If the user proceeds un-chunked, record as `large-diff-unchunked` for Review Integrity.
 
 **Spec source (opt-in):** if `.goat-flow/tasks/.active` exists, read it to find the active plan subdir and scan for a milestone file with `Status: in-progress` or `testing-gate`. If found, offer: "Include Spec Drift check against M[NN] exit criteria?" Default: skip for quick, offer for full. Note the choice in Review Integrity.
+
+**Temporary review artifacts:** If you need to persist a repo diff, scoped diff, grep summary, or similar helper file during review, write it under `.goat-flow/scratchpad/` only. Do not drop ad hoc review artifacts at repo root. Use a filename with a random suffix so concurrent review agents do not collide; prefer `mktemp -p .goat-flow/scratchpad goat-review-<artifact>.XXXXXX.txt` or an equivalent `<base>.<random>.txt` pattern.
 
 **Footgun check:** Use the preamble's grep-first learning-loop retrieval on `.goat-flow/footguns/` for the target area. Present matches or an explicit retrieval miss; do not broad-load the bucket.
 
@@ -65,10 +71,8 @@ Now read full files for context. For each Pass-1 suspicion:
 |--------|---------|
 | "Trusted author wrote it, Pass 2 will just refute everything - skip it" | In-group trust has historically produced the worst misses in auth/signing/rate-limit code. Open the files. |
 | "CI is green, so boundary and signing edges are already covered" | CI tests what was thought of. Review looks for what wasn't. Green CI raises, not answers, the Pass-2 question. |
-| "N clean reviews of this author = pattern, this one is probably clean too" | Pattern matching on authorship is not evidence about this diff. Each Pass-1 suspicion still needs Pass-2 disprove. |
 | "Tight window + demo tomorrow - MAY-only cosmetic pass is proportionate" | An incomplete review merged into a demo window is worse than a `coverage-degraded` conclusion returned on time. |
 | "Findings would be zero anyway, so Review Integrity is paperwork" | Review Integrity IS the zero-findings signal. `files-not-opened` tells the reader you stopped early. |
-| "Footgun file is probably stale, reading it is ceremony" | Footguns are memory. Treating them as ceremony is how the same mistake ships twice. |
 
 ### Severity + Action Tagging
 
@@ -127,7 +131,7 @@ List:
 - **Files opened in Pass 2:** count / total in diff. List paths that were read diff-only.
 - **Evidence tags:** N OBSERVED / M INFERRED across findings.
 - **Size:** lines changed, files changed. If chunked, state which group was reviewed and which are pending.
-- **Degradation flags** (any that apply): `chunked-partial`, `large-diff-unchunked`, `high-inference-ratio`, `files-not-opened`, `unfamiliar-area`, `missing-types`, `spec-drift-skipped`, `footguns-unread`.
+- **Degradation flags** (any that apply): `chunked-partial`, `large-diff-unchunked`, `high-inference-ratio`, `files-not-opened`, `unfamiliar-area`, `missing-types`, `spec-drift-skipped`, `footguns-unread`, `base-fetch-failed` (PR mode only).
 - **Conclusion:** `confident` | `coverage-degraded` | `high-inference` | `partial`.
 
 Never leave this section empty. "confident - no degradation flags" is the minimum.
@@ -151,6 +155,7 @@ Never leave this section empty. "confident - no degradation flags" is the minimu
 - MUST propose chunking when the diff exceeds 20 files OR 3000 changed lines
 - MUST emit Spec Drift only when opt-in triggered; if skipped, log `spec-drift-skipped` in Review Integrity
 - MUST split Spec Drift output by direction: exit-criteria drift as `[advisory]` (no severity tag), assumption invalidation as `[MUST:needs-decision]` under `## Findings`, open-criterion satisfaction as `[ready-to-tick]`
+- MUST store any temporary review artifact files (saved diffs, scoped diffs, grep summaries) under `.goat-flow/scratchpad/` with a random suffix in the filename; never write them to repo root
 - MUST attempt to disprove each Pass-1 suspicion during Pass 2
 - MUST group 3+ related findings as systemic patterns
 - MUST NOT make file edits in review or audit mode unless the user says "implement"

@@ -323,9 +323,9 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 ## 7. Audio Format Notes (Task 1.7)
 
 ### Browser to Server
-- Browser `MediaRecorder` outputs WebM/Opus by default (compressed, small)
-- NeMo requires 16kHz mono WAV (PCM)
-- Server must convert incoming WebM chunks to WAV before NeMo inference
+- Current browser path uses `PcmStreamer` in `public/js/scribe.js` to emit 16 kHz 16-bit PCM
+- NeMo consumes PCM via `AudioBuffer` when `NEMO_STREAM_INPUT_FORMAT=pcm`
+- WebM/Opus decoding remains available only when the environment contract is explicitly changed to `webm`
 
 ### Recommended Approach: ffmpeg subprocess
 - ffmpeg is already a dependency (installed in setup-initial.sh)
@@ -333,10 +333,10 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 - Alternative: `PyAV` (in-process, no subprocess overhead) — viable but adds a dependency
 - Alternative: `AudioWorklet` in browser sending raw PCM Float32 — eliminates server conversion but increases bandwidth ~10x
 
-### Decision: WebM/Opus from browser + ffmpeg conversion on server
-- Lowest bandwidth (compressed audio over WebSocket)
-- ffmpeg is battle-tested and already required
-- Conversion adds <50ms per chunk — negligible vs NeMo inference time
+### Current Decision: Browser PCM + direct server buffering
+- Avoids per-chunk ffmpeg subprocess work in the live path
+- Keeps the browser/server contract explicit through `NEMO_STREAM_INPUT_FORMAT=pcm`
+- Uses more bandwidth than WebM/Opus, but removes a silent format-conversion failure mode from live sessions
 
 ---
 

@@ -22,6 +22,6 @@ Every NeMo inference entry point wraps the synchronous call in `loop.run_in_exec
 
 Session state is fanned out across three sibling Mercure topics (`…/raw`, `…/roles`, `…/summary`) instead of multiplexing into one. Browser subscriptions pick the topics it cares about.
 
-**Why:** The raw path must not be blocked by role-inference latency; the summary path fires once at session end. Separate topics keep each hop's tail-latency independent. See `.goat-flow/decisions/ADR-002-two-mercure-topics-per-session.md`.
+**Why:** The raw path must not be blocked by role-inference latency; the summary path fires once at session end. Separate topics keep each hop's tail-latency independent. See `.goat-flow/decisions/ADR-002-mercure-topics-per-session.md`.
 
 **How to apply:** When adding a new stream (e.g. word-level confidences, speaker switches), publish a new topic under `scribe/session/{id}/<concern>` rather than overloading `raw`.

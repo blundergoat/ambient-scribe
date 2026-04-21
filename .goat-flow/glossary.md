@@ -10,6 +10,7 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 - **PcmStreamer** — Browser-side capture/resampler in `public/js/scribe.js`. Always emits 16 kHz 16-bit PCM; the server trusts `NEMO_STREAM_INPUT_FORMAT` to match.
 - **Raw segment** — Pre-role-attribution transcript chunk published to `scribe/session/{id}/raw`.
 - **Roles topic** — Post-inference speaker → role mapping published to `scribe/session/{id}/roles`.
+- **Summary topic** — End-of-session summary update published to `scribe/session/{id}/summary`.
 
 ## Session / lifecycle
 
@@ -22,4 +23,4 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 
 - **Mercure** — SSE fan-out hub. JWT-authed publish from FastAPI; browser subscribes with a short-lived JWT.
 - **Strands** — Agent SDK used to wire Ollama/Bedrock + `assign_roles` tool. Configured via `config/packages/strands.yaml`.
-- **Preflight** — `./scripts/preflight-checks.sh`: PHPUnit, PHPStan L10, Ruff, pytest, context-validate all in one gate.
+- **Preflight** — `./scripts/preflight-checks.sh`: local umbrella quality gate for PHP validation, PHPStan L10, coding style dry-run, PHPMD/complexity, PHPUnit, coverage, Docker Compose config, and optional Ruff when installed.

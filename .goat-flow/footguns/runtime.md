@@ -1,10 +1,12 @@
 ---
 category: runtime
+last_reviewed: 2026-04-22
 ---
 
 # Runtime / Session / Mercure Footguns
 
 ## Footgun: Mercure publish failure only surfaces as a browser banner
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `strands_agents/api/server.py:335-395`
 - **Files:** `strands_agents/api/server.py:710-725`
@@ -14,6 +16,7 @@ category: runtime
 - **Evidence:** `publish_to_mercure()` returns `False` after retries, the WebSocket handler emits a `system_error` frame on the first failed raw publish, and the browser only renders that message into `#systemBanner`.
 
 ## Footgun: Session lifecycle split across active sessions, transcript storage, and role state
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `strands_agents/session_lifecycle.py:68-98`
 - **Files:** `strands_agents/api/server.py:240-285`
@@ -23,6 +26,7 @@ category: runtime
 - **Evidence:** `destroy()` cleans active sessions plus role state, `_periodic_cleanup()` separately reaps orphaned queue/mode/event-id entries, and `SessionStore` independently expires transcript data on access.
 
 ## Footgun: NeMo is a fixed-capacity singleton with no in-process recovery
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `strands_agents/api/server.py:198-202`
 - **Files:** `strands_agents/api/server.py:217-237`
@@ -32,6 +36,7 @@ category: runtime
 - **Evidence:** FastAPI creates one `NemoPipeline()` during lifespan startup, one shared `ThreadPoolExecutor`, and the Compose service reserves a single NVIDIA device.
 
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `strands_agents/session_lifecycle.py:41-67`
 - **Files:** `strands_agents/session_lifecycle.py:100-138`

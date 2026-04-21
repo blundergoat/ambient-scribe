@@ -1,8 +1,9 @@
 ---
 category: verification
+last_reviewed: 2026-04-22
 ---
 
-# READ / CLASSIFY / VERIFY Lessons
+# READ / SCOPE / VERIFY Lessons
 
 ## Lesson: Audio format mismatch — read both pipeline ends (2026-03-21)
 
@@ -12,7 +13,7 @@ AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while 
 
 ## Lesson: Question misclassified as directive (2026-03-21)
 
-"How does session cleanup work?" was treated as a directive to implement changes to session cleanup. The CLASSIFY step should have identified this as an Inquiry.
+"How does session cleanup work?" was treated as a directive to implement changes to session cleanup. The SCOPE step should have identified this as a question and kept the agent in Explain mode.
 
 **Lesson:** Questions get explanations, not edits — do NOT migrate to Implement mode unless a Directive is issued.
 

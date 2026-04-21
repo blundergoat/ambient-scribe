@@ -1,10 +1,12 @@
 ---
 category: config
+last_reviewed: 2026-04-22
 ---
 
 # Config, Networking, and Deployment Footguns
 
 ## Footgun: Browser-facing WebSocket and Mercure URLs are passed straight through
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `.env.example:19-23`
 - **Files:** `.env.example:79-81`
@@ -18,6 +20,7 @@ category: config
 - **Evidence:** Symfony injects `ws_url` and `mercure_url` directly into `CONFIG`, and `public/js/scribe.js` uses those values as-is for the WebSocket and Mercure subscriptions.
 
 ## Footgun: Terraform still advertises DynamoDB while runtime persists only memory or SQLite
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `infra/terraform/environments/prod/main.tf:82-90`
 - **Files:** `infra/terraform/environments/prod/main.tf:142-146`
@@ -28,6 +31,7 @@ category: config
 - **Evidence:** Terraform sets `DYNAMODB_TABLE`, `create_storage_backend()` chooses only `SessionStore` or `SqliteBackend`, and the in-memory store still documents restart data loss.
 
 ## Footgun: Bind-mounted local dev can hide image-only runtime issues
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `Dockerfile:36-43`
 - **Files:** `docker-compose.yml:84-87`

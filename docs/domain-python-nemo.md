@@ -20,7 +20,7 @@ Both loaded once at startup as a singleton (`NemoPipeline` in `nemo_pipeline.py`
 
 ## Audio Processing
 
-1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `templates/scribe/index.html.twig`
+1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `public/js/scribe.js`
 2. **Server expects `input_format="pcm"` by default** and appends the bytes directly to `AudioBuffer`
 3. **Growing buffer strategy:** re-process full buffered audio on each chunk via `TranscriptionSession.process_chunk()`
 4. **AudioBuffer** (`nemo_session.py`) has a 15-minute safety cap to prevent unbounded memory growth
@@ -62,6 +62,7 @@ Published from `api/server.py` via `publish_to_mercure()` (`server.py:187-213`):
 | `scribe/session/{id}/raw` | `segment` | After each NeMo inference with results |
 | `scribe/session/{id}/raw` | `finalized` | On WebSocket close |
 | `scribe/session/{id}/roles` | `role_update` | After Strands agent completes role inference |
+| `scribe/session/{id}/summary` | `summary` | After the summary endpoint completes |
 
 Requires `MERCURE_JWT` env var (pre-signed JWT). See `.goat-flow/footguns/runtime.md` for Mercure publish-failure debugging.
 
@@ -74,10 +75,10 @@ Requires `MERCURE_JWT` env var (pre-signed JWT). See `.goat-flow/footguns/runtim
 ## Testing
 
 ```bash
-cd strands_agents && pip install -r ../tests/python/requirements-dev.txt
-pytest ../tests/python/                  # Run all Python tests
-pytest ../tests/python/ -v               # Verbose output
-pytest ../tests/python/test_api.py       # Single test file
+cd strands_agents && .venv/bin/pip install -r ../tests/python/requirements-dev.txt
+.venv/bin/pytest ../tests/python/                  # Run all Python tests
+.venv/bin/pytest ../tests/python/ -v               # Verbose output
+.venv/bin/pytest ../tests/python/test_api.py       # Single test file
 ```
 
 Test files: `tests/python/test_api.py`, `test_nemo_pipeline.py`, `test_nemo_session.py`, `test_role_inference.py`

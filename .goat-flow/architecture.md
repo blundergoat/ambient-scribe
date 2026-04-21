@@ -4,11 +4,11 @@ Ambient Scribe is a browser -> Python -> Mercure -> browser transcription system
 
 ## Components
 
-- Browser UI (`templates/scribe/index.html.twig`): captures microphone audio with `PcmStreamer`, opens the WebSocket, and subscribes to Mercure `raw` and `roles` topics.
+- Browser UI (`templates/scribe/index.html.twig` + `public/js/scribe.js`): injects session config, captures microphone audio with `PcmStreamer`, opens the WebSocket, and subscribes to Mercure `raw`, `roles`, and `summary` topics.
 - Symfony app (`src/`): renders `/scribe`, exposes history and role snapshot/proxy endpoints, and owns app config.
 - FastAPI agent (`strands_agents/api/server.py`): handles WebSocket ingest, batch upload, session history, legacy role SSE, and Mercure publishing.
 - NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`): singleton GPU diarization/ASR plus per-session audio buffering.
-- Role inference (`strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py`): sequential per-session DOCTOR/PATIENT mapping.
+- Role inference (`strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py`): sequential per-session mapping for six modes; canonical DOCTOR/PATIENT slots are rendered as mode-specific labels such as Doctor/Patient, Organiser/Participant, Host/Guest, or Speaker A/B.
 - Summary generation (`strands_agents/agents/summary_agent.py`): mode-specific structured summaries (SOAP, action items, etc.) on session end.
 - Mercure (`docker-compose.yml`): fan-out for three topics per session — raw segments, role assignments, and end-of-session summary (topic template `scribe/session/<id>/<concern>`, concern ∈ {raw, roles, summary}).
 - Terraform (`infra/terraform/`): ECS/Fargate, ALB, Mercure, secrets, and DynamoDB scaffolding.
@@ -19,7 +19,7 @@ Ambient Scribe is a browser -> Python -> Mercure -> browser transcription system
 2. Browser streams PCM audio to `ws://.../ws/transcribe/{session_id}`.
 3. FastAPI runs NeMo inside `ThreadPoolExecutor(max_workers=2)`, stores transcript state, and publishes raw segments to Mercure.
 4. A per-session async queue runs role inference and publishes role updates to Mercure.
-5. Browser merges the `raw` and `roles` topics into one transcript timeline.
+5. Browser merges the `raw` and `roles` topics into one transcript timeline and opens summary content when the `summary` topic fires.
 6. PHP can still fetch history plus current/streamed role data for non-live paths.
 
 ## Constraints
@@ -32,7 +32,7 @@ Ambient Scribe is a browser -> Python -> Mercure -> browser transcription system
 
 ## Trade-Offs
 
-- Two Mercure topics keep the NeMo hot path independent from role-inference latency.
+- Three Mercure topics keep raw transcription, role inference, and end-of-session summaries independent.
 - In-memory state keeps iteration fast but loses data on restart and diverges from Terraform's DynamoDB scaffold.
 - A singleton NeMo pipeline minimizes GPU churn but requires process restart for recovery.
 - Legacy PHP role-stream endpoints remain even though the live UI now prefers Mercure role topics.

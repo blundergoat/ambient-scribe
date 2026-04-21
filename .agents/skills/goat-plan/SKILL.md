@@ -1,7 +1,7 @@
 ---
 name: goat-plan
 description: "Use when starting a non-trivial implementation that needs structured task breakdown with progress tracking."
-goat-flow-skill-version: "1.2.0"
+goat-flow-skill-version: "1.2.2"
 ---
 # /goat-plan
 
@@ -32,7 +32,7 @@ Use when work needs breaking into milestones with tracked progress. goat-plan cr
 ## Step 0 - Intake
 
 **Check for existing milestones first:**
-- Read `.goat-flow/tasks/.active` (one-line file naming the active plan subdir, e.g. `1.2.0`) to identify which subdir holds the current plan. Scan only that subdir for milestone files.
+- Read `.goat-flow/tasks/.active` (one-line file naming the active plan subdir, e.g. `1.2.2`) to identify which subdir holds the current plan. Scan only that subdir for milestone files.
 - If the user explicitly names an existing milestone file, or clearly asks to "update", "improve", "tighten", "rewrite", or "fix" the current plan, treat that as approval to edit that file in place. Do NOT ask inline-vs-file or "resume/update/start fresh" when there is exactly one obvious target file. Ask only if multiple milestone files plausibly match or if the user explicitly signals read-only/no-write intent.
 - If `.active` is missing: list top-level entries in `.goat-flow/tasks/`, ask the user which is the active plan, and offer to write `.active` for next time.
 - If found: "Milestone files exist for [feature]. Resume from here, update milestones, or start fresh?" Use this only when the target file is not already obvious from the user's request.
@@ -73,7 +73,6 @@ Structure the work into milestones using these archetypes. Adapt the count to th
 
 | Excuse | Reality |
 |--------|---------|
-| "Team is experienced so the spike is overkill" | Expertise with provider X does not transfer to provider Y - the expertise is the wrong shape. Spike anyway. |
 | "N milestones is what they asked for, stick to the count" | Milestone count is fine; dropping the spike to hit the count isn't. Add the M1 spike even if it means N+1. |
 | "Tight deadline means skip the full intake" | The tight deadline is *why* M1 must be a spike - fail fast on unknowns, not last. |
 | "Kill criteria are ceremony for something this straightforward" | Anything touching money, auth, or data is not "straightforward". Name the kill criteria anyway. |

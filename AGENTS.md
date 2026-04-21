@@ -99,16 +99,9 @@ When blocked, ask one question and include the recommended default path.
 | Architectural decisions | `.goat-flow/decisions/` |
 | Session continuity | `.goat-flow/logs/sessions/` |
 | Session handoff | `tasks/handoff-template.md` |
-| Preflight playbook | `docs/codex-playbooks/goat-preflight.md` |
-| Research playbook | `docs/codex-playbooks/goat-research.md` |
-| Debug playbook | `docs/codex-playbooks/goat-debug.md` |
-| Audit playbook | `docs/codex-playbooks/goat-audit.md` |
-| Review playbook | `docs/codex-playbooks/goat-review.md` |
-| Eval suite | `agent-evals/` |
 | Workflow validation | `scripts/context-validate.sh` |
 | Dangerous-command policy | `.claude/hooks/deny-dangerous.sh` |
 | Claude Code workflow | `CLAUDE.md` |
-| Claude Code evals | `agent-evals/` |
 ## Essential Commands
 ```bash
 cp .env.example .env
@@ -117,7 +110,7 @@ cp .env.example .env
 ./scripts/gpu-check.sh
 composer test
 vendor/bin/phpunit tests/Unit
-python3 -m pytest tests/python -q
+strands_agents/.venv/bin/pytest tests/python/ -q
 ./scripts/preflight-checks.sh
 ./scripts/context-validate.sh
 ./scripts/api-load-test.sh -n 20 -c 5

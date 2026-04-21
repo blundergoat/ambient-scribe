@@ -20,12 +20,12 @@ strands_agents/
 │   ├── __init__.py
 │   └── server.py              # FastAPI — /health, /transcribe/file, /ws/transcribe/{id}, /session/{id}/history
 ├── agents/
-│   └── __init__.py            # Agent registry — create_role_inference_agent()
+│   ├── __init__.py            # Agent package
+│   └── transcription_agent.py # Strands role inference agent (Bedrock or Ollama)
 ├── tools/
 │   └── assign_roles.py        # RoleMapping, RoleMappingState, per-session store
 ├── nemo_pipeline.py           # NeMo Parakeet wrapper — Segment, TranscriptionResult, NemoPipeline
 ├── nemo_session.py            # AudioBuffer, TranscriptionSession
-├── transcription_agent.py     # Strands role inference agent (Bedrock or Ollama)
 ├── session.py                 # In-memory SessionStore for transcript history
 └── requirements.txt
 ```
@@ -50,7 +50,7 @@ strands_agents/
 
 - **NeMo singleton**: One `NemoPipeline` instance created at import time, shared across all WebSocket sessions
 - **Per-session state**: Each WebSocket connection gets its own `TranscriptionSession` with an `AudioBuffer`
-- **Role inference**: The Strands agent uses Bedrock (or Ollama) to assign DOCTOR/PATIENT roles to diarized speaker labels
+- **Role inference**: The Strands agent uses Bedrock (or Ollama CPU) to assign mode-specific roles to diarized speaker labels. The internal canonical slots are DOCTOR/PATIENT, but the prompt and UI adapt them for medical, meeting, interview, TV/media, lecture, and general modes.
 - **Role mapping state**: `RoleMappingState` in `tools/assign_roles.py` maintains per-session speaker-to-role mappings
 - **Mercure publishing**: Transcription results are published to Mercure SSE topics for real-time browser delivery
 
@@ -68,8 +68,8 @@ Changes to Pydantic models or WebSocket message formats MUST be coordinated with
 | Variable | Default | Used by |
 |----------|---------|---------|
 | `NEMO_MODEL_PROVIDER` | `local` | `nemo_pipeline.py` |
-| `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | `transcription_agent.py` |
-| `NEMO_WEBSOCKET_URL` | `ws://nemo-agent:8001` | Browser WebSocket |
+| `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | `agents/transcription_agent.py` |
+| `NEMO_WEBSOCKET_URL` | `ws://nemo-agent:8001` | Symfony-injected browser WebSocket URL |
 | `MERCURE_HUB_URL` | `http://mercure:3701/.well-known/mercure` | `server.py` |
 | `MERCURE_JWT` | (empty) | `server.py` |
 | `AWS_DEFAULT_REGION` | `ap-southeast-2` | Bedrock region |
@@ -80,5 +80,5 @@ Changes to Pydantic models or WebSocket message formats MUST be coordinated with
 python3 -m py_compile strands_agents/api/server.py
 python3 -m py_compile strands_agents/agents/__init__.py
 python3 -m py_compile strands_agents/nemo_pipeline.py
-python3 -m py_compile strands_agents/transcription_agent.py
+python3 -m py_compile strands_agents/agents/transcription_agent.py
 ```

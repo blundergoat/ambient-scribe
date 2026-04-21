@@ -1,4 +1,4 @@
-# CLAUDE.md — v1.2.0 (2026-04-20)
+# CLAUDE.md — v1.2.2 (2026-04-22)
 
 Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Supports 6 modes (Medical, Meeting, Interview, TV/Media, Lecture, General). Core invariant: NeMo owns the single GPU; role inference never runs on it.
 
@@ -105,7 +105,6 @@ Ask First checklist:
 | `AGENTS.md` | Codex workflow (multi-agent) |
 | `GEMINI.md` | Gemini workflow (multi-agent) |
 | `.github/instructions/` | Per-language coding standards |
-| `agent-evals/` | Regression evals |
 | `milestones/` | Task breakdowns M0–M6 |
 
 ## Essential Commands
@@ -115,7 +114,6 @@ Ask First checklist:
 ./scripts/context-validate.sh    # Workflow-file structural check
 composer test                    # PHPUnit
 composer analyse                 # PHPStan Level 10
-pytest tests/python/             # Python tests (from project root)
-ruff check strands_agents/       # Python lint
+strands_agents/.venv/bin/pytest tests/python/ -q  # Python tests
 docker compose up --build        # Full stack (requires NVIDIA GPU)
 ```
