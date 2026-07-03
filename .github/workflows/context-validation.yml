@@ -12,7 +12,7 @@ on:
       - 'docs/guidelines-ownership-split.md'
       - 'tasks/handoff-template.md'
       - 'scripts/context-validate.sh'
-      - '.claude/hooks/deny-dangerous.sh'
+      - '.goat-flow/hooks/deny-dangerous.sh'
       - '.github/instructions/**'
       - '.github/workflows/context-validation.yml'
       - '.github/git-commit-instructions.md'

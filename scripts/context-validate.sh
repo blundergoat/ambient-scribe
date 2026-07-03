@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit
 
 fail() {
     echo "FAIL: $1" >&2
@@ -33,7 +33,14 @@ require_file "tasks/handoff-template.md"
 require_file ".github/instructions/ai-agent-guidelines.instructions.md"
 
 # goat-flow canonical learning-loop surfaces (directories, not flat files)
-for dir in ".goat-flow/footguns" ".goat-flow/lessons" ".goat-flow/decisions"; do
+for dir in \
+    ".goat-flow/learning-loop/footguns" \
+    ".goat-flow/learning-loop/lessons" \
+    ".goat-flow/learning-loop/decisions" \
+    ".goat-flow/learning-loop/patterns" \
+    ".goat-flow/skill-docs/playbooks" \
+    ".goat-flow/hooks"
+do
     [[ -d "$dir" ]] || fail "missing directory: $dir"
 done
 
@@ -45,29 +52,32 @@ elif [[ "$agents_lines" -gt 135 ]]; then
 fi
 
 for ref in \
-    "docs/architecture.md" \
+    ".goat-flow/architecture.md" \
+    ".goat-flow/code-map.md" \
+    ".goat-flow/glossary.md" \
     "docs/domain-reference.md" \
-    ".github/instructions/ai-agent-guidelines.instructions.md" \
+    ".github/instructions/" \
     "docs/guidelines-ownership-split.md" \
-    ".goat-flow/lessons" \
-    ".goat-flow/footguns" \
-    "tasks/handoff-template.md" \
+    ".goat-flow/learning-loop/lessons" \
+    ".goat-flow/learning-loop/footguns" \
+    ".goat-flow/skill-docs/playbooks" \
     "scripts/context-validate.sh" \
-    ".claude/hooks/deny-dangerous.sh" \
+    ".goat-flow/hooks" \
     "CLAUDE.md"
 do
     require_grep "$ref" "AGENTS.md"
 done
 
-if [[ -x ".claude/hooks/deny-dangerous.sh" ]]; then
-    ./.claude/hooks/deny-dangerous.sh --self-test >/dev/null
+if [[ -x ".goat-flow/hooks/deny-dangerous/deny-dangerous-self-test.sh" ]]; then
+    ./.goat-flow/hooks/deny-dangerous/deny-dangerous-self-test.sh >/dev/null
 else
-    fail ".claude/hooks/deny-dangerous.sh is not executable"
+    fail ".goat-flow/hooks/deny-dangerous/deny-dangerous-self-test.sh is not executable"
 fi
 
-# Footguns live in .goat-flow/footguns/ as category bucket files. Each entry MUST cite file:line evidence.
-mapfile -t footgun_files < <(find .goat-flow/footguns -maxdepth 1 -type f -name '*.md' ! -name 'README.md' | sort)
-[[ "${#footgun_files[@]}" -gt 0 ]] || fail ".goat-flow/footguns/ has no category bucket files"
+# Footguns live in .goat-flow/learning-loop/footguns/ as category bucket files. Each
+# entry MUST cite file evidence with a grep-friendly semantic anchor.
+mapfile -t footgun_files < <(find .goat-flow/learning-loop/footguns -maxdepth 1 -type f -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' | sort)
+[[ "${#footgun_files[@]}" -gt 0 ]] || fail ".goat-flow/learning-loop/footguns/ has no category bucket files"
 
 total_refs=0
 for fg_file in "${footgun_files[@]}"; do
@@ -75,12 +85,22 @@ for fg_file in "${footgun_files[@]}"; do
     for entry in "${refs[@]}"; do
         raw="${entry#*:}"
         raw="${raw#- **Files:** }"
-        ref="$(echo "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^`//; s/`$//')"
-        [[ "$ref" =~ ^[^:]+:[0-9]+(-[0-9]+)?$ ]] || fail "footgun reference missing file:line evidence: $ref ($fg_file)"
+        ref_path=""
+        if [[ "$raw" == \`* ]]; then
+            ref_path="${raw#\`}"
+            if [[ "$ref_path" == *\`* ]]; then
+                ref_path="${ref_path%%\`*}"
+            else
+                ref_path=""
+            fi
+        fi
+        [[ -n "$ref_path" ]] || fail "footgun reference missing backticked path: $raw ($fg_file)"
+        [[ -e "$ref_path" ]] || fail "footgun reference path missing: $ref_path ($fg_file)"
+        [[ "$raw" =~ \(search:\ \"[^\"]+\"\) ]] || fail "footgun reference missing semantic search anchor: $raw ($fg_file)"
         total_refs=$((total_refs + 1))
     done
 done
-[[ "$total_refs" -gt 0 ]] || fail ".goat-flow/footguns/ has no structured file:line entries"
+[[ "$total_refs" -gt 0 ]] || fail ".goat-flow/learning-loop/footguns/ has no structured file evidence entries"
 
 while IFS= read -r path; do
     [[ -n "$path" ]] || continue

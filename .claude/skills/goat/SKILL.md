@@ -1,45 +1,68 @@
 ---
 name: goat
 description: "Use when you describe an outcome and need the right goat-* workflow chosen for you."
-goat-flow-skill-version: "1.2.2"
+goat-flow-skill-version: "1.13.0"
 ---
 # /goat
 
 ## Shared Conventions
 
-Read `.goat-flow/skill-reference/skill-preamble.md` for shared conventions.
-On full-depth, also read `.goat-flow/skill-reference/skill-conventions.md`.
-Universal constraints from `skill-preamble.md` apply.
+Read `.goat-flow/skill-docs/skill-preamble.md` for shared conventions.
 
-Use when the user describes an outcome and wants the right workflow chosen.
+Use when the user gives an outcome and needs the right goat-* route. **If the user names a skill explicitly (`/goat-debug`, `/goat-review`, etc.), route immediately - no classification, no GATHER.**
+
+**If a symptom tempts code reading, STOP.** The dispatcher routes; the routed skill investigates.
+
+| Excuse | Reality |
+|--------|---------|
+| "I can see it - routing is overhead" | You are dispatcher, not investigator. Route first. |
+| "The user said 'just fix it'" | Pressure is not an override. Route to /goat-debug. |
+| "Time pressure means investigate now" | Routing takes seconds; wrong routing wastes more. |
+| "Multiple symptoms mean read files" | Split numbered intents; route each separately. |
 
 ## How It Works
 
-1. **UNDERSTAND** - classify intent and target from the user's request.
-2. **GATHER** - collect minimal context: ask-first boundaries, footgun matches, recent git activity, config/architecture if relevant. Format: `User wants [intent] on [target] with boundaries [none / ask-first]. Recent git [summary / none].`
-3. **ROUTE** - dispatch to the target skill using the preamble routing table. Include a one-line rationale: "Routing to `/goat-debug` - you described a symptom ([symptom]), and the target is [area]."
+1. **UNDERSTAND** - classify intent and target. If multiple intents, number each and route independently. Ask only if ordering matters.
+2. **GATHER** - before routing, check:
+   - Footgun matches: grep `.goat-flow/learning-loop/footguns/INDEX.md` for the target area; open entries only on hits
+   - Ask-first boundaries: scan the active instruction file's Ask First boundaries for named files; if none are named, record `target-files=unknown`
+   - If any check fails or is unavailable, note `gather-degraded` and route anyway
+   - Do not emit the preamble's `Relevant prior learnings` line - that belongs to the routed skill's Step 0
+3. **ROUTE** - dispatch using the route map. Emit a Route Snapshot (`Intent` / `Route` / `Rationale`), e.g.:
 
-## Planning Route
+```
+Intent: Diagnose a slow endpoint
+Route: /goat-debug
+Rationale: "slow" is a symptom to investigate; no file named -> target-files=unknown
+```
 
-For planning requests, read `.goat-flow/tasks/.active` to find the active plan subdir (one-line file naming a subdir like `1.2.2`), then scan that subdir for milestone files. If `.active` is missing, list top-level entries in `.goat-flow/tasks/` and ask the user which is current.
+## Route Map
 
-| Complexity | Approach |
-|------------|----------|
-| Hotfix | Route to direct execution, no planning needed |
-| Small Feature | Compressed brief → `/goat-plan` for 1-2 milestones |
-| Standard | Feature brief → `/goat-plan` (suggest `/goat-critique` if approach uncertain) |
-| System / Infrastructure | Feature brief → `/goat-plan` → `/goat-critique` (recommended) |
+| Intent | Route |
+|--------|-------|
+| Bug, failure, unexpected behaviour | `/goat-debug` |
+| Verify a fix worked | `/goat-debug` (post-fix verification) |
+| Browser-visible issue | Browser evidence first; `/goat-debug` Investigate if diagnosis needed |
+| Understand, explain, explore unfamiliar code | `/goat-debug` (Investigate mode) |
+| Quality review, audit, diff check | `/goat-review` |
+| Verify a diff/PR before merge | `/goat-review` |
+| Multi-perspective critique | `/goat-critique` |
+| Security, compliance, dependency audit | `/goat-security` |
+| Testing gaps, coverage, verification planning | `/goat-qa` |
+| Verify test coverage | `/goat-qa` |
+| Feature planning, milestones | `/goat-plan` |
+| Bare task path (no action verb) | Bare or ambiguous task paths are read-only context. Do not update `.active`, milestone status, or code from a path alone |
+| Build/plan verb + scope | `/goat-plan` (Step 0 handles complexity and mode) |
+| Simple implementation (single-file, obvious) | No skill; use execution loop directly |
+| Simple question | Answer directly |
 
-## Handoff
-
-Pass the collected brief and any preselected depth to the target skill.
-If the user signals a re-route mid-workflow, preserve context and dispatch again.
-
-**Proof Gate:** Route rationales and dispatch claims in this skill's output must satisfy the Proof Gate in `skill-preamble.md` - cite the concrete signals (file, symptom, artifact) that justified the route.
+**More examples:** `/goat-review this diff` -> `/goat-review` (explicit; no GATHER). `Look at auth` -> `/goat-security` (assume security audit; offer `/goat-review` re-route). `Debug login test then review fix` -> 1. `/goat-debug`; 2. `/goat-review`.
 
 ## Constraints
 
-- MUST understand intent conversationally, not via keyword lookup.
-- MUST ask 0-2 clarification questions max; route with stated assumption if still ambiguous.
-- MUST include a one-line route rationale with every dispatch.
-- MUST respect explicit skill overrides.
+- MUST respect explicit skill invocations immediately - no reclassification
+- MUST NOT inspect source code, read implementation files, or make changes before routing
+- MUST understand intent conversationally, not via keyword lookup - 0-2 clarification questions max; route with stated assumption if still ambiguous
+- MUST emit a Route Snapshot with every dispatch - Proof Gate applies to route claims
+- MUST split multi-intent requests into numbered intents and route each
+- MUST pass brief/depth to target skill and preserve context on re-route

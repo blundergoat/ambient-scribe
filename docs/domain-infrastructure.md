@@ -41,7 +41,7 @@ These variables must be consistent across services. Mismatch causes silent failu
 | `NEMO_WEBSOCKET_URL` | — | `ws://localhost:48101` | — | Browser-side WebSocket URL |
 | `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | — | — | Must be bedrock or ollama, NOT local GPU |
 
-See `.goat-flow/footguns/runtime.md` for JWT / Mercure publish failure debugging.
+See `.goat-flow/learning-loop/footguns/runtime.md` for JWT / Mercure publish failure debugging.
 
 ## Terraform Structure
 

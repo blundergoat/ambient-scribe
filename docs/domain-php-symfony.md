@@ -22,7 +22,7 @@ public function index(): Response
 }
 ```
 
-Session IDs are generated server-side (UUID v4) and passed to the template, which forwards them to the WebSocket and Mercure topic URLs. See `.goat-flow/footguns/config.md` for the full coupling chain.
+Session IDs are generated server-side (UUID v4) and passed to the template, which forwards them to the WebSocket and Mercure topic URLs. See `.goat-flow/learning-loop/footguns/config.md` for the full coupling chain.
 
 ## Service Wiring
 

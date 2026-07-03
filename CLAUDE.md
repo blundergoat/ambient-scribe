@@ -1,14 +1,32 @@
-# CLAUDE.md — v1.2.2 (2026-04-22)
+# CLAUDE.md — v1.13.0 (2026-07-04)
 
 Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Supports 6 modes (Medical, Meeting, Interview, TV/Media, Lecture, General). Core invariant: NeMo owns the single GPU; role inference never runs on it.
 
-Truth order: (1) user instruction > (2) this file > (3) skill in use > (4) `.github/instructions/` > (5) system spec.
+Workspace boundary: this checkout is the controlling goat-flow workspace. The selected target project is the project currently being inspected or changed; it may differ from the controlling workspace. Use target-scoped commands such as `git -C <target> status` and keep writes inside the declared target. Target projects do not need goat-flow installed unless the active preset audits goat-flow installation.
+
+## Truth Order
+User's explicit instruction for this session > this `CLAUDE.md` file > `.goat-flow/architecture.md`, `.goat-flow/code-map.md`, and `.goat-flow/glossary.md` > loaded goat-* skills and `.goat-flow/skill-docs/` > local instructions in `.github/instructions/` and peer agent files.
+
+## Hard Rules
+
+- Severity order: SECURITY > CORRECTNESS > INTEGRATION > PERFORMANCE > STYLE.
+- Questions get Explain mode; directives get action; ambiguous asks get one clarifying question with a recommended default.
+- MUST read/search before claims or edits, MUST read every file changed, and cross-boundary work MUST read both sides before acting.
+- Preserve cross-file consistency for routes, topics, env vars, hook paths, and skill names; cite file evidence with semantic anchors.
+- No features, abstractions, dependencies, or error handling beyond the declared scope.
+
+## Key Resources
+
+- Learning loop, grep before changes: `.goat-flow/learning-loop/footguns/`, `.goat-flow/learning-loop/lessons/`, `.goat-flow/learning-loop/patterns/`, `.goat-flow/learning-loop/decisions/`.
+- Tool playbooks: `.goat-flow/skill-docs/playbooks/README.md` is the index; read the relevant playbook before declaring a tool unavailable.
+- Project shape: `.goat-flow/architecture.md`, `.goat-flow/code-map.md`, `.goat-flow/glossary.md`, `docs/domain-reference.md`.
+- Shared guidance: `.github/instructions/`, `AGENTS.md`, and `GEMINI.md`.
 
 ## Execution Loop: READ → SCOPE → ACT → VERIFY
 
 When a goat-* skill is active, the skill's Step 0 satisfies READ/SCOPE — resume at ACT.
 
-**READ** — Gather evidence from real files before any claim. Cross-boundary work MUST read both sides (PHP + Python + Twig/JS). Never fabricate codebase facts.
+**READ** — Gather evidence from real files before any claim. Cross-boundary work MUST read both sides (PHP + Python + Twig/JS). Never fabricate codebase facts. Before declaring any tool or capability unavailable, read the matching playbook in `.goat-flow/skill-docs/playbooks/` (e.g. `browser-use.md`, `page-capture.md`) and run that doc's "Availability Check" section verbatim - project-local CLI tools at `~/.local/bin/` are valid; do not conflate "no harness/MCP tool" with "no tool".
 
 ```
 BAD:  "WebSocket publishes to topic 'transcribe'" (fabricated)
@@ -35,11 +53,16 @@ State line: `State: [MODE] | Goal: [one line] | Exit: [condition]`. Switch: "Swi
 - Re-read every `file:line` cited before presenting findings; unreadable = UNVERIFIED
 - After renames, `rg <old-symbol>` across ALL files (including `.md`, `.yaml`, `.json`). Zero refs = pass
 - Loop detection: 5+ edits to the same file without green tests → STOP and escalate
+**Hallucination red-flags:**
+
+Checks passed without output; Completion without changed files; Fix verification without reproduction; Hedged claims (`should`, `probably`, `looks good`) as verification.
+
+Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` under "Rationalisations to reject".
 - DoD log triggers (conditional, not a separate step):
-  - VERIFY caught a failure in your code → `.goat-flow/lessons/` entry
-  - Human corrected behaviour → `.goat-flow/lessons/` entry immediately
-  - Reusable approach confirmed twice or crosses a boundary → `.goat-flow/patterns.md`
-  - Architectural trap with file:line evidence → `.goat-flow/footguns/`
+  - VERIFY caught a failure in your code → `.goat-flow/learning-loop/lessons/` entry
+  - Human corrected behaviour → `.goat-flow/learning-loop/lessons/` entry immediately
+  - Reusable approach confirmed twice or crosses a boundary → `.goat-flow/learning-loop/patterns/`
+  - Architectural trap with file evidence → `.goat-flow/learning-loop/footguns/`
 
 ## Autonomy Tiers
 
@@ -59,7 +82,7 @@ State line: `State: [MODE] | Goal: [one line] | Exit: [condition]`. Switch: "Swi
 Ask First checklist:
 1. Boundary touched: [name]
 2. Related code read: [yes/no]
-3. Footgun entry checked: [relevant `.goat-flow/footguns/*.md` entry, or "none"]
+3. Footgun entry checked: [relevant `.goat-flow/learning-loop/footguns/*.md` entry, or "none"]
 4. Local instruction checked: [local `CLAUDE.md` / `.github/instructions/` file, or "none"]
 5. Rollback command: [exact command]
 
@@ -74,6 +97,10 @@ Ask First checklist:
 5. Current state captured in `.goat-flow/logs/sessions/` before stopping incomplete work
 6. After any rename or move, `rg <old-name>` across all files (`.md`, `.json`, `.yaml`, config included) returns zero refs
 
+## Artifact Routing
+
+Footguns go to `.goat-flow/learning-loop/footguns/`; lessons go to `.goat-flow/learning-loop/lessons/`; decisions go to `.goat-flow/learning-loop/decisions/`; patterns go to `.goat-flow/learning-loop/patterns/`; local continuity goes to `.goat-flow/logs/sessions/`; active plans go to `.goat-flow/plans/`. Read the target directory `README.md` before editing.
+
 ## Working Memory
 
 5+ turn tasks → `.goat-flow/logs/sessions/YYYY-MM-DD-<slug>.md`. Context ladder: summarize → trim into session log → split task if context still grows. Incomplete work MUST update the session log before stopping.
@@ -83,20 +110,22 @@ Ask First checklist:
 - **GPU exclusivity:** NeMo owns the GPU. Role inference MUST use Bedrock or CPU Ollama — never local GPU.
 - **ThreadPoolExecutor:** NeMo inference MUST use `run_in_executor`; never call directly in an async context.
 - **Session ID coupling:** UUID flows PHP → Twig → JS → WebSocket → Mercure. All layers MUST match.
-- **Audio contract:** Browser streams 16 kHz PCM; `NEMO_STREAM_INPUT_FORMAT` MUST agree. See `.goat-flow/footguns/audio.md`.
+- **Audio contract:** Browser streams 16 kHz PCM; `NEMO_STREAM_INPUT_FORMAT` MUST agree. See `.goat-flow/learning-loop/footguns/audio.md`.
 
 ## Router Table
 
 | Resource | Read when... |
 |---|---|
 | `.claude/skills/` | Skill dispatch; see `.claude/skills/goat/SKILL.md` to pick the right one |
-| `.goat-flow/footguns/` | Cross-domain landmines with file:line evidence |
-| `.goat-flow/lessons/` | Past agent mistakes and patterns |
-| `.goat-flow/decisions/` | ADRs with rationale (NeMo GPU, Mercure topics) |
+| `.goat-flow/learning-loop/footguns/` | Cross-domain landmines with file evidence |
+| `.goat-flow/learning-loop/lessons/` | Past agent mistakes |
+| `.goat-flow/learning-loop/patterns/` | Reusable successful approaches |
+| `.goat-flow/learning-loop/decisions/` | ADRs with rationale (NeMo GPU, Mercure topics) |
 | `.goat-flow/architecture.md` | System design, data flows |
 | `.goat-flow/code-map.md` | Entry points, file roles |
 | `.goat-flow/config.yaml` | Agent/skills/paths config |
-| `.goat-flow/skill-reference/` | Shared skill preamble + conventions |
+| `.goat-flow/skill-docs/` | Shared skill preamble + conventions |
+| `.goat-flow/skill-docs/playbooks/` | Tool playbooks (README.md index; read BEFORE declaring a tool unavailable) |
 | `docs/architecture.md` | Legacy system doc (retained for now) |
 | `docs/domain-php-symfony.md` | PHP/Symfony domain notes |
 | `docs/domain-python-nemo.md` | Python/NeMo domain notes |
@@ -105,7 +134,8 @@ Ask First checklist:
 | `AGENTS.md` | Codex workflow (multi-agent) |
 | `GEMINI.md` | Gemini workflow (multi-agent) |
 | `.github/instructions/` | Per-language coding standards |
-| `milestones/` | Task breakdowns M0–M6 |
+| `.goat-flow/plans/` | Current goat-flow plan files |
+| `milestones/` | Legacy project roadmap M0–M6 |
 
 ## Essential Commands
 

@@ -1,107 +1,41 @@
-# Ambient Scribe AGENTS — v1.0 (2026-03-21)
-Codex runtime workflow for this repo. Domain context lives in `docs/domain-reference.md`, system shape in `docs/architecture.md`, and shared engineering practice in `.github/instructions/ai-agent-guidelines.instructions.md`.
-Codex has no hooks or native profiles here; safety relies on these rules plus `./scripts/context-validate.sh` and `./scripts/deny-dangerous.sh`. Prefer repo helpers such as `./scripts/start-dev.sh` over raw `docker compose` unless the user asks otherwise.
-## Default Loop: READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG
-### READ
-- MUST read every file you change before proposing or editing.
-- MUST read both sides first for PHP <-> Python, Twig/public JS <-> WebSocket/Mercure, Docker/env, or infra <-> runtime work.
-- MUST NOT invent repo facts; say so when you have not read something.
-BAD: "The browser sends WebM/Opus" without reading the frontend.
-GOOD: Read `public/js/scribe.js` and `strands_agents/nemo_session.py`, then say the live path sends PCM and defaults to `NEMO_STREAM_INPUT_FORMAT=pcm`.
-### CLASSIFY
-- MUST declare `Mode=<Explain|Plan|Implement|Debug|Review> | Complexity=<Hotfix|Standard|System|Infra> | Boundary=<...>`.
-- Complexity budgets: Hotfix (2 reads / 3 turns), Standard (4 / 10), System (6 / 20), Infra (8 / 25); over budget REQUIRES re-classification.
-- Questions get answers, directives get action, and ambiguous asks get one clarifying question with a default.
-BAD: User asked "explain the cleanup flow" -> edited `session_lifecycle.py`.
-GOOD: User asked "explain the cleanup flow" -> answered with file:line evidence and no edits.
-### SCOPE
-- MUST declare files to change, non-goals, and blast radius before acting.
-- MUST stop and re-scope with the user if the work expands beyond that boundary.
-### ACT
-| Mode | Default behaviour |
-| --- | --- |
-| Explain | Walkthrough only; no edits unless asked. |
-| Plan | Produce a concrete plan, then stop. |
-| Implement | Read enough to act, then edit within the next 2-3 substantive steps. |
-| Debug | Diagnosis first with file:line evidence. No fixes until human reviews diagnosis. |
-| Review | Findings first, ordered by severity, with file:line evidence; no edits unless asked. |
-- State: [MODE] | Goal: [one line] | Exit: [condition]
-- Switching to [NEW STATE] because [reason].
-- MUST avoid planning loops; in Implement mode, the fourth substantive read without writing means start coding or report the blocker.
-- MUST prefer the thinnest vertical slice.
-BAD: "I rewrote the streaming stack before confirming the contract."
-GOOD: "I patched the failing contract, added the narrow test, and stopped."
-### VERIFY
-- MUST run focused checks after each meaningful change, then broader checks before done.
-- Level 1: note and continue on isolated unrelated failures, flaky tests, or non-blocking lint noise.
-- Level 2: stop and report on cross-boundary, security, deployment, runtime, or contract failures.
-- MUST use revert-and-rescope when the current path is wrong, and MUST stop after two failed approaches on the same fix path.
-- MUST run `rg` after renames or contract edits to confirm the old symbol, route, or topic is gone or intentionally retained.
-### LOG
-| Directory | Use when |
-| --- | --- |
-| `.goat-flow/lessons/` | agent behaviour caused the miss |
-| `.goat-flow/footguns/` | a cross-domain landmine needs file:line evidence |
-| `.goat-flow/logs/sessions/` | navigation or ownership slowed the task; session handoff |
-- MUST update when tripped (DoD gate #4). SHOULD log after routine sessions.
-- If VERIFY caught a failure in code you wrote this session, or you corrected course mid-task, a `.goat-flow/lessons/` entry is required before DoD can be satisfied.
-- After human correction of agent behaviour, MUST log the lesson immediately.
-- Footgun propagation: SHOULD propagate active footguns to the nearest routed instruction doc.
-- MUST load `.goat-flow/lessons/` for features/refactors and `.goat-flow/footguns/` before Ask First work.
-- Dual-agent projects: learning loop directories are shared. Read existing bucket files before appending.
+# Ambient Scribe AGENTS - goat-flow v1.13.0 (2026-07-04)
+
+Ambient Scribe is a Symfony + FastAPI + NeMo + Mercure medical transcription app. Core invariant: NeMo owns the single GPU; role inference never uses it.
+Workspace boundary: this checkout is the controlling goat-flow workspace; when a selected target differs, use target-scoped commands such as `git -C <target> status` and keep writes inside the declared target.
+
+## Truth Order
+1. User's explicit instruction for this session.
+2. This `AGENTS.md` file.
+3. `.goat-flow/architecture.md`, `.goat-flow/code-map.md`, and `.goat-flow/glossary.md`.
+4. Loaded goat-* skills and `.goat-flow/skill-docs/`.
+5. Local instructions in `.github/instructions/` and peer agent files.
+
 ## Autonomy Tiers
-### Always
-- MUST read, search, diff, run focused tests, run `./scripts/context-validate.sh`, and update docs/tests that are directly required by the change.
-- Make small, local fixes inside one boundary when the requested behaviour is clear.
-### Ask First
-- PHP <-> Python API contract changes in `src/Controller/`, `src/Service/`, `strands_agents/api/server.py`, or frontend event payloads.
-- WebSocket, Mercure topic, or browser-facing URL changes in `.env.example`, `config/packages/`, `docker-compose.yml`, or `templates/scribe/index.html.twig`.
-- Audio capture or `NEMO_STREAM_INPUT_FORMAT` changes across the browser, env, and `strands_agents/nemo_session.py`.
-- GPU/NeMo loading or concurrency changes in `strands_agents/nemo_pipeline.py`, `strands_agents/api/server.py`, or `docker-compose.yml`.
-- Role-agent provider/model changes, new dependencies, public route changes, Terraform/deployment edits, or production-facing config.
-Ask First checklist:
-1. Boundary touched: [name]
-2. Related code read: [yes/no]
-3. Footgun entry checked: [relevant entry, or "none"]
-4. Local instruction checked: [.github/instructions/<file> / CLAUDE.md / none]
-5. Rollback command: [exact command]
-### Never
-- Delete or weaken tests to make a failure disappear.
-- Edit `.env`, secrets, or credentials files directly.
-- Commit, amend, push, or run destructive git commands unless the user asked.
-- Run unscoped `rm -rf`.
-- Manually edit generated outputs such as `coverage.xml`, `coverage-html/`, or vendor-installed code.
-## Definition of Done
-1. Relevant tests/checks pass, or any unresolved failure is explicitly explained.
-2. `./scripts/context-validate.sh` passes after workflow-file changes.
-3. No Ask First boundary was changed without approval or a clear user instruction.
-4. `.goat-flow/lessons/` or `.goat-flow/footguns/` is updated if you tripped a behavioural or architectural issue.
-5. `.goat-flow/logs/sessions/` reflects the current state when work spans sessions.
-6. After renames or contract edits, `rg` confirms the old pattern is gone or intentionally retained.
-## Working Memory
-- 5+ turn tasks SHOULD keep `.goat-flow/logs/sessions/YYYY-MM-DD-<slug>.md` current.
-- Context ladder: summarize current state, trim it into the session log, then split the task if context still grows.
-- Codex has no native profiles; use lanes: App (`src/`, `templates/`, `public/js/`), Agent (`strands_agents/`), Infra (`docker-compose.yml`, `infra/`); crossing lanes into Ask First work REQUIRES re-scope.
-- Incomplete work MUST update the active `.goat-flow/logs/sessions/` file, and shared notes MUST be read before appending.
-## Sub-Agent Objectives
-Sub-agents MUST get one focused objective and MUST return paths, evidence, confidence, and next step. Budget: 5 calls.
-## Communication When Blocked
-When blocked, ask one question and include the recommended default path.
-## Router
-| Need | File |
-| --- | --- |
-| System map | `docs/architecture.md` |
-| Project structure and conventions | `docs/domain-reference.md` |
-| Shared engineering practice | `.github/instructions/ai-agent-guidelines.instructions.md` |
-| Guidelines ownership split | `docs/guidelines-ownership-split.md` |
-| Behavioural lessons | `.goat-flow/lessons/` |
-| Cross-domain landmines | `.goat-flow/footguns/` |
-| Architectural decisions | `.goat-flow/decisions/` |
-| Session continuity | `.goat-flow/logs/sessions/` |
-| Session handoff | `tasks/handoff-template.md` |
-| Workflow validation | `scripts/context-validate.sh` |
-| Dangerous-command policy | `.claude/hooks/deny-dangerous.sh` |
-| Claude Code workflow | `CLAUDE.md` |
+**Always:** read/search/diff, run focused checks, run `./scripts/context-validate.sh` after instruction or workflow edits, update directly required docs/tests, and keep `.goat-flow/logs/sessions/` current when work spans sessions.
+
+**Ask First:** PHP <-> Python API contract changes in `src/Controller/`, `src/Service/`, or `strands_agents/api/server.py`; frontend event payloads; WebSocket/Mercure topic or browser-facing URL changes in `.env.example`, `config/packages/`, `docker-compose.yml`, `templates/scribe/index.html.twig`, or `public/js/scribe.js`; audio capture or `NEMO_STREAM_INPUT_FORMAT`; GPU/NeMo loading or concurrency in `strands_agents/nemo_pipeline.py`, `strands_agents/api/server.py`, or `docker-compose.yml`; role-agent provider/model or tool plumbing in `strands_agents/agents/` or `strands_agents/tools/`; new dependencies, public routes, CI, Terraform, deployment, secrets policy, hook policy, or 3+ setup/docs files.
+
+Ask First checklist: boundary touched; related code read; `.goat-flow/learning-loop/footguns/` entry checked or "none"; local instruction checked; exact rollback command.
+
+**Never:** delete or weaken tests to hide failures; edit `.env`, credentials, or secrets; commit, amend, push, or run destructive git commands unless asked; run unscoped `rm -rf`; manually edit generated outputs or vendor-installed code; create `_new`, `_modified`, `_backup`, or `_v2` variants instead of editing the real file.
+
+## Hard Rules
+- Severity order: SECURITY > CORRECTNESS > INTEGRATION > PERFORMANCE > STYLE.
+- Questions get Explain mode; directives get action; ambiguous asks get one clarifying question with a recommended default.
+- MUST read every file you change. Cross-boundary work MUST read both sides first.
+- Preserve cross-file consistency for routes, topics, env vars, hook paths, and skill names.
+- Cite file evidence with semantic anchors; do not invent line references.
+- Sub-agents get one focused objective and must return paths, evidence, confidence, and next step. Budget: 5 calls.
+- No features, abstractions, dependencies, or error handling beyond the declared scope.
+
+## Commit Messages
+Commit subjects follow `#<issue_number> <Area> - <Action>`, imperative mood, max 72 characters, with bodies for non-trivial changes. Full rules live in `docs/coding-standards/git-commit.md`.
+
+## Key Resources
+- Learning loop, grep before changes: `.goat-flow/learning-loop/footguns/`, `.goat-flow/learning-loop/lessons/`, `.goat-flow/learning-loop/patterns/`, `.goat-flow/learning-loop/decisions/`.
+- Tool playbooks: `.goat-flow/skill-docs/playbooks/README.md` is the index; read the relevant playbook before declaring a tool unavailable.
+- Project shape: `.goat-flow/architecture.md`, `.goat-flow/code-map.md`, `.goat-flow/glossary.md`, `docs/domain-reference.md`.
+
 ## Essential Commands
 ```bash
 cp .env.example .env
@@ -109,9 +43,74 @@ cp .env.example .env
 ./scripts/health-check-localdev.sh
 ./scripts/gpu-check.sh
 composer test
-vendor/bin/phpunit tests/Unit
+composer analyse
+composer cs:check
 strands_agents/.venv/bin/pytest tests/python/ -q
 ./scripts/preflight-checks.sh
 ./scripts/context-validate.sh
 ./scripts/api-load-test.sh -n 20 -c 5
 ```
+
+## Execution Loop: READ → SCOPE → ACT → VERIFY
+When a goat-* skill is active, the skill's Step 0 replaces READ and selects mode/depth. SCOPE still applies before writes; resume at ACT after Step 0 output or when a blocking gate releases.
+
+### READ
+- MUST gather evidence from real files before claims or edits; never fabricate repo facts.
+- MUST use `rg`/`rg --files` first for search. Read only matching learning-loop entries first; reword once on zero hits, then note a retrieval miss.
+- MUST read both sides for PHP <-> Python, Twig/public JS <-> WebSocket/Mercure, Docker/env, audio, GPU/NeMo, hooks/settings, or infra <-> runtime work.
+- Before declaring any tool or capability unavailable, read the matching playbook in `.goat-flow/skill-docs/playbooks/` (e.g. `browser-use.md`, `page-capture.md`) and run that doc's "Availability Check" section verbatim - project-local CLI tools at `~/.local/bin/` are valid; do not conflate "no harness/MCP tool" with "no tool".
+
+### SCOPE
+- Declare `Mode=<Explain|Plan|Implement|Debug|Review> | Complexity=<Hotfix|Small|Standard|System|Infra> | Boundary=<paths>`.
+- Budgets: Hotfix 2 reads/3 turns; Small 3/5; Standard 4/10; System 6/20; Infra 8/25. Over budget means checkpoint and re-classify.
+- Declare files allowed to change, non-goals, blast radius, and verification gate. Expanding beyond scope means stop and re-scope.
+
+### ACT
+- Declare `State: [MODE] | Goal: [one line] | Exit: [condition]`.
+- Explain: walkthrough only, no edits unless asked. Plan: concrete plan, then stop. Implement: edit in 2-3 substantive steps. Debug: diagnosis with file evidence first, fixes after human review. Review: findings first, no edits unless asked.
+- Prefer the thinnest vertical slice and preserve existing local patterns.
+
+### VERIFY
+- Run focused checks after meaningful changes, then broader checks before done.
+- Stop on cross-boundary, security, deployment, runtime, or contract failures; note and continue only for isolated unrelated failures or flaky/non-blocking noise.
+- Re-read cited evidence before final claims. Do not claim checks passed without the literal pass/fail line from this session.
+**Hallucination red-flags:**
+
+Checks passed without output; Completion without listing changed files; Fix verification without reproduction; Hedged claims (`should`, `probably`, `looks good`) as verification.
+
+Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` under "Rationalisations to reject".
+- After renames or contract edits, run `rg <old-pattern>` and confirm old refs are gone or intentionally retained.
+- If VERIFY caught a failure in code you wrote, or you corrected course mid-task, update `.goat-flow/learning-loop/lessons/` before DoD.
+
+## Definition of Done
+1. Relevant checks pass, or unresolved failures are explicitly explained.
+2. `./scripts/context-validate.sh` passes after instruction or workflow-file changes.
+3. No Ask First boundary changed without approval or clear user instruction.
+4. Learning-loop entry updated if a behavioural or architectural issue was tripped.
+5. `.goat-flow/logs/sessions/` reflects current state when work spans sessions or stops incomplete.
+6. `goat-flow index` is rerun after learning-loop edits, and `goat-flow stats --check` is clean or exceptions are logged.
+7. After renames or contract edits, `rg` confirms old symbols/routes/topics are gone or intentionally retained.
+
+## Artifact Routing
+Footguns go to `.goat-flow/learning-loop/footguns/`; lessons to `.goat-flow/learning-loop/lessons/`; decisions to `.goat-flow/learning-loop/decisions/`; patterns to `.goat-flow/learning-loop/patterns/`; local continuity to `.goat-flow/logs/sessions/`; active plans to `.goat-flow/plans/`. Read the target directory `README.md` before editing.
+
+## Quality Bar
+Every hot-path instruction line must be a behavioural rule, scope boundary, exact command, verification gate, router pointer, or composition rule. Domain knowledge belongs in `.goat-flow/` docs or `docs/`.
+
+## Router Table
+| Resource | Path |
+| --- | --- |
+| Architecture | `.goat-flow/architecture.md` |
+| Code map / glossary | `.goat-flow/code-map.md`, `.goat-flow/glossary.md` |
+| Learning loop | `.goat-flow/learning-loop/footguns/`, `.goat-flow/learning-loop/lessons/`, `.goat-flow/learning-loop/patterns/`, `.goat-flow/learning-loop/decisions/` |
+| Skill reference (meta) | `.goat-flow/skill-docs/` |
+| Tool playbooks (README index for CLI/MCP availability checks; examples: browser-use, page-capture, skill-quality-testing) | `.goat-flow/skill-docs/playbooks/` - read BEFORE declaring a tool unavailable |
+| Codex skills/config/hooks | `.agents/skills/`, `.codex/config.toml`, `.codex/hooks.json`, `.goat-flow/hooks/` |
+| App lane | `src/`, `templates/`, `public/js/`, `config/` |
+| Agent lane | `strands_agents/`, `tests/python/` |
+| Infra lane | `docker-compose.yml`, `Dockerfile`, `docker/`, `infra/terraform/` |
+| Scripts and checks | `scripts/`, `composer.json`, `phpunit.xml.dist`, `phpstan.neon` |
+| Shared guidance | `.github/instructions/`, `docs/domain-reference.md`, `docs/guidelines-ownership-split.md` |
+| Commit guidance | `docs/coding-standards/git-commit.md` |
+| Session state | `.goat-flow/logs/sessions/`, `.goat-flow/plans/`, `.goat-flow/scratchpad/` |
+| Peer agent instructions | `CLAUDE.md`, `GEMINI.md` |

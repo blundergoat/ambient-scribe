@@ -8,15 +8,14 @@ Repository tree with one-line descriptions. For deep dives, follow the "read whe
 ambient-scribe/
 ├── src/                              # PHP application (PSR-4: App\)
 │   ├── Controller/
-│   │   └── ScribeController.php      # 4 endpoints: UI, history, role stream, roles
+│   │   └── ScribeController.php      # 4 routes: UI, history, roles, home redirect
 │   ├── Service/
-│   │   ├── RoleInferenceService.php   # Wraps Strands role attribution calls
-│   │   └── RoleInferenceResult.php    # Data model for role inference results
+│   │   └── RoleInferenceService.php   # Wraps Strands role attribution calls
 │   └── Kernel.php                     # Symfony application kernel
 │
 ├── strands_agents/                    # Python FastAPI + NeMo + Strands agent
 │   ├── api/
-│   │   └── server.py                  # FastAPI HTTP + WebSocket (5 endpoints, Mercure publishing)
+│   │   └── server.py                  # FastAPI HTTP + WebSocket (6 routes, Mercure publishing)
 │   ├── agents/
 │   │   ├── transcription_agent.py     # Strands agent factory for role inference
 │   │   └── __init__.py
@@ -44,8 +43,8 @@ ambient-scribe/
 │   ├── python/                        # pytest suite
 │   │   ├── conftest.py                # Fixtures (mock models, audio files)
 │   │   ├── test_api.py                # FastAPI endpoint tests
-│   │   ├── test_nemo_pipeline.py      # NemoPipeline unit tests
-│   │   ├── test_nemo_session.py       # TranscriptionSession tests
+│   │   ├── test_sqlite_backend.py      # Persistent transcript storage tests
+│   │   ├── test_summary.py            # Consultation summary endpoint tests
 │   │   └── test_role_inference.py     # Role inference agent tests
 │   └── fixtures/audio/                # OSCE test WAV files (abdominal pain, chest pain)
 │
@@ -71,7 +70,7 @@ ambient-scribe/
 │   └── installers/                    # Multi-agent framework installers
 │
 ├── docs/                              # Project documentation (see router table in CLAUDE.md)
-└── milestones/                        # Task breakdowns: M0–M4
+└── milestones/                        # Task breakdowns: M0–M6 plus M2a/M3a
 ```
 
 ## Key Entry Points

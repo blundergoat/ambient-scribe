@@ -1,3 +1,6 @@
+---
+goat-flow-reference-version: "1.13.0"
+---
 # goat-security reference: common threats
 
 Use when the surface is mixed or unclear.

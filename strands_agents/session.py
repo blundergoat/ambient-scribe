@@ -25,8 +25,9 @@ BOUNDS & EVICTION
 LIMITATIONS (this is a PoC)
 =============================================================================
 
-  - IN-MEMORY ONLY: All history is lost when the container restarts.
-    For production, use DynamoDB or a database.
+  - IN-MEMORY BACKEND: All history is lost when this backend is active and the
+    container restarts. Use a persistent backend such as SESSION_STORAGE=sqlite
+    when transcript history must survive process restarts.
 """
 
 from __future__ import annotations

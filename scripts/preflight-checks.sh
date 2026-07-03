@@ -3,7 +3,7 @@
 # Usage: ./scripts/preflight-checks.sh [--coverage-min=80]
 
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit
 
 # SKIP symbol not provided by env-detect.sh (WARN uses ○ but SKIP is a local alias)
 SKIP="${YELLOW}○${RESET}"
@@ -76,7 +76,8 @@ divider() {
 
 elapsed_since() {
     local start=$1
-    local end=$(date +%s%N)
+    local end
+    end=$(date +%s%N)
     local ms=$(( (end - start) / 1000000 ))
     if [[ $ms -lt 1000 ]]; then
         echo "${ms}ms"
@@ -88,7 +89,8 @@ elapsed_since() {
 }
 
 summary() {
-    local end_time=$(date +%s%N)
+    local end_time
+    end_time=$(date +%s%N)
     local total_ms=$(( (end_time - START_TIME) / 1000000 ))
     local total_secs=$((total_ms / 1000))
     local total_frac=$((total_ms % 1000 / 100))
@@ -119,7 +121,7 @@ header
 step "Composer validate"
 t=$(date +%s%N)
 if composer validate --strict 2>&1 | grep -q "is valid"; then
-    pass "$(elapsed_since $t)"
+    pass "$(elapsed_since "$t")"
 else
     fail "Composer validate"
 fi
@@ -130,7 +132,7 @@ t=$(date +%s%N)
 audit_output=$(composer audit 2>&1)
 audit_exit=$?
 if [[ $audit_exit -eq 0 ]]; then
-    pass "$(elapsed_since $t)"
+    pass "$(elapsed_since "$t")"
 else
     vuln_count=$(echo "$audit_output" | grep -c "Advisory" || true)
     fail "Security audit (${vuln_count} advisories)"
@@ -147,7 +149,7 @@ if [[ -x "$danger_script" ]]; then
     danger_output=$("$danger_script" --check-repo 2>&1)
     danger_exit=$?
     if [[ $danger_exit -eq 0 ]]; then
-        pass "$(elapsed_since $t)"
+        pass "$(elapsed_since "$t")"
     else
         fail "Danger policy"
         echo "$danger_output" | head -10 | while read -r line; do
@@ -165,7 +167,7 @@ if [[ -x vendor/bin/php-cs-fixer ]]; then
     cs_output=$(vendor/bin/php-cs-fixer fix --dry-run --diff 2>&1)
     cs_exit=$?
     if [[ $cs_exit -eq 0 ]]; then
-        pass "$(elapsed_since $t)"
+        pass "$(elapsed_since "$t")"
     else
         fix_count=$(echo "$cs_output" | grep -c "^   [0-9]*)" || true)
         fail "Code style (${fix_count} files need fixing - run composer cs:fix)"
@@ -182,7 +184,7 @@ if [[ -f "$complexity_script" ]]; then
     complexity_output=$(php "$complexity_script" --path=src --max=20 2>&1)
     complexity_exit=$?
     if [[ $complexity_exit -eq 0 ]]; then
-        pass "$(elapsed_since $t)"
+        pass "$(elapsed_since "$t")"
     else
         violation_count=$(echo "$complexity_output" | grep -c "^ - " || true)
         fail "Cyclomatic complexity (${violation_count} violations)"
@@ -205,7 +207,7 @@ if [[ -x vendor/bin/phpmd ]]; then
     fi
     phpmd_exit=$?
     if [[ $phpmd_exit -eq 0 ]]; then
-        pass "$(elapsed_since $t)"
+        pass "$(elapsed_since "$t")"
     else
         violation_count=$(echo "$phpmd_output" | grep -c "." || true)
         fail "Mess detector (${violation_count} violations)"
@@ -228,7 +230,7 @@ if [[ -x vendor/bin/phpstan ]]; then
     fi
     stan_exit=$?
     if [[ $stan_exit -eq 0 ]]; then
-        pass "$(elapsed_since $t)"
+        pass "$(elapsed_since "$t")"
     else
         err_count=$(echo "$stan_output" | grep -cE "^/" || true)
         fail "Static analysis (${err_count} errors)"
@@ -255,8 +257,8 @@ if [[ -d templates ]]; then
         fi
     done
     if [[ $twig_errors -eq 0 ]]; then
-        twig_count=$(ls templates/*.html.twig 2>/dev/null | wc -l)
-        pass "${twig_count} templates $(elapsed_since $t)"
+        twig_count=$(find templates -maxdepth 1 -type f -name '*.html.twig' | wc -l)
+        pass "${twig_count} templates $(elapsed_since "$t")"
     else
         fail "Twig templates (${twig_errors} files with unclosed blocks)"
     fi
@@ -281,7 +283,7 @@ if [[ -d "$agent_dir" ]]; then
         ruff_output=$("$ruff_cmd" check "$agent_dir" 2>&1)
         ruff_exit=$?
         if [[ $ruff_exit -eq 0 ]]; then
-            pass "$(elapsed_since $t)"
+            pass "$(elapsed_since "$t")"
         else
             err_count=$(echo "$ruff_output" | grep -cE '^[^ ]+:[0-9]+:[0-9]+:' || true)
             fail "Python lint (${err_count} errors)"
@@ -307,7 +309,7 @@ if [[ -f "$compose_file" ]] && command -v docker &>/dev/null; then
     compose_exit=$?
     if [[ $compose_exit -eq 0 ]]; then
         service_count=$(docker compose -f "$compose_file" config --services 2>/dev/null | wc -l)
-        pass "${service_count} services $(elapsed_since $t)"
+        pass "${service_count} services $(elapsed_since "$t")"
     else
         fail "Docker Compose config"
         echo "$compose_output" | head -5 | while read -r line; do
@@ -335,7 +337,7 @@ else
         if [[ -z "$test_summary" ]]; then
             test_summary=$(echo "$test_output" | grep -oE 'No tests executed' || echo "no tests")
         fi
-        pass "${test_summary} $(elapsed_since $t)"
+        pass "${test_summary} $(elapsed_since "$t")"
     else
         fail_count=$(echo "$test_output" | grep -oE '[0-9]+ failure' | grep -oE '[0-9]+' || echo "?")
         fail "Tests (${fail_count} failures)"
@@ -364,6 +366,7 @@ else
             echo -e "    ${DIM}${line}${RESET}"
         done
     else
+        # shellcheck disable=SC2016
         coverage_stats=$(php -r '
             $xml = @simplexml_load_file("coverage.xml");
             if ($xml === false || !isset($xml->project->metrics)) {
@@ -387,7 +390,7 @@ else
                 echo -e "    ${DIM}${line}${RESET}"
             done
         elif awk "BEGIN {exit !($coverage_pct >= $MIN_COVERAGE)}"; then
-            pass "${coverage_pct}% line coverage (${covered_lines}/${total_lines}, min ${MIN_COVERAGE}%) $(elapsed_since $t)"
+            pass "${coverage_pct}% line coverage (${covered_lines}/${total_lines}, min ${MIN_COVERAGE}%) $(elapsed_since "$t")"
         else
             fail "Coverage ${coverage_pct}% < ${MIN_COVERAGE}% (${covered_lines}/${total_lines} lines)"
             echo -e "    ${DIM}coverage.xml analyzed successfully; threshold not met${RESET}"
@@ -411,7 +414,7 @@ if [[ "$RUN_MUTATE" == true ]]; then
             msi=$(echo "$mutate_output" | grep -oE 'Covered Code MSI: [0-9]+%' | grep -oE '[0-9]+%' || echo "")
             killed=$(echo "$mutate_output" | grep -oE '[0-9]+ mutants were killed' | grep -oE '[0-9]+' || echo "")
             total_m=$(echo "$mutate_output" | grep -oE '[0-9]+ mutations were generated' | grep -oE '[0-9]+' || echo "")
-            pass "${killed:+${killed}/${total_m} killed }${msi:+(${msi} MSI) }$(elapsed_since $t)"
+            pass "${killed:+${killed}/${total_m} killed }${msi:+(${msi} MSI) }$(elapsed_since "$t")"
         else
             msi=$(echo "$mutate_output" | grep -oE 'MSI:[[:space:]]*[0-9]+%' | head -1 | grep -oE '[0-9]+%' || echo "")
             covered_msi=$(echo "$mutate_output" | grep -oE 'Covered Code MSI:[[:space:]]*[0-9]+%' | head -1 | grep -oE '[0-9]+%' || echo "")

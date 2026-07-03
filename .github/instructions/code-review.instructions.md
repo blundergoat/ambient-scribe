@@ -61,7 +61,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 ## What NOT to Flag
 
 - Empty `MERCURE_*` variables in `start-dev.sh` -- this is intentional (sync-only mode, no Mercure)
-- Python agent using in-memory session storage -- this is by design for local dev; DynamoDB is used in production
+- Python agent using in-memory session storage -- this is valid for local dev; production runtime currently supports SQLite persistence, not DynamoDB
 - `docker-compose.override.yml` not existing -- it's optional and gitignored
 - Large NeMo model files not in the repository -- they are downloaded at container build time
 
