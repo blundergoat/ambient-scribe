@@ -6,7 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-M3/M4 work covers tool-based role mapping, summaries, replay, transcript grouping, scenario gates, JS extraction, UI polish, and developer guidance.
+## [0.2.0] - 2026-03-16
+
+Release covering tool-based role mapping, summaries, replay, transcript grouping, scenario gates, JS extraction, UI polish, developer guidance, multi-mode role inference, local-first defaults, SQLite persistence, manual speaker overrides, and full-stack hardening.
 
 ### Added
 
@@ -21,39 +23,6 @@ M3/M4 work covers tool-based role mapping, summaries, replay, transcript groupin
 - **Ollama tool-calling footgun** - documented models that support `assign_roles`, including `qwen2.5:14b`.
 - **Frontend extraction** - moved production code to `public/js/scribe.js` and dev-only panel code to `public/js/scribe-dev.js`.
 - **Developer instrumentation** - added WebSocket frame/byte counters, Docker hot reload, template rebuild guidance, five multi-mode scenarios, and 37 Python tests.
-
-### Changed
-
-- **BREAKING: PHP baseline is now 8.3+.** Upgrade local, CI, and deployment PHP from 8.2 to 8.3 before running Composer; this has no deprecation window because the PHP Gruff dev tool requires PHP 8.3.
-- **Ollama default model** - changed `llama3.1:8b` to `qwen2.5:14b` to match local pulls, `.env.example`, and Docker Compose.
-- **Role inference worker** - detects tool invocation via mapping-history growth and avoids duplicate role mapping application.
-- **Role inference prompt and agent setup** - instructs tool calling with JSON fallback and passes `assign_roles` in the agent tool list.
-- **Role flip detection** - moved client-side so Mercure reporting reflects visible mapping changes.
-- **Developer scripts and labels** - simplified `start-dev.sh` flags and renamed TV/General start labels.
-- **Agent guidance** - made Ask First paths, commit areas, evals, and lessons more project-specific.
-
-### Removed
-
-- **`ROLE_INFERENCE_SYSTEM_PROMPT`** - removed the unused backwards-compatibility alias.
-
-### Fixed
-
-- **Instruction drift** - fixed the `blundergoat/strands-php-client` package name, footgun cross-reference, and CI instruction-file triggers.
-- **Session cleanup** - clears confidence pulse, dev panel logs, speaker maps, summaries, and replay state.
-- **Download fallback** - collects text from grouped segment spans instead of a single segment node.
-- **E2E contracts** - uses UUID session IDs, checks the `/summary` endpoint, and asserts the extracted `scribe.js` reference.
-
-### Tests
-
-- **230 Python unit tests** cover tool/free-text role mapping, flip detection, agent creation, summaries, replay, heuristics, and scenario fixtures.
-- **25 E2E contract tests** cover agent health, sessions, WebSocket, file transcription, PHP proxy, Mercure pub/sub, lifecycle, and cross-service shape matching.
-
-## [0.2.0] - 2026-03-16
-
-Multi-mode role inference, local-first defaults, SQLite persistence, manual speaker overrides, and full-stack hardening.
-
-### Added
-
 - **Mode-aware role inference** - added six mode-specific prompts, browser-passed mode, context labels, and per-mode agent caching.
 - **Role inference fallback** - falls back from LLM agent to mode-specific heuristics, then to graceful no-role output.
 - **Manual speaker override** - lets users cycle roles, publishes overrides to Mercure, locks confirmed speakers, and exposes `POST /session/{id}/roles/override`.
@@ -65,6 +34,13 @@ Multi-mode role inference, local-first defaults, SQLite persistence, manual spea
 
 ### Changed
 
+- **BREAKING: PHP baseline is now 8.3+.** Upgrade local, CI, and deployment PHP from 8.2 to 8.3 before running Composer; this has no deprecation window because the PHP Gruff dev tool requires PHP 8.3.
+- **Ollama default model** - changed `llama3.1:8b` to `qwen2.5:14b` to match local pulls, `.env.example`, and Docker Compose.
+- **Role inference worker** - detects tool invocation via mapping-history growth and avoids duplicate role mapping application.
+- **Role inference prompt and agent setup** - instructs tool calling with JSON fallback and passes `assign_roles` in the agent tool list.
+- **Role flip detection** - moved client-side so Mercure reporting reflects visible mapping changes.
+- **Developer scripts and labels** - simplified `start-dev.sh` flags and renamed TV/General start labels.
+- **Agent guidance** - made Ask First paths, commit areas, evals, and lessons more project-specific.
 - **Default role provider** - changed `ROLE_AGENT_MODEL_PROVIDER` from `bedrock` to `ollama` for local-first startup.
 - **Confidence scoring** - uses a rolling last-five window instead of lifetime average.
 - **Transcript context** - sends the first 500 and last 3000 characters to preserve opening context.
@@ -74,17 +50,27 @@ Multi-mode role inference, local-first defaults, SQLite persistence, manual spea
 
 ### Removed
 
+- **`ROLE_INFERENCE_SYSTEM_PROMPT`** - removed the unused backwards-compatibility alias.
 - **Legacy live role SSE path** - removed the PHP `/roles/stream` endpoint, `RoleInferenceService::streamRoleInference()`, `RoleInferenceResult`, `fetchAuthoritativeSnapshot()`, and the Python `/session/{id}/roles/stream` endpoint.
 - **Unused SSE support** - removed `sse-starlette` imports and SSE consumer tracking.
 - **`docker-compose.no-gpu.yml`** - removed the unused no-GPU compose file because the app requires GPU transcription.
 
 ### Fixed
 
+- **Instruction drift** - fixed the `blundergoat/strands-php-client` package name, footgun cross-reference, and CI instruction-file triggers.
+- **Session cleanup** - clears confidence pulse, dev panel logs, speaker maps, summaries, and replay state.
+- **Download fallback** - collects text from grouped segment spans instead of a single segment node.
+- **E2E contracts** - uses UUID session IDs, checks the `/summary` endpoint, and asserts the extracted `scribe.js` reference.
 - **Python tests** - repaired stale imports, fixtures, UUIDs, and `AudioBuffer` API expectations.
 - **File upload security** - replaced user-shaped temp paths with `NamedTemporaryFile`.
 - **Session ID validation** - rejects malformed IDs with HTTP 400 on all endpoints.
 - **Error privacy** - publishes generic Mercure errors and truncates role inference logs with `error_type`.
 - **Frontend/runtime issues** - declared `pcmStreamer`, filtered health-check log spam, and made the ready banner use configured ports.
+
+### Tests
+
+- **230 Python unit tests** cover tool/free-text role mapping, flip detection, agent creation, summaries, replay, heuristics, and scenario fixtures.
+- **25 E2E contract tests** cover agent health, sessions, WebSocket, file transcription, PHP proxy, Mercure pub/sub, lifecycle, and cross-service shape matching.
 
 ### Security
 
