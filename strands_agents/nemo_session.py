@@ -255,13 +255,13 @@ class TranscriptionSession:
         if self.input_format == "pcm":
             if raw_audio[:4] == _WEBM_MAGIC:
                 raise ValueError(
-                    f"Audio format mismatch: configured for PCM but received WebM data. "
-                    f"Set NEMO_STREAM_INPUT_FORMAT=webm or fix the browser audio encoding."
+                    "Audio format mismatch: configured for PCM but received WebM data. "
+                    "Set NEMO_STREAM_INPUT_FORMAT=webm or fix the browser audio encoding."
                 )
             if raw_audio[:4] == _WAV_MAGIC:
                 raise ValueError(
-                    f"Audio format mismatch: configured for raw PCM but received WAV "
-                    f"(container with headers). Send headerless 16kHz mono s16le PCM."
+                    "Audio format mismatch: configured for raw PCM but received WAV "
+                    "(container with headers). Send headerless 16kHz mono s16le PCM."
                 )
         elif self.input_format == "webm":
             if len(raw_audio) >= 4 and raw_audio[:4] != _WEBM_MAGIC:
