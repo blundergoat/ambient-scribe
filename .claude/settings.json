@@ -2,7 +2,47 @@
   "permissions": {
     "deny": [
       "Bash(*git commit*)",
-      "Bash(*git push*)"
+      "Bash(*git push*)",
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.development)",
+      "Read(.env.development.local)",
+      "Read(.env.test)",
+      "Read(.env.test.local)",
+      "Read(.env.production)",
+      "Read(.env.production.local)",
+      "Read(.env.prod)",
+      "Read(.env.prod.local)",
+      "Read(.env.staging)",
+      "Read(.env.staging.local)",
+      "Read(**/secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Bash(*sudo *)",
+      "Bash(*mkfs*)",
+      "Bash(*dd if=*)",
+      "Bash(*git reset --hard*)",
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.development)",
+      "Read(**/.env.development.local)",
+      "Read(**/.env.test)",
+      "Read(**/.env.test.local)",
+      "Read(**/.env.production)",
+      "Read(**/.env.production.local)",
+      "Read(**/.env.prod)",
+      "Read(**/.env.prod.local)",
+      "Read(**/.env.staging)",
+      "Read(**/.env.staging.local)",
+      "Read(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Read(**/.docker/config.json)",
+      "Read(**/.gnupg/**)",
+      "Read(**/.npmrc)",
+      "Read(**/.pypirc)",
+      "Read(**/*.pfx)",
+      "Read(**/credentials*)",
+      "Read(**/.kube/config)"
     ]
   },
   "hooks": {
@@ -12,11 +52,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.php$'; then if [ -x vendor/bin/php-cs-fixer ] && vendor/bin/php-cs-fixer fix --quiet \"$CLAUDE_FILE_PATH\" >/dev/null 2>&1; then echo 'formatted php'; elif [ ! -x vendor/bin/php-cs-fixer ]; then echo 'php-cs-fixer not found; skipping PHP formatting' >&2; else echo \"php formatting failed: $CLAUDE_FILE_PATH\" >&2; fi; fi"
-          },
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/format-file.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.py$'; then if command -v ruff >/dev/null 2>&1; then FORMATTER=ruff; elif [ -x strands_agents/.venv/bin/ruff ]; then FORMATTER=strands_agents/.venv/bin/ruff; else FORMATTER=''; fi; if [ -n \"$FORMATTER\" ] && \"$FORMATTER\" format --quiet \"$CLAUDE_FILE_PATH\" >/dev/null 2>&1; then echo 'formatted python'; elif [ -z \"$FORMATTER\" ]; then echo 'ruff not found; skipping Python formatting' >&2; else echo \"python formatting failed: $CLAUDE_FILE_PATH\" >&2; fi; fi"
+            "command": "bash -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -f \"$root/.goat-flow/hooks/gruff-code-quality.sh\" ] || root=\"${CLAUDE_PROJECT_DIR:-}\"; [ -f \"$root/.goat-flow/hooks/gruff-code-quality.sh\" ] || { printf '\\''gruff-code-quality: hook unavailable: git repository root or hook script unavailable; skipped.\\n'\\'' >&2; exit 0; }; cd \"$root\" || { printf '\\''gruff-code-quality: hook unavailable: git repository root or hook script unavailable; skipped.\\n'\\'' >&2; exit 0; }; bash \"$root/.goat-flow/hooks/gruff-code-quality.sh\"'",
+            "timeout": 90
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -f \"$root/.goat-flow/hooks/gruff-code-quality.sh\" ] || root=\"${CLAUDE_PROJECT_DIR:-}\"; [ -f \"$root/.goat-flow/hooks/gruff-code-quality.sh\" ] || { printf '\\''gruff-code-quality: hook unavailable: git repository root or hook script unavailable; skipped.\\n'\\'' >&2; exit 0; }; cd \"$root\" || { printf '\\''gruff-code-quality: hook unavailable: git repository root or hook script unavailable; skipped.\\n'\\'' >&2; exit 0; }; bash \"$root/.goat-flow/hooks/gruff-code-quality.sh\"'",
+            "timeout": 90
           }
         ]
       }
@@ -26,7 +82,38 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; RUFF=$(command -v ruff || echo strands_agents/.venv/bin/ruff); $RUFF check strands_agents/ 2>&1 | head -10"
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/stop-lint.sh\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -f \"$root/.goat-flow/hooks/post-turn-safety.sh\" ] || root=\"${CLAUDE_PROJECT_DIR:-}\"; [ -f \"$root/.goat-flow/hooks/post-turn-safety.sh\" ] || { printf '\\''post-turn-safety: hook unavailable: git repository root or hook script unavailable.\\n'\\'' >&2; exit 2; }; cd \"$root\" || { printf '\\''post-turn-safety: hook unavailable: git repository root or hook script unavailable.\\n'\\'' >&2; exit 2; }; bash \"$root/.goat-flow/hooks/post-turn-safety.sh\"'",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'CONTEXT AFTER COMPACTION:' && echo 'Modified files:' && git diff --name-only 2>/dev/null && echo '---' && ls -1t .goat-flow/logs/sessions/*.md 2>/dev/null | head -1 | xargs -r cat 2>/dev/null || echo 'No active session log' && echo '---' && echo 'Constraints: read CLAUDE.md Autonomy Tiers before proceeding'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -f \"$root/.goat-flow/hooks/deny-dangerous.sh\" ] || root=\"${CLAUDE_PROJECT_DIR:-}\"; [ -f \"$root/.goat-flow/hooks/deny-dangerous.sh\" ] || { printf '\\''BLOCKED: Policy hook unavailable: git repository root unavailable.\\n'\\'' >&2; exit 2; }; cd \"$root\" || { printf '\\''BLOCKED: Policy hook unavailable: git repository root unavailable.\\n'\\'' >&2; exit 2; }; bash \"$root/.goat-flow/hooks/deny-dangerous.sh\"'"
           }
         ]
       }

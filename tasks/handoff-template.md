@@ -1,16 +1,9 @@
-# Session Handoff
+# Session Handoff — [YYYY-MM-DD]
 
-## Status
-<!-- In Progress / Blocked / Paused -->
+Purpose: Record incomplete work or a two-correction stop to ensure the next session can resume without repeating mistakes.
 
-## Current State
-<!-- What's been done, what's working, what's not -->
-
-## Key Decisions
-<!-- Decisions made during this session and why -->
-
-## Known Risks
-<!-- What might break, what's fragile, what needs attention -->
-
-## Next Step
-<!-- Exactly what to do next — one actionable step -->
+- **Status:** [Incomplete / Blocked / Stopped]
+- **Current State:** [Summary of files changed and why]
+- **Key Decisions:** [Rationale for the current path]
+- **Known Risks:** [Footguns or architectural landmines]
+- **Next Step:** [Specific, actionable task for the next agent]

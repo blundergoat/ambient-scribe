@@ -31,8 +31,12 @@ strands_agents/**/.venv/
 
 # Claude Code
 .claude/settings.local.json
+.claude/projects/
+.claude/worktrees/
 tasks/todo.md
 tasks/handoff.md
+/commit.md
+/release.md
 
 # Node
 node_modules/

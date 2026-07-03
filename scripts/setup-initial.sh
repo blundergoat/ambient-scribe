@@ -243,97 +243,15 @@ print(f'{header}.{payload}.{sig}')
 " 2>/dev/null)
     fi
 
-# ── PHP dependencies ───────────────────────────────────────────────
-echo ""
-echo -e "  ${BOLD}Installing PHP dependencies${RESET}"
-echo ""
-
-step "composer install"
-cd "$REPO_ROOT"
-if composer install 2>&1 | tail -1; then
-    pass
-else
-    fail "composer install failed"
-fi
-
-# ── Python dependencies ────────────────────────────────────────────
-echo ""
-echo -e "  ${BOLD}Installing Python dependencies${RESET}"
-echo ""
-
-PYTHON_AGENT_DIR="$REPO_ROOT/strands_agents"
-
-step "Create Python venv"
-if [[ -d "$PYTHON_AGENT_DIR/.venv" ]]; then
-    pass "already exists"
-else
-    python3 -m venv "$PYTHON_AGENT_DIR/.venv"
-    pass "created"
-fi
-
-step "pip install -r requirements.txt"
-if "$PYTHON_AGENT_DIR/.venv/bin/pip" install -r "$PYTHON_AGENT_DIR/requirements.txt" 2>&1 | tail -1; then
-    pass
-else
-    fail "pip install failed"
-fi
-
-step "pip install yt-dlp"
-if "$PYTHON_AGENT_DIR/.venv/bin/pip" install yt-dlp 2>&1 | tail -1; then
-    pass
-else
-    fail "yt-dlp install failed"
-fi
-
-# ── Node.js / Playwright (browser e2e tests) ─────────────────────
-echo ""
-echo -e "  ${BOLD}Installing Node.js dependencies${RESET}"
-echo ""
-
-step "Node.js"
-if command -v node &>/dev/null; then
-    node_version=$(node --version 2>/dev/null)
-    pass "${node_version}"
-else
-    warn "not found — browser e2e tests will be skipped"
-fi
-
-if command -v node &>/dev/null; then
-    step "npm install (Playwright)"
-    cd "$REPO_ROOT"
-    if npm install 2>&1 | tail -1; then
-        pass
-    else
-        fail "npm install failed"
-    fi
-
-    step "Playwright browsers"
-    if npx playwright install chromium 2>&1 | tail -1; then
-        pass
-    else
-        fail "playwright browser install failed"
-    fi
-
-    step "Playwright system deps"
-    if npx playwright install-deps chromium 2>&1 | tail -1; then
-        pass
-    else
-        warn "could not install system deps — run: npx playwright install-deps chromium"
-    fi
-fi
-
-# ── System packages ──────────────────────────────────────────────
-echo ""
-echo -e "  ${BOLD}Installing system packages${RESET}"
-echo ""
-
-step "ffmpeg"
-if command -v ffmpeg &>/dev/null; then
-    ffmpeg_version=$(ffmpeg -version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-    pass "already installed v${ffmpeg_version}"
-else
-    if sudo apt-get install -y -qq ffmpeg 2>&1 | tail -1; then
-        pass "installed"
+    if [[ -n "$JWT_PAYLOAD" ]]; then
+        # Write to .env
+        if grep -q '^MERCURE_PUBLISHER_JWT=' "$REPO_ROOT/.env" 2>/dev/null; then
+            sed -i "s|^MERCURE_PUBLISHER_JWT=.*|MERCURE_PUBLISHER_JWT=${JWT_PAYLOAD}|" "$REPO_ROOT/.env"
+        else
+            echo "MERCURE_PUBLISHER_JWT=${JWT_PAYLOAD}" >> "$REPO_ROOT/.env"
+        fi
+        export MERCURE_PUBLISHER_JWT="$JWT_PAYLOAD"
+        pass "generated and saved to .env"
     else
         fail "could not generate — install PHP or Python"
     fi
@@ -341,19 +259,14 @@ fi
 
 echo ""
 
-if [[ $ERRORS -eq 0 ]]; then
-    echo ""
-    echo -e "  ${GREEN}${BOLD}Setup complete!${RESET}"
-    echo ""
-    echo -e "  ${YELLOW}${BOLD}Note:${RESET} ${DIM}live transcription now runs through Dockerized NeMo.${RESET}"
-    echo -e "     ${DIM}The local Python venv is for tests and tools, not the dev transcription runtime.${RESET}"
-    echo -e "     ${DIM}scripts/start-dev.sh auto-selects a free agent port in the 48101-48110 range.${RESET}"
-    echo ""
-    echo -e "  ${DIM}Next steps:${RESET}"
-    echo -e "    ${ARROW} Run quality checks:     ${BOLD}composer preflight${RESET}"
-    echo -e "    ${ARROW} Start local dev:        ${BOLD}scripts/start-dev.sh${RESET}"
-    echo -e "    ${ARROW} Start full stack:        ${BOLD}docker compose up --build${RESET}"
-    echo -e "    ${ARROW} Python venv is at:       ${DIM}strands_agents/.venv${RESET}"
+# =============================================================================
+# STEP 3: Build Docker Images
+# =============================================================================
+echo -e "  ${BOLD}Building Docker images${RESET}"
+echo -e "  ${DIM}NeMo image is large — first build takes 15-30 minutes${RESET}"
+echo ""
+
+if dc build --progress=tty 2>&1; then
     echo ""
     echo -e "  ${ARROW} Docker images              ${PASS}  ${DIM}all built${RESET}"
 else

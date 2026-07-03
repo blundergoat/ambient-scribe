@@ -8,7 +8,7 @@
 #   ./scripts/e2e-test.sh --no-start   # Tests only (services already running)
 #   ./scripts/e2e-test.sh --agent-only # Skip PHP app (test agent directly)
 #
-# Starts services WITHOUT GPU (NEMO_SKIP_MODEL_LOAD=1) so tests run on any machine.
+# Starts services WITHOUT GPU (NEMO_MODEL_PROVIDER=mock) so tests run on any machine.
 # Tests validate API contracts, proxy chains, and service integration.
 #
 # Exit codes:
@@ -138,8 +138,8 @@ cors_origins http://localhost:${APP_PORT}" \
     fi
 
     # ── Python Agent ──────────────────────────────────────────────────
-    log "Starting Python agent on port ${AGENT_PORT} (NEMO_SKIP_MODEL_LOAD=1)..."
-    NEMO_SKIP_MODEL_LOAD=1 \
+    log "Starting Python agent on port ${AGENT_PORT} (NEMO_MODEL_PROVIDER=mock)..."
+    NEMO_MODEL_PROVIDER=mock \
     NEMO_STREAM_INPUT_FORMAT=pcm \
     MERCURE_HUB_URL="http://localhost:${MERCURE_PORT}/.well-known/mercure" \
     MERCURE_JWT_SECRET="e2e-test-secret-key-minimum-32-chars" \

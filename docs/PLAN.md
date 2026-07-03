@@ -1,8 +1,8 @@
 # Next Steps Plan
 
 **Created:** 2026-02-20
-**Updated:** 2026-02-26
-**Current state:** M0 code-complete, M1 complete, M2 GPU-verified, Priority 0 (preflight) next
+**Updated:** 2026-03-16
+**Current state:** M0–M2 complete, M3 code-complete (tool wired, Ollama default fixed, tests pass), live verification pending
 
 ---
 
@@ -57,8 +57,8 @@ This is the demo's centrepiece. Prerequisites: preflight green, M2 GPU-verified 
 
 ### Session A (~2 hours): Agent + Queue
 
-- [ ] Fill `strands_agents/transcription_agent.py` stub — Strands Agent with Bedrock Haiku 4.5
-  - System prompt for DOCTOR/PATIENT reasoning (medical terminology, question patterns, greeting conventions)
+- [ ] Fill `strands_agents/agents/transcription_agent.py` — Strands Agent with Bedrock Haiku 4.5
+  - System prompt for mode-specific role reasoning (medical, meeting, interview, TV/media, lecture, general)
   - Edge case handling: monologues, silence, Sortformer label flips
 - [ ] Implement per-session inference queue in server.py
   - `asyncio.Queue` per session — sequential processing, no race conditions
@@ -99,14 +99,14 @@ Only after M3 is working end-to-end:
 ## Quick Reference: What's Blocking What
 
 ```
-Preflight green ←── PHP tests (Priority 0)        ← YOU ARE HERE
+Preflight green ←── PHP tests (Priority 0)        ✔ DONE
       │
       ▼
 M2 sign-off ←────── GPU verification (Priority 1) ✔ DONE
       │
       ▼
-M3 build ←───────── Agent + queue + UX (Priority 2)
+M3 build ←───────── Agent + queue + UX (Priority 2) ✔ CODE COMPLETE — live verification pending
       │
       ▼
-M4 polish ←──────── Demo mode + blog (Priority 3)
+M4 polish ←──────── Demo mode + blog (Priority 3)  ← NEXT
 ```

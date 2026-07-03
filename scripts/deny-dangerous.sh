@@ -11,9 +11,10 @@ Codifies dangerous-command policy for review, CI, and preflight.
 Usage:
   ./scripts/deny-dangerous.sh --check-repo
   ./scripts/deny-dangerous.sh --command "git push --force"
+  ./scripts/deny-dangerous.sh --self-test
   ./scripts/deny-dangerous.sh git commit --no-verify
 
-This script does not intercept commands at runtime.
+This script is policy verification only. It does not intercept Codex at runtime.
 EOF
 }
 
@@ -76,6 +77,37 @@ check_repo() {
     echo "deny-dangerous: repo diff allowed"
 }
 
+self_test() {
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    expect_deny() {
+        local command_text="$1"
+        if "$script_path" --command "$command_text" >/dev/null 2>&1; then
+            echo "SELF-TEST FAIL: expected denial for '$command_text'" >&2
+            exit 1
+        fi
+    }
+
+    expect_allow() {
+        local command_text="$1"
+        if ! "$script_path" --command "$command_text" >/dev/null 2>&1; then
+            echo "SELF-TEST FAIL: expected allow for '$command_text'" >&2
+            exit 1
+        fi
+    }
+
+    expect_deny "git push --force origin main"
+    expect_deny "git commit --no-verify -m test"
+    expect_deny "terraform apply"
+    expect_deny "rm -rf /"
+    expect_deny "sed -i .env"
+    expect_allow "strands_agents/.venv/bin/pytest tests/python/ -q"
+    expect_allow "git status"
+
+    echo "deny-dangerous: self-test passed"
+}
+
 if [[ $# -eq 0 ]]; then
     usage
     exit 0
@@ -88,6 +120,10 @@ case "${1:-}" in
         ;;
     --check-repo)
         check_repo
+        exit 0
+        ;;
+    --self-test)
+        self_test
         exit 0
         ;;
     --command)

@@ -15,7 +15,7 @@
         "source": "https://github.com/blundergoat/ambient-scribe"
     },
     "require": {
-        "php": ">=8.2",
+        "php": ">=8.3",
         "blundergoat/strands-php-client": "dev-dev",
         "symfony/framework-bundle": "^6.4",
         "symfony/mercure": "^0.6",
@@ -28,6 +28,7 @@
         "twig/twig": "^3.0"
     },
     "require-dev": {
+        "blundergoat/gruff-php": "^0.4.1",
         "friendsofphp/php-cs-fixer": "^3.0",
         "infection/infection": "^0.29|^0.32",
         "phpmd/phpmd": "^2.15",

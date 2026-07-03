@@ -5,9 +5,9 @@ Rules and patterns for the Python layer. This service owns the GPU, runs NeMo in
 ## GPU Rules (Non-Negotiable)
 
 1. **NeMo owns the GPU exclusively.** No other GPU workload may run in the same container or on the same card.
-2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `docs/footguns.md` FG-2.
+2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `.goat-flow/learning-loop/footguns/runtime.md`.
 3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous — without `run_in_executor`, the async event loop freezes. See `api/server.py:131-134` for the executor and `:243-250`, `:307-311` for usage.
-4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `docs/footguns.md` FG-1.
+4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `.goat-flow/learning-loop/footguns/runtime.md`.
 
 ## NeMo Models
 
@@ -20,7 +20,7 @@ Both loaded once at startup as a singleton (`NemoPipeline` in `nemo_pipeline.py`
 
 ## Audio Processing
 
-1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `templates/scribe/index.html.twig`
+1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `public/js/scribe.js`
 2. **Server expects `input_format="pcm"` by default** and appends the bytes directly to `AudioBuffer`
 3. **Growing buffer strategy:** re-process full buffered audio on each chunk via `TranscriptionSession.process_chunk()`
 4. **AudioBuffer** (`nemo_session.py`) has a 15-minute safety cap to prevent unbounded memory growth
@@ -62,8 +62,9 @@ Published from `api/server.py` via `publish_to_mercure()` (`server.py:187-213`):
 | `scribe/session/{id}/raw` | `segment` | After each NeMo inference with results |
 | `scribe/session/{id}/raw` | `finalized` | On WebSocket close |
 | `scribe/session/{id}/roles` | `role_update` | After Strands agent completes role inference |
+| `scribe/session/{id}/summary` | `summary` | After the summary endpoint completes |
 
-Requires `MERCURE_JWT` env var (pre-signed JWT). See `docs/footguns.md` FG-6 for JWT mismatch issues.
+Requires `MERCURE_JWT` env var (pre-signed JWT). See `.goat-flow/learning-loop/footguns/runtime.md` for Mercure publish-failure debugging.
 
 ## Session Management
 
@@ -74,10 +75,10 @@ Requires `MERCURE_JWT` env var (pre-signed JWT). See `docs/footguns.md` FG-6 for
 ## Testing
 
 ```bash
-cd strands_agents && pip install -r ../tests/python/requirements-dev.txt
-pytest ../tests/python/                  # Run all Python tests
-pytest ../tests/python/ -v               # Verbose output
-pytest ../tests/python/test_api.py       # Single test file
+cd strands_agents && .venv/bin/pip install -r ../tests/python/requirements-dev.txt
+.venv/bin/pytest ../tests/python/                  # Run all Python tests
+.venv/bin/pytest ../tests/python/ -v               # Verbose output
+.venv/bin/pytest ../tests/python/test_api.py       # Single test file
 ```
 
 Test files: `tests/python/test_api.py`, `test_nemo_pipeline.py`, `test_nemo_session.py`, `test_role_inference.py`

@@ -31,34 +31,29 @@ Use these standard area prefixes for consistency. Choose the area where the **mo
 
 | Area | Purpose |
 |------|---------|
-| Forge | Forge provisioning engine (WSL setup) |
-| Docker Runtime | Container orchestration features |
-| App Operations | Makefile-based task runner |
-| Secrets | Secrets management (.env, infra files) |
-| Workspace Config | Workspace YAML configuration |
-| Workspaces | Multi-workspace switching |
-| WSL | WSL instance management |
-| Frontend | General React/TypeScript changes |
-| Backend | General Rust/Tauri changes |
-| Scripts | Shell scripts (setup, preflight, etc.) |
-| CI | GitHub Actions, workflows |
+| Backend | PHP/Symfony (`src/`, `config/`) |
+| Frontend | Twig templates, external JS (`public/js/scribe.js`) |
+| Agent | Python agent layer (`strands_agents/`) |
+| NeMo | NeMo pipeline, GPU inference |
+| Infra | Docker, Terraform, deployment |
+| Scripts | Shell scripts (`scripts/`) |
+| CI | GitHub Actions workflows |
 | Docs | Documentation updates |
 | Tests | Test additions/modifications |
 | Deps | Dependency updates |
-| Infra | Infrastructure (Docker compose, etc.) |
 
 ### Multi-Area Commits
 
-When a commit spans multiple areas (e.g., a Rust command + React UI + config schema), use the area containing the **primary logic change** — typically where the new behavior originates. Mention the other affected areas in the body.
+When a commit spans multiple areas (e.g., PHP controller + Python agent + Twig template), use the area containing the **primary logic change** — typically where the new behavior originates. Mention the other affected areas in the body.
 
 ```
-#55 Backend - Add workspace-specific path handling to all commands
+#55 Agent - Add session timeout to NeMo pipeline
 
-Updates read_env_file, write_env_file, export_secrets_bundle, and
-import_secrets_bundle to accept optional path parameters.
+Adds configurable timeout to NemoPipeline so idle sessions release GPU
+resources after the grace window expires.
 
-Frontend: Updated invoke calls in useSecrets hook to pass workspace path.
-Config: Added path field to workspace-config schema.
+Backend: Updated ScribeController to pass timeout from config.
+Infra: Added NEMO_SESSION_TIMEOUT to docker-compose.yml.
 ```
 
 ## Subject Line Examples
@@ -66,11 +61,11 @@ Config: Added path field to workspace-config schema.
 **Good:**
 
 ```
-#12 Forge - Add system check for installed packages
-#45 Secrets - Support workspace-specific env paths
-#23 Scripts - Rename setup scripts for clarity
-#67 Workspaces - Add multi-workspace store with persistence
-#31 Backend - Fix path traversal validation on nested directories
+#12 Backend - Add session timeout to ScribeController
+#45 Agent - Accept session_id from multipart form data
+#23 Infra - Pin NeMo container to CUDA 12.2
+#67 NeMo - Add GPU memory guard to pipeline startup
+#31 Frontend - Fix WebSocket reconnect on session resume
 ```
 
 **Bad:**
@@ -112,16 +107,14 @@ Separate the body from the subject with a **blank line**. Wrap lines at **72 cha
 ### Body Example
 
 ```
-#42 Forge - Add mode-aware cancel behavior
+#42 Agent - Add graceful shutdown to NeMo session cleanup
 
-Cancel now only terminates the WSL instance when running in Reset mode.
-Previously, cancelling any Forge operation would kill the WSL instance,
-which destroyed the user's active development environment during
-UpdateRepos or UpdateStacks operations.
+Session cleanup now waits for in-flight transcription before destroying
+the NeMo pipeline reference. Previously, immediate cleanup during active
+inference caused orphaned GPU threads and memory leaks.
 
-Considered adding a confirmation dialog instead, but opted for
-mode-aware logic since UpdateRepos/UpdateStacks should never need
-instance termination.
+Considered adding a queue drain timeout instead, but opted for
+cooperative shutdown since the pipeline already tracks active futures.
 
 Closes #42
 Refs #38
@@ -165,7 +158,7 @@ the old script names.
 When a commit is co-authored (pair programming, AI-assisted, etc.), add `Co-authored-by` trailers:
 
 ```
-#19 Frontend - Add workspace selector dropdown
+#19 Frontend - Add session history panel to scribe view
 
 Co-authored-by: Jane Doe <jane@example.com>
 Co-authored-by: Claude Opus 4.6 <noreply@anthropic.com>
@@ -177,8 +170,8 @@ During development on a feature branch, work-in-progress and fixup commits are a
 
 | Prefix | Purpose | Before merge |
 |--------|---------|--------------|
-| `WIP: #12 Forge - ...` | Work in progress, not ready for review | Squash or rewrite into a proper commit |
-| `fixup! #12 Forge - ...` | Fixes a previous commit on the branch | Squash into the target commit with `git rebase --autosquash` |
+| `WIP: #12 Backend - ...` | Work in progress, not ready for review | Squash or rewrite into a proper commit |
+| `fixup! #12 Backend - ...` | Fixes a previous commit on the branch | Squash into the target commit with `git rebase --autosquash` |
 
 **Main branch must only contain clean, atomic commits** — no WIP or fixup commits should survive the merge.
 

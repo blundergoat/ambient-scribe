@@ -9,6 +9,7 @@ Validates that:
   - Retry logic works correctly
 """
 
+import httpx
 import pytest
 
 import api.server as api_server
@@ -24,12 +25,15 @@ def clear_state():
     lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
+    app.state.http_client = httpx.AsyncClient(timeout=5.0)
     yield
     sessions._sessions.clear()
     lifecycle.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
 
 

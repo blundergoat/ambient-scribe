@@ -1,0 +1,13 @@
+.env*
+**/secrets/
+**/*.pem
+**/*.key
+**/credentials*
+**/.git/
+vendor/
+node_modules/
+var/
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.nemo

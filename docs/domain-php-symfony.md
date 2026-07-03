@@ -4,7 +4,7 @@ Conventions and patterns for the PHP layer. This service serves the UI, manages 
 
 ## Conventions
 
-- **PHP 8.2+**, Symfony 6.4, PSR-4 namespace `App\`
+- **PHP 8.3+**, Symfony 6.4, PSR-4 namespace `App\`
 - Attribute-based routing (no YAML route definitions for controllers)
 - Strict typing: `declare(strict_types=1)` in every file
 - Services autowired and autoconfigured via `config/services.yaml`
@@ -22,7 +22,7 @@ public function index(): Response
 }
 ```
 
-Session IDs are generated server-side (UUID v4) and passed to the template, which forwards them to the WebSocket and Mercure topic URLs. See `docs/footguns.md` FG-4 for the full coupling chain.
+Session IDs are generated server-side (UUID v4) and passed to the template, which forwards them to the WebSocket and Mercure topic URLs. See `.goat-flow/learning-loop/footguns/config.md` for the full coupling chain.
 
 ## Service Wiring
 

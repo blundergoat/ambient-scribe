@@ -1,6 +1,6 @@
 # strands_agents/ — Local Context
 
-## Footguns (from docs/footguns.md)
+## Footguns (see `.goat-flow/footguns/`)
 
 - ~~**Mercure JWT silent failure:**~~ MITIGATED — `publish_to_mercure()` returns `bool`, logs ERROR, sends `system_error` WebSocket frame. Browser shows amber banner.
 - ~~**Session cleanup race:**~~ MITIGATED — `SessionLifecycle` class with per-session `asyncio.Lock`. `lifecycle.destroy()` is atomic. `assign_roles._session_states` has `threading.Lock`.

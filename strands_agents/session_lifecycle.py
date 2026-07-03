@@ -1,14 +1,15 @@
 """
 Session lifecycle manager — atomic session registration and cleanup.
 
-Solves two problems:
-  1. Race condition: WebSocket disconnect cleanup_session() can delete
-     RoleMappingState while /roles/stream is still reading it.
-  2. Uncoordinated cleanup: active_sessions, role state, and inference
-     queues were cleaned up independently without synchronization.
+Provides a single point of control for session state transitions,
+protected by per-session asyncio locks. Coordinates cleanup of
+active sessions, role state, and inference queues.
 
-This class provides a single point of control for session state transitions,
-protected by per-session asyncio locks.
+Supports a reconnection grace period: when a WebSocket disconnects,
+destruction can be scheduled with a delay via schedule_destroy().
+If the same session_id reconnects within the grace window, the
+pending destroy is cancelled and the existing TranscriptionSession
+is preserved (audio buffer + transcript state intact).
 """
 
 from __future__ import annotations
@@ -35,10 +36,22 @@ class SessionLifecycle:
     def __init__(self) -> None:
         self._locks: dict[str, asyncio.Lock] = {}
         self._active: dict[str, TranscriptionSession] = {}
-        self._sse_consumers: dict[str, int] = {}
+        self._pending_destroys: dict[str, asyncio.Task[None]] = {}
 
     async def register(self, session_id: str, session: TranscriptionSession) -> None:
-        """Register a new active transcription session."""
+        """Register a new active transcription session.
+
+        If a pending destroy is scheduled for this session_id (from a
+        previous disconnect), it is cancelled so the session survives.
+        """
+        # Cancel any pending graceful destroy — the session is being resumed.
+        pending = self._pending_destroys.pop(session_id, None)
+        if pending is not None and not pending.done():
+            pending.cancel()
+            logger.info("session_lifecycle.pending_destroy_cancelled", extra={
+                "session_id": session_id,
+            })
+
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
@@ -57,13 +70,7 @@ class SessionLifecycle:
         session_id: str,
         close_role_inference_fn: CloseRoleInferenceFn | None = None,
     ) -> None:
-        """Atomically tear down all state for a session under its lock.
-
-        Args:
-            session_id: The session to destroy.
-            close_role_inference_fn: Async callable to shut down the inference
-                worker for this session (injected to avoid circular imports).
-        """
+        """Atomically tear down all state for a session under its lock."""
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
@@ -71,51 +78,68 @@ class SessionLifecycle:
             logger.error("session_lifecycle.destroy_lock_timeout", extra={
                 "session_id": session_id,
             })
+            # Best-effort cleanup without the lock
             self._active.pop(session_id, None)
             if close_role_inference_fn is not None:
                 try:
                     await close_role_inference_fn(session_id)
                 except Exception:
-                    logger.exception("session_lifecycle.destroy_close_role_inference_failed", extra={
-                        "session_id": session_id,
-                    })
-            if self._sse_consumers.get(session_id, 0) == 0:
-                cleanup_role_state(session_id)
-                self._locks.pop(session_id, None)
+                    logger.exception("session_lifecycle.destroy_close_role_inference_failed")
+            cleanup_role_state(session_id)
+            self._locks.pop(session_id, None)
             return
         try:
             self._active.pop(session_id, None)
             if close_role_inference_fn is not None:
                 await close_role_inference_fn(session_id)
-            # Only clean role state if no SSE consumers are reading it
-            if self._sse_consumers.get(session_id, 0) == 0:
-                cleanup_role_state(session_id)
+            cleanup_role_state(session_id)
         finally:
             lock.release()
-
-        # Clean up the lock itself if no one else needs it
-        if self._sse_consumers.get(session_id, 0) == 0:
             self._locks.pop(session_id, None)
 
-    def sse_consumer_start(self, session_id: str) -> None:
-        """Increment the SSE consumer count for a session."""
-        self._sse_consumers[session_id] = self._sse_consumers.get(session_id, 0) + 1
+    async def schedule_destroy(
+        self,
+        session_id: str,
+        close_role_inference_fn: CloseRoleInferenceFn | None = None,
+        grace_seconds: float = 30.0,
+    ) -> None:
+        """Schedule session destruction after a grace period.
 
-    def sse_consumer_end(self, session_id: str) -> None:
-        """Decrement the SSE consumer count. Clean up role state if session is gone."""
-        count = self._sse_consumers.get(session_id, 0) - 1
-        if count <= 0:
-            self._sse_consumers.pop(session_id, None)
-            # If the session was already destroyed while SSE was active, clean up now
-            if not self.is_active(session_id):
-                cleanup_role_state(session_id)
-                self._locks.pop(session_id, None)
-        else:
-            self._sse_consumers[session_id] = count
+        If the same session_id reconnects before the timer fires,
+        register() cancels the pending task and the session survives.
 
-    async def get_lock(self, session_id: str) -> asyncio.Lock:
-        """Return the per-session lock for safe state reads."""
-        return self._get_or_create_lock(session_id)
+        If already scheduled (e.g. duplicate disconnect), this is a no-op.
+        """
+        if session_id in self._pending_destroys:
+            return  # already scheduled
+
+        async def _delayed_destroy() -> None:
+            try:
+                await asyncio.sleep(grace_seconds)
+                logger.info("session_lifecycle.grace_period_expired", extra={
+                    "session_id": session_id,
+                    "grace_seconds": grace_seconds,
+                })
+                await self.destroy(session_id, close_role_inference_fn)
+            finally:
+                current_task = asyncio.current_task()
+                if self._pending_destroys.get(session_id) is current_task:
+                    self._pending_destroys.pop(session_id, None)
+
+        task = asyncio.create_task(
+            _delayed_destroy(),
+            name=f"grace-destroy-{session_id}",
+        )
+        self._pending_destroys[session_id] = task
+        logger.info("session_lifecycle.destroy_scheduled", extra={
+            "session_id": session_id,
+            "grace_seconds": grace_seconds,
+        })
+
+    def has_pending_destroy(self, session_id: str) -> bool:
+        """Check whether a graceful destroy is pending for this session."""
+        task = self._pending_destroys.get(session_id)
+        return task is not None and not task.done()
 
     def get(self, session_id: str) -> TranscriptionSession | None:
         """Return the active TranscriptionSession or None."""
@@ -134,7 +158,11 @@ class SessionLifecycle:
         """Clear all state (for testing)."""
         self._active.clear()
         self._locks.clear()
-        self._sse_consumers.clear()
+        # Cancel any pending graceful destroys
+        for task in self._pending_destroys.values():
+            if not task.done():
+                task.cancel()
+        self._pending_destroys.clear()
 
     def _get_or_create_lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:

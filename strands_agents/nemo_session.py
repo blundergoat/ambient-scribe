@@ -38,6 +38,7 @@ import logging
 import subprocess
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 
 from nemo_pipeline import NemoPipeline, Segment
@@ -60,7 +61,7 @@ class AudioBuffer:
             max_duration_seconds: Maximum audio duration to retain (default: 15 minutes).
                                   Safety cap to prevent unbounded memory growth.
         """
-        self._chunks: list[bytes] = []
+        self._chunks: deque[bytes] = deque()
         self._total_bytes: int = 0
         self._max_bytes: int = int(max_duration_seconds * 16000 * 2)  # 16kHz, 16-bit = 32KB/s
 
@@ -75,7 +76,7 @@ class AudioBuffer:
 
         # Safety cap: if buffer exceeds max, trim from the beginning
         while self._total_bytes > self._max_bytes and len(self._chunks) > 1:
-            removed = self._chunks.pop(0)
+            removed = self._chunks.popleft()
             self._total_bytes -= len(removed)
 
     def current_window(self) -> bytes:
@@ -254,13 +255,13 @@ class TranscriptionSession:
         if self.input_format == "pcm":
             if raw_audio[:4] == _WEBM_MAGIC:
                 raise ValueError(
-                    f"Audio format mismatch: configured for PCM but received WebM data. "
-                    f"Set NEMO_STREAM_INPUT_FORMAT=webm or fix the browser audio encoding."
+                    "Audio format mismatch: configured for PCM but received WebM data. "
+                    "Set NEMO_STREAM_INPUT_FORMAT=webm or fix the browser audio encoding."
                 )
             if raw_audio[:4] == _WAV_MAGIC:
                 raise ValueError(
-                    f"Audio format mismatch: configured for raw PCM but received WAV "
-                    f"(container with headers). Send headerless 16kHz mono s16le PCM."
+                    "Audio format mismatch: configured for raw PCM but received WAV "
+                    "(container with headers). Send headerless 16kHz mono s16le PCM."
                 )
         elif self.input_format == "webm":
             if len(raw_audio) >= 4 and raw_audio[:4] != _WEBM_MAGIC:

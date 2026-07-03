@@ -55,16 +55,25 @@ class Segment:
     start: float             # Start time in seconds
     end: float               # End time in seconds
     is_interim: bool = False  # True if this segment may be revised
+    segment_id: str = ""     # Server-assigned unique ID
+    revision: int = 1        # Incremented when segment is updated
+    supersedes: str = ""     # segment_id this replaces (for reconciliation)
 
     def dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
+        d = {
             "speaker_id": self.speaker_id,
             "text": self.text,
             "start": self.start,
             "end": self.end,
             "is_interim": self.is_interim,
         }
+        if self.segment_id:
+            d["segment_id"] = self.segment_id
+            d["revision"] = self.revision
+        if self.supersedes:
+            d["supersedes"] = self.supersedes
+        return d
 
 
 @dataclass
@@ -256,6 +265,11 @@ class NemoPipeline:
         if not parsed_diar:
             return []
 
+        # Filter out hallucinated speakers (< 5% of total frame activity)
+        parsed_diar = self._filter_hallucinated_speakers(parsed_diar)
+        if not parsed_diar:
+            return []
+
         # Get ASR text
         asr_text = ""
         if asr_hyps:
@@ -300,6 +314,81 @@ class NemoPipeline:
                 ))
 
         return segments
+
+    @staticmethod
+    def _filter_hallucinated_speakers(
+        parsed_diar: list[tuple[float, float, str]],
+        min_share: float = 0.05,
+        min_absolute_duration: float = 1.0,
+        min_segment_count: int = 2,
+    ) -> list[tuple[float, float, str]]:
+        """Remove brief one-off speakers with less than ``min_share`` of activity.
+
+        NeMo's Sortformer occasionally hallucinates a brief speaker segment
+        (e.g., <= 1 second in a 100-second recording). These ghost speakers
+        cause downstream role-inference noise. The absolute-duration and segment
+        count floors keep legitimate short speakers from being dropped solely
+        because they have less than 5% of a long recording.
+
+        Args:
+            parsed_diar: List of ``(start, end, speaker_id)`` tuples from
+                :meth:`_parse_diar_strings`.
+            min_share: Minimum fraction of total duration a speaker must
+                occupy to be kept (default 5 %).
+            min_absolute_duration: Always keep speakers above this cumulative
+                duration even if their share is small.
+            min_segment_count: Always keep speakers that appear in at least this
+                many diarization segments.
+
+        Returns:
+            Filtered list with the same tuple structure.
+        """
+        if not parsed_diar:
+            return parsed_diar
+
+        total_duration = sum(end - start for start, end, _ in parsed_diar)
+        if total_duration <= 0:
+            return parsed_diar
+
+        # Accumulate per-speaker duration
+        speaker_durations: dict[str, float] = {}
+        speaker_segment_counts: dict[str, int] = {}
+        for start, end, speaker_id in parsed_diar:
+            speaker_durations[speaker_id] = speaker_durations.get(speaker_id, 0.0) + (end - start)
+            speaker_segment_counts[speaker_id] = speaker_segment_counts.get(speaker_id, 0) + 1
+
+        # Suppress only tiny, one-off speakers below the proportional threshold.
+        suppressed = {
+            spk
+            for spk, dur in speaker_durations.items()
+            if (
+                dur / total_duration < min_share
+                and dur <= min_absolute_duration
+                and speaker_segment_counts[spk] < min_segment_count
+            )
+        }
+
+        if suppressed:
+            for spk in suppressed:
+                logger.warning(
+                    "nemo_pipeline.hallucinated_speaker_suppressed",
+                    extra={
+                        "speaker_id": spk,
+                        "duration": speaker_durations[spk],
+                        "total_duration": total_duration,
+                        "share": speaker_durations[spk] / total_duration,
+                        "segments": speaker_segment_counts[spk],
+                        "min_share": min_share,
+                        "min_absolute_duration": min_absolute_duration,
+                        "min_segment_count": min_segment_count,
+                    },
+                )
+
+        return [
+            (start, end, spk)
+            for start, end, spk in parsed_diar
+            if spk not in suppressed
+        ]
 
     @staticmethod
     def _parse_diar_strings(diar_output: Any) -> list[tuple[float, float, str]]:

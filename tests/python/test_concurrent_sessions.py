@@ -10,6 +10,7 @@ Validates that:
 
 from concurrent.futures import ThreadPoolExecutor
 
+import httpx
 import pytest
 from fastapi import WebSocketDisconnect
 
@@ -29,14 +30,17 @@ def clear_state():
     lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
+    app.state.http_client = httpx.AsyncClient(timeout=5.0)
     yield
     sessions._sessions.clear()
     lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
@@ -48,10 +52,13 @@ class TestConcurrentSessions:
     @pytest.mark.asyncio
     async def test_three_sessions_isolated(self, monkeypatch):
         """Three concurrent sessions don't cross-contaminate segments."""
+        sid_a = "00000000-0000-4000-8000-00000000000a"
+        sid_b = "00000000-0000-4000-8000-00000000000b"
+        sid_c = "00000000-0000-4000-8000-00000000000c"
         segment_texts = {
-            "session-a": "What brings you in today?",
-            "session-b": "I have a headache.",
-            "session-c": "Take two aspirin.",
+            sid_a: "What brings you in today?",
+            sid_b: "I have a headache.",
+            sid_c: "Take two aspirin.",
         }
 
         class ImmediateLoop:
@@ -74,6 +81,7 @@ class TestConcurrentSessions:
         class FakeWebSocket:
             def __init__(self):
                 self.headers = {}
+                self.query_params = {}
                 self.accepted = False
                 self._sent_chunk = False
 
@@ -86,18 +94,19 @@ class TestConcurrentSessions:
                 self._sent_chunk = True
                 return b"\x00" * 3200
 
-        async def fake_publish(topic, data):
+        async def fake_publish(topic, data, event_id=None):
             return True
 
         async def fake_enqueue(session_id, segments):
             pass
 
-        monkeypatch.setattr("api.server.asyncio.get_event_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr("api.server.asyncio.get_running_loop", lambda: ImmediateLoop())
         monkeypatch.setattr("api.server.publish_to_mercure", fake_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
+        monkeypatch.setattr("api.server.SESSION_RECONNECT_GRACE_SECONDS", 0.0)
 
         # Run all three sessions sequentially (they each process one chunk then disconnect)
-        for sid in ["session-a", "session-b", "session-c"]:
+        for sid in [sid_a, sid_b, sid_c]:
             app.state.nemo_pipeline = make_pipeline(sid)
             ws = FakeWebSocket()
             await transcribe_stream(ws, sid)

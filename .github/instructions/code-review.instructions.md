@@ -8,15 +8,15 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 
 ## Project Context
 
-- PHP >=8.2, Symfony 6.4, `declare(strict_types=1)` everywhere, PSR-12 formatting
+- PHP >=8.3, Symfony 6.4, `declare(strict_types=1)` everywhere, PSR-12 formatting
 - Namespace: `App\` (src/), `App\Tests\` (tests/)
 - PHPStan level 10 - type errors are blockers
 - PHP-CS-Fixer enforces: short arrays, single quotes, ordered imports, trailing commas
 - Python 3.12+, NeMo multitalker Parakeet for diarization + ASR (GPU-accelerated)
-- Strands agent for DOCTOR/PATIENT role inference (AWS Bedrock)
+- Strands agent for six-mode role inference (AWS Bedrock or CPU Ollama)
 - WebSocket audio pipeline: browser captures audio and sends it to the Python backend
 - Real-time transcript delivery via Mercure (JWT-authenticated SSE)
-- `blundergoat/strands-client` is a local path dependency at `../strands-php-client`
+- `blundergoat/strands-php-client` is a local path dependency at `../strands-php-client`
 
 ## What to Flag
 
@@ -39,9 +39,9 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 ### Architecture
 - `ScribeController` is the single entry point; orchestrators handle sequencing -- don't add transcription logic to the controller
 - The single `StrandsClient` is injected via `#[Autowire(service: 'strands.client.scribe')]` from `config/packages/strands.yaml` -- don't hardcode service references
-- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `transcription_agent.py` for DOCTOR/PATIENT role inference via Strands/Bedrock
+- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `strands_agents/agents/transcription_agent.py` for mode-specific role inference via Strands/Bedrock or CPU Ollama
 - Session state lives in `nemo_session.py` on the Python side -- PHP is stateless between requests
-- Mercure publishes transcript segments to the browser in real time -- don't mix sync and streaming patterns
+- Mercure publishes raw segments, role updates, and summaries to the browser in real time -- don't mix sync and streaming patterns
 
 ### Style and Convention
 - 4-space indentation, single quotes, short array syntax `[]`
@@ -61,7 +61,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 ## What NOT to Flag
 
 - Empty `MERCURE_*` variables in `start-dev.sh` -- this is intentional (sync-only mode, no Mercure)
-- Python agent using in-memory session storage -- this is by design for local dev; DynamoDB is used in production
+- Python agent using in-memory session storage -- this is valid for local dev; production runtime currently supports SQLite persistence, not DynamoDB
 - `docker-compose.override.yml` not existing -- it's optional and gitignored
 - Large NeMo model files not in the repository -- they are downloaded at container build time
 
@@ -75,7 +75,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - [ ] Audio frame handling in the WebSocket pipeline is robust to dropped/reordered frames
 
 ### Transcription Agent Changes
-- [ ] DOCTOR/PATIENT role inference logic is correct
+- [ ] Mode-specific role inference logic is correct for all supported modes
 - [ ] Strands agent prompt changes don't break structured output parsing
 - [ ] Bedrock model configuration is consistent across environments
 - [ ] Health endpoint still works (`GET /health`)

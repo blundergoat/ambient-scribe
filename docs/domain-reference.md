@@ -5,7 +5,7 @@ Migrated from CLAUDE.md and the old root AGENTS content to separate domain knowl
 
 ## Project Overview
 
-Ambient Scribe is a real-time ambient medical scribe that captures doctor-patient consultations via microphone, transcribes speech with speaker diarization (NeMo multitalker Parakeet), and attributes speakers as DOCTOR or PATIENT using a Strands AI agent. Built with Python/FastAPI (NeMo GPU inference + WebSocket), PHP/Symfony (UI + session management), and Mercure (real-time SSE streaming).
+Ambient Scribe is a real-time multi-mode transcription app that captures microphone audio, transcribes speech with speaker diarization (NeMo multitalker Parakeet), and attributes speakers using a Strands AI agent. It supports Medical, Meeting, Interview, TV/Media, Lecture, and General modes. Built with Python/FastAPI (NeMo GPU inference + WebSocket), PHP/Symfony (UI + session management), and Mercure (real-time SSE streaming).
 
 ## Project Structure
 
@@ -31,22 +31,23 @@ Browser (Twig UI :48082)
     -> Publish raw segments to Mercure (scribe/session/{id}/raw)
   -> Strands agent (async, sequential per-session queue)
     -> Publish role updates to Mercure (scribe/session/{id}/roles)
-  <- Browser receives segments + role updates via Mercure SSE
+    -> Publish summaries to Mercure (scribe/session/{id}/summary)
+  <- Browser receives segments, role updates, and summaries via Mercure SSE
 ```
 
 ### Key Design Decisions
 
 - PHP does not touch the live audio hot path. Symfony serves the page and history/snapshot APIs only.
 - NeMo owns the GPU exclusively. The Strands role agent must stay on Bedrock or CPU-only Ollama.
-- Two Mercure topics per session keep hot-path transcription independent from slower role inference.
+- Three Mercure topics per session keep hot-path transcription, slower role inference, and summary rendering independent.
 - NeMo inference runs in `ThreadPoolExecutor(max_workers=2)` to avoid blocking the async event loop.
 - Role inference is sequenced per session to avoid mapping races.
 
 ### Key Components
 
 - PHP layer (`src/`): PSR-4 namespace `App\`, Symfony 6.4. `ScribeController` serves the UI plus history/role routes.
-- Python agent (`strands_agents/`): FastAPI with WebSocket support. `nemo_pipeline.py` wraps NeMo models (singleton, shared). `nemo_session.py` manages per-WebSocket state. `transcription_agent.py` handles role inference via Strands SDK. `api/server.py` is the HTTP + WebSocket layer.
-- Frontend (`templates/scribe/index.html.twig`): single Twig template with inline JS for PCM audio capture, WebSocket streaming, and Mercure SSE subscription.
+- Python agent (`strands_agents/`): FastAPI with WebSocket support. `nemo_pipeline.py` wraps NeMo models (singleton, shared). `nemo_session.py` manages per-WebSocket state. `agents/transcription_agent.py` handles role inference via Strands SDK. `api/server.py` is the HTTP + WebSocket layer.
+- Frontend (`templates/scribe/index.html.twig`, `public/js/scribe.js`): Twig injects session config; browser JS handles PCM audio capture, WebSocket streaming, and Mercure SSE subscriptions.
 - Infrastructure (`infra/terraform/`): ECS/Fargate task with app, agent, and Mercure sidecars plus DynamoDB scaffolding.
 
 ## Quality Standards
@@ -71,9 +72,9 @@ Copy `.env.example` to `.env`. Key variables:
 - Local host defaults use uncommon dev ports: app `48082`, agent `48101`, Mercure `48137`
 - For local stack bring-up, prefer `./scripts/start-dev.sh` and the health-check scripts over raw `docker compose`
 
-## Milestone Status
+## Plan Status
 
-See `milestones/` for detailed task breakdowns:
+See `.goat-flow/plans/` for detailed task breakdowns:
 - M0: shared infrastructure
 - M1: NeMo validation + scaffold (complete)
 - M2: audio pipeline end-to-end (in progress; code exists, final live verification pending)

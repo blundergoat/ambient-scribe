@@ -28,10 +28,13 @@ The tool encapsulates state management so the agent focuses on reasoning.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+
+from strands import tool
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +57,16 @@ class RoleMappingState:
     current_mapping: dict[str, str] = field(default_factory=dict)
     mapping_history: list[dict[str, str]] = field(default_factory=list)
     confidence_history: list[float] = field(default_factory=list)
+    confirmed_overrides: dict[str, str] = field(default_factory=dict)
+    last_flip_detected: bool = False
 
     @property
     def running_confidence(self) -> float:
-        """Running average confidence across all invocations."""
+        """EWMA confidence over the last 5 invocations."""
         if not self.confidence_history:
             return 0.0
-        return sum(self.confidence_history) / len(self.confidence_history)
+        recent = self.confidence_history[-5:]
+        return sum(recent) / len(recent)
 
     def update(self, new_mapping: dict[str, str], confidence: float) -> bool:
         """Update the mapping and detect flips.
@@ -73,6 +79,7 @@ class RoleMappingState:
             True if a label flip was detected, False otherwise.
         """
         flip_detected = self._detect_flip(new_mapping)
+        self.last_flip_detected = flip_detected
 
         self.mapping_history.append(new_mapping)
         self.confidence_history.append(confidence)
@@ -195,3 +202,43 @@ def _attribute_segments(
         })
 
     return attributed_segments
+
+
+@tool
+def assign_roles(
+    session_id: str,
+    mapping: str,
+    segments: str,
+    confidence: float,
+    reasoning: str = "",
+) -> dict:
+    """Persist a speaker-to-role mapping and return attributed segments.
+
+    Call this tool after analysing the transcript to commit your role decisions.
+    The tool handles state persistence, flip detection, and segment attribution.
+
+    Args:
+        session_id: The session identifier.
+        mapping: JSON string of speaker-to-role mapping, e.g. '{"spk_0": "DOCTOR", "spk_1": "PATIENT"}'.
+        segments: JSON string of transcript segments to attribute, each with speaker_id, text, start, end.
+        confidence: Your confidence in this mapping (0.0 to 1.0).
+        reasoning: Brief explanation of your role assignment logic.
+    """
+    parsed_mapping = json.loads(mapping) if isinstance(mapping, str) else mapping
+    parsed_segments = json.loads(segments) if isinstance(segments, str) else segments
+
+    result = apply_role_mapping_result(
+        session_id=session_id,
+        segments=parsed_segments,
+        mapping=parsed_mapping,
+        confidence=confidence,
+        reasoning=reasoning,
+    )
+
+    return {
+        "mapping": result.mapping,
+        "attributed_segments": result.attributed_segments,
+        "confidence": result.confidence,
+        "flip_detected": result.flip_detected,
+        "reasoning": result.reasoning,
+    }

@@ -9,6 +9,7 @@ Validates that concurrent destroy + SSE read doesn't cause:
 
 import asyncio
 
+import httpx
 import pytest
 
 import api.server as api_server
@@ -26,43 +27,20 @@ def clear_state():
     lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
+    app.state.http_client = httpx.AsyncClient(timeout=5.0)
     yield
     sessions._sessions.clear()
     lifecycle.clear()
+    api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
 
 
 class TestCleanupRace:
     """Tests for concurrent cleanup + state reads."""
-
-    @pytest.mark.asyncio
-    async def test_concurrent_destroy_and_sse_read(self):
-        """SSE consumer active during destroy → no exception, state preserved."""
-        pipeline = NemoPipeline()
-
-        for i in range(50):
-            sid = f"race-{i}"
-            session = TranscriptionSession(sid, pipeline)
-            await lifecycle.register(sid, session)
-            get_or_create_state(sid).update({"spk_0": "DOCTOR"}, 0.9)
-
-            # Simulate SSE starting before destroy
-            lifecycle.sse_consumer_start(sid)
-
-            # Destroy while SSE is active
-            await lifecycle.destroy(sid)
-
-            # State should survive for SSE reader
-            assert sid in _session_states
-            state = get_or_create_state(sid)
-            assert state.current_mapping == {"spk_0": "DOCTOR"}
-
-            # SSE ends → cleanup happens
-            lifecycle.sse_consumer_end(sid)
-            assert sid not in _session_states
 
     @pytest.mark.asyncio
     async def test_concurrent_destroy_without_sse(self):
@@ -96,3 +74,20 @@ class TestCleanupRace:
         await asyncio.gather(*tasks)
 
         assert lifecycle.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_schedule_destroy_waits_for_grace_period(self):
+        """Scheduled destroy keeps the session alive until the grace expires."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("grace-test", pipeline)
+
+        await lifecycle.register("grace-test", session)
+        await lifecycle.schedule_destroy("grace-test", grace_seconds=0.05)
+        await asyncio.sleep(0)
+
+        assert lifecycle.is_active("grace-test")
+        assert lifecycle.has_pending_destroy("grace-test")
+
+        await asyncio.sleep(0.08)
+
+        assert not lifecycle.is_active("grace-test")

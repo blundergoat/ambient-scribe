@@ -1,43 +1,29 @@
-# Guidelines Ownership Split
+# Guidelines Ownership Split — Ambient Scribe
 
-Audit date: 2026-03-15
+This document records the migration of domain knowledge and agent instructions to separate files.
 
-## Scope
+## Migration Summary (2026-03-21)
 
-- Runtime workflow now lives in `AGENTS.md`.
-- Shared engineering practice stays in `.github/instructions/ai-agent-guidelines.instructions.md`.
-- Project structure and domain detail live in `docs/domain-reference.md` and `docs/architecture.md`.
+- **Source:** `GEMINI.md` (original)
+- **Destination 1:** `GEMINI.md` (Workflow instructions for Gemini CLI)
+- **Destination 2:** `docs/domain-reference.md` (Domain knowledge and technical reference)
+- **Destination 3:** `docs/architecture.md` (High-level system design)
 
-## Existing AGENTS Migration
+## Ownership Split
 
-Moved out of the old root `AGENTS.md`:
-- Project structure/module map -> `docs/domain-reference.md`
-- Architecture/runtime notes -> `docs/architecture.md` and `docs/domain-reference.md`
+### Gemini CLI (`GEMINI.md`)
+- **Owns:** Workflow loop (READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG), autonomy tiers, definition of done, and the router table.
+- **Rules:** No domain knowledge here. If you need to know *how* something works, consult the Router.
 
-Kept in the new root `AGENTS.md`:
-- Execution loop
-- Autonomy tiers
-- Definition of Done
-- Router table
-- Essential commands
-- Repo-specific safety rules such as no direct `.env` edits and no raw `docker compose` by default
+### Domain Reference (`docs/domain-reference.md`)
+- **Owns:** Core technologies, component descriptions, data flow details, environment variables, and quality standards.
+- **Rules:** This is a reference only. It does not command the agent's behavior.
 
-## Guidelines Audit
+### Architecture (`docs/architecture.md`)
+- **Owns:** High-level system design, cross-layer interactions, and long-term architectural decisions.
 
-Audited file: `.github/instructions/ai-agent-guidelines.instructions.md`
+### Shared Guidelines (`.github/instructions/ai-agent-guidelines.instructions.md`)
+- **Owns:** Engineering standards and shared practices across both agents (Gemini and Codex).
 
-Sections kept in guidelines because they are cross-project engineering practice:
-- Core Principles
-- Project-Specific Constraints
-- Engineering Practices
-- Testing Conventions
-- Git Hygiene
-- Commit Messages
-
-Sections removed or rewritten before the ownership split:
-1. Intro sentence pointing workflow ownership at `CLAUDE.md`
-   - Before: "Workflow rules (execution loop, DoD, autonomy tiers, stop-the-line) live in CLAUDE.md."
-   - After: "Runtime workflow rules ... live in AGENTS.md. This file owns shared engineering practice only."
-   - Why: workflow ownership moved to Codex-native `AGENTS.md`, and the guidance file should not own runtime behaviour.
-
-No broader section removal was needed because the existing guidelines file was already mostly engineering-only.
+## Rationale
+Separating workflow from domain knowledge reduces context noise and ensures that the agent's behavioral rules remain stable even as the project's technical details evolve.

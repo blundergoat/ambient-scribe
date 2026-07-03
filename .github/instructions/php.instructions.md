@@ -6,7 +6,7 @@ applyTo: '**/*.php'
 
 ## Language & Framework
 
-- PHP >=8.2, Symfony 6.4
+- PHP >=8.3, Symfony 6.4
 - Every file starts with `declare(strict_types=1);`
 - PSR-4 autoloading: `App\` -> `src/`, `App\Tests\` -> `tests/`
 

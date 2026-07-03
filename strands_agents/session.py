@@ -25,8 +25,9 @@ BOUNDS & EVICTION
 LIMITATIONS (this is a PoC)
 =============================================================================
 
-  - IN-MEMORY ONLY: All history is lost when the container restarts.
-    For production, use DynamoDB or a database.
+  - IN-MEMORY BACKEND: All history is lost when this backend is active and the
+    container restarts. Use a persistent backend such as SESSION_STORAGE=sqlite
+    when transcript history must survive process restarts.
 """
 
 from __future__ import annotations
@@ -38,6 +39,25 @@ from collections import OrderedDict
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "100"))
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "7200"))
 MAX_SEGMENTS_PER_SESSION = 5000  # ~4 hours at 5s chunks
+_TRANSCRIPT_ELLIPSIS = "\n...\n"
+
+
+def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
+    """Return a transcript preview no longer than max_chars."""
+    if max_chars <= 0:
+        return ""
+    if len(full_text) <= max_chars:
+        return full_text
+    if max_chars <= len(_TRANSCRIPT_ELLIPSIS):
+        return full_text[:max_chars]
+
+    if max_chars <= 500 + len(_TRANSCRIPT_ELLIPSIS):
+        first_size = (max_chars - len(_TRANSCRIPT_ELLIPSIS)) // 2
+    else:
+        first_size = 500
+    last_size = max_chars - len(_TRANSCRIPT_ELLIPSIS) - first_size
+
+    return full_text[:first_size] + _TRANSCRIPT_ELLIPSIS + full_text[-last_size:]
 
 
 class _SessionData:
@@ -132,12 +152,15 @@ class SessionStore:
         self._sessions.move_to_end(session_id)
         return list(session.segments)
 
-    def get_transcript_text(self, session_id: str, max_chars: int = 2000) -> str:
+    def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str:
         """Return the accumulated transcript as plain text (for role inference context).
+
+        Returns opening and recent context separated by an ellipsis marker while
+        respecting max_chars.
 
         Args:
             session_id: The session UUID
-            max_chars: Maximum characters to return (last N chars)
+            max_chars: Maximum characters to return (first 500 + last N)
 
         Returns:
             Plain text transcript with speaker labels.
@@ -150,9 +173,7 @@ class SessionStore:
             lines.append(f"[{speaker}] {text}")
 
         full_text = "\n".join(lines)
-        if len(full_text) > max_chars:
-            return full_text[-max_chars:]
-        return full_text
+        return _truncate_transcript_text(full_text, max_chars)
 
     def cleanup(self, session_id: str) -> None:
         """Remove a session's data.

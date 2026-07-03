@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ambient Scribe — Real-time Transcription</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/tailwind.js"></script>
     <style>
         :root {
             color-scheme: light;
@@ -96,6 +96,15 @@
             background: var(--color-unknown-bg);
         }
 
+        .segment--relabeled {
+            animation: segment-relabel 0.6s ease-out;
+        }
+        @keyframes segment-relabel {
+            0% { opacity: 0.6; transform: translateX(-2px); }
+            50% { opacity: 1; }
+            100% { opacity: 1; transform: translateX(0); }
+        }
+
         .segment__avatar {
             width: 2rem;
             height: 2rem;
@@ -143,17 +152,115 @@
         .segment--SPEAKER_B .segment__speaker { color: var(--color-speaker-b); }
         .segment--UNKNOWN .segment__speaker { color: var(--color-unknown); }
 
+        .segment__speaker[style*="cursor: pointer"]:hover {
+            text-decoration: underline;
+            text-decoration-style: dotted;
+        }
+
+        .segment__override-icon {
+            display: inline-block;
+            font-size: 0.625rem;
+            margin-left: 0.25rem;
+            vertical-align: super;
+            opacity: 0.7;
+        }
+
         .segment__time {
             font-size: 0.6875rem;
             color: var(--text-subtle);
             font-variant-numeric: tabular-nums;
         }
 
-        .segment__text {
+        .segment__texts {
             display: block;
             color: var(--text-strong);
             line-height: 1.6;
             font-size: 0.9375rem;
+        }
+        .segment__text {
+            display: inline;
+        }
+        .segment__text + .segment__text::before {
+            content: ' ';
+        }
+
+        /* ---- Summary Panel ---- */
+        .summary-panel {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface-bg);
+            margin-top: 0.75rem;
+            overflow: hidden;
+        }
+        .summary-panel__toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--text-strong);
+        }
+        .summary-panel__toggle:hover { background: var(--surface-hover); }
+        .summary-panel__chevron {
+            transition: transform 0.2s;
+            width: 16px; height: 16px;
+        }
+        .summary-panel--open .summary-panel__chevron { transform: rotate(180deg); }
+        .summary-panel__body {
+            padding: 0 1rem 1rem;
+            display: none;
+        }
+        .summary-panel--open .summary-panel__body { display: block; }
+        .summary-panel__loading {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            color: var(--text-subtle);
+            font-size: 0.875rem;
+        }
+        .summary-section { margin-bottom: 1rem; }
+        .summary-section:last-child { margin-bottom: 0; }
+        .summary-section__heading {
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--text-subtle);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.375rem;
+        }
+        .summary-section__content {
+            font-size: 0.9375rem;
+            line-height: 1.6;
+            color: var(--text-strong);
+        }
+        .summary-key-points {
+            list-style: disc;
+            padding-left: 1.25rem;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: var(--text-strong);
+        }
+
+        /* ---- Replay Progress ---- */
+        .replay-progress {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+        .replay-progress__fill {
+            height: 100%;
+            background: var(--color-speaker-a);
+            transition: width 0.5s linear;
+            border-radius: 2px;
         }
 
         /* ---- Recording Pulse ---- */
@@ -480,7 +587,7 @@
             background: var(--surface-hover);
             color: var(--text-strong);
         }
-        .dev-panel__btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .dev-panel__btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .dev-panel__btn--primary {
             background: var(--accent);
             color: #fff;
@@ -522,11 +629,11 @@
     {% if dev %}
     <aside id="scenarioPanel" class="scenario-panel">
         <div class="scenario-panel__header">
-            <div class="scenario-panel__title">Scenarios</div>
+            <div class="scenario-panel__title">Demo Scenarios</div>
             <div class="scenario-panel__controls">
                 <button onclick="scenarioRunner.runAll()" class="dev-panel__btn dev-panel__btn--primary" id="scenarioRunAllBtn">Run All</button>
                 <button onclick="scenarioRunner.runRandom()" class="dev-panel__btn">Random</button>
-                <button onclick="scenarioRunner.runFailed()" class="dev-panel__btn" id="scenarioRunFailedBtn" disabled>Failed</button>
+                <button onclick="scenarioRunner.runFailed()" class="dev-panel__btn" id="scenarioRunFailedBtn" disabled title="No failed scenarios to re-run">Failed</button>
                 <button onclick="scenarioRunner.stop()" class="dev-panel__btn dev-panel__btn--danger" id="scenarioStopBtn" disabled>Stop</button>
             </div>
         </div>
@@ -584,26 +691,36 @@
 
         {# Controls #}
         <div class="panel p-3 mb-4 flex items-center gap-3 flex-wrap">
-            <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording">
+            <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording (Space)" title="Start recording (Space)">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5"/></svg>
                 <span id="startBtnLabel">Start Recording</span>
+                <span class="text-xs opacity-70">(Space)</span>
             </button>
-            <button id="stopBtn" onclick="stopRecording()" class="btn btn--danger hidden" aria-label="Stop recording">
+            <button id="stopBtn" onclick="stopRecording()" class="btn btn--danger hidden" aria-label="Stop recording (Space or Escape)" title="Stop recording (Space / Esc)">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>
                 Stop
+                <span class="text-xs opacity-70">(Space)</span>
             </button>
             <button id="reconnectBtn" onclick="reconnect()" class="btn btn--ghost hidden" style="border-color:#f59e0b; color:#f59e0b;" aria-label="Reconnect">Reconnect</button>
-            <button id="downloadBtn" onclick="downloadTranscript()" class="btn btn--ghost hidden" aria-label="Download transcript">
+            <button id="downloadBtn" onclick="downloadTranscript()" class="btn btn--ghost hidden" aria-label="Download transcript (D)" title="Download transcript (D)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                 Download
+                <span class="text-xs opacity-70">(D)</span>
             </button>
             <button id="resetBtn" onclick="resetSession()" class="btn btn--ghost hidden" aria-label="New session">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
                 New Session
             </button>
+            <span class="mx-1 text-xs muted-text">|</span>
+            <button id="demoBtn" onclick="document.getElementById('demoFileInput').click()" class="btn btn--ghost" aria-label="Demo: replay a WAV file">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Demo
+            </button>
+            <input id="demoFileInput" type="file" accept=".wav,audio/wav" style="display:none" onchange="startReplay(this.files[0])">
 
             <div class="flex items-center gap-3 ml-auto">
                 <span id="status" class="text-sm muted-text" aria-live="polite">Ready</span>
+                <span id="audioLevel" class="hidden ml-2 text-xs" aria-live="polite"></span>
                 <span id="confidenceBadge" class="confidence-badge text-xs px-2 py-0.5 rounded-full hidden" aria-label="Speaker identification confidence"></span>
                 <span id="timer" class="text-sm font-mono subtle-text hidden" aria-label="Recording timer">00:00</span>
             </div>
@@ -611,6 +728,12 @@
 
         {# System Banner #}
         <div id="systemBanner" class="hidden mb-4 px-4 py-3 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium border border-amber-300"></div>
+        <div id="toastContainer" style="position:fixed; bottom:1.5rem; right:1.5rem; z-index:50;"></div>
+
+        {# Replay Progress #}
+        <div id="replayProgress" class="replay-progress hidden">
+            <div id="replayProgressFill" class="replay-progress__fill" style="width:0%"></div>
+        </div>
 
         {# Transcript #}
         <div id="transcript" role="log" aria-live="polite" class="panel p-4 overflow-y-auto" style="min-height:400px; max-height:calc(100vh - 220px);">
@@ -619,6 +742,21 @@
                 <span class="subtle-text block text-sm" id="emptyStateText">Click "Start Recording" to begin transcription.</span>
                 <span class="subtle-text block text-xs mt-1">Ensure microphone access is allowed.</span>
             </p>
+        </div>
+
+        {# Summary Panel #}
+        <div id="summaryPanel" class="summary-panel hidden">
+            <button class="summary-panel__toggle" onclick="toggleSummary()" aria-expanded="false" aria-controls="summaryBody">
+                <span id="summaryTitle">Session Summary</span>
+                <svg class="summary-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div id="summaryBody" class="summary-panel__body">
+                <div id="summaryLoading" class="summary-panel__loading hidden">
+                    <span class="recording-dot recording-pulse"></span>
+                    Generating summary...
+                </div>
+                <div id="summaryContent"></div>
+            </div>
         </div>
 
         {# Segment Count #}
@@ -633,7 +771,7 @@
     {% if dev %}
     <aside id="devPanel" class="dev-panel">
         <div class="dev-panel__header">
-            <span class="dev-panel__title">Inspector</span>
+            <span class="dev-panel__title">Dev Panel</span>
         </div>
         <div class="dev-panel__tabs">
             <button class="dev-panel__tab dev-panel__tab--active" data-tab="segments" onclick="devPanel.switchTab('segments')">Segments</button>
@@ -684,1197 +822,22 @@
     </div>{# /appLayout #}
 
     <script>
-    // =========================================================================
-    // Configuration (injected by Symfony/Twig)
-    // =========================================================================
     const CONFIG = {
         sessionId: '{{ session_id }}',
         wsUrl: '{{ ws_url }}',
         mercureUrl: '{{ mercure_url }}',
         topicRaw: '{{ mercure_topic_raw }}',
         topicRoles: '{{ mercure_topic_roles }}',
+        topicSummary: 'scribe/session/{{ session_id }}/summary',
         enableRoleUpdates: {{ enable_role_updates ? 'true' : 'false' }},
     };
-    const THEME_STORAGE_KEY = 'ambient-scribe-theme';
-
-    // =========================================================================
-    // Modes
-    // =========================================================================
-    const MODES = {
-        medical:   { name: 'Medical',   icon: '\u{1F3E5}', subtitle: 'Consultation transcription with speaker identification', roleLabels: { DOCTOR: 'Doctor', PATIENT: 'Patient' }, startLabel: 'Start Consultation', avatarLabels: { DOCTOR: 'Dr', PATIENT: 'Pt' } },
-        meeting:   { name: 'Meeting',   icon: '\u{1F4CB}', subtitle: 'Meeting transcription with participant identification', roleLabels: { DOCTOR: 'Organiser', PATIENT: 'Participant' }, startLabel: 'Start Meeting', avatarLabels: { DOCTOR: 'Org', PATIENT: 'Att' } },
-        interview: { name: 'Interview', icon: '\u{1F3A4}', subtitle: 'Interview transcription with role identification', roleLabels: { DOCTOR: 'Interviewer', PATIENT: 'Candidate' }, startLabel: 'Start Interview', avatarLabels: { DOCTOR: 'Int', PATIENT: 'Can' } },
-        tv:        { name: 'TV / Media',icon: '\u{1F4FA}', subtitle: 'Broadcast transcription with speaker identification', roleLabels: { DOCTOR: 'Host', PATIENT: 'Guest' }, startLabel: 'Start Recording', avatarLabels: { DOCTOR: 'Ho', PATIENT: 'Gu' } },
-        lecture:   { name: 'Lecture',   icon: '\u{1F393}', subtitle: 'Lecture transcription with speaker identification', roleLabels: { DOCTOR: 'Lecturer', PATIENT: 'Student' }, startLabel: 'Start Lecture', avatarLabels: { DOCTOR: 'Lc', PATIENT: 'St' } },
-        general:   { name: 'General',   icon: '\u{1F399}', subtitle: 'Real-time audio transcription with speaker identification', roleLabels: { DOCTOR: 'Speaker A', PATIENT: 'Speaker B' }, startLabel: 'Start Recording', avatarLabels: { DOCTOR: 'A', PATIENT: 'B' } },
-    };
-
-    let currentMode = localStorage.getItem('ambient-scribe-mode') || 'medical';
-
-    function getMode() { return MODES[currentMode] || MODES.medical; }
-
-    function getRoleLabel(backendRole) {
-        const mode = getMode();
-        return mode.roleLabels[backendRole] || backendRole;
-    }
-
-    function getAvatarLabel(backendRole) {
-        const mode = getMode();
-        return mode.avatarLabels[backendRole] || (backendRole === 'UNKNOWN' ? '?' : backendRole.charAt(0));
-    }
-
-    function setMode(modeKey) {
-        currentMode = modeKey;
-        localStorage.setItem('ambient-scribe-mode', modeKey);
-        applyMode();
-        closeModeDropdown();
-    }
-
-    function applyMode() {
-        const mode = getMode();
-        document.getElementById('modeIcon').textContent = mode.icon;
-        document.getElementById('modeLabel').textContent = mode.name;
-        document.getElementById('appSubtitle').textContent = mode.subtitle;
-        document.getElementById('startBtnLabel').textContent = mode.startLabel;
-        document.getElementById('emptyStateText').textContent = `Click "${mode.startLabel}" to begin transcription.`;
-
-        // Rebuild dropdown
-        const dropdown = document.getElementById('modeDropdown');
-        if (dropdown) {
-            dropdown.innerHTML = Object.entries(MODES).map(([key, m]) =>
-                `<button class="mode-selector__option ${key === currentMode ? 'mode-selector__option--active' : ''}" onclick="setMode('${key}')">` +
-                `<span class="mode-selector__icon">${m.icon}</span>${m.name}</button>`
-            ).join('');
-        }
-
-        // Re-label existing segments
-        relabelSegments();
-    }
-
-    function toggleModeDropdown() {
-        const d = document.getElementById('modeDropdown');
-        d.style.display = d.style.display === 'none' ? '' : 'none';
-    }
-
-    function closeModeDropdown() {
-        const d = document.getElementById('modeDropdown');
-        if (d) d.style.display = 'none';
-    }
-
-    // Close dropdown on outside click
-    document.addEventListener('click', (e) => {
-        const sel = document.getElementById('modeSelector');
-        if (sel && !sel.contains(e.target)) closeModeDropdown();
-    });
-
-    // =========================================================================
-    // Theme
-    // =========================================================================
-    function getCurrentTheme() {
-        return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-    }
-
-    function applyTheme(theme) {
-        const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
-        document.documentElement.dataset.theme = resolvedTheme;
-
-        const toggle = document.getElementById('themeToggle');
-        const iconLight = document.getElementById('themeIconLight');
-        const iconDark = document.getElementById('themeIconDark');
-
-        if (toggle) toggle.setAttribute('aria-pressed', resolvedTheme === 'dark' ? 'true' : 'false');
-        if (iconLight) iconLight.style.display = resolvedTheme === 'dark' ? 'none' : '';
-        if (iconDark) iconDark.style.display = resolvedTheme === 'dark' ? '' : 'none';
-    }
-
-    function toggleTheme() {
-        const nextTheme = getCurrentTheme() === 'dark' ? 'light' : 'dark';
-        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-        applyTheme(nextTheme);
-    }
-
-    applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || getCurrentTheme());
-    applyMode();
-
-    // =========================================================================
-    // StreamOrchestrator — manages EventSource connections to Mercure
-    // =========================================================================
-    class StreamOrchestrator {
-        constructor(mercureUrl) {
-            this._mercureUrl = mercureUrl;
-            this._streams = new Map();
-            this._active = false;
-            window.addEventListener('beforeunload', () => this.disconnectAll());
-        }
-
-        subscribe(topic, handler) {
-            if (this._streams.has(topic)) return;
-            const state = { source: null, handler, retries: 0, backoffMs: 1000, timer: null };
-            this._streams.set(topic, state);
-            this._active = true;
-            this._connect(topic, state);
-        }
-
-        unsubscribe(topic) {
-            const state = this._streams.get(topic);
-            if (!state) return;
-            clearTimeout(state.timer);
-            state.source?.close();
-            this._streams.delete(topic);
-        }
-
-        disconnectAll() {
-            this._active = false;
-            for (const [, state] of this._streams) {
-                clearTimeout(state.timer);
-                state.source?.close();
-            }
-            this._streams.clear();
-        }
-
-        get isConnected() {
-            for (const state of this._streams.values()) {
-                if (state.source?.readyState === EventSource.OPEN) return true;
-            }
-            return false;
-        }
-
-        get totalRetries() {
-            let total = 0;
-            for (const state of this._streams.values()) total += state.retries;
-            return total;
-        }
-
-        _connect(topic, state) {
-            if (!this._active || !this._mercureUrl) return;
-            const url = new URL(this._mercureUrl);
-            url.searchParams.append('topic', topic);
-            const source = new EventSource(url);
-            state.source = source;
-
-            source.onmessage = (event) => {
-                state.backoffMs = 1000;
-                state.retries = 0;
-                try { state.handler(JSON.parse(event.data)); }
-                catch (err) { console.error(`StreamOrchestrator: parse error on ${topic}`, err); }
-            };
-
-            source.onerror = () => {
-                source.close();
-                if (!this._active) return;
-                state.retries++;
-                state.timer = setTimeout(() => this._connect(topic, state), state.backoffMs);
-                state.backoffMs = Math.min(state.backoffMs * 2, 30000);
-            };
-
-            source.onopen = () => console.log(`StreamOrchestrator: connected to ${topic}`);
-        }
-    }
-
-    // =========================================================================
-    // PCM Streamer
-    // =========================================================================
-    class PcmStreamer {
-        constructor(stream, options = {}) {
-            this._stream = stream;
-            this._targetSampleRate = options.targetSampleRate || 16000;
-            this._chunkMs = options.chunkMs || 5000;
-            this._onChunk = options.onChunk || (() => {});
-            this._audioContext = null;
-            this._source = null;
-            this._processor = null;
-            this._silence = null;
-            this._buffers = [];
-            this._bufferedBytes = 0;
-            this._bytesPerChunk = this._targetSampleRate * 2 * (this._chunkMs / 1000);
-        }
-
-        async start() {
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContextClass) throw new Error('Web Audio API is not supported');
-
-            this._audioContext = new AudioContextClass();
-            await this._audioContext.resume();
-
-            this._source = this._audioContext.createMediaStreamSource(this._stream);
-            this._processor = this._audioContext.createScriptProcessor(4096, 1, 1);
-            this._silence = this._audioContext.createGain();
-            this._silence.gain.value = 0;
-
-            this._processor.onaudioprocess = (event) => {
-                const input = event.inputBuffer.getChannelData(0);
-                const downsampled = this._downsampleBuffer(input, this._audioContext.sampleRate, this._targetSampleRate);
-                const pcmChunk = this._floatTo16BitPcm(downsampled);
-                if (pcmChunk.byteLength === 0) return;
-                this._buffers.push(pcmChunk);
-                this._bufferedBytes += pcmChunk.byteLength;
-                if (this._bufferedBytes >= this._bytesPerChunk) this.flush();
-            };
-
-            this._source.connect(this._processor);
-            this._processor.connect(this._silence);
-            this._silence.connect(this._audioContext.destination);
-        }
-
-        flush() {
-            if (this._bufferedBytes === 0) return;
-            const merged = new Uint8Array(this._bufferedBytes);
-            let offset = 0;
-            for (const chunk of this._buffers) { merged.set(chunk, offset); offset += chunk.byteLength; }
-            this._buffers = [];
-            this._bufferedBytes = 0;
-            this._onChunk(merged.buffer);
-        }
-
-        stop() {
-            this.flush();
-            this._processor?.disconnect();
-            this._source?.disconnect();
-            this._silence?.disconnect();
-            this._processor = null;
-            this._source = null;
-            this._silence = null;
-            if (this._audioContext) { this._audioContext.close().catch(() => {}); this._audioContext = null; }
-        }
-
-        _downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
-            if (inputSampleRate === outputSampleRate) return new Float32Array(buffer);
-            if (inputSampleRate < outputSampleRate) throw new Error(`Cannot upsample audio from ${inputSampleRate}Hz to ${outputSampleRate}Hz`);
-            const ratio = inputSampleRate / outputSampleRate;
-            const len = Math.round(buffer.length / ratio);
-            const out = new Float32Array(len);
-            let oi = 0, ii = 0;
-            while (oi < len) {
-                const ni = Math.round((oi + 1) * ratio);
-                let acc = 0, cnt = 0;
-                for (let i = ii; i < ni && i < buffer.length; i++) { acc += buffer[i]; cnt++; }
-                out[oi] = cnt > 0 ? acc / cnt : 0;
-                oi++; ii = ni;
-            }
-            return out;
-        }
-
-        _floatTo16BitPcm(floatBuffer) {
-            const pcm = new Int16Array(floatBuffer.length);
-            for (let i = 0; i < floatBuffer.length; i++) {
-                const s = Math.max(-1, Math.min(1, floatBuffer[i]));
-                pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-            }
-            return new Uint8Array(pcm.buffer);
-        }
-    }
-
-    // =========================================================================
-    // State
-    // =========================================================================
-    let ws = null;
-    let recorder = null;
-    let mediaStream = null;
-    let timerInterval = null;
-    let startTime = null;
-    let segmentIndex = 0;
-    let roleMapping = {};
-    let confidence = 0;
-    let streams = null;
-    let isRecording = false;
-    let userInitiatedStop = false;
-    let reconnectAttempts = 0;
-    let reconnectTimer = null;
-    const MAX_RECONNECT_ATTEMPTS = 3;
-
-    function showRoleIdentificationPending() {
-        if (!CONFIG.enableRoleUpdates) return;
-        const badge = document.getElementById('confidenceBadge');
-        badge.classList.remove('hidden');
-        badge.textContent = 'Identifying speakers...';
-        badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
-    }
-
-    // =========================================================================
-    // Recording Controls
-    // =========================================================================
-    async function startRecording() {
-        try {
-            mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-            });
-
-            ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = async () => {
-                try {
-                    pcmStreamer = new PcmStreamer(mediaStream, {
-                        targetSampleRate: 16000, chunkMs: 5000,
-                        onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); }
-                    });
-                    await pcmStreamer.start();
-                } catch (err) {
-                    console.error('PCM stream setup failed:', err);
-                    document.getElementById('status').textContent = `Audio setup error: ${err.message}`;
-                    pcmStreamer?.stop(); pcmStreamer = null; ws?.close();
-                }
-            };
-
-            ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.type === 'system_error') showSystemBanner(msg.message);
-                } catch (err) { console.warn('WebSocket text frame parse error:', err); }
-            };
-            ws.onclose = (event) => {
-                pcmStreamer?.stop(); pcmStreamer = null;
-                if (isRecording && !userInitiatedStop) handleUnexpectedDisconnect(event.code);
-            };
-            ws.onerror = () => { document.getElementById('status').textContent = 'Streaming error'; };
-
-            subscribeToMercure();
-
-            isRecording = true;
-            userInitiatedStop = false;
-            reconnectAttempts = 0;
-            document.getElementById('startBtn').classList.add('hidden');
-            document.getElementById('stopBtn').classList.remove('hidden');
-            document.getElementById('reconnectBtn').classList.add('hidden');
-            document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span class="text-red-500 font-medium">Recording</span>';
-            document.getElementById('emptyState').classList.add('hidden');
-            document.getElementById('timer').classList.remove('hidden');
-            announce('Recording started');
-            showRoleIdentificationPending();
-
-            if (segmentIndex > 0) document.getElementById('downloadBtn').classList.remove('hidden');
-
-            if (!startTime) {
-                startTime = Date.now();
-                timerInterval = setInterval(updateTimer, 1000);
-            }
-        } catch (err) {
-            console.error('Failed to start recording:', err);
-            document.getElementById('status').textContent = err.name === 'NotAllowedError' ? 'Microphone access denied' : `Error: ${err.message}`;
-        }
-    }
-
-    function stopRecording() {
-        userInitiatedStop = true;
-        isRecording = false;
-        clearTimeout(reconnectTimer);
-        pcmStreamer?.stop(); pcmStreamer = null;
-        ws?.close();
-        mediaStream?.getTracks().forEach(t => t.stop());
-        streams?.disconnectAll();
-        clearInterval(timerInterval);
-
-        document.getElementById('startBtn').classList.remove('hidden');
-        document.getElementById('stopBtn').classList.add('hidden');
-        document.getElementById('reconnectBtn').classList.add('hidden');
-        document.getElementById('status').textContent = 'Session ended';
-        announce('Recording stopped');
-
-        if (segmentIndex > 0) {
-            document.getElementById('downloadBtn').classList.remove('hidden');
-            document.getElementById('resetBtn').classList.remove('hidden');
-        }
-    }
-
-    function resetSession() {
-        // Stop anything still running
-        if (isRecording) stopRecording();
-
-        // Generate a new session ID
-        CONFIG.sessionId = crypto.randomUUID();
-
-        // Update Mercure topics for the new session
-        CONFIG.topicRaw = `scribe/session/${CONFIG.sessionId}/raw`;
-        CONFIG.topicRoles = `scribe/session/${CONFIG.sessionId}/roles`;
-
-        // Clear transcript
-        const transcript = document.getElementById('transcript');
-        transcript.querySelectorAll('.segment').forEach(el => el.remove());
-
-        // Reset all state
-        segmentIndex = 0;
-        roleMapping = {};
-        confidence = 0;
-        startTime = null;
-        clearInterval(timerInterval);
-        timerInterval = null;
-
-        // Reset UI
-        document.getElementById('segmentCount').textContent = '0';
-        document.getElementById('timer').textContent = '00:00';
-        document.getElementById('timer').classList.add('hidden');
-        document.getElementById('downloadBtn').classList.add('hidden');
-        document.getElementById('resetBtn').classList.add('hidden');
-        document.getElementById('startBtn').classList.remove('hidden');
-        document.getElementById('stopBtn').classList.add('hidden');
-        document.getElementById('reconnectBtn').classList.add('hidden');
-        document.getElementById('status').textContent = 'Ready';
-
-        const emptyState = document.getElementById('emptyState');
-        if (emptyState) emptyState.classList.remove('hidden');
-
-        const badge = document.getElementById('confidenceBadge');
-        badge.classList.add('hidden');
-        badge.textContent = '';
-
-        const banner = document.getElementById('systemBanner');
-        banner.classList.add('hidden');
-        banner.textContent = '';
-
-        announce('Session reset');
-    }
-
-    // =========================================================================
-    // Mercure SSE Subscription
-    // =========================================================================
-    function subscribeToMercure() {
-        if (!CONFIG.mercureUrl) return;
-        streams = new StreamOrchestrator(CONFIG.mercureUrl);
-        streams.subscribe(CONFIG.topicRaw, handleRawSegment);
-        if (CONFIG.enableRoleUpdates) streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
-    }
-
-    // =========================================================================
-    // Reconnect Logic
-    // =========================================================================
-    function handleUnexpectedDisconnect(code) {
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            autoReconnect();
-        } else {
-            isRecording = false;
-            document.getElementById('stopBtn').classList.add('hidden');
-            document.getElementById('reconnectBtn').classList.remove('hidden');
-            const msg = `Connection failed \u2014 ${segmentIndex} segments preserved`;
-            document.getElementById('status').textContent = msg;
-            announce(msg);
-            if (segmentIndex > 0) document.getElementById('downloadBtn').classList.remove('hidden');
-        }
-    }
-
-    function autoReconnect() {
-        reconnectAttempts++;
-        const backoffMs = 1000 * Math.pow(2, reconnectAttempts - 1);
-        const seconds = Math.round(backoffMs / 1000);
-        document.getElementById('status').textContent = `Reconnecting in ${seconds}s...`;
-        announce(`Connection lost. Reconnecting in ${seconds} seconds.`);
-
-        reconnectTimer = setTimeout(() => {
-            document.getElementById('status').textContent = `Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`;
-            if (!mediaStream || mediaStream.getTracks().every(t => t.readyState === 'ended')) {
-                startRecording();
-            } else {
-                connectWebSocket();
-            }
-        }, backoffMs);
-    }
-
-    function reconnect() {
-        reconnectAttempts = 0;
-        document.getElementById('reconnectBtn').classList.add('hidden');
-        startRecording();
-    }
-
-    function connectWebSocket() {
-        ws = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
-        ws.binaryType = 'arraybuffer';
-
-        ws.onopen = async () => {
-            reconnectAttempts = 0;
-            if (!pcmStreamer && mediaStream) {
-                pcmStreamer = new PcmStreamer(mediaStream, {
-                    targetSampleRate: 16000, chunkMs: 5000,
-                    onChunk: (pcmChunk) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcmChunk); }
-                });
-                await pcmStreamer.start();
-            }
-            document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span class="text-red-500 font-medium">Recording</span>';
-            announce('Reconnected successfully');
-        };
-
-        ws.onmessage = (event) => {
-            try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'system_error') showSystemBanner(msg.message);
-            } catch (err) {}
-        };
-        ws.onclose = (event) => {
-            pcmStreamer?.stop(); pcmStreamer = null;
-            if (isRecording && !userInitiatedStop) handleUnexpectedDisconnect(event.code);
-        };
-        ws.onerror = () => {};
-    }
-
-    // =========================================================================
-    // Transcript Download
-    // =========================================================================
-    async function downloadTranscript() {
-        let segments;
-        try {
-            const response = await fetch(`/scribe/${CONFIG.sessionId}/history`);
-            if (response.ok) { const data = await response.json(); segments = data.segments || []; }
-        } catch (err) { console.warn('Could not fetch from server, falling back to DOM:', err); }
-
-        if (!segments || segments.length === 0) {
-            segments = [];
-            document.querySelectorAll('.segment').forEach(el => {
-                segments.push({
-                    speaker_id: el.dataset.speakerId,
-                    role: roleMapping[el.dataset.speakerId] || 'UNKNOWN',
-                    text: el.querySelector('.segment__text')?.textContent?.trim() || '',
-                    start: parseFloat(el.dataset.start) || 0,
-                    end: parseFloat(el.dataset.end) || 0,
-                });
-            });
-        }
-
-        const exportData = { session_id: CONFIG.sessionId, exported_at: new Date().toISOString(), mode: currentMode, segments };
-        const jsonBlob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-
-        const textLines = segments.map(seg => {
-            const role = getRoleLabel(seg.role || roleMapping[seg.speaker_id] || 'UNKNOWN');
-            return `[${formatTime(seg.start || 0)} - ${formatTime(seg.end || 0)}] ${role}: ${seg.text || ''}`;
-        });
-        const textBlob = new Blob([textLines.join('\n')], { type: 'text/plain' });
-
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        triggerDownload(jsonBlob, `transcript-${CONFIG.sessionId}-${timestamp}.json`);
-        triggerDownload(textBlob, `transcript-${CONFIG.sessionId}-${timestamp}.txt`);
-    }
-
-    function triggerDownload(blob, filename) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    }
-
-    // =========================================================================
-    // Accessibility
-    // =========================================================================
-    function announce(message) {
-        const el = document.getElementById('srAnnounce');
-        if (el) { el.textContent = message; setTimeout(() => { el.textContent = ''; }, 1000); }
-    }
-
-    // =========================================================================
-    // Segment Rendering
-    // =========================================================================
-    function handleRawSegment(data) {
-        if (data.type === 'finalized') { document.getElementById('status').textContent = 'Transcript finalized'; return; }
-        if (data.type === 'error') { document.getElementById('status').textContent = `Transcription error: ${data.message}`; return; }
-        if (data.type !== 'segment') return;
-        const role = roleMapping[data.speaker_id] || 'UNKNOWN';
-        appendSegment(data, role);
-    }
-
-    function appendSegment(segment, role) {
-        const container = document.getElementById('transcript');
-        const el = document.createElement('div');
-        const id = `segment-${segmentIndex++}`;
-
-        el.id = id;
-        el.className = `segment segment--${role}`;
-        el.dataset.speakerId = segment.speaker_id;
-        el.dataset.start = segment.start;
-        el.dataset.end = segment.end;
-
-        const displayLabel = getRoleLabel(role === 'UNKNOWN' ? 'UNKNOWN' : role);
-        const speakerLabel = role === 'UNKNOWN' ? segment.speaker_id : displayLabel;
-        const avatarText = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
-
-        el.innerHTML = `
-            <div class="segment__avatar">${avatarText}</div>
-            <div class="segment__body">
-                <div class="segment__header">
-                    <span class="segment__speaker">${escapeHtml(speakerLabel)}</span>
-                    <span class="segment__time">${formatTime(segment.start)}</span>
-                </div>
-                <span class="segment__text">${escapeHtml(segment.text)}</span>
-            </div>
-        `;
-
-        container.appendChild(el);
-
-        container.scrollTop = container.scrollHeight;
-
-        document.getElementById('segmentCount').textContent = segmentIndex;
-        if (segmentIndex === 1) document.getElementById('downloadBtn').classList.remove('hidden');
-    }
-
-    // =========================================================================
-    // Role Updates
-    // =========================================================================
-    function handleRoleUpdate(data) {
-        if (!data.mapping) return;
-        roleMapping = data.mapping;
-        confidence = data.confidence || 0;
-
-        const badge = document.getElementById('confidenceBadge');
-        badge.classList.remove('hidden');
-        if (confidence >= 0.8) {
-            badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
-            badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800';
-        } else if (confidence >= 0.5) {
-            badge.textContent = `Low confidence (${Math.round(confidence * 100)}%)`;
-            badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800';
-        } else {
-            badge.textContent = 'Identifying speakers...';
-            badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
-        }
-        relabelSegments();
-    }
-
-    function relabelSegments() {
-        document.querySelectorAll('.segment').forEach(el => {
-            const speakerId = el.dataset.speakerId;
-            const newRole = roleMapping[speakerId] || 'UNKNOWN';
-
-            el.className = `segment segment--${newRole}`;
-
-            const label = el.querySelector('.segment__speaker');
-            if (label) {
-                const displayLabel = getRoleLabel(newRole === 'UNKNOWN' ? 'UNKNOWN' : newRole);
-                label.textContent = newRole === 'UNKNOWN' ? speakerId : displayLabel;
-            }
-
-            const avatar = el.querySelector('.segment__avatar');
-            if (avatar) {
-                avatar.textContent = newRole === 'UNKNOWN' ? '?' : getAvatarLabel(newRole);
-            }
-        });
-
-        // Update inspector segment log entries retroactively
-        const log = document.getElementById('devSegmentLog');
-        if (log) {
-            log.querySelectorAll('.dev-panel__entry').forEach(entry => {
-                const speakerId = entry.dataset.speakerId;
-                if (!speakerId) return;
-                const newRole = roleMapping[speakerId] || 'UNKNOWN';
-                const roleSpan = entry.querySelector('[data-role-label]');
-                if (roleSpan) {
-                    roleSpan.textContent = getRoleLabel(newRole);
-                    roleSpan.style.color = getRoleColor(newRole);
-                }
-            });
-        }
-    }
-
-    // =========================================================================
-    // Utilities
-    // =========================================================================
-    function formatTime(seconds) {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-
-    function updateTimer() {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        document.getElementById('timer').textContent = formatTime(elapsed);
-    }
-
-    function getRoleColor(role) {
-        switch (role) {
-            case 'DOCTOR': return 'var(--color-speaker-a)';
-            case 'PATIENT': return 'var(--color-speaker-b)';
-            default: return 'var(--color-unknown)';
-        }
-    }
-
-    function showSystemBanner(message) {
-        const banner = document.getElementById('systemBanner');
-        banner.textContent = message;
-        banner.classList.remove('hidden');
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     {% if dev_panel_enabled is defined and dev_panel_enabled %}
-    // =========================================================================
-    // Dev Panel Configuration
-    // =========================================================================
     const SCENARIOS = {{ scenarios|json_encode|raw }};
-    let scenarioMode = false;
-
-    function toggleScenarioPanel() {
-        const panel = document.getElementById('scenarioPanel');
-        const backdrop = document.getElementById('scenarioPanelBackdrop');
-        if (!panel) return;
-        const visible = panel.style.display !== 'none' && panel.style.display !== '';
-        panel.style.display = visible ? 'none' : 'flex';
-        if (backdrop) backdrop.style.display = visible ? 'none' : 'block';
-    }
-
-    function toggleDevPanelMobile() {
-        const panel = document.getElementById('devPanel');
-        const backdrop = document.getElementById('devPanelBackdrop');
-        if (!panel) return;
-        const visible = panel.style.display !== 'none' && panel.style.display !== '';
-        panel.style.display = visible ? 'none' : 'flex';
-        if (backdrop) backdrop.style.display = visible ? 'none' : 'block';
-    }
-
-    // =========================================================================
-    // DevPanel Class
-    // =========================================================================
-    class DevPanel {
-        constructor() {
-            this._activeTab = 'segments';
-            this._rawBuffer = [];
-            this._rawMax = 200;
-            this._stateInterval = null;
-            this._wsMetrics = { framesSent: 0, framesReceived: 0, bytesSent: 0, bytesReceived: 0 };
-            this._mercureMetrics = new Map();
-        }
-
-        init() {
-            const savedTab = localStorage.getItem('ambient-scribe-devtab');
-            if (savedTab) this.switchTab(savedTab);
-            this._stateInterval = setInterval(() => this.refreshState(), 500);
-            this.renderScenarioList();
-        }
-
-        switchTab(tabName) {
-            this._activeTab = tabName;
-            localStorage.setItem('ambient-scribe-devtab', tabName);
-            document.querySelectorAll('.dev-panel__tab').forEach(t => {
-                t.classList.toggle('dev-panel__tab--active', t.dataset.tab === tabName);
-            });
-            document.querySelectorAll('.dev-panel__content').forEach(c => {
-                c.style.display = c.dataset.content === tabName ? '' : 'none';
-            });
-        }
-
-        logSegment(data, role, source) {
-            const log = document.getElementById('devSegmentLog');
-            if (!log) return;
-            const entry = document.createElement('div');
-            entry.className = 'dev-panel__entry';
-            entry.dataset.speakerId = data.speaker_id || '';
-            const text = (data.text || '').substring(0, 60);
-            const badge = source === 'scenario' ? '<span style="color:#f59e0b">[S]</span> ' : '';
-            entry.innerHTML = `${badge}<span data-role-label style="color:${getRoleColor(role)}">${getRoleLabel(role)}</span> <span class="subtle-text">${formatTime(data.start || 0)}</span><br>${escapeHtml(text)}`;
-            log.appendChild(entry);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        logRaw(type, data) {
-            const entry = { ts: new Date().toISOString(), type, data };
-            this._rawBuffer.push(entry);
-            if (this._rawBuffer.length > this._rawMax) this._rawBuffer.shift();
-
-            const log = document.getElementById('devRawLog');
-            const countEl = document.getElementById('devRawCount');
-            if (!log) return;
-            if (countEl) countEl.textContent = this._rawBuffer.length;
-
-            const el = document.createElement('div');
-            el.className = 'dev-panel__entry';
-            const preview = JSON.stringify(data).substring(0, 80);
-            el.innerHTML = `<span class="subtle-text">${entry.ts.substring(11, 23)}</span> <strong>${type}</strong><br>${escapeHtml(preview)}`;
-            el.style.cursor = 'pointer';
-            el.onclick = () => {
-                const pre = el.querySelector('pre');
-                if (pre) { pre.remove(); }
-                else { const full = document.createElement('pre'); full.className = 'dev-panel__pre'; full.textContent = JSON.stringify(data, null, 2); el.appendChild(full); }
-            };
-            log.appendChild(el);
-            while (log.children.length > this._rawMax) log.removeChild(log.firstChild);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        logMercure(topic, data) {
-            const metrics = this._mercureMetrics.get(topic) || { count: 0 };
-            metrics.count++;
-            this._mercureMetrics.set(topic, metrics);
-
-            const log = document.getElementById('devMercureLog');
-            if (!log) return;
-            if (log.children.length === 1 && log.firstChild.textContent.includes('Waiting')) log.innerHTML = '';
-
-            const el = document.createElement('div');
-            el.className = 'dev-panel__entry';
-            const shortTopic = topic.split('/').slice(-2).join('/');
-            el.innerHTML = `<span class="subtle-text">${shortTopic}</span> #${metrics.count} \u2014 ${data.type || 'msg'}`;
-            log.appendChild(el);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        logWs(direction, data, bytes) {
-            if (direction === 'send') { this._wsMetrics.framesSent++; this._wsMetrics.bytesSent += bytes || 0; }
-            else { this._wsMetrics.framesReceived++; this._wsMetrics.bytesReceived += bytes || 0; }
-            this.updateWsStatus();
-
-            const log = document.getElementById('devWsLog');
-            if (!log) return;
-            const el = document.createElement('div');
-            el.className = 'dev-panel__entry';
-            const arrow = direction === 'send' ? '\u2191' : '\u2193';
-            el.innerHTML = `${arrow} ${direction}${bytes ? ` (${bytes}B)` : ''}`;
-            log.appendChild(el);
-            if (log.children.length > 100) log.removeChild(log.firstChild);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        updateWsStatus() {
-            const el = document.getElementById('devWsStatus');
-            if (!el) return;
-            const state = ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'None';
-            const m = this._wsMetrics;
-            el.textContent = `State: ${state}\nSent: ${m.framesSent} frames (${m.bytesSent}B)\nRecv: ${m.framesReceived} frames (${m.bytesReceived}B)`;
-        }
-
-        refreshState() {
-            const el = document.getElementById('devStateSnapshot');
-            if (!el || this._activeTab !== 'state') return;
-            el.textContent = JSON.stringify({
-                sessionId: CONFIG.sessionId,
-                mode: currentMode,
-                isRecording,
-                scenarioMode,
-                segmentIndex,
-                roleMapping,
-                confidence,
-                reconnectAttempts,
-                wsState: ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : null,
-                mercureConnected: streams?.isConnected ?? false,
-                mercureRetries: streams?.totalRetries ?? 0,
-            }, null, 2);
-        }
-
-        clearSegmentLog() {
-            const log = document.getElementById('devSegmentLog');
-            if (log) log.innerHTML = '';
-        }
-
-        clearRawLog() {
-            this._rawBuffer = [];
-            const log = document.getElementById('devRawLog');
-            if (log) log.innerHTML = '';
-            const countEl = document.getElementById('devRawCount');
-            if (countEl) countEl.textContent = '0';
-        }
-
-        clearMercureLog() {
-            this._mercureMetrics.clear();
-            const log = document.getElementById('devMercureLog');
-            if (log) log.innerHTML = '<div class="dev-panel__entry subtle-text">Waiting for Mercure events...</div>';
-        }
-
-        async fetchHealth() {
-            const el = document.getElementById('devPipelineInfo');
-            if (!el) return;
-            el.textContent = 'Fetching...';
-            try {
-                const wsBaseUrl = CONFIG.wsUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-                const resp = await fetch(`${wsBaseUrl}/health`);
-                const data = await resp.json();
-                el.textContent = JSON.stringify(data, null, 2);
-            } catch (err) {
-                el.textContent = scenarioMode || !isRecording
-                    ? 'No backend connected (demo/scenario mode)\n\nThe Pipeline tab requires a running NeMo agent.\nStart the full stack with: docker compose up --build'
-                    : `Connection error: ${err.message}`;
-            }
-        }
-
-        copyAllRaw() {
-            const text = this._rawBuffer.map(e => JSON.stringify(e)).join('\n');
-            navigator.clipboard.writeText(text).catch(() => {});
-        }
-
-        renderScenarioList() {
-            const list = document.getElementById('scenarioList');
-            if (!list) return;
-            list.innerHTML = SCENARIOS.map(s => `
-                <div class="scenario-item" data-scenario-id="${s.id}" onclick="scenarioRunner.runOne('${s.id}')">
-                    <div class="scenario-item__name">${escapeHtml(s.name)}</div>
-                    <div class="scenario-item__meta">${s.events.length} events \u2014 ${escapeHtml(s.description)}</div>
-                    <div id="scenarioResult-${s.id}" class="scenario-item__result" style="display:none;"></div>
-                </div>
-            `).join('');
-        }
-    }
-
-    // =========================================================================
-    // ScenarioRunner Class
-    // =========================================================================
-    class ScenarioRunner {
-        constructor() {
-            this._running = false;
-            this._stopped = false;
-            this._results = new Map();
-            this._previousRoleMapping = null;
-        }
-
-        async runOne(id) {
-            const scenario = SCENARIOS.find(s => s.id === id);
-            if (!scenario || this._running) return;
-            this._running = true;
-            this._stopped = false;
-            this._updateControls(true);
-            this._markScenario(id, 'running');
-
-            await this._resetState();
-            const result = await this._executeScenario(scenario);
-            this._results.set(id, result);
-            this._markScenario(id, result.pass ? 'pass' : 'fail', result);
-
-            this._running = false;
-            this._updateControls(false);
-            this._showPostScenarioButtons();
-        }
-
-        async runAll() {
-            this._running = true;
-            this._stopped = false;
-            this._results.clear();
-            this._updateControls(true);
-            this._showProgress(true);
-
-            for (let i = 0; i < SCENARIOS.length && !this._stopped; i++) {
-                const scenario = SCENARIOS[i];
-                this._updateProgress(i, SCENARIOS.length);
-                this._markScenario(scenario.id, 'running');
-                await this._resetState();
-                const result = await this._executeScenario(scenario);
-                this._results.set(scenario.id, result);
-                this._markScenario(scenario.id, result.pass ? 'pass' : 'fail', result);
-            }
-
-            this._updateProgress(SCENARIOS.length, SCENARIOS.length);
-            this._running = false;
-            this._updateControls(false);
-            this._showPostScenarioButtons();
-        }
-
-        async runRandom() {
-            const idx = Math.floor(Math.random() * SCENARIOS.length);
-            await this.runOne(SCENARIOS[idx].id);
-        }
-
-        async runFailed() {
-            const failedIds = [];
-            this._results.forEach((r, id) => { if (!r.pass) failedIds.push(id); });
-            if (failedIds.length === 0) return;
-
-            this._running = true;
-            this._stopped = false;
-            this._updateControls(true);
-            this._showProgress(true);
-
-            for (let i = 0; i < failedIds.length && !this._stopped; i++) {
-                const scenario = SCENARIOS.find(s => s.id === failedIds[i]);
-                if (!scenario) continue;
-                this._updateProgress(i, failedIds.length);
-                this._markScenario(scenario.id, 'running');
-                await this._resetState();
-                const result = await this._executeScenario(scenario);
-                this._results.set(scenario.id, result);
-                this._markScenario(scenario.id, result.pass ? 'pass' : 'fail', result);
-            }
-
-            this._running = false;
-            this._updateControls(false);
-            this._showPostScenarioButtons();
-        }
-
-        stop() { this._stopped = true; }
-
-        exportResults() {
-            const data = {};
-            this._results.forEach((r, id) => { data[id] = r; });
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            triggerDownload(blob, `scenario-results-${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.json`);
-        }
-
-        async _resetState() {
-            this._previousRoleMapping = { ...roleMapping };
-            const transcript = document.getElementById('transcript');
-            transcript.querySelectorAll('.segment').forEach(el => el.remove());
-            const empty = document.getElementById('emptyState');
-            if (empty) empty.classList.add('hidden');
-            segmentIndex = 0;
-            roleMapping = {};
-            confidence = 0;
-            document.getElementById('segmentCount').textContent = '0';
-
-            // Clear inspector panels between runs
-            devPanel.clearSegmentLog();
-            devPanel.clearRawLog();
-            devPanel.clearMercureLog();
-
-            scenarioMode = true;
-        }
-
-        async _executeScenario(scenario) {
-            let flipDetected = false;
-            const startedAt = Date.now();
-
-            for (const event of scenario.events) {
-                if (this._stopped) break;
-                if (event.delay > 0) await new Promise(r => setTimeout(r, event.delay));
-
-                switch (event.type) {
-                    case 'segment':
-                        handleRawSegment({ ...event.data, __scenario: true });
-                        break;
-                    case 'role_update':
-                        const prevMapping = { ...roleMapping };
-                        handleRoleUpdate(event.data);
-                        for (const [spk, role] of Object.entries(prevMapping)) {
-                            if (event.data.mapping[spk] && event.data.mapping[spk] !== role) flipDetected = true;
-                        }
-                        break;
-                    case 'ws_disconnect':
-                        devPanel.logRaw('ws_disconnect', event.data);
-                        document.getElementById('status').textContent = 'Connection lost (scenario)';
-                        break;
-                    case 'ws_reconnect':
-                        devPanel.logRaw('ws_reconnect', event.data);
-                        document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span class="text-red-500 font-medium">Recording</span>';
-                        break;
-                    case 'control':
-                        devPanel.logRaw('control', event.data);
-                        if (event.data.action === 'start') document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span class="text-red-500 font-medium">Recording</span>';
-                        else if (event.data.action === 'stop') document.getElementById('status').textContent = 'Session ended';
-                        break;
-                    case 'finalized':
-                        handleRawSegment({ type: 'finalized' });
-                        break;
-                }
-            }
-
-            scenarioMode = false;
-            const expected = scenario.expectedEndState;
-            const errors = [];
-
-            if (expected.segmentCount !== undefined && segmentIndex !== expected.segmentCount) errors.push(`segments: ${segmentIndex} (expected ${expected.segmentCount})`);
-            if (expected.roleMapping && Object.keys(expected.roleMapping).length > 0) {
-                for (const [spk, role] of Object.entries(expected.roleMapping)) {
-                    if (roleMapping[spk] !== role) errors.push(`role ${spk}: ${roleMapping[spk] || 'none'} (expected ${role})`);
-                }
-            }
-            if (expected.confidenceMin !== undefined && expected.confidenceMin > 0 && confidence < expected.confidenceMin) errors.push(`confidence: ${confidence} (min ${expected.confidenceMin})`);
-            if (expected.flipDetected !== undefined && flipDetected !== expected.flipDetected) errors.push(`flip: ${flipDetected} (expected ${expected.flipDetected})`);
-
-            return { pass: errors.length === 0, errors, segmentCount: segmentIndex, roleMapping: { ...roleMapping }, confidence, flipDetected, durationMs: Date.now() - startedAt };
-        }
-
-        _markScenario(id, status, result) {
-            const item = document.querySelector(`[data-scenario-id="${id}"]`);
-            if (!item) return;
-            item.className = `scenario-item scenario-item--${status}`;
-            const resultEl = document.getElementById(`scenarioResult-${id}`);
-            if (!resultEl) return;
-
-            if (status === 'running') {
-                resultEl.style.display = '';
-                resultEl.innerHTML = '<span style="color:var(--accent)">Running...</span>';
-            } else if (result) {
-                resultEl.style.display = '';
-                resultEl.innerHTML = result.pass
-                    ? `<span style="color:var(--color-success)">PASS</span> \u2014 ${result.durationMs}ms, ${result.segmentCount} segments`
-                    : `<span style="color:var(--color-danger)">FAIL</span> \u2014 ${escapeHtml(result.errors.join(', '))}`;
-            }
-        }
-
-        _updateControls(running) {
-            const runAll = document.getElementById('scenarioRunAllBtn');
-            const stopBtn = document.getElementById('scenarioStopBtn');
-            const failedBtn = document.getElementById('scenarioRunFailedBtn');
-            const exportBtn = document.getElementById('scenarioExportBtn');
-
-            if (runAll) runAll.disabled = running;
-            if (stopBtn) stopBtn.disabled = !running;
-
-            if (!running) {
-                let hasFailed = false;
-                this._results.forEach(r => { if (!r.pass) hasFailed = true; });
-                if (failedBtn) failedBtn.disabled = !hasFailed;
-                if (exportBtn) exportBtn.style.display = this._results.size > 0 ? '' : 'none';
-            }
-        }
-
-        _showProgress(show) {
-            const el = document.getElementById('scenarioProgress');
-            if (el) el.style.display = show ? 'flex' : 'none';
-        }
-
-        _updateProgress(current, total) {
-            const fill = document.getElementById('scenarioProgressFill');
-            const text = document.getElementById('scenarioProgressText');
-            if (fill) fill.style.width = `${(current / total) * 100}%`;
-            if (text) text.textContent = `${current}/${total}`;
-        }
-
-        _showPostScenarioButtons() {
-            if (segmentIndex > 0) {
-                document.getElementById('downloadBtn').classList.remove('hidden');
-                document.getElementById('resetBtn').classList.remove('hidden');
-            }
-            document.getElementById('status').textContent = 'Scenario complete';
-        }
-    }
-
-    // =========================================================================
-    // Dev Panel Instances & Instrumentation
-    // =========================================================================
-    const devPanel = new DevPanel();
-    const scenarioRunner = new ScenarioRunner();
-
-    const _origHandleRawSegment = handleRawSegment;
-    handleRawSegment = function(data) {
-        const source = data.__scenario ? 'scenario' : 'live';
-        devPanel.logRaw('segment', data);
-        const role = roleMapping[data.speaker_id] || 'UNKNOWN';
-        if (data.type === 'segment') devPanel.logSegment(data, role, source);
-        devPanel.logMercure(CONFIG.topicRaw, data);
-        _origHandleRawSegment(data);
-    };
-
-    const _origHandleRoleUpdate = handleRoleUpdate;
-    handleRoleUpdate = function(data) {
-        devPanel.logRaw('role_update', data);
-        devPanel.logMercure(CONFIG.topicRoles, data);
-        _origHandleRoleUpdate(data);
-    };
-
-    const _origStartRecording = startRecording;
-    startRecording = async function() {
-        if (scenarioMode) {
-            isRecording = true;
-            userInitiatedStop = false;
-            document.getElementById('startBtn').classList.add('hidden');
-            document.getElementById('stopBtn').classList.remove('hidden');
-            document.getElementById('status').innerHTML = '<span class="recording-dot recording-pulse"></span><span class="text-red-500 font-medium">Scenario</span>';
-            document.getElementById('emptyState')?.classList.add('hidden');
-            return;
-        }
-        return _origStartRecording();
-    };
-
-    document.addEventListener('DOMContentLoaded', () => {
-        devPanel.init();
-
-        // Add mobile backdrops
-        if (window.innerWidth < 1280) {
-            ['scenarioPanel', 'devPanel'].forEach(id => {
-                const backdrop = document.createElement('div');
-                backdrop.id = id + 'Backdrop';
-                backdrop.className = 'panel-backdrop';
-                backdrop.style.display = 'none';
-                backdrop.onclick = () => {
-                    document.getElementById(id).style.display = 'none';
-                    backdrop.style.display = 'none';
-                };
-                document.body.appendChild(backdrop);
-            });
-        }
-    });
     {% endif %}
     </script>
+    <script src="/js/scribe.js"></script>
+    {% if dev_panel_enabled is defined and dev_panel_enabled %}
+    <script src="/js/scribe-dev.js"></script>
+    {% endif %}
 </body>
 </html>
