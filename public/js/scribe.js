@@ -353,6 +353,11 @@ function hideAudioLevel() {
     if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
 }
 
+function disconnectMercureStreams() {
+    streams?.disconnectAll();
+    streams = null;
+}
+
 function showRoleIdentificationPending() {
     if (!CONFIG.enableRoleUpdates) return;
     const badge = document.getElementById('confidenceBadge');
@@ -433,7 +438,7 @@ function stopRecording() {
     pcmStreamer?.stop(); pcmStreamer = null;
     ws?.close();
     mediaStream?.getTracks().forEach(t => t.stop());
-    streams?.disconnectAll();
+    disconnectMercureStreams();
     clearInterval(timerInterval);
 
     document.getElementById('startBtn').classList.remove('hidden');
@@ -455,6 +460,7 @@ function stopRecording() {
 function resetSession() {
     // Stop anything still running
     if (isRecording) stopRecording();
+    else disconnectMercureStreams();
 
     // Generate a new session ID
     CONFIG.sessionId = crypto.randomUUID();
@@ -528,6 +534,7 @@ function resetSession() {
 // Mercure SSE Subscription
 // =========================================================================
 function subscribeToMercure() {
+    disconnectMercureStreams();
     if (!CONFIG.mercureUrl) return;
     streams = new StreamOrchestrator(CONFIG.mercureUrl);
     streams.subscribe(CONFIG.topicRaw, handleRawSegment);
@@ -1016,6 +1023,7 @@ async function startReplay(file) {
         demoBtn.textContent = 'Demo';
         demoBtn.disabled = false;
         replayActive = false;
+        disconnectMercureStreams();
     }
 }
 

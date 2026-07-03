@@ -45,3 +45,18 @@ last_reviewed: 2026-07-04
 - **Files:** `strands_agents/api/server.py` (search: "await lifecycle.schedule_destroy")
 - **What breaks:** During the grace period, audio buffers, `_session_modes`, `_mercure_event_ids`, and role state remain alive so a reconnect can resume. Long grace windows trade resilience for memory growth.
 - **Evidence:** `register()` cancels pending destroys, `schedule_destroy()` stores delayed tasks in `_pending_destroys`, the server treats pending destroys as live sessions, and `transcribe_stream()` schedules cleanup instead of destroying immediately.
+
+## Footgun: Live transcription contracts are split across Docker, Twig, JS, and FastAPI
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** ACTUAL_MEASURED
+**Source:** git history (auto-seeded)
+**hallucination-risk:** high
+
+- **Files:** `docker-compose.yml` (search: "NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-48101}")
+- **Files:** `templates/scribe/index.html.twig` (search: "const CONFIG =")
+- **Files:** `public/js/scribe.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
+- **Files:** `strands_agents/api/server.py` (search: "async def transcribe_stream")
+- **Git evidence:** `35bceb4` touched `docker-compose.yml`, `strands_agents/api/server.py`, `strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`, `templates/scribe/index.html.twig`, and `tests/python/test_api.py` to restore live transcription and healthcheck contracts.
+- **Git evidence:** `d045b6c` touched `docker-compose.yml`, `scripts/start-dev.sh`, `templates/scribe/index.html.twig`, and scenarios to harden the dev workflow and UI.
+- **Git evidence:** churn scan over the last 50 commits found `templates/scribe/index.html.twig` in 12 commits, `strands_agents/api/server.py` in 10 commits, and `docker-compose.yml` in 10 commits.
+- **What breaks:** A local-looking change to ports, injected config, WebSocket URL construction, mode query parameters, or FastAPI route handling can silently break the live path because no single schema owns the browser-to-agent contract.
+- **Evidence:** The session URL is composed from Docker/Symfony/Twig-provided config in the browser, while FastAPI separately owns route validation and mode handling.

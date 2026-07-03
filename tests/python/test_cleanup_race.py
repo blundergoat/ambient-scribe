@@ -74,3 +74,20 @@ class TestCleanupRace:
         await asyncio.gather(*tasks)
 
         assert lifecycle.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_schedule_destroy_waits_for_grace_period(self):
+        """Scheduled destroy keeps the session alive until the grace expires."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("grace-test", pipeline)
+
+        await lifecycle.register("grace-test", session)
+        await lifecycle.schedule_destroy("grace-test", grace_seconds=0.05)
+        await asyncio.sleep(0)
+
+        assert lifecycle.is_active("grace-test")
+        assert lifecycle.has_pending_destroy("grace-test")
+
+        await asyncio.sleep(0.08)
+
+        assert not lifecycle.is_active("grace-test")

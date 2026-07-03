@@ -39,6 +39,25 @@ from collections import OrderedDict
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "100"))
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "7200"))
 MAX_SEGMENTS_PER_SESSION = 5000  # ~4 hours at 5s chunks
+_TRANSCRIPT_ELLIPSIS = "\n...\n"
+
+
+def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
+    """Return a transcript preview no longer than max_chars."""
+    if max_chars <= 0:
+        return ""
+    if len(full_text) <= max_chars:
+        return full_text
+    if max_chars <= len(_TRANSCRIPT_ELLIPSIS):
+        return full_text[:max_chars]
+
+    if max_chars <= 500 + len(_TRANSCRIPT_ELLIPSIS):
+        first_size = (max_chars - len(_TRANSCRIPT_ELLIPSIS)) // 2
+    else:
+        first_size = 500
+    last_size = max_chars - len(_TRANSCRIPT_ELLIPSIS) - first_size
+
+    return full_text[:first_size] + _TRANSCRIPT_ELLIPSIS + full_text[-last_size:]
 
 
 class _SessionData:
@@ -136,8 +155,8 @@ class SessionStore:
     def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str:
         """Return the accumulated transcript as plain text (for role inference context).
 
-        Returns the first 500 chars (opening context) plus the last (max_chars - 500)
-        chars (recent context), separated by an ellipsis marker.
+        Returns opening and recent context separated by an ellipsis marker while
+        respecting max_chars.
 
         Args:
             session_id: The session UUID
@@ -154,11 +173,7 @@ class SessionStore:
             lines.append(f"[{speaker}] {text}")
 
         full_text = "\n".join(lines)
-        if len(full_text) > max_chars:
-            first = full_text[:500]
-            last = full_text[-(max_chars - 500):]
-            return first + "\n...\n" + last
-        return full_text
+        return _truncate_transcript_text(full_text, max_chars)
 
     def cleanup(self, session_id: str) -> None:
         """Remove a session's data.

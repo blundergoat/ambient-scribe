@@ -319,19 +319,26 @@ class NemoPipeline:
     def _filter_hallucinated_speakers(
         parsed_diar: list[tuple[float, float, str]],
         min_share: float = 0.05,
+        min_absolute_duration: float = 1.0,
+        min_segment_count: int = 2,
     ) -> list[tuple[float, float, str]]:
-        """Remove speakers with less than ``min_share`` of total frame activity.
+        """Remove brief one-off speakers with less than ``min_share`` of activity.
 
         NeMo's Sortformer occasionally hallucinates a brief speaker segment
-        (e.g., < 1 second in a 100-second recording).  These ghost speakers
-        cause downstream role-inference noise.  This filter drops every segment
-        belonging to a speaker whose cumulative duration is below the threshold.
+        (e.g., <= 1 second in a 100-second recording). These ghost speakers
+        cause downstream role-inference noise. The absolute-duration and segment
+        count floors keep legitimate short speakers from being dropped solely
+        because they have less than 5% of a long recording.
 
         Args:
             parsed_diar: List of ``(start, end, speaker_id)`` tuples from
                 :meth:`_parse_diar_strings`.
             min_share: Minimum fraction of total duration a speaker must
                 occupy to be kept (default 5 %).
+            min_absolute_duration: Always keep speakers above this cumulative
+                duration even if their share is small.
+            min_segment_count: Always keep speakers that appear in at least this
+                many diarization segments.
 
         Returns:
             Filtered list with the same tuple structure.
@@ -345,14 +352,20 @@ class NemoPipeline:
 
         # Accumulate per-speaker duration
         speaker_durations: dict[str, float] = {}
+        speaker_segment_counts: dict[str, int] = {}
         for start, end, speaker_id in parsed_diar:
             speaker_durations[speaker_id] = speaker_durations.get(speaker_id, 0.0) + (end - start)
+            speaker_segment_counts[speaker_id] = speaker_segment_counts.get(speaker_id, 0) + 1
 
-        # Identify speakers to suppress
+        # Suppress only tiny, one-off speakers below the proportional threshold.
         suppressed = {
             spk
             for spk, dur in speaker_durations.items()
-            if dur / total_duration < min_share
+            if (
+                dur / total_duration < min_share
+                and dur <= min_absolute_duration
+                and speaker_segment_counts[spk] < min_segment_count
+            )
         }
 
         if suppressed:
@@ -364,6 +377,10 @@ class NemoPipeline:
                         "duration": speaker_durations[spk],
                         "total_duration": total_duration,
                         "share": speaker_durations[spk] / total_duration,
+                        "segments": speaker_segment_counts[spk],
+                        "min_share": min_share,
+                        "min_absolute_duration": min_absolute_duration,
+                        "min_segment_count": min_segment_count,
                     },
                 )
 

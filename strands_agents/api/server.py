@@ -1021,10 +1021,11 @@ async def replay_file(
         existing.cancel()
 
     # Spawn paced replay task
-    _replay_tasks[session_id] = asyncio.create_task(
+    replay_task = asyncio.create_task(
         _replay_segments(session_id, segments, speed, mode),
         name=f"replay-{session_id}",
     )
+    _replay_tasks[session_id] = replay_task
 
     logger.info("replay.started", extra={
         "session_id": session_id,
@@ -1092,7 +1093,9 @@ async def _replay_segments(
     except Exception:
         logger.exception("replay.failed", extra={"session_id": session_id})
     finally:
-        _replay_tasks.pop(session_id, None)
+        current_task = asyncio.current_task()
+        if _replay_tasks.get(session_id) is current_task:
+            _replay_tasks.pop(session_id, None)
 
 
 @app.api_route("/session/{session_id}/roles", methods=["GET", "POST"])

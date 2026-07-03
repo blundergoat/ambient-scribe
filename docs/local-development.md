@@ -37,7 +37,7 @@ Runs PHP and Python directly. Faster iteration, no container rebuilds.
 
 ### For bare-metal
 
-- PHP 8.2+
+- PHP 8.3+
 - Composer
 - Python 3.12+
 - pip3

@@ -33,7 +33,7 @@ BAD:  "WebSocket publishes to topic 'transcribe'" (fabricated)
 GOOD: Read server.py:236 → publishes to 'scribe/session/{id}/raw'
 ```
 
-**SCOPE** — Declare in one step: Intent (question → answer; directive → act), Complexity (Hotfix 2/3, Small 3/5, Standard 4/10, System 6/20, Infra 8/25), Mode, files allowed to change, non-goals, blast radius. Re-classify if reads exceed 3× estimate.
+**SCOPE** — Declare in one step: Intent (question → answer; directive → act), Complexity (Hotfix 2/3, Standard 4/10, System 6/20, Infra 8/25), Mode, files allowed to change, non-goals, blast radius. Re-classify if reads exceed 3× estimate.
 
 **ACT** — Mode transitions MUST be explicit.
 
@@ -132,10 +132,8 @@ Footguns go to `.goat-flow/learning-loop/footguns/`; lessons go to `.goat-flow/l
 | `docs/domain-infrastructure.md` | Infra + Terraform notes |
 | `docs/nemo-api-notes.md` | NeMo API specifics |
 | `AGENTS.md` | Codex workflow (multi-agent) |
-| `GEMINI.md` | Gemini workflow (multi-agent) |
 | `.github/instructions/` | Per-language coding standards |
-| `.goat-flow/plans/` | Current goat-flow plan files |
-| `milestones/` | Legacy project roadmap M0–M6 |
+| `.goat-flow/plans/` | Current goat-flow plan files and roadmap |
 
 ## Essential Commands
 

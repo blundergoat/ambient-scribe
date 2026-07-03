@@ -74,6 +74,11 @@ When a goat-* skill is active, the skill's Step 0 replaces READ and selects mode
 - Run focused checks after meaningful changes, then broader checks before done.
 - Stop on cross-boundary, security, deployment, runtime, or contract failures; note and continue only for isolated unrelated failures or flaky/non-blocking noise.
 - Re-read cited evidence before final claims. Do not claim checks passed without the literal pass/fail line from this session.
+**Hallucination red-flags:**
+
+Checks passed without output; Completion without listing changed files; Fix verification without reproduction; Hedged claims (`should`, `probably`, `looks good`) as verification.
+
+Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` under "Rationalisations to reject".
 - After renames or contract edits, run `rg <old-pattern>` and confirm old refs are gone or intentionally retained.
 - If VERIFY caught a failure in code you wrote, or you corrected course mid-task, update `.goat-flow/learning-loop/lessons/` before DoD.
 

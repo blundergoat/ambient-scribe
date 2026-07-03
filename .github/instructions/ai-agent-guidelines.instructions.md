@@ -19,7 +19,7 @@ Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) 
 
 ## Project-Specific Constraints
 
-- **PHP**: >=8.2, Symfony 6.4, `declare(strict_types=1)`, PSR-12, PHPStan level 10
+- **PHP**: >=8.3, Symfony 6.4, `declare(strict_types=1)`, PSR-12, PHPStan level 10
 - **Style**: Single quotes, short arrays, ordered imports, trailing commas in multiline
 - **Namespace**: `App\` for src/, `App\Tests\` for tests/
 - **Python agent**: FastAPI + Strands SDK + NeMo Parakeet in `strands_agents/`, Python 3.12+

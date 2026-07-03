@@ -2,11 +2,14 @@
 Tests for the replay demo endpoint.
 """
 
+import asyncio
 import io
 import struct
+from contextlib import suppress
 from unittest.mock import patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import api.server as api_server
@@ -14,6 +17,13 @@ from api.server import app, sessions
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000088"
+
+
+def _cancel_replay_tasks() -> None:
+    for task in list(api_server._replay_tasks.values()):
+        if not task.done():
+            task.cancel()
+    api_server._replay_tasks.clear()
 
 
 def _make_wav_bytes(duration_seconds: float = 1.0, sample_rate: int = 16000) -> bytes:
@@ -46,9 +56,12 @@ class TestReplayEndpoint:
         sessions._sessions.clear()
         api_server._session_modes.clear()
         api_server._mercure_event_ids.clear()
-        api_server._replay_tasks.clear()
+        _cancel_replay_tasks()
         app.state.nemo_pipeline = NemoPipeline()
         app.state.http_client = httpx.AsyncClient(timeout=5.0)
+
+    def teardown_method(self):
+        _cancel_replay_tasks()
 
     def test_replay_returns_segment_count(self):
         mock_result = TranscriptionResult(segments=[
@@ -222,3 +235,44 @@ class TestReplayEndpoint:
             files={"file": ("slow.wav", io.BytesIO(wav), "audio/wav")},
         )
         assert r.status_code == 422  # Validation error
+
+    @pytest.mark.asyncio
+    async def test_replay_task_cleanup_preserves_newer_replacement(self, monkeypatch):
+        """A cancelled old replay task must not clear a newer task for the session."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_publish(topic, data, event_id=None):
+            started.set()
+            await release.wait()
+            return True
+
+        async def fake_enqueue(session_id, segments, mode=None):
+            pass
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", slow_publish)
+        monkeypatch.setattr(api_server, "enqueue_role_inference", fake_enqueue)
+
+        old_task = asyncio.create_task(
+            api_server._replay_segments(
+                TEST_SESSION_ID,
+                [{"speaker_id": "spk_0", "text": "old", "start": 0.0, "end": 1.0}],
+                1.0,
+                "medical",
+            )
+        )
+        api_server._replay_tasks[TEST_SESSION_ID] = old_task
+
+        await started.wait()
+        replacement_task = asyncio.create_task(asyncio.sleep(60))
+        old_task.cancel()
+        api_server._replay_tasks[TEST_SESSION_ID] = replacement_task
+
+        with suppress(asyncio.CancelledError):
+            await old_task
+
+        assert api_server._replay_tasks[TEST_SESSION_ID] is replacement_task
+
+        replacement_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await replacement_task

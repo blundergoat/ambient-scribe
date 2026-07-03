@@ -195,7 +195,14 @@ class TestGetTranscriptText:
 
         result = backend.get_transcript_text("s1", max_chars=200)
         assert "\n...\n" in result
-        assert len(result) <= 210  # 200 + ellipsis marker
+        assert len(result) <= 200
+
+    def test_tiny_truncation_budget(self, backend):
+        backend.append_segment("s1", _make_segment(text="A very long segment"))
+
+        result = backend.get_transcript_text("s1", max_chars=4)
+
+        assert len(result) <= 4
 
     def test_empty_session(self, backend):
         result = backend.get_transcript_text("nonexistent")

@@ -4,7 +4,7 @@ Conventions and patterns for the PHP layer. This service serves the UI, manages 
 
 ## Conventions
 
-- **PHP 8.2+**, Symfony 6.4, PSR-4 namespace `App\`
+- **PHP 8.3+**, Symfony 6.4, PSR-4 namespace `App\`
 - Attribute-based routing (no YAML route definitions for controllers)
 - Strict typing: `declare(strict_types=1)` in every file
 - Services autowired and autoconfigured via `config/services.yaml`

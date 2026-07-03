@@ -297,6 +297,33 @@ class TestFilterHallucinatedSpeakers:
         assert "speaker_2" not in speaker_ids
         assert len(result) == 3
 
+    def test_keeps_short_speaker_above_absolute_duration_floor(self):
+        """A short but substantial speaker should not be dropped only by share."""
+        parsed_diar = [
+            (0.0, 60.0, "speaker_0"),
+            (60.0, 99.0, "speaker_1"),
+            (99.0, 100.2, "speaker_2"),
+        ]
+
+        result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
+
+        speaker_ids = {spk for _, _, spk in result}
+        assert "speaker_2" in speaker_ids
+
+    def test_keeps_repeated_short_speaker_segments(self):
+        """Repeated appearances are kept even when total duration is small."""
+        parsed_diar = [
+            (0.0, 50.0, "speaker_0"),
+            (50.0, 100.0, "speaker_1"),
+            (100.0, 100.3, "speaker_2"),
+            (100.3, 100.6, "speaker_2"),
+        ]
+
+        result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
+
+        speaker_ids = {spk for _, _, spk in result}
+        assert "speaker_2" in speaker_ids
+
     def test_keeps_speakers_above_threshold(self):
         """Speakers with >= 5% of total duration are kept."""
         parsed_diar = [

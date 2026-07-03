@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c10f71402b36d50b81b6d1290ba20c2b",
+    "content-hash": "7f06bf4118e58397cd32d19e4d8ecc9f",
     "packages": [
         {
             "name": "blundergoat/strands-php-client",
@@ -3929,6 +3929,78 @@
         }
     ],
     "packages-dev": [
+        {
+            "name": "blundergoat/gruff-php",
+            "version": "v0.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/blundergoat/gruff-php.git",
+                "reference": "ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/blundergoat/gruff-php/zipball/ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d",
+                "reference": "ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d",
+                "shasum": ""
+            },
+            "require": {
+                "nikic/php-parser": "^5.6",
+                "php": "^8.3",
+                "symfony/console": "^6.4 || ^7.0 || ^8.0",
+                "symfony/finder": "^6.4 || ^7.0 || ^8.0",
+                "symfony/process": "^6.4 || ^7.0 || ^8.0",
+                "symfony/yaml": "^6.4 || ^7.0 || ^8.0"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "^3.95",
+                "infection/infection": "^0.32",
+                "phpstan/phpstan": "^2.0",
+                "phpunit/phpunit": "^12.5"
+            },
+            "bin": [
+                "bin/gruff-php"
+            ],
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "GruffPhp\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Matthew Hansen",
+                    "homepage": "https://www.blundergoat.com/about",
+                    "role": "Developer"
+                }
+            ],
+            "description": "Opinionated PHP code-quality analyzer with SARIF output, baselines, and a local dashboard.",
+            "homepage": "https://github.com/blundergoat/gruff-php",
+            "keywords": [
+                "baselines",
+                "cli",
+                "code-analysis",
+                "code-quality",
+                "code-review",
+                "dogfood",
+                "linter",
+                "php",
+                "phpstan-alternative",
+                "quality-gate",
+                "sarif",
+                "static-analysis"
+            ],
+            "support": {
+                "docs": "https://github.com/blundergoat/gruff-php/blob/main/README.md",
+                "issues": "https://github.com/blundergoat/gruff-php/issues",
+                "security": "https://github.com/blundergoat/gruff-php/security/policy",
+                "source": "https://github.com/blundergoat/gruff-php"
+            },
+            "time": "2026-06-13T22:11:56+00:00"
+        },
         {
             "name": "clue/ndjson-react",
             "version": "v1.3.0",
@@ -8725,7 +8797,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=8.2"
+        "php": ">=8.3"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

@@ -114,12 +114,17 @@ class SessionLifecycle:
             return  # already scheduled
 
         async def _delayed_destroy() -> None:
-            logger.info("session_lifecycle.grace_period_expired", extra={
-                "session_id": session_id,
-                "grace_seconds": grace_seconds,
-            })
-            await self.destroy(session_id, close_role_inference_fn)
-            self._pending_destroys.pop(session_id, None)
+            try:
+                await asyncio.sleep(grace_seconds)
+                logger.info("session_lifecycle.grace_period_expired", extra={
+                    "session_id": session_id,
+                    "grace_seconds": grace_seconds,
+                })
+                await self.destroy(session_id, close_role_inference_fn)
+            finally:
+                current_task = asyncio.current_task()
+                if self._pending_destroys.get(session_id) is current_task:
+                    self._pending_destroys.pop(session_id, None)
 
         task = asyncio.create_task(
             _delayed_destroy(),

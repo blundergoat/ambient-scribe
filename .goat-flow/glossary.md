@@ -8,14 +8,17 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 - **Parakeet** — `EncDecMultiTalkerRNNTBPEModel`, the ASR model. ~4.5 GB VRAM.
 - **Sortformer** — `SortformerEncLabelModel`, the diarization model (who-spoke-when). ~1.2 GB VRAM.
 - **PcmStreamer** — Browser-side capture/resampler in `public/js/scribe.js`. Always emits 16 kHz 16-bit PCM; the server trusts `NEMO_STREAM_INPUT_FORMAT` to match.
+- **StreamOrchestrator** — Browser-side Mercure EventSource manager in `public/js/scribe.js`. Tracks topic subscriptions, reconnect backoff, and Last-Event-ID resume state.
 - **Raw segment** — Pre-role-attribution transcript chunk published to `scribe/session/{id}/raw`.
 - **Roles topic** — Post-inference speaker → role mapping published to `scribe/session/{id}/roles`.
 - **Summary topic** — End-of-session summary update published to `scribe/session/{id}/summary`.
+- **Replay** — FastAPI/browser flow that processes an uploaded audio file through NeMo and republishes the resulting segments to Mercure with pacing for demo and scenario validation.
 
 ## Session / lifecycle
 
 - **SessionLifecycle** — `strands_agents/session_lifecycle.py`. Owns active WebSocket sessions and per-session cleanup with reconnect grace window.
 - **SessionStore** — `strands_agents/session.py`. In-memory or SQLite transcript history with independent TTL eviction.
+- **SqliteBackend** — `strands_agents/storage.py`. Persistent transcript backend stored at `SESSION_DB_PATH` when `SESSION_STORAGE=sqlite`.
 - **Mode** — One of 6 capture profiles: Medical, Meeting, Interview, TV/Media, Lecture, General. Drives role taxonomy and summary prompt.
 - **Role inference** — Bedrock or CPU Ollama agent (`strands_agents/agents/transcription_agent.py`) that calls `assign_roles` as a tool. Never runs on the NeMo GPU.
 

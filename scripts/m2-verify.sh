@@ -14,7 +14,7 @@
 #   2. ./scripts/start-dev.sh -b    (services running and healthy)
 #   3. ./scripts/health-checks.sh   (all green)
 #
-# What this tests (M2 exit criteria from milestones/milestone-2-*.md):
+# What this tests (M2 exit criteria from .goat-flow/plans/):
 #   1. NeMo models loaded at startup (structlog marker in logs)
 #   2. POST /transcribe/file — upload WAV, get speaker-attributed segments
 #   3. /health responds during active transcription (event loop not blocked)
@@ -358,7 +358,7 @@ else
 fi
 
 echo ""
-echo -e "  ${DIM}M2 exit criteria: milestones/milestone-2-audio-pipeline-end-to-end.md${RESET}"
+echo -e "  ${DIM}M2 exit criteria: .goat-flow/plans/${RESET}"
 echo -e "  ${DIM}Next: open http://localhost:8082/scribe and test live mic recording${RESET}"
 echo ""
 

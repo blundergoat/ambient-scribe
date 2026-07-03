@@ -1,6 +1,6 @@
 # Backend — Ambient Scribe
 
-PHP 8.2+ with Symfony 6.4. Two PHP source files handle the HTTP layer; the real-time audio pipeline is handled by the Python agent via WebSocket.
+PHP 8.3+ with Symfony 6.4. Two PHP source files handle the HTTP layer; the real-time audio pipeline is handled by the Python agent via WebSocket.
 
 ## File Layout
 

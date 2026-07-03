@@ -22,7 +22,7 @@ Real-time medical transcription system that captures clinical conversations, per
                            +-------------------+        |  - Role inference    |
                            |                   |        |  (DOCTOR / PATIENT)  |
                            |  Symfony App      | <------+----------------------+
-                           |  (PHP 8.2)        |
+                           |  (PHP 8.3+)       |
                            |  - ScribeController        +----------------------+
                            |  - Orchestrator   | -----> |  Mercure Hub (SSE)   |
                            |                   |        +----------------------+
@@ -52,7 +52,7 @@ The application will be available at `http://localhost:8080`.
 |--------------------|------------------------------------------------------|
 | ASR + Diarization  | NVIDIA NeMo multitalker Parakeet (GPU)               |
 | Role Inference     | Strands SDK + AWS Bedrock                            |
-| Backend            | PHP 8.2, Symfony 6.4                                 |
+| Backend            | PHP 8.3+, Symfony 6.4                                |
 | Audio Pipeline     | WebSocket (browser -> Python)                        |
 | Transcript Delivery| Mercure Hub (SSE)                                    |
 | Frontend           | Twig, Tailwind CSS, Stimulus / AssetMapper           |
@@ -67,6 +67,6 @@ composer cs:check      # PHP-CS-Fixer dry-run
 composer preflight     # All quality checks in sequence
 ```
 
-## Milestones
+## Plans
 
-See the [milestones/](milestones/) directory for project planning and progress tracking.
+See the [.goat-flow/plans/](.goat-flow/plans/) directory for project planning and progress tracking.

@@ -4,7 +4,7 @@ Real-time medical transcription system. Browser captures microphone audio, strea
 
 ## Stack
 
-- **PHP >=8.2, Symfony 6.4** — `src/`, PSR-12, PHPStan level 10, `declare(strict_types=1)` in every file
+- **PHP >=8.3, Symfony 6.4** — `src/`, PSR-12, PHPStan level 10, `declare(strict_types=1)` in every file
 - **Python 3.12+, FastAPI** — `strands_agents/`, NeMo Parakeet (GPU diarization + ASR), Strands SDK
 - **Frontend** — Twig template (`templates/scribe/index.html.twig`) loads `public/js/scribe.js`; no bundler, no npm build step
 - **Mercure** — JWT-authenticated SSE for real-time transcript delivery

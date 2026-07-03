@@ -21,7 +21,8 @@ SQLITE SCHEMA
   segments(id INTEGER PK, session_id TEXT FK, speaker_id TEXT, text TEXT,
            start REAL, end REAL, is_interim INTEGER, role TEXT, position INTEGER)
 
-Thread safety: check_same_thread=False + threading.Lock for all writes.
+Thread safety: check_same_thread=False + threading.Lock for all shared
+connection access.
 """
 
 from __future__ import annotations
@@ -52,14 +53,32 @@ class StorageBackend(Protocol):
 
 
 SESSION_DB_PATH = os.environ.get("SESSION_DB_PATH", "/data/sessions.db")
+_TRANSCRIPT_ELLIPSIS = "\n...\n"
+
+
+def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
+    """Return a transcript preview no longer than max_chars."""
+    if max_chars <= 0:
+        return ""
+    if len(full_text) <= max_chars:
+        return full_text
+    if max_chars <= len(_TRANSCRIPT_ELLIPSIS):
+        return full_text[:max_chars]
+
+    if max_chars <= 500 + len(_TRANSCRIPT_ELLIPSIS):
+        first_size = (max_chars - len(_TRANSCRIPT_ELLIPSIS)) // 2
+    else:
+        first_size = 500
+    last_size = max_chars - len(_TRANSCRIPT_ELLIPSIS) - first_size
+
+    return full_text[:first_size] + _TRANSCRIPT_ELLIPSIS + full_text[-last_size:]
 
 
 class SqliteBackend:
     """Persistent transcript storage backed by a single SQLite file.
 
     Thread-safe: uses check_same_thread=False and a threading.Lock for all
-    write operations. Read operations do not acquire the lock (SQLite WAL
-    mode allows concurrent readers).
+    shared connection access.
 
     Tables are created on init if they don't exist.
     """
@@ -174,15 +193,16 @@ class SqliteBackend:
 
     def get_segments(self, session_id: str) -> list[dict]:
         """Return all segments for a session ordered by position."""
-        rows = self._conn.execute(
-            """
-            SELECT speaker_id, text, start, end, is_interim, role
-            FROM segments
-            WHERE session_id = ?
-            ORDER BY position
-            """,
-            (session_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT speaker_id, text, start, end, is_interim, role
+                FROM segments
+                WHERE session_id = ?
+                ORDER BY position
+                """,
+                (session_id,),
+            ).fetchall()
 
         segments = []
         for row in rows:
@@ -201,8 +221,8 @@ class SqliteBackend:
     def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str:
         """Return the accumulated transcript as plain text (for role inference context).
 
-        Returns the first 500 chars (opening context) plus the last (max_chars - 500)
-        chars (recent context), separated by an ellipsis marker.
+        Returns opening and recent context separated by an ellipsis marker while
+        respecting max_chars.
         """
         segments = self.get_segments(session_id)
         lines = []
@@ -212,13 +232,7 @@ class SqliteBackend:
             lines.append(f"[{speaker}] {text}")
 
         full_text = "\n".join(lines)
-        if len(full_text) > max_chars:
-            first_size = min(500, max_chars // 3)
-            last_size = max_chars - first_size
-            first = full_text[:first_size]
-            last = full_text[-last_size:]
-            return first + "\n...\n" + last
-        return full_text
+        return _truncate_transcript_text(full_text, max_chars)
 
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
         """Update the role column for segments matching speaker_ids in the mapping."""
@@ -243,9 +257,11 @@ class SqliteBackend:
     @property
     def session_count(self) -> int:
         """Number of sessions in the database."""
-        row = self._conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
         return row[0] if row else 0
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

@@ -72,9 +72,9 @@ Copy `.env.example` to `.env`. Key variables:
 - Local host defaults use uncommon dev ports: app `48082`, agent `48101`, Mercure `48137`
 - For local stack bring-up, prefer `./scripts/start-dev.sh` and the health-check scripts over raw `docker compose`
 
-## Milestone Status
+## Plan Status
 
-See `milestones/` for detailed task breakdowns:
+See `.goat-flow/plans/` for detailed task breakdowns:
 - M0: shared infrastructure
 - M1: NeMo validation + scaffold (complete)
 - M2: audio pipeline end-to-end (in progress; code exists, final live verification pending)

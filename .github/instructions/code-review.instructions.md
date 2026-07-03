@@ -8,7 +8,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 
 ## Project Context
 
-- PHP >=8.2, Symfony 6.4, `declare(strict_types=1)` everywhere, PSR-12 formatting
+- PHP >=8.3, Symfony 6.4, `declare(strict_types=1)` everywhere, PSR-12 formatting
 - Namespace: `App\` (src/), `App\Tests\` (tests/)
 - PHPStan level 10 - type errors are blockers
 - PHP-CS-Fixer enforces: short arrays, single quotes, ordered imports, trailing commas
