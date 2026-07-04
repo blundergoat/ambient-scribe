@@ -30,6 +30,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Log analysis and eval tooling** - added `scripts/analyze-logs.py` for process-quality reports and `scripts/eval-role-heuristic.py` for GPU-free scenario role-attribution evaluation.
+- **Stack inventory documentation** - added `README_STACK.md` with the current model, service, runtime, topic, and dependency inventory for the medical scribe stack.
 - **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
 - **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
 - **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.

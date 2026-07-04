@@ -132,3 +132,12 @@ During M12, the first clinical-hints UI pass hid the sidebar element but left a 
 During M12, the clinical KB loader handled missing files and invalid shapes but did not handle malformed JSON. A bad PoC knowledge file would have turned an assistive hint/grounding feature into a summary-generation failure for the user.
 
 **Lesson:** For optional local JSON/fixture inputs used by a user-facing path, cover malformed JSON as well as missing files and empty data. Optional assistive data should degrade to no context, not block the primary workflow.
+
+## Lesson: Model stack docs need env, Compose, and code defaults checked together (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `README_STACK.md` (search: "Compose has an older no-`.env` fallback"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=ollama"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
+
+While creating the stack inventory, the root README still described Bedrock as the role-inference default, `.env.example` described Ollama as the local default, Compose passed Ollama by default, and the Python agent retained Bedrock defaults for missing env vars. Reading only one source would have produced another stale model summary.
+
+**Lesson:** For docs that name model providers or IDs, verify `.env.example`, `docker-compose.yml`, agent factory code, and any existing README before writing the final wording. Call out intentional fallback differences instead of flattening them into one default.
