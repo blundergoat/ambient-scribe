@@ -7,28 +7,6 @@
 // =========================================================================
 
 /**
- * Shows or hides the demo-audio panel on small screens.
- * Use when a developer taps the audio icon while testing `/scribe`.
- */
-function toggleAudioFixturePanel() {
-    const audioFixturePanel = document.getElementById('audioFixturePanel');
-    const audioFixtureBackdrop = document.getElementById('audioFixturePanelBackdrop');
-
-    // Production pages and some tests do not render the audio fixture panel.
-    if (!audioFixturePanel) {
-        return;
-    }
-
-    const isVisible = audioFixturePanel.style.display !== 'none' && audioFixturePanel.style.display !== '';
-    audioFixturePanel.style.display = isVisible ? 'none' : 'flex';
-
-    // The backdrop follows the panel so mobile users can close it cleanly.
-    if (audioFixtureBackdrop) {
-        audioFixtureBackdrop.style.display = isVisible ? 'none' : 'block';
-    }
-}
-
-/**
  * Shows or hides the dev-inspector panel on small screens.
  * Use when a developer taps the dev-panel icon while checking a session.
  */
@@ -49,6 +27,39 @@ function toggleDevPanelMobile() {
         devBackdrop.style.display = isVisible ? 'none' : 'block';
     }
 }
+
+const DEV_PANEL_COLLAPSED_KEY = 'ambient-scribe-dev-panel-collapsed';
+
+/**
+ * Collapses or expands the dev-panel body under its header.
+ * Use when debugging output should get out of the way of Clinical Hints.
+ */
+function toggleDevPanelCollapsed() {
+    const devPanelElement = document.getElementById('devPanel');
+
+    // Production pages and some tests do not render the dev panel.
+    if (!devPanelElement) {
+        return;
+    }
+
+    const isCollapsed = devPanelElement.classList.toggle('dev-panel--collapsed');
+    localStorage.setItem(DEV_PANEL_COLLAPSED_KEY, isCollapsed ? '1' : '0');
+
+    const collapseButton = document.getElementById('devPanelCollapseBtn');
+
+    // CSS rotates the SVG caret so the button keeps its icon markup.
+    if (collapseButton) {
+        collapseButton.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        collapseButton.setAttribute('aria-label', isCollapsed ? 'Expand dev panel' : 'Collapse dev panel');
+    }
+}
+
+// Reapply the developer's last collapsed choice on every page load.
+document.addEventListener('DOMContentLoaded', () => {
+    if (localStorage.getItem(DEV_PANEL_COLLAPSED_KEY) === '1') {
+        toggleDevPanelCollapsed();
+    }
+});
 
 /**
  * Dev inspector for transcript, raw events, Mercure, WebSocket, and state.
@@ -412,22 +423,22 @@ class DevPanel {
     }
 
     /**
-     * Renders clickable demo audio rows.
+     * Renders the demo-audio selector into its header mount.
      * Use after the dev panel loads or generated WAV fixtures change.
      */
     renderAudioFixtureList() {
-        const audioFixtureList = document.getElementById('audioFixtureList');
+        const audioSelectMount = document.getElementById('audioSelectMount');
 
-        // Without the audio list element, there is no local demo list to render.
-        if (!audioFixtureList) {
+        // Without the header mount, there is no demo selector to render.
+        if (!audioSelectMount) {
             return;
         }
 
-        clearElement(audioFixtureList);
+        clearElement(audioSelectMount);
 
         // Empty generated audio means the developer has no WAV choices yet.
         if (AUDIO_FIXTURES.length === 0) {
-            audioFixtureList.appendChild(createElement('div', {
+            audioSelectMount.appendChild(createElement('div', {
                 className: 'audio-fixture-item__meta',
                 text: 'No generated audio fixtures.',
             }));
@@ -435,7 +446,7 @@ class DevPanel {
         }
 
         // A single dropdown selects one PriMock57 clip and starts its replay.
-        audioFixtureList.appendChild(createAudioFixtureSelect());
+        audioSelectMount.appendChild(createAudioFixtureSelect());
     }
 
     /**
@@ -506,18 +517,21 @@ function audioFixtureSubLabel(audioFixture) {
  * Use when the dev panel loads; selecting an option starts that clip's replay.
  */
 function createAudioFixtureSelect() {
-    const selectedFixture = AUDIO_FIXTURES[0];
+    // Nothing plays until the developer chooses, so the trigger starts as a prompt.
     const triggerMain = createElement('span', { className: 'audio-select__main' }, [
         createElement('span', {
             className: 'audio-select__title',
-            text: audioFixtureLabel(selectedFixture),
+            text: 'Select demo audio',
             attributes: { id: 'audioSelectTitle' },
         }),
-        createElement('span', { className: 'audio-select__sub', text: audioFixtureSubLabel(selectedFixture) }),
+        createElement('span', {
+            className: 'audio-select__sub',
+            text: 'PriMock57 demo audio',
+            attributes: { id: 'audioSelectSub' },
+        }),
     ]);
     const triggerIndicators = createElement('span', { className: 'audio-select__indicators' }, [
-        createElement('span', { className: 'audio-select__dot' }),
-        createElement('span', { className: 'audio-select__caret', text: '▾' }),
+        createCaretIcon(),
     ]);
     const trigger = createElement('button', {
         className: 'audio-select__trigger',
@@ -535,10 +549,53 @@ function createAudioFixtureSelect() {
         attributes: { id: 'audioSelectMenu', role: 'listbox' },
     });
     for (const audioFixture of AUDIO_FIXTURES) {
-        menu.appendChild(createAudioFixtureOption(audioFixture, audioFixture === selectedFixture));
+        menu.appendChild(createAudioFixtureOption(audioFixture, false));
     }
+    menu.appendChild(createUploadWavOption());
 
     return createElement('div', { className: 'audio-select', attributes: { id: 'audioSelect' } }, [trigger, menu]);
+}
+
+/**
+ * Builds the chevron icon for the demo-audio trigger.
+ * SVG needs its own namespace, so the shared createElement helper cannot make it.
+ */
+function createCaretIcon() {
+    const caret = createElement('span', { className: 'audio-select__caret' });
+    const svgNamespace = 'http://www.w3.org/2000/svg';
+    const chevron = document.createElementNS(svgNamespace, 'svg');
+    chevron.setAttribute('viewBox', '0 0 24 24');
+    chevron.setAttribute('width', '16');
+    chevron.setAttribute('height', '16');
+    chevron.setAttribute('fill', 'none');
+    chevron.setAttribute('stroke', 'currentColor');
+    chevron.setAttribute('stroke-width', '2.5');
+    chevron.setAttribute('stroke-linecap', 'round');
+    chevron.setAttribute('stroke-linejoin', 'round');
+    const chevronPath = document.createElementNS(svgNamespace, 'path');
+    chevronPath.setAttribute('d', 'M6 9l6 6 6-6');
+    chevron.appendChild(chevronPath);
+    caret.appendChild(chevron);
+    return caret;
+}
+
+/**
+ * Builds the manual Upload WAV entry at the bottom of the dropdown.
+ * Use so arbitrary WAV files stay testable now that the side panel is gone.
+ */
+function createUploadWavOption() {
+    const uploadOption = createElement('button', {
+        className: 'audio-select__option audio-select__option--upload',
+        attributes: { type: 'button', id: 'audioSelectUploadBtn' },
+    }, [
+        createElement('span', { className: 'audio-select__option-title', text: 'Upload WAV…' }),
+        createElement('span', { className: 'audio-select__option-sub', text: 'replay any local 16 kHz-compatible file' }),
+    ]);
+    uploadOption.addEventListener('click', () => {
+        closeAudioSelectMenu();
+        document.getElementById('demoFileInput')?.click();
+    });
+    return uploadOption;
 }
 
 /**
@@ -607,6 +664,12 @@ function selectAudioFixture(audioFixture) {
     const selectorTitle = document.getElementById('audioSelectTitle');
     if (selectorTitle) {
         selectorTitle.textContent = audioFixtureLabel(audioFixture);
+    }
+
+    // The sub line switches from the placeholder prompt to the chosen clip's descriptor.
+    const selectorSub = document.getElementById('audioSelectSub');
+    if (selectorSub) {
+        selectorSub.textContent = audioFixtureSubLabel(audioFixture);
     }
 
     // Reflect the current choice for assistive tech and the selected-row highlight.

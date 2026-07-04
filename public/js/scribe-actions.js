@@ -15,6 +15,20 @@ function revealPostVisitActions() {
     if (segmentIndex > 0) {
         setElementHidden('resetBtn', false);
         setElementHidden('summaryBtn', false);
+        setSummaryPendingText('Consultation ended - click Summarise to generate the session summary.');
+    }
+}
+
+/**
+ * Updates the summary panel's waiting message.
+ * Use when the visit moves between recording and ready-to-summarise states.
+ */
+function setSummaryPendingText(message) {
+    const pendingText = document.getElementById('summaryPendingText');
+
+    // Isolated test pages may not render the summary panel.
+    if (pendingText) {
+        pendingText.textContent = message;
     }
 }
 

@@ -54,6 +54,12 @@ MODEL_PROVIDER="${ROLE_AGENT_MODEL_PROVIDER:-${MODEL_PROVIDER:-ollama}}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen3.5:9b}}"
 
+# The ollama container sits behind a compose profile; only the ollama
+# provider needs it. Bedrock setups start the stack without it.
+if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
+    export COMPOSE_PROFILES="${COMPOSE_PROFILES:-ollama}"
+fi
+
 # ── Ollama helpers ─────────────────────────────────────────────────
 detect_running_ollama_host() {
     local pid configured_host

@@ -117,7 +117,7 @@ async function startReplay(file, options = {}) {
  * Use so the user cannot start two audio replays at once from the UI.
  */
 function setReplayControlsBusy(isBusy, label) {
-    const uploadButton = document.querySelector('.audio-fixture-panel__footer button');
+    const uploadButton = document.getElementById('audioSelectUploadBtn');
     const summaryButton = document.getElementById('summaryBtn');
 
     // Summary should not be requested while replay upload is still being prepared.
@@ -125,13 +125,18 @@ function setReplayControlsBusy(isBusy, label) {
         summaryButton.disabled = isBusy;
     }
 
-    // Production pages have no demo audio panel, so replay status is enough.
+    // Production pages have no demo audio selector, so replay status is enough.
     if (!uploadButton) {
         return;
     }
 
     uploadButton.disabled = isBusy;
-    uploadButton.textContent = label;
+    const uploadTitle = uploadButton.querySelector('.audio-select__option-title');
+
+    // The dropdown row keeps its two-line shape while showing busy state.
+    if (uploadTitle) {
+        uploadTitle.textContent = isBusy ? label : 'Upload WAV…';
+    }
 }
 
 /**
@@ -518,11 +523,14 @@ function renderClinicalHints(hints) {
     }
 
     clearElement(hintsList);
+    hintsPanel.classList.remove('hidden');
 
-    // No suggestions means there is nothing for the clinician to review.
+    // The section stays visible after a summary; an empty run says so plainly.
     if (hints.length === 0) {
-        hintsPanel.classList.add('hidden');
-        setClinicalHintsLayoutVisible(false);
+        hintsList.appendChild(createElement('div', {
+            className: 'clinical-hints__empty',
+            text: 'No suggestions for this consultation.',
+        }));
         return;
     }
 
@@ -532,7 +540,6 @@ function renderClinicalHints(hints) {
     }
 
     hintsPanel.classList.remove('hidden');
-    setClinicalHintsLayoutVisible(true);
 }
 
 /**
@@ -552,13 +559,14 @@ function createClinicalHintElement(hint) {
 
     dismissButton.addEventListener('click', () => {
         hintElement.remove();
-        const hintsPanel = document.getElementById('clinicalHintsPanel');
         const hintsList = document.getElementById('clinicalHintsList');
 
-        // The sidebar closes once the clinician dismisses the final suggestion.
+        // The section stays in place; dismissing the last hint says it is done.
         if (hintsList?.children.length === 0) {
-            hintsPanel?.classList.add('hidden');
-            setClinicalHintsLayoutVisible(false);
+            hintsList.appendChild(createElement('div', {
+                className: 'clinical-hints__empty',
+                text: 'All suggestions dismissed.',
+            }));
         }
     });
 
@@ -604,22 +612,6 @@ function clearClinicalHints() {
 
     clearElement(hintsList);
     hintsPanel.classList.add('hidden');
-    setClinicalHintsLayoutVisible(false);
-}
-
-/**
- * Adds or removes the desktop hints column.
- * Use when the sidebar opens or closes so hidden hints do not leave blank space.
- */
-function setClinicalHintsLayoutVisible(shouldShowHintsColumn) {
-    const appLayout = document.getElementById('appLayout');
-
-    // Isolated tests may omit the full app shell while still exercising rendering.
-    if (!appLayout) {
-        return;
-    }
-
-    appLayout.classList.toggle('app-layout--with-hints', shouldShowHintsColumn);
 }
 
 /**

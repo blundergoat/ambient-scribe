@@ -91,6 +91,15 @@ last_reviewed: 2026-07-04
 - **Evidence:** The browser fetch path is same-origin, FastAPI defines the summary endpoint, and Symfony must translate the app-origin request into a FastAPI call while preserving JSON error responses.
 - **Prevention:** When adding or changing browser-to-FastAPI HTTP actions, add a Symfony same-origin proxy or explicitly prove browser CORS/config. Include a route smoke that checks `Content-Type: application/json` for failure states, not just happy-path API tests.
 
+## Footgun: Visit topics must share one multiplexed EventSource
+**Status:** active | **Created:** 2026-07-05 | **Evidence:** OBSERVED
+
+- **Files:** `public/js/scribe-streaming.js` (search: "class StreamOrchestrator")
+- **Files:** `public/js/scribe-recording.js` (search: "streams.connect(topics")
+- **What breaks:** Browsers cap HTTP/1.1 connections at ~6 per host, and the Mercure hub on `http://localhost` cannot negotiate HTTP/2. When each visit topic (raw/roles/summary/hints) opened its own EventSource, a couple of open scribe tabs exhausted the pool and every new tab's streams hung silently in CONNECTING: the dev panel showed "disconnected" and 0 segments while the server logged `mercure.publish.succeeded` for every event and `curl` against the hub returned a healthy SSE stream.
+- **Evidence:** A demo replay produced continuous publish-succeeded logs while the fresh browser tab rendered nothing; the hub answered probes with 200 + correct CORS throughout. Consolidating to one EventSource carrying all topics (events routed by payload `type`) restored delivery.
+- **Prevention:** New Mercure topics must be added to the shared stream's topic list and the type→handler map - never as an additional EventSource. When "hub works but browser is silent", count open SSE connections across ALL tabs before blaming the hub or a stale page.
+
 ## Footgun: Replay transcription must stay coupled to audible browser audio
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
 

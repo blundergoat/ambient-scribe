@@ -97,48 +97,28 @@
             margin: 0 auto;
         }
 
+        /* Dev mode: workspace 10/12 (transcript 5 + summary/hints 5), dev rail 2/12. */
         .app-layout--dev {
             display: grid;
-            grid-template-columns: 300px minmax(0, 1fr);
-            grid-template-rows: auto minmax(0, 1fr);
+            grid-template-columns: minmax(0, 10fr) minmax(200px, 2fr);
             height: 100vh;
             max-width: none;
             margin: 0;
         }
 
-        .app-layout--with-hints:not(.app-layout--dev) {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 320px;
-            gap: 1rem;
-            max-width: 88rem;
-        }
-
-        .app-layout--dev.app-layout--with-hints {
-            grid-template-columns: 300px minmax(0, 1fr) 320px;
-        }
-
-        .app-layout--dev > .audio-fixture-panel {
-            grid-column: 1;
-            grid-row: 1;
-            border-right: 1px solid var(--surface-border);
-            border-bottom: 1px solid var(--surface-border);
+        /* Collapsed dev panel shrinks to a slim vertical strip on the right edge. */
+        .app-layout--dev:has(.dev-panel--collapsed) {
+            grid-template-columns: minmax(0, 1fr) 2.75rem;
         }
 
         .app-layout--dev > .dev-panel {
-            grid-column: 1;
-            grid-row: 2;
+            grid-column: 2;
             min-height: 0;
-            border-right: 1px solid var(--surface-border);
+            border-left: 1px solid var(--surface-border);
         }
 
         .app-layout--dev > .scribe-workspace {
-            grid-column: 2;
-            grid-row: 1 / 3;
-        }
-
-        .app-layout--dev.app-layout--with-hints > .clinical-hints {
-            grid-column: 3;
-            grid-row: 1 / 3;
+            grid-column: 1;
         }
 
         .scribe-workspace {
@@ -191,8 +171,22 @@
             gap: 0.875rem;
         }
 
-        .consultation-workspace:has(.summary-panel:not(.hidden)) {
-            grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+        /* Once the summary or hints open, transcript and that column split 5:5. */
+        .consultation-workspace:has(.summary-panel:not(.hidden)),
+        .consultation-workspace:has(.clinical-hints:not(.hidden)) {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        /* Summary on top, clinical hints below it, sharing one scrollable column. */
+        .summary-column {
+            display: flex;
+            flex-direction: column;
+            gap: 0.875rem;
+            min-height: 0;
+        }
+        /* An all-hidden column must not occupy the grid track's gap. */
+        .summary-column:not(:has(.summary-panel:not(.hidden))):not(:has(.clinical-hints:not(.hidden))) {
+            display: none;
         }
 
         .transcript-panel {
@@ -447,17 +441,26 @@
             color: var(--text-strong);
         }
 
-        /* ---- Clinical Hints ---- */
+        /* ---- Clinical Hints (card below the session summary) ---- */
+        /* The column splits summary 2/3 and hints 1/3 once both are visible. */
         .clinical-hints {
-            position: sticky;
-            top: 0;
-            height: 100vh;
+            flex: 1;
+            min-height: 0;
             overflow-y: auto;
-            border-left: 1px solid var(--surface-border);
+            border: 1px solid var(--surface-border);
+            border-radius: var(--radius);
             background: var(--surface-bg);
             padding: 1.125rem;
         }
         .clinical-hints.hidden { display: none; }
+        .clinical-hints__empty {
+            font-size: 0.8125rem;
+            color: var(--text-subtle);
+        }
+        .summary-column > .summary-panel {
+            flex: 2;
+            min-height: 0;
+        }
         .clinical-hints__title {
             font-size: 0.8125rem;
             font-weight: 700;
@@ -624,47 +627,22 @@
         .icon-btn svg { width: 18px; height: 18px; }
 
         /* ---- Demo Audio Panel (left) ---- */
-        .audio-fixture-panel {
-            min-height: 0;
-            overflow: visible;
-            background: var(--surface-bg);
-            display: flex;
-            flex-direction: column;
-            font-size: 0.8125rem;
+        /* Demo Audio selector lives in the header; sizing wrapper for the dropdown. */
+        .audio-select-mount {
+            position: relative;
+            width: 300px;
+            max-width: 40vw;
         }
-        .audio-fixture-panel__header {
-            padding: 1.25rem 1.125rem 0.5rem;
-            flex-shrink: 0;
-        }
-        .audio-fixture-panel__title {
-            font-weight: 700;
-            font-size: 0.6875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.13em;
-            color: var(--text-subtle);
-            margin-bottom: 0.75rem;
-        }
-        .audio-fixture-panel__body {
-            overflow: visible;
-            padding: 0.375rem 0.75rem 0.75rem;
-        }
-        .audio-fixture-item {
-            display: block;
-            width: 100%;
-            text-align: left;
-            padding: 0.625rem 0.75rem;
-            border: 1px solid var(--surface-border);
+        /* The header trigger matches the icon-btn height; the menu keeps its full rows. */
+        .audio-select-mount .audio-select__trigger {
+            height: 2.25rem;
+            padding: 0 0.625rem;
             border-radius: 0.5rem;
-            margin-bottom: 0.375rem;
-            cursor: pointer;
-            transition: all 0.15s;
-            background: var(--surface-bg-alt);
-            color: inherit;
-            font: inherit;
         }
-        .audio-fixture-item:hover {
-            background: var(--surface-hover);
-            border-color: var(--accent-soft);
+        .audio-select-mount .audio-select__sub { display: none; }
+        .audio-select-mount .audio-select__indicators {
+            flex-direction: row;
+            gap: 0.375rem;
         }
         .audio-fixture-item--complete { border-left: 3px solid var(--color-success); }
         .audio-fixture-item--error { border-left: 3px solid var(--color-danger); }
@@ -709,9 +687,13 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .audio-select__indicators { flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
-        .audio-select__dot { width: 7px; height: 7px; border-radius: 999px; background: var(--color-danger); }
-        .audio-select__caret { font-size: 0.6875rem; color: var(--text-subtle); transition: transform 0.15s; }
+        .audio-select__indicators { flex: none; display: flex; align-items: center; }
+        .audio-select__caret {
+            display: flex;
+            align-items: center;
+            color: var(--text-subtle);
+            transition: transform 0.15s;
+        }
         .audio-select--open .audio-select__caret { transform: rotate(180deg); }
         .audio-select__menu {
             position: absolute;
@@ -744,12 +726,6 @@
         .audio-select__option[aria-selected="true"] { background: var(--surface-selected); }
         .audio-select__option-title { display: block; font-weight: 600; font-size: 0.8125rem; color: var(--text-strong); }
         .audio-select__option-sub { display: block; font-size: 0.6875rem; color: var(--text-muted); margin-top: 0.125rem; }
-        .audio-fixture-item__name {
-            font-weight: 600;
-            font-size: 0.8125rem;
-            color: var(--text-strong);
-            overflow-wrap: anywhere;
-        }
         .audio-fixture-item__meta {
             font-size: 0.6875rem;
             color: var(--text-subtle);
@@ -763,12 +739,14 @@
             color: var(--accent);
             font-weight: 600;
         }
-        .audio-fixture-panel__footer {
-            padding: 0 0.75rem 0.875rem;
-            flex-shrink: 0;
+        .audio-select__option--upload {
+            border-top: 1px solid var(--surface-border);
+            border-radius: 0;
+            margin-top: 0.25rem;
+            padding-top: 0.625rem;
         }
 
-        /* ---- Dev Panel (left rail) ---- */
+        /* ---- Dev Panel (right rail) ---- */
         .dev-panel {
             min-height: 0;
             overflow: hidden;
@@ -800,6 +778,49 @@
             color: var(--text-subtle);
         }
         .dev-panel__status--on { color: var(--color-success); }
+        .dev-panel__header-side {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .dev-panel__collapse {
+            border: 0;
+            background: none;
+            color: var(--text-subtle);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.5rem;
+            height: 1.5rem;
+            padding: 0;
+            border-radius: 0.375rem;
+            transition: background 0.15s, color 0.15s;
+        }
+        .dev-panel__collapse:hover,
+        .dev-panel__collapse:focus-visible {
+            background: var(--surface-hover);
+            color: var(--text-strong);
+        }
+        .dev-panel__collapse .audio-select__caret { color: currentColor; }
+        .dev-panel__collapse svg { display: block; }
+        .dev-panel__collapse-caret { transform: rotate(-90deg); }
+        .dev-panel--collapsed .dev-panel__collapse-caret { transform: rotate(90deg); }
+        /* Collapsed: a slim vertical strip with the title reading downward. */
+        .dev-panel--collapsed .dev-panel__tabs,
+        .dev-panel--collapsed .dev-panel__content,
+        .dev-panel--collapsed .dev-panel__status { display: none !important; }
+        .dev-panel--collapsed .dev-panel__header {
+            flex-direction: column;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 0 0;
+        }
+        .dev-panel--collapsed .dev-panel__title {
+            writing-mode: vertical-rl;
+            letter-spacing: 0.08em;
+        }
+        .dev-panel--collapsed .dev-panel__header-side { flex-direction: column; }
         .dev-panel__tabs {
             display: flex;
             flex-wrap: wrap;
@@ -889,29 +910,19 @@
         }
 
         @media (max-width: 1279px) {
-            .app-layout--dev,
-            .app-layout--dev.app-layout--with-hints,
-            .app-layout--with-hints:not(.app-layout--dev) {
+            .app-layout--dev {
                 display: block;
                 max-width: none;
             }
 
-            .audio-fixture-panel, .dev-panel {
+            .dev-panel {
                 position: fixed;
                 top: 0;
+                right: 0;
                 height: 100vh;
                 display: none;
                 z-index: 50;
                 box-shadow: var(--shadow-md);
-            }
-            .audio-fixture-panel {
-                left: 0;
-                width: 85vw;
-                max-width: 320px;
-                max-height: none;
-            }
-            .dev-panel {
-                right: 0;
                 width: 85vw;
                 max-width: 380px;
                 border-top: 0;
@@ -944,21 +955,15 @@
             }
 
             .consultation-workspace,
-            .consultation-workspace:has(.summary-panel:not(.hidden)) {
+            .consultation-workspace:has(.summary-panel:not(.hidden)),
+            .consultation-workspace:has(.clinical-hints:not(.hidden)) {
                 grid-template-columns: minmax(0, 1fr);
             }
 
             .transcript-panel,
-            .summary-panel {
-                max-height: none;
-            }
-
+            .summary-panel,
             .clinical-hints {
-                position: static;
-                height: auto;
-                margin: 0 1rem 1rem;
-                border-left: 0;
-                border-top: 1px solid var(--surface-border);
+                max-height: none;
             }
         }
     </style>
@@ -968,39 +973,25 @@
 
     <div id="appLayout" class="app-layout{% if dev %} app-layout--dev{% endif %}">
 
-    {# ===== DEMO AUDIO PANEL (LEFT) ===== #}
-    {% if dev %}
-    <aside id="audioFixturePanel" class="audio-fixture-panel">
-        <div class="audio-fixture-panel__header">
-            <div class="audio-fixture-panel__title">Demo Audio</div>
-        </div>
-        <div id="audioFixtureList" class="audio-fixture-panel__body"></div>
-        <div class="audio-fixture-panel__footer">
-            <button onclick="document.getElementById('demoFileInput').click()" class="dev-panel__btn" style="width:100%;">Upload WAV</button>
-        </div>
-    </aside>
-    {% endif %}
-
     {# ===== MAIN CONTENT ===== #}
     <main class="scribe-workspace">
 
         {# Header #}
         <div class="scribe-header">
             <div class="scribe-title-row">
-                {% if dev %}
-                <button onclick="toggleAudioFixturePanel()" class="icon-btn xl:hidden" aria-label="Toggle demo audio">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                </button>
-                {% endif %}
                 <div>
                     <div class="flex items-center gap-2.5">
                         <h1 class="title-text text-xl font-bold tracking-tight" id="appTitle">Ambient Scribe</h1>
                     </div>
                     <p class="mt-0.5 text-xs muted-text" id="appSubtitle">Consultation transcription with doctor and patient identification</p>
+                    {% if dev %}
+                    <p class="mt-0.5 text-xs muted-text">Start consultation below or select demo audio to the right</p>
+                    {% endif %}
                 </div>
             </div>
             <div class="flex items-center gap-2">
                 {% if dev %}
+                <div id="audioSelectMount" class="audio-select-mount"></div>
                 <button onclick="toggleDevPanelMobile()" class="icon-btn xl:hidden" aria-label="Toggle dev panel">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                 </button>
@@ -1062,30 +1053,37 @@
                 </p>
             </div>
 
-            {# Summary Panel #}
-            <div id="summaryPanel" class="summary-panel hidden">
-                <div class="summary-panel__header">
-                    <span id="summaryTitle">Session Summary</span>
+            {# Summary + Clinical Hints share the right half of the workspace #}
+            <div class="summary-column">
+                <div id="summaryPanel" class="summary-panel hidden">
+                    <div class="summary-panel__header">
+                        <span id="summaryTitle">Session Summary</span>
+                    </div>
+                    <div id="summaryBody" class="summary-panel__body">
+                        <div id="summaryPending" class="summary-pending">
+                            <span class="summary-pending__bars" aria-hidden="true">
+                                <span class="summary-pending__bar"></span>
+                                <span class="summary-pending__bar"></span>
+                                <span class="summary-pending__bar"></span>
+                            </span>
+                            <span class="summary-pending__text" id="summaryPendingText">Recording in progress, summarise will be available once consultation ends.</span>
+                        </div>
+                        <div id="summaryLoading" class="summary-panel__loading hidden">
+                            <span class="recording-dot recording-pulse"></span>
+                            Generating summary...
+                        </div>
+                        <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
+                            <span id="summaryStatusBadge" class="summary-status__badge"></span>
+                            <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                        </div>
+                        <div id="summaryContent"></div>
+                    </div>
                 </div>
-                <div id="summaryBody" class="summary-panel__body">
-                    <div id="summaryPending" class="summary-pending">
-                        <span class="summary-pending__bars" aria-hidden="true">
-                            <span class="summary-pending__bar"></span>
-                            <span class="summary-pending__bar"></span>
-                            <span class="summary-pending__bar"></span>
-                        </span>
-                        <span class="summary-pending__text">Recording in progress, summarise will be available once consultation ends.</span>
-                    </div>
-                    <div id="summaryLoading" class="summary-panel__loading hidden">
-                        <span class="recording-dot recording-pulse"></span>
-                        Generating summary...
-                    </div>
-                    <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
-                        <span id="summaryStatusBadge" class="summary-status__badge"></span>
-                        <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
-                    </div>
-                    <div id="summaryContent"></div>
-                </div>
+
+                <aside id="clinicalHintsPanel" class="clinical-hints hidden" aria-label="Clinical hints">
+                    <div class="clinical-hints__title">Clinical Hints</div>
+                    <div id="clinicalHintsList" class="clinical-hints__list"></div>
+                </aside>
             </div>
         </div>
 
@@ -1097,18 +1095,21 @@
         <div id="srAnnounce" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
     </main>
 
-    {# ===== CLINICAL HINTS (RIGHT) ===== #}
-    <aside id="clinicalHintsPanel" class="clinical-hints hidden" aria-label="Clinical hints">
-        <div class="clinical-hints__title">Clinical Hints</div>
-        <div id="clinicalHintsList" class="clinical-hints__list"></div>
-    </aside>
-
-    {# ===== DEV PANEL (LEFT RAIL) ===== #}
+    {# ===== DEV PANEL (RIGHT RAIL) ===== #}
     {% if dev %}
     <aside id="devPanel" class="dev-panel">
         <div class="dev-panel__header">
             <span class="dev-panel__title">Dev Panel</span>
-            <span id="devConnectionStatus" class="dev-panel__status">○ disconnected</span>
+            <span class="dev-panel__header-side">
+                <span id="devConnectionStatus" class="dev-panel__status">○ disconnected</span>
+                <button id="devPanelCollapseBtn" class="dev-panel__collapse" type="button" onclick="toggleDevPanelCollapsed()" aria-expanded="true" aria-label="Collapse dev panel">
+                    <span class="audio-select__caret dev-panel__collapse-caret" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                            <path d="M6 9l6 6 6-6"></path>
+                        </svg>
+                    </span>
+                </button>
+            </span>
         </div>
         <div class="dev-panel__tabs">
             <button class="dev-panel__tab dev-panel__tab--active" data-tab="segments" onclick="devPanel.switchTab('segments')">Segments</button>

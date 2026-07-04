@@ -352,6 +352,7 @@ function resetVisitUi() {
     document.getElementById('summaryLoading').classList.add('hidden');
     document.getElementById('summaryTitle').textContent = 'Session Summary';
     setSummaryStatus('pending');
+    setSummaryPendingText('Recording in progress, summarise will be available once consultation ends.');
     clearClinicalHints();
 
     const confidenceBadge = document.getElementById('confidenceBadge');
@@ -379,23 +380,34 @@ function subscribeToMercure() {
         return;
     }
 
-    streams = new StreamOrchestrator(CONFIG.mercureUrl);
-    streams.subscribe(CONFIG.topicRaw, handleRawSegment);
+    const topics = [CONFIG.topicRaw];
 
     // Role updates are optional in degraded/local environments.
     if (CONFIG.enableRoleUpdates) {
-        streams.subscribe(CONFIG.topicRoles, handleRoleUpdate);
+        topics.push(CONFIG.topicRoles);
     }
 
     // Summary updates appear after the visit finishes.
     if (CONFIG.topicSummary) {
-        streams.subscribe(CONFIG.topicSummary, handleSummaryEvent);
+        topics.push(CONFIG.topicSummary);
     }
 
     // Hints are assistive and should not block transcript or summary updates.
     if (CONFIG.topicHints) {
-        streams.subscribe(CONFIG.topicHints, handleClinicalHintsEvent);
+        topics.push(CONFIG.topicHints);
     }
+
+    // One EventSource carries every topic; events route to handlers by type.
+    streams = new StreamOrchestrator(CONFIG.mercureUrl);
+    streams.connect(topics, {
+        segment: handleRawSegment,
+        finalized: handleRawSegment,
+        error: handleRawSegment,
+        role_update: handleRoleUpdate,
+        system_error: handleRoleUpdate,
+        summary: handleSummaryEvent,
+        clinical_hints: handleClinicalHintsEvent,
+    });
 }
 
 /**

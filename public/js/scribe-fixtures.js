@@ -206,20 +206,17 @@ stopReplay = function stopReplayWithAudioFixtureStatus() {
 document.addEventListener('DOMContentLoaded', () => {
     devPanel.init();
 
-    // Mobile dev panels need backdrop divs for tap-out dismissal.
+    // The mobile dev panel needs a backdrop div for tap-out dismissal.
     if (window.innerWidth < 1280) {
-        // Both side panels need tap-out dismissal on smaller screens.
-        for (const panelId of ['audioFixturePanel', 'devPanel']) {
-            const backdrop = createElement('div', {
-                className: 'panel-backdrop',
-                attributes: { id: `${panelId}Backdrop` },
-                style: 'display:none',
-            });
-            backdrop.addEventListener('click', () => {
-                document.getElementById(panelId).style.display = 'none';
-                backdrop.style.display = 'none';
-            });
-            document.body.appendChild(backdrop);
-        }
+        const backdrop = createElement('div', {
+            className: 'panel-backdrop',
+            attributes: { id: 'devPanelBackdrop' },
+            style: 'display:none',
+        });
+        backdrop.addEventListener('click', () => {
+            document.getElementById('devPanel').style.display = 'none';
+            backdrop.style.display = 'none';
+        });
+        document.body.appendChild(backdrop);
     }
 });

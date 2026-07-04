@@ -9,6 +9,7 @@
 #   nemo-agent  - Python FastAPI + NeMo GPU inference (WebSocket + HTTP)
 #   app         - PHP Symfony web application (UI + session management)
 #   mercure     - Real-time SSE hub for transcript streaming
+#   ollama      - CPU-only role/summary LLM (profile `ollama`; skipped on Bedrock)
 #
 # DATA FLOW:
 #
@@ -95,9 +96,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      # Role inference + summaries default to the bundled Ollama service.
+      # Ollama only runs under the `ollama` compose profile; Bedrock setups
+      # start without it, so the dependency must not be required.
       ollama:
         condition: service_started
+        required: false
     healthcheck:
       # /health returns 200 (ok) when models loaded or skipped, 503 (degraded)
       # when model loading failed. 503 will cause Docker to mark unhealthy.
@@ -163,15 +166,18 @@ services:
   # ===========================================================================
   # OLLAMA - Local LLM for Role Inference + Summaries (CPU-only)
   # ===========================================================================
-  # Default provider for role inference and session summaries. Starts with the
-  # stack; nemo-agent reaches it in-network at http://ollama:11434. No host port
-  # is published, so it never clashes with a host-side Ollama already on 11434.
+  # Runs only under the `ollama` compose profile, for setups where
+  # ROLE_AGENT_MODEL_PROVIDER=ollama. Bedrock setups never start this service.
+  # start-dev.sh activates the profile automatically; by hand:
+  #   COMPOSE_PROFILES=ollama docker compose up -d
+  # nemo-agent reaches it in-network at http://ollama:11434. No host port is
+  # published, so it never clashes with a host-side Ollama already on 11434.
   # The GPU belongs to NeMo - Ollama runs on CPU using system RAM.
   #
   # First run only - pull the model into the persistent ollama_data volume:
   #   docker compose exec ollama ollama pull qwen3.5:9b
-  # Prefer AWS Bedrock? Set ROLE_AGENT_MODEL_PROVIDER=bedrock (this service can be stopped).
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama
     volumes:
       - ollama_data:/root/.ollama

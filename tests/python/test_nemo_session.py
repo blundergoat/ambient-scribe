@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from nemo_pipeline import NemoPipeline, TranscriptionResult
+from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 from nemo_session import AudioBuffer, TranscriptionSession
 
 
@@ -67,14 +67,26 @@ class TestAudioBuffer:
         buf.append(b"chunk1")
         buf.append(b"chunk2")
 
-        assert buf.current_window() == b"chunk1chunk2"
+        assert buf.full_audio() == b"chunk1chunk2"
 
     def test_empty_buffer_on_creation(self):
         """New buffer starts with zero bytes."""
         buf = AudioBuffer()
 
         assert buf.total_bytes == 0
-        assert buf.current_window() == b""
+        assert buf.full_audio() == b""
+
+    def test_audio_from_absolute_offset(self):
+        """audio_from slices by absolute session offset, surviving head trims."""
+        buf = AudioBuffer(max_duration_seconds=1.0)
+
+        buf.append(b"a" * 32000)
+        assert buf.audio_from(16000) == b"a" * 16000
+
+        # A second chunk trims the first; absolute offsets must stay aligned.
+        buf.append(b"b" * 32000)
+        assert buf.audio_from(32000) == b"b" * 32000
+        assert buf.end_seconds == 2.0
 
     def test_full_audio_returns_all_data(self):
         """full_audio() returns all accumulated PCM bytes."""
@@ -106,27 +118,123 @@ class TestProcessChunk:
         # Pipeline is in mock mode → transcribe_buffer returns empty result.
         session.process_chunk(b"chunk-data-1")
         assert session.chunk_count == 1
-        assert b"chunk-data-1" in session.buffer.current_window()
+        assert b"chunk-data-1" in session.buffer.full_audio()
 
         session.process_chunk(b"chunk-data-2")
         assert session.chunk_count == 2
-        assert b"chunk-data-2" in session.buffer.current_window()
+        assert b"chunk-data-2" in session.buffer.full_audio()
 
-    def test_process_chunk_returns_segments(self):
-        """process_chunk returns new segments from the pipeline."""
+    def test_process_chunk_returns_stable_segments(self):
+        """Segments ending clear of the buffer edge are emitted immediately."""
         pipeline = NemoPipeline()
         session = TranscriptionSession("test-session", pipeline, input_format="pcm")
 
-        mock_result = TranscriptionResult(
+        stable_result = TranscriptionResult(
+            segments=[Segment(speaker_id="spk_0", start=0.0, end=1.0, text="hello")]
+        )
+
+        # Five seconds of audio leaves the 0-1s segment well clear of the edge.
+        with patch.object(pipeline, "transcribe_buffer", return_value=stable_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [segment.text for segment in segments] == ["hello"]
+        assert session.accumulated_transcript == segments
+
+    def test_process_chunk_holds_back_unstable_tail(self):
+        """A segment still touching the buffer edge waits for the next pass."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        edge_result = TranscriptionResult(
+            segments=[Segment(speaker_id="spk_0", start=0.0, end=4.8, text="still talking")]
+        )
+
+        # The segment ends within a second of the 5s buffer edge → held back.
+        with patch.object(pipeline, "transcribe_buffer", return_value=edge_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert segments == []
+        assert session.accumulated_transcript == []
+
+    def test_window_audio_stays_sample_aligned(self):
+        """Fractional marks must never hand NeMo half a 16-bit sample."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        window_parities: list[int] = []
+
+        def record_parity(audio_buffer):
+            window_parities.append(len(audio_buffer) % 2)
+            # An end like 2.111111 puts the next window start on an odd byte
+            # unless offsets are computed in whole samples.
+            return TranscriptionResult(
+                segments=[
+                    Segment(speaker_id="spk_0", start=0.0, end=2.111111, text="line")
+                ]
+            )
+
+        with patch.object(pipeline, "transcribe_buffer", side_effect=record_parity):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            session.process_chunk(b"\x00" * 32000 * 5)
+            session.finalize()
+
+        assert window_parities == [0, 0, 0]
+
+    def test_emitted_audio_is_not_transcribed_again(self):
+        """The next pass only sees audio past the emission mark, once emitted."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        window_lengths: list[int] = []
+
+        def record_window(audio_buffer):
+            window_lengths.append(len(audio_buffer))
+            return TranscriptionResult(
+                segments=[
+                    Segment(speaker_id="spk_0", start=0.0, end=1.0, text="line")
+                ]
+            )
+
+        with patch.object(pipeline, "transcribe_buffer", side_effect=record_window):
+            first = session.process_chunk(b"\x00" * 32000 * 5)
+            second = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert len(first) == 1 and len(second) == 1
+        # The second window starts near the mark, not at the session start.
+        assert window_lengths[1] < window_lengths[0] + 32000 * 5
+        # Emitted lines never repeat: the second segment sits after the first.
+        assert session.accumulated_transcript[1].start > 0.0
+
+    def test_window_speaker_ids_follow_the_anchor(self):
+        """A window whose diarizer swapped IDs is remapped via the overlap."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
             segments=[
-                MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        # The second window re-reads the anchor tail but labels voices inversely:
+        # the anchor's voice (spk_1 "patient line") now carries the spk_0 label.
+        swapped_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.6, text="patient line"),
+                Segment(speaker_id="spk_1", start=0.6, end=2.0, text="doctor again"),
             ]
         )
 
-        with patch.object(pipeline, "transcribe_buffer", return_value=mock_result):
-            segments = session.process_chunk(b"\x00" * 3200)
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, swapped_pass]
+        ):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            tail = session.process_chunk(b"\x00" * 32000 * 5)
 
-        assert len(segments) == 1
+        # Only the genuinely new line emits, relabeled back to the doctor's ID.
+        assert [(segment.speaker_id, segment.text) for segment in tail] == [
+            ("spk_0", "doctor again")
+        ]
 
     def test_empty_chunk_skipped(self):
         """Empty audio bytes are skipped without appending to buffer."""
@@ -218,7 +326,7 @@ class TestFinalize:
     """Tests for TranscriptionSession.finalize."""
 
     def test_finalize_with_empty_buffer(self):
-        """Finalize with no chunks returns empty accumulated transcript."""
+        """Finalize with no chunks returns no tail segments."""
         pipeline = NemoPipeline()
         session = TranscriptionSession("test-session", pipeline)
 
@@ -226,24 +334,22 @@ class TestFinalize:
         assert isinstance(result, list)
         assert len(result) == 0
 
-    def test_finalize_returns_accumulated_transcript(self):
-        """Finalize with buffered audio runs final pass and returns all segments."""
+    def test_finalize_drains_the_held_back_tail(self):
+        """Finalize emits the edge segment that streaming held back."""
         pipeline = NemoPipeline()
         session = TranscriptionSession("test-session", pipeline, input_format="pcm")
 
-        # Simulate having processed a chunk
-        session.buffer.append(b"\x00" * 3200)
-
-        mock_result = TranscriptionResult(
-            segments=[
-                MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
-            ]
+        edge_result = TranscriptionResult(
+            segments=[Segment(speaker_id="spk_0", start=0.0, end=4.8, text="last words")]
         )
 
-        with patch.object(pipeline, "transcribe_buffer", return_value=mock_result):
-            result = session.finalize()
+        with patch.object(pipeline, "transcribe_buffer", return_value=edge_result):
+            held = session.process_chunk(b"\x00" * 32000 * 5)
+            tail = session.finalize()
 
-        assert len(result) == 1
+        assert held == []
+        assert [segment.text for segment in tail] == ["last words"]
+        assert session.accumulated_transcript == tail
 
 
 class TestInputFormatValidation:

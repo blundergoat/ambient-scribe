@@ -43,7 +43,7 @@ class TestAudioBuffer:
         buf.append(b"\x00" * 3200)
 
         assert buf.total_bytes == 6400
-        assert len(buf.current_window()) == 6400
+        assert len(buf.full_audio()) == 6400
         assert len(buf.full_audio()) == 6400
 
     def test_duration_calculation(self):
@@ -67,7 +67,7 @@ class TestAudioBuffer:
         buf = AudioBuffer()
         assert buf.total_bytes == 0
         assert buf.duration_seconds == 0.0
-        assert buf.current_window() == b""
+        assert buf.full_audio() == b""
 
 
 class TestTranscriptionSession:

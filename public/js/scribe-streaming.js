@@ -7,9 +7,12 @@
 // =========================================================================
 
 /**
- * Keeps Mercure event streams alive for the visible consultation.
+ * Keeps the Mercure event stream alive for the visible consultation.
  * Users reach this after recording starts or a demo replay subscribes to events.
- * It reconnects dropped UI feeds without touching microphone PCM streaming.
+ * All visit topics share ONE EventSource: browsers cap HTTP/1.1 connections per
+ * host (~6), so per-topic streams across a few open tabs exhaust the pool and
+ * new tabs hang silently in CONNECTING with a working hub. Events are routed
+ * to handlers by their payload `type`.
  */
 class StreamOrchestrator {
     /**
@@ -18,81 +21,45 @@ class StreamOrchestrator {
      */
     constructor(mercureUrl) {
         this._mercureUrl = mercureUrl;
-        this._streams = new Map();
+        this._topics = [];
+        this._handlersByType = {};
+        this._source = null;
         this._active = false;
+        this._retries = 0;
+        this._backoffMs = 1000;
+        this._timer = null;
+        this._lastEventId = null;
         window.addEventListener('beforeunload', () => this.disconnectAll());
     }
 
     /**
-     * Opens a Mercure topic for transcript, role, summary, or hint updates.
+     * Opens one stream for every visit topic, routing events by payload type.
      * Use when the clinician starts a live or replay session.
      */
-    subscribe(topic, eventHandler) {
-        // Duplicate subscriptions would show the clinician repeated segments.
-        if (this._streams.has(topic)) {
-            return;
-        }
-
-        const streamState = {
-            source: null,
-            eventHandler,
-            retries: 0,
-            backoffMs: 1000,
-            timer: null,
-            lastEventId: null,
-        };
-
-        this._streams.set(topic, streamState);
-        this._active = true;
-        this._connect(topic, streamState);
+    connect(topics, handlersByType) {
+        this._topics = topics;
+        this._handlersByType = handlersByType;
+        this._active = topics.length > 0;
+        this._openStream();
     }
 
     /**
-     * Closes one Mercure topic.
-     * Use when a specific visit feed is no longer needed.
-     */
-    unsubscribe(topic) {
-        const streamState = this._streams.get(topic);
-
-        // If the topic was never opened, there is no UI feed to close.
-        if (!streamState) {
-            return;
-        }
-
-        clearTimeout(streamState.timer);
-        streamState.source?.close();
-        this._streams.delete(topic);
-    }
-
-    /**
-     * Closes all Mercure topics for the current visit.
+     * Closes the visit stream.
      * Use when the clinician stops, resets, or leaves the session.
      */
     disconnectAll() {
         this._active = false;
-
-        // Every open feed can otherwise keep adding stale transcript events.
-        for (const [, streamState] of this._streams) {
-            clearTimeout(streamState.timer);
-            streamState.source?.close();
-        }
-
-        this._streams.clear();
+        clearTimeout(this._timer);
+        this._source?.close();
+        this._source = null;
     }
 
     /**
-     * Reports whether any Mercure stream is open.
+     * Reports whether the Mercure stream is open.
      * Use by the dev panel to show if the live transcript feed is connected.
      */
     get isConnected() {
-        // Any open feed means the browser can still receive visit updates.
-        for (const streamState of this._streams.values()) {
-            if (streamState.source?.readyState === EventSource.OPEN) {
-                return true;
-            }
-        }
-
-        return false;
+        return this._source?.readyState === EventSource.OPEN;
     }
 
     /**
@@ -100,50 +67,45 @@ class StreamOrchestrator {
      * Use by the dev panel when diagnosing dropped transcript events.
      */
     get totalRetries() {
-        let totalRetries = 0;
-
-        // The dev panel displays a single retry count for all visit topics.
-        for (const streamState of this._streams.values()) {
-            totalRetries += streamState.retries;
-        }
-
-        return totalRetries;
+        return this._retries;
     }
 
     /**
-     * Connects or reconnects one Mercure topic.
+     * Connects or reconnects the shared visit stream.
      * Bad JSON is logged and stream errors back off, so the visible transcript can recover.
      */
-    _connect(topic, streamState) {
+    _openStream() {
         // No active session or hub URL means no browser updates can be opened.
         if (!this._active || !this._mercureUrl) {
             return;
         }
 
         const streamUrl = new URL(this._mercureUrl);
-        streamUrl.searchParams.append('topic', topic);
+        for (const topic of this._topics) {
+            streamUrl.searchParams.append('topic', topic);
+        }
 
         // Resume after a brief network drop so the clinician does not miss text.
-        if (streamState.lastEventId) {
-            streamUrl.searchParams.append('Last-Event-ID', streamState.lastEventId);
+        if (this._lastEventId) {
+            streamUrl.searchParams.append('Last-Event-ID', this._lastEventId);
         }
 
         const source = new EventSource(streamUrl);
-        streamState.source = source;
+        this._source = source;
 
         source.onmessage = (event) => {
-            streamState.backoffMs = 1000;
-            streamState.retries = 0;
+            this._backoffMs = 1000;
+            this._retries = 0;
 
-            // Store the last event id for a later reconnect of this UI feed.
+            // Store the last event id for a later reconnect of the UI feed.
             if (event.lastEventId) {
-                streamState.lastEventId = event.lastEventId;
+                this._lastEventId = event.lastEventId;
             }
 
             try {
-                streamState.eventHandler(JSON.parse(event.data));
+                this._dispatch(JSON.parse(event.data));
             } catch (parseError) {
-                console.error(`Mercure event parse failed for ${topic}`, parseError);
+                console.error('Mercure event parse failed', parseError);
             }
         };
 
@@ -155,10 +117,19 @@ class StreamOrchestrator {
                 return;
             }
 
-            streamState.retries++;
-            streamState.timer = setTimeout(() => this._connect(topic, streamState), streamState.backoffMs);
-            streamState.backoffMs = Math.min(streamState.backoffMs * 2, 30000);
+            this._retries++;
+            this._timer = setTimeout(() => this._openStream(), this._backoffMs);
+            this._backoffMs = Math.min(this._backoffMs * 2, 30000);
         };
+    }
+
+    /**
+     * Routes one event to its handler by payload type.
+     * Unknown types are ignored so new server events cannot break the UI.
+     */
+    _dispatch(payload) {
+        const handler = this._handlersByType[payload?.type];
+        handler?.(payload);
     }
 }
 

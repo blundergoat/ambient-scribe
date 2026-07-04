@@ -6,6 +6,15 @@ last_reviewed: 2026-07-04
 
 # Audio Pipeline Footguns
 
+## Footgun: PCM byte offsets must be sample-aligned or NeMo rejects the buffer
+**Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/nemo_session.py` (search: "window_start_byte = int(window_start_seconds * 16000) * 2")
+- **Files:** `strands_agents/nemo_session.py` (search: "def audio_from")
+- **What breaks:** The stream is 16 kHz 16-bit PCM, so every sample is 2 bytes. Any byte offset computed as `int(seconds * 32000)` can land on an odd byte for fractional segment times; slicing there splits a sample in half and NeMo's `np.frombuffer(dtype=int16)` raises `ValueError: buffer size must be a multiple of element size`, killing the live WebSocket loop mid-session (observed ~40-70s in, whenever the emission mark first hit an odd offset).
+- **Evidence:** `websocket.error ValueError: buffer size must be a multiple of element size` reproduced on a demo replay after windowed emission landed; fixed by computing offsets in whole samples (`int(seconds * 16000) * 2`) and hardening `audio_from` to even starts/lengths, with the parity regression pinned in `tests/python/test_nemo_session.py` (search: "test_window_audio_stays_sample_aligned").
+- **Prevention:** Compute PCM offsets in samples and multiply by the sample width - never in raw bytes from a float. Any new slicing of buffered audio must keep both the start offset and the slice length even.
+
 ## Footgun: Audio format is a browser/env/Python contract
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 

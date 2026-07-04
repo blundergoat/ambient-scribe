@@ -91,7 +91,7 @@ If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST
 
 | Service | Port | What runs |
 |---------|------|-----------|
-| **Ollama** | 11434 | `ollama serve` (started automatically if not running) |
+| **Ollama** | 11434 | `ollama serve` (only when `ROLE_AGENT_MODEL_PROVIDER=ollama`; the compose service sits behind the `ollama` profile and Bedrock setups skip it) |
 | **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on host port 48101 |
 | **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
 | **PHP app** | 48082 | PHP built-in server (demo replay streams WAV PCM to FastAPI directly, so no PHP upload path is involved) |

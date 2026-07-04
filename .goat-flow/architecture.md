@@ -42,7 +42,7 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 ## Deployment / Operations
 
 - Local runtime is `docker-compose.yml` with `nemo-agent`, `app`, `mercure`, and optional CPU-only `ollama` profile.
-- `docker/nemo/Dockerfile` builds the NeMo FastAPI image from NVIDIA's `nvcr.io/nvidia/nemo:26.02` base image and pins `nemo_toolkit[asr]==2.7.3`; `Dockerfile` builds the Symfony app container.
+- `docker/nemo/Dockerfile` builds the NeMo FastAPI image from NVIDIA's NeMo 26.02 base image and pins `nemo_toolkit[asr]==2.7.3`; `Dockerfile` builds the Symfony app container.
 - `scripts/start-dev.sh`, `scripts/health-check-localdev.sh`, `scripts/gpu-check.sh`, and `scripts/preflight-checks.sh` are the main local operator commands.
 - GitHub Actions live under `.github/workflows/`; Terraform production scaffolding lives under `infra/terraform/environments/prod/` and modules under `infra/terraform/modules/`.
 

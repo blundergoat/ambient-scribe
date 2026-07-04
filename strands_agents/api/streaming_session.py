@@ -118,7 +118,9 @@ async def transcribe_stream_session(
                 websocket, session_id, session, services, loop, state
             )
     except WebSocketDisconnect:
-        await _finalize_after_disconnect(session_id, session, services, loop, state)
+        await _finalize_after_disconnect(
+            websocket, session_id, session, services, loop, state
+        )
     except Exception as error:
         await _publish_transcription_error(session_id, services, error)
     finally:
@@ -259,13 +261,14 @@ async def _warn_live_streaming_failure(websocket: WebSocket, session_id: str) ->
 
 
 async def _finalize_after_disconnect(
+    websocket: WebSocket,
     session_id: str,
     session: TranscriptionSession,
     services: StreamingServices,
     loop: Any,
     state: StreamState,
 ) -> None:
-    """Finalize transcript text when the user stops or the socket disconnects."""
+    """Publish the held-back tail and store the full transcript on session end."""
     logger.info(
         "websocket.disconnected",
         extra={
@@ -273,10 +276,17 @@ async def _finalize_after_disconnect(
             "total_chunks": state.chunk_count,
         },
     )
-    final_segments = await loop.run_in_executor(services.executor, session.finalize)
+    tail_segments = await loop.run_in_executor(services.executor, session.finalize)
+    # The held-back tail publishes now so the browser sees the final utterances.
+    tail_payloads = await _publish_raw_segments(
+        websocket, session_id, tail_segments, services, state
+    )
+    if tail_payloads != []:
+        await services.enqueue_role_inference(session_id, tail_payloads)
+
     services.sessions.replace_segments(
         session_id,
-        [segment.dict() for segment in final_segments],
+        [segment.dict() for segment in session.accumulated_transcript],
     )
     current_state = get_or_create_state(session_id)
     # Confirmed role mappings keep final transcript labels aligned with the live view.
@@ -297,8 +307,13 @@ async def _publish_transcription_error(
     error: Exception,
 ) -> None:
     """Publish a generic transcript error without exposing clinical text."""
+    # The error type/text goes into the message because plain log formats drop
+    # `extra` fields, and exc_info records the traceback for diagnosis.
     logger.error(
-        "websocket.error",
+        "websocket.error %s: %s",
+        type(error).__name__,
+        str(error)[:300],
+        exc_info=error,
         extra={
             "session_id": session_id,
             "error": str(error),
