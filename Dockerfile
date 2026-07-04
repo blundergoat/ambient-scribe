@@ -39,7 +39,7 @@ WORKDIR /app
 COPY . /app/
 
 # Install PHP dependencies (--no-dev skips test/dev packages, --optimize-autoloader for speed)
-# strands-php-client resolves from GitHub via the dev-dev branch in composer.lock.
+# strands-php-client resolves from the tagged Composer constraint in composer.lock.
 RUN composer install --no-dev --optimize-autoloader
 
 # The PHP built-in server listens on this port

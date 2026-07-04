@@ -1,5 +1,12 @@
 <?php
 
+/**
+ * PHP-CS-Fixer config for maintained app and test code.
+ *
+ * Run this before shipping clinician-facing Scribe changes so formatting noise stays out of review.
+ * It keeps source and PHPUnit tests aligned while gruff and PHPStan own behavior-oriented quality gates.
+ */
+
 $finder = (new PhpCsFixer\Finder())
     ->in([
         __DIR__ . '/src',

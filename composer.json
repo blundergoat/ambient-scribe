@@ -15,11 +15,11 @@
         "source": "https://github.com/blundergoat/ambient-scribe"
     },
     "require": {
-        "php": ">=8.3",
-        "blundergoat/strands-php-client": "dev-dev",
+        "php": ">=8.3 <8.5",
+        "blundergoat/strands-php-client": "^1.4",
         "symfony/framework-bundle": "^6.4",
-        "symfony/mercure": "^0.6",
-        "symfony/mercure-bundle": "^0.3",
+        "symfony/mercure": "^0.7",
+        "symfony/mercure-bundle": "^0.4",
         "symfony/runtime": "^6.4",
         "symfony/string": "^6.4",
         "symfony/twig-bundle": "^6.4",
@@ -30,11 +30,11 @@
     "require-dev": {
         "blundergoat/gruff-php": "^0.4.1",
         "friendsofphp/php-cs-fixer": "^3.0",
-        "infection/infection": "^0.29|^0.32",
+        "infection/infection": "^0.34",
         "phpmd/phpmd": "^2.15",
         "phpstan/phpstan": "^2.0",
-        "phpunit/phpunit": "^11.0",
-        "symfony/dotenv": "^7.4"
+        "phpunit/phpunit": "^12.0",
+        "symfony/dotenv": "^6.4"
     },
     "autoload": {
         "psr-4": {
@@ -59,7 +59,7 @@
         "test": "vendor/bin/phpunit",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-html=coverage-html --coverage-clover=coverage.xml",
         "analyse": "vendor/bin/phpstan analyse",
-        "analyse:complexity": "php scripts/check-cyclomatic-complexity.php --path=src --max=20",
+        "analyse:complexity": "vendor/bin/gruff-php analyse",
         "analyse:messdetector": "vendor/bin/phpmd src text phpmd.xml",
         "cs:check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
         "cs:fix": "vendor/bin/php-cs-fixer fix",

@@ -10,7 +10,6 @@ from tools.assign_roles import (
     RoleMappingState,
     _attribute_segments,
     _normalize_mapping,
-    apply_role_mapping_result,
     assign_roles,
     cleanup_session,
     get_or_create_state,
@@ -49,11 +48,11 @@ class TestAssignRolesToolEdgeCases:
         segs = [{"speaker_id": "spk_0", "text": "Hello", "start": 0.0, "end": 1.0}]
         result = assign_roles(
             session_id="tool-list-segs",
-            mapping=json.dumps({"spk_0": "HOST"}),
+            mapping=json.dumps({"spk_0": "DOCTOR"}),
             segments=segs,
             confidence=0.8,
         )
-        assert result["attributed_segments"][0]["role"] == "HOST"
+        assert result["attributed_segments"][0]["role"] == "DOCTOR"
 
     def test_confidence_above_one(self):
         """Confidence > 1.0 is stored as-is (no clamping)."""
@@ -94,10 +93,19 @@ class TestAssignRolesToolEdgeCases:
         result = assign_roles(
             session_id="tool-extra-fields",
             mapping=json.dumps({"spk_0": "DOCTOR"}),
-            segments=json.dumps([{
-                "speaker_id": "spk_0", "text": "Hi", "start": 0.0, "end": 1.0,
-                "is_interim": False, "segment_id": "abc-123", "custom_field": "preserved",
-            }]),
+            segments=json.dumps(
+                [
+                    {
+                        "speaker_id": "spk_0",
+                        "text": "Hi",
+                        "start": 0.0,
+                        "end": 1.0,
+                        "is_interim": False,
+                        "segment_id": "abc-123",
+                        "custom_field": "preserved",
+                    }
+                ]
+            ),
             confidence=0.8,
         )
         seg = result["attributed_segments"][0]
@@ -168,7 +176,9 @@ class TestFlipDetectionEdges:
         state = RoleMappingState()
         state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8)
         # Adding a third speaker — different key set, not a flip
-        flip = state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT", "spk_2": "NURSE"}, 0.85)
+        flip = state.update(
+            {"spk_0": "DOCTOR", "spk_1": "PATIENT", "spk_2": "NURSE"}, 0.85
+        )
         assert flip is False
 
     def test_speaker_removed_is_not_flip(self):
@@ -188,7 +198,9 @@ class TestFlipDetectionEdges:
         state = RoleMappingState()
         state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT", "spk_2": "NURSE"}, 0.8)
         # spk_0 and spk_1 swap, spk_2 unchanged
-        flip = state.update({"spk_0": "PATIENT", "spk_1": "DOCTOR", "spk_2": "NURSE"}, 0.9)
+        flip = state.update(
+            {"spk_0": "PATIENT", "spk_1": "DOCTOR", "spk_2": "NURSE"}, 0.9
+        )
         assert flip is True
 
     def test_last_flip_detected_flag(self):

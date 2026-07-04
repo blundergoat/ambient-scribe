@@ -176,24 +176,23 @@ else
     skip "php-cs-fixer not installed"
 fi
 
-# 5. Cyclomatic complexity
-step "Cyclomatic complexity (max 20)"
+# 5. PHP quality (gruff-php)
+step "PHP quality (gruff-php)"
 t=$(date +%s%N)
-complexity_script="$REPO_ROOT/scripts/check-cyclomatic-complexity.php"
-if [[ -f "$complexity_script" ]]; then
-    complexity_output=$(php "$complexity_script" --path=src --max=20 2>&1)
+if [[ -x vendor/bin/gruff-php ]]; then
+    complexity_output=$(vendor/bin/gruff-php analyse 2>&1)
     complexity_exit=$?
     if [[ $complexity_exit -eq 0 ]]; then
         pass "$(elapsed_since "$t")"
     else
-        violation_count=$(echo "$complexity_output" | grep -c "^ - " || true)
-        fail "Cyclomatic complexity (${violation_count} violations)"
+        violation_count=$(echo "$complexity_output" | grep -c "^[[:space:]]*[0-9][0-9]*\\." || true)
+        fail "gruff-php (${violation_count} findings)"
         echo "$complexity_output" | head -20 | while read -r line; do
             echo -e "    ${DIM}${line}${RESET}"
         done
     fi
 else
-    skip "scripts/check-cyclomatic-complexity.php not found"
+    skip "gruff-php not installed"
 fi
 
 # 6. Mess detector (PHPMD)

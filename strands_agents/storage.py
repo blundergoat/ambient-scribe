@@ -1,28 +1,9 @@
 """
-Storage backends for transcript session persistence.
+Persistent transcript storage contracts and SQLite implementation.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-Defines the StorageBackend protocol and concrete implementations:
-
-  - StorageBackend: Protocol that both SessionStore and SqliteBackend satisfy.
-  - SqliteBackend: Persistent storage using a single SQLite file.
-
-The in-memory SessionStore (session.py) already conforms to the protocol
-without changes.
-
-=============================================================================
-SQLITE SCHEMA
-=============================================================================
-
-  sessions(id TEXT PK, created_at REAL, last_accessed_at REAL)
-  segments(id INTEGER PK, session_id TEXT FK, speaker_id TEXT, text TEXT,
-           start REAL, end REAL, is_interim INTEGER, role TEXT, position INTEGER)
-
-Thread safety: check_same_thread=False + threading.Lock for all shared
-connection access.
+The API uses this protocol whether transcript history is in memory or on disk.
+SQLite keeps user-visible segments and role labels across process restarts so
+the browser can restore histories and generate summaries after reconnects.
 """
 
 from __future__ import annotations
@@ -36,9 +17,12 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class StorageBackend(Protocol):
-    """Protocol for transcript storage backends.
+    """
+    Protocol for transcript storage backends.
 
-    Both the in-memory SessionStore and SqliteBackend implement this.
+    Implement this when a storage backend can serve the same browser history,
+    role-label, and summary workflows as the in-memory store. Empty results
+    always mean the UI has no transcript to restore for that session.
     """
 
     def append_segment(self, session_id: str, segment: dict) -> None: ...
@@ -75,12 +59,12 @@ def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
 
 
 class SqliteBackend:
-    """Persistent transcript storage backed by a single SQLite file.
+    """
+    Persistent transcript storage backed by one SQLite file.
 
-    Thread-safe: uses check_same_thread=False and a threading.Lock for all
-    shared connection access.
-
-    Tables are created on init if they don't exist.
+    Use this when transcript histories must survive a container or process
+    restart. It stores raw speaker labels, role labels, and timestamps in order
+    so the browser can restore the same visible session state.
     """
 
     def __init__(self, db_path: str | None = None) -> None:
@@ -142,7 +126,12 @@ class SqliteBackend:
         return row[0] if row else 0
 
     def append_segment(self, session_id: str, segment: dict) -> None:
-        """Append a transcript segment to the session."""
+        """Append one newly visible transcript line to persistent history.
+
+        Args:
+            session_id: Recording UUID whose browser history receives the segment.
+            segment: Segment payload; empty text still stores timing and speaker context.
+        """
         with self._lock:
             self._ensure_session(session_id)
             position = self._next_position(session_id)
@@ -165,7 +154,12 @@ class SqliteBackend:
             self._conn.commit()
 
     def replace_segments(self, session_id: str, segments: list[dict]) -> None:
-        """Replace all segments for a session (transactional)."""
+        """Replace all visible transcript lines after final transcription.
+
+        Args:
+            session_id: Recording UUID whose stored history should be replaced.
+            segments: Final transcript payloads; empty clears the visible history.
+        """
         with self._lock:
             self._ensure_session(session_id)
             self._conn.execute(
@@ -192,7 +186,14 @@ class SqliteBackend:
             self._conn.commit()
 
     def get_segments(self, session_id: str) -> list[dict]:
-        """Return all segments for a session ordered by position."""
+        """Return transcript lines in the order the browser should display them.
+
+        Args:
+            session_id: Recording UUID requested by history, replay, or summary flow.
+
+        Returns:
+            Segment list; empty means no transcript is available for that session.
+        """
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -205,6 +206,7 @@ class SqliteBackend:
             ).fetchall()
 
         segments = []
+        # Each row becomes one transcript line the browser can restore.
         for row in rows:
             seg: dict = {
                 "speaker_id": row[0],
@@ -213,6 +215,7 @@ class SqliteBackend:
                 "end": row[3],
                 "is_interim": bool(row[4]),
             }
+            # A missing role means the UI still shows the raw speaker label.
             if row[5] is not None:
                 seg["role"] = row[5]
             segments.append(seg)
@@ -223,9 +226,17 @@ class SqliteBackend:
 
         Returns opening and recent context separated by an ellipsis marker while
         respecting max_chars.
+
+        Args:
+            session_id: Recording UUID whose transcript feeds role or summary agents.
+            max_chars: Maximum characters; `0` returns empty context to callers.
+
+        Returns:
+            Plain transcript text; empty means the agent should not infer content.
         """
         segments = self.get_segments(session_id)
         lines = []
+        # Each stored segment contributes one role-aware line for the agent.
         for seg in segments:
             speaker = seg.get("role", seg.get("speaker_id", "UNKNOWN"))
             text = seg.get("text", "")
@@ -235,8 +246,14 @@ class SqliteBackend:
         return _truncate_transcript_text(full_text, max_chars)
 
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
-        """Update the role column for segments matching speaker_ids in the mapping."""
+        """Persist speaker roles so restored history matches the live transcript.
+
+        Args:
+            session_id: Recording UUID whose visible labels should change.
+            mapping: Speaker-to-role map; empty means no stored labels change.
+        """
         with self._lock:
+            # Each mapping entry updates all matching lines in the user's transcript.
             for speaker_id, role in mapping.items():
                 self._conn.execute(
                     """
@@ -248,20 +265,30 @@ class SqliteBackend:
             self._conn.commit()
 
     def cleanup(self, session_id: str) -> None:
-        """Remove a session and all its segments."""
+        """Remove a transcript history when the session is no longer needed.
+
+        Args:
+            session_id: Recording UUID to remove; unknown IDs leave storage unchanged.
+        """
         with self._lock:
-            self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+            self._conn.execute(
+                "DELETE FROM segments WHERE session_id = ?", (session_id,)
+            )
             self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             self._conn.commit()
 
     @property
     def session_count(self) -> int:
-        """Number of sessions in the database."""
+        """Count transcript histories available for restore.
+
+        Returns:
+            Number of stored sessions; `0` means no persisted history exists.
+        """
         with self._lock:
             row = self._conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
         return row[0] if row else 0
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close SQLite resources when the API process is shutting down."""
         with self._lock:
             self._conn.close()

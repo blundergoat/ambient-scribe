@@ -22,3 +22,11 @@ last_reviewed: 2026-07-04
 **Context:** Raw transcription, role attribution, and summary generation have different latency and failure profiles.
 
 **Approach:** Publish separate sibling topics under `scribe/session/{id}/<concern>` for each concern, as captured by `.goat-flow/learning-loop/decisions/ADR-002-mercure-topics-per-session.md`. Do not overload the raw topic with higher-latency role or summary payloads.
+
+## Pattern: Collapse removed selectors to constants
+
+**Created:** 2026-07-04
+
+**Context:** A user-facing selector is removed and only one behavior remains, such as the 0.3.0 collapse from multiple scribe profiles to medical-only transcription.
+
+**Approach:** Remove the selector parameter at every ingress, replace prompt/config maps with named constants, and update browser labels directly. Verify with a narrow stale-contract sweep for removed symbols plus a broader documentation sweep that records justified historical keeps.

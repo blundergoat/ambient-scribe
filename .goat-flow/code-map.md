@@ -22,7 +22,7 @@ ambient-scribe/
 ├── strands_agents/ = Python FastAPI, NeMo, storage, and Strands agent lane
 │   ├── api/server.py = HTTP/WebSocket API, Mercure publishing, role queue, summaries, replay, health
 │   ├── agents/transcription_agent.py = role inference agent factory
-│   ├── agents/summary_agent.py = mode-specific summary agent factory
+│   ├── agents/summary_agent.py = medical summary agent factory
 │   ├── tools/assign_roles.py = Pydantic role assignment tool and session role state
 │   ├── nemo_pipeline.py = singleton Sortformer/Parakeet GPU pipeline wrapper
 │   ├── nemo_session.py = per-WebSocket audio buffering and ffmpeg conversion

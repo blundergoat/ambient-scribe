@@ -9,8 +9,8 @@ last_reviewed: 2026-07-04
 ## Footgun: Audio format is a browser/env/Python contract
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
-- **Files:** `public/js/scribe.js` (search: "class PcmStreamer")
-- **Files:** `public/js/scribe.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
+- **Files:** `public/js/scribe-streaming.js` (search: "class PcmStreamer")
+- **Files:** `public/js/scribe-recording.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
 - **Files:** `.env.example` (search: "NEMO_STREAM_INPUT_FORMAT=pcm")
 - **Files:** `docker-compose.yml` (search: "NEMO_STREAM_INPUT_FORMAT=${NEMO_STREAM_INPUT_FORMAT:-pcm}")
 - **Files:** `strands_agents/nemo_session.py` (search: "def _validate_audio_format")

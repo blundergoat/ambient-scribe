@@ -1,9 +1,9 @@
 # NeMo API Discovery Notes
 
-**Status:** Complete (Milestone 1, Task 1.4)
+**Status:** Superseded runtime target; API notes retained for implementation context.
 **Date:** 2026-02-19
 **Hardware:** RTX 5080 Laptop GPU (16GB VRAM, Blackwell sm_120)
-**Container:** `nvcr.io/nvidia/nemo:25.09` + NeMo main branch (v2.8.0rc0)
+**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3`.
 
 ---
 
@@ -11,9 +11,9 @@
 
 | Component | Version |
 |---|---|
-| NeMo Framework | 2.8.0rc0 (pip from main, on top of 25.09 container) |
+| NeMo Framework | 2.7.3 pinned runtime target |
 | PyTorch | 2.8.0a0+5228986c39.nv25.06 |
-| CUDA (container) | 13.x (25.09 release) |
+| CUDA (container) | 13.x-class NVIDIA NeMo release |
 | CUDA (host driver) | 13.1, Driver 591.74 |
 | GPU | NVIDIA GeForce RTX 5080 Laptop GPU (sm_120, 16303 MiB) |
 
@@ -367,12 +367,12 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ### Container Version Matrix
 
-| Issue | NeMo 24.12 (v2.1.0) | NeMo 25.09 (v2.5.3) | NeMo 25.09 + main (v2.8.0rc0) |
+| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 2.7.3 target |
 |---|---|---|---|
 | RTX 5080 (sm_120) CUDA | Fails | Works | Works |
 | Streaming Sortformer v2.1 | Fails (`spkcache_len`) | Works | Works |
-| Multitalker ASR module | Missing | Missing | Works |
-| CUDA graph decoder | N/A | N/A | Broken (workaround available) |
+| Multitalker ASR module | Missing | Missing | Expected in released line; verify during GPU build |
+| CUDA graph decoder | N/A | N/A | Verify during GPU build before changing workaround code |
 
 ### Sortformer Configuration
 

@@ -1,0 +1,18 @@
+# Ambient Scribe medical lexicon.
+# Provenance: project-curated common primary-care terms for synthetic demos.
+# Format: canonical term | likely ASR variant | likely ASR variant
+# Keep this small until NeMo decode-time boosting is GPU-verified.
+metoprolol|metro pro lol|meto prolol
+sumatriptan|summa trip tan|sumatryptan
+empagliflozin|empa glyph lozin|empa gliflozin
+lisinopril|listen april|lisin april
+troponin|tro pony|troponen
+naproxen|na proxen|naproxin
+ibuprofen|i buprofen|eye buprofen
+paracetamol|para seat amol|paracetemol
+hypertension|high per tension
+radiculopathy|radiculo pathy|ridiculopathy
+myocardial infarction|my cardial infarction|heart attack
+atrial fibrillation|a trial fibrillation|a fib
+gestational diabetes|gestation diabetes
+thyroid function test|thyroid function tests

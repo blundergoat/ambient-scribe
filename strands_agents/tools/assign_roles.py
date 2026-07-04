@@ -1,29 +1,9 @@
 """
-Role assignment tool — programmatic state management for speaker→role mapping.
+Role-mapping tool used by the Strands agent.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-This tool handles the STATE MANAGEMENT side of role assignment:
-  - Persists the speaker→role mapping across agent invocations
-  - Detects diarization label flips by comparing mapping history
-  - Returns structured output via Pydantic (not free-text)
-  - Tracks confidence as a running average over time
-
-The LLM AGENT decides the roles (via its system prompt). This tool manages
-the persistence and validation of those decisions.
-
-=============================================================================
-WHY THIS IS A TOOL (NOT JUST A PROMPT)
-=============================================================================
-
-Without this tool, the agent would need to:
-  - Remember its own mapping history in context (grows unboundedly)
-  - Detect label flips via text reasoning (unreliable)
-  - Output unstructured JSON (parsing errors)
-
-The tool encapsulates state management so the agent focuses on reasoning.
+The agent decides which raw speaker is DOCTOR or PATIENT; this module stores
+that decision, detects diarization flips, and returns attributed segments. The
+browser uses the result to replace raw `spk_*` labels with clinical roles.
 """
 
 from __future__ import annotations
@@ -41,18 +21,44 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RoleMapping:
-    """The result of a role assignment decision."""
+    """
+    Role assignment result ready for browser relabeling.
 
-    mapping: dict[str, str]              # {"spk_0": "DOCTOR", "spk_1": "PATIENT"}
-    attributed_segments: list[dict]      # Segments with roles applied
-    confidence: float                    # 0.0-1.0, running average
-    flip_detected: bool = False          # True if labels swapped since last call
-    reasoning: str = ""                  # Brief explanation of assignment logic
+    The worker publishes this after the agent or tool chooses roles. Empty
+    mappings leave transcript lines on raw speaker labels so the UI does not
+    overstate uncertain attribution.
+
+    Attributes:
+        mapping: Speaker-to-role labels such as `spk_0 -> DOCTOR`.
+        attributed_segments: Transcript segments with role labels added.
+        confidence: Running confidence shown by role state and dev tools.
+        flip_detected: True when diarization labels likely swapped.
+        reasoning: Short explanation for clinical review/debug surfaces.
+    """
+
+    mapping: dict[str, str]  # {"spk_0": "DOCTOR", "spk_1": "PATIENT"}
+    attributed_segments: list[dict]  # Segments with roles applied
+    confidence: float  # 0.0-1.0, running average
+    flip_detected: bool = False  # True if labels swapped since last call
+    reasoning: str = ""  # Brief explanation of assignment logic
 
 
 @dataclass
 class RoleMappingState:
-    """Per-session state for role mapping, managed by the tool."""
+    """
+    Per-session memory for visible speaker role labels.
+
+    It keeps mapping and confidence history across agent calls so a browser
+    recording can get steadier DOCTOR/PATIENT labels over time. Empty state
+    means the UI should keep raw speaker labels until evidence arrives.
+
+    Attributes:
+        current_mapping: Latest speaker-to-role labels shown in the transcript.
+        mapping_history: Recent mappings used to detect label flips.
+        confidence_history: Recent confidence values used for the running score.
+        confirmed_overrides: User-selected labels the agent should respect.
+        last_flip_detected: Whether the latest update detected a label swap.
+    """
 
     current_mapping: dict[str, str] = field(default_factory=dict)
     mapping_history: list[dict[str, str]] = field(default_factory=list)
@@ -62,38 +68,53 @@ class RoleMappingState:
 
     @property
     def running_confidence(self) -> float:
-        """EWMA confidence over the last 5 invocations."""
+        """Average recent confidence for the role badge shown to users.
+
+        Returns:
+            Average of up to five recent scores; `0.0` means no role evidence yet.
+        """
+        # No agent decisions means the browser should not show confident roles.
         if not self.confidence_history:
             return 0.0
         recent = self.confidence_history[-5:]
         return sum(recent) / len(recent)
 
-    def update(self, new_mapping: dict[str, str], confidence: float) -> bool:
-        """Update the mapping and detect flips.
+    def did_update_mapping_detect_flip(
+        self, new_mapping: dict[str, str], confidence: float
+    ) -> bool:
+        """Update the visible mapping and report whether labels flipped.
 
         Args:
-            new_mapping: The new speaker→role mapping from the agent.
-            confidence: The agent's confidence in this mapping.
+            new_mapping: New speaker-to-role mapping; empty leaves no visible roles.
+            confidence: Agent confidence for the mapping shown in the UI.
 
         Returns:
-            True if a label flip was detected, False otherwise.
+            True when a label flip was detected, false when labels stayed stable.
         """
-        flip_detected = self._detect_flip(new_mapping)
+        flip_detected = self._is_role_label_flip(new_mapping)
         self.last_flip_detected = flip_detected
 
         self.mapping_history.append(new_mapping)
         self.confidence_history.append(confidence)
         self.current_mapping = new_mapping
 
+        # A flip warning helps the browser explain sudden role relabeling.
         if flip_detected:
-            logger.warning("role_mapping.flip_detected", extra={
-                "previous": self.mapping_history[-2] if len(self.mapping_history) > 1 else {},
-                "current": new_mapping,
-            })
+            logger.warning(
+                "role_mapping.flip_detected",
+                extra={
+                    "previous": self.mapping_history[-2]
+                    if len(self.mapping_history) > 1
+                    else {},
+                    "current": new_mapping,
+                },
+            )
 
         return flip_detected
 
-    def _detect_flip(self, new_mapping: dict[str, str]) -> bool:
+    update = did_update_mapping_detect_flip
+
+    def _is_role_label_flip(self, new_mapping: dict[str, str]) -> bool:
         """Detect a role permutation across the same speaker IDs.
 
         A flip occurs when at least two existing speakers change roles, every
@@ -101,11 +122,12 @@ class RoleMappingState:
         assigned across those changed speakers is preserved.
 
         Args:
-            new_mapping: The proposed new mapping.
+            new_mapping: Proposed speaker-to-role labels; empty means no flip.
 
         Returns:
-            True if a flip was detected.
+            True if the same speakers swapped visible roles.
         """
+        # Different speaker sets mean the UI is seeing a new participant, not a flip.
         if not self.current_mapping or set(new_mapping) != set(self.current_mapping):
             return False
 
@@ -114,6 +136,7 @@ class RoleMappingState:
             for speaker, new_role in new_mapping.items()
             if self.current_mapping.get(speaker) != new_role
         ]
+        # One changed speaker is a correction, not a two-way diarization swap.
         if len(changed_speakers) < 2:
             return False
 
@@ -153,10 +176,21 @@ def apply_role_mapping_result(
     confidence: float,
     reasoning: str = "",
 ) -> RoleMapping:
-    """Persist a mapping decision and return attributed segment payloads."""
+    """Persist a mapping decision and return attributed segment payloads.
+
+    Args:
+        session_id: Recording UUID whose transcript should be relabeled.
+        segments: New transcript segments; empty returns no attributed lines.
+        mapping: Speaker-to-role labels; empty leaves all segment roles UNKNOWN.
+        confidence: Agent confidence for this mapping.
+        reasoning: Optional explanation shown in logs/dev review; empty means no explanation.
+
+    Returns:
+        RoleMapping ready for Mercure publication and browser relabeling.
+    """
     state = get_or_create_state(session_id)
     normalized_mapping = _normalize_mapping(mapping)
-    flip_detected = state.update(normalized_mapping, confidence)
+    flip_detected = state.did_update_mapping_detect_flip(normalized_mapping, confidence)
 
     return RoleMapping(
         mapping=normalized_mapping,
@@ -182,6 +216,7 @@ def cleanup_session(session_id: str) -> None:
 def _normalize_mapping(mapping: dict[str, str]) -> dict[str, str]:
     """Normalize agent output into the expected speaker->role shape."""
     normalized: dict[str, str] = {}
+    # Each mapping entry controls how matching transcript lines are labeled.
     for speaker_id, role in mapping.items():
         normalized[str(speaker_id)] = str(role).upper()
 
@@ -194,12 +229,15 @@ def _attribute_segments(
 ) -> list[dict[str, Any]]:
     """Apply the current mapping to a list of raw transcript segments."""
     attributed_segments: list[dict[str, Any]] = []
+    # Each raw segment becomes a role-labeled line for the browser transcript.
     for segment in segments:
         speaker_id = str(segment.get("speaker_id", ""))
-        attributed_segments.append({
-            **segment,
-            "role": mapping.get(speaker_id, "UNKNOWN"),
-        })
+        attributed_segments.append(
+            {
+                **segment,
+                "role": mapping.get(speaker_id, "UNKNOWN"),
+            }
+        )
 
     return attributed_segments
 
@@ -223,9 +261,20 @@ def assign_roles(
         segments: JSON string of transcript segments to attribute, each with speaker_id, text, start, end.
         confidence: Your confidence in this mapping (0.0 to 1.0).
         reasoning: Brief explanation of your role assignment logic.
+
+    Returns:
+        Mapping payload the browser uses to relabel transcript segments.
     """
-    parsed_mapping = json.loads(mapping) if isinstance(mapping, str) else mapping
-    parsed_segments = json.loads(segments) if isinstance(segments, str) else segments
+    # Tool callers send JSON strings; tests may pass dictionaries directly.
+    if isinstance(mapping, str):
+        parsed_mapping = json.loads(mapping)
+    else:
+        parsed_mapping = mapping
+    # Empty segment JSON means the UI receives a mapping without new attributed text.
+    if isinstance(segments, str):
+        parsed_segments = json.loads(segments)
+    else:
+        parsed_segments = segments
 
     result = apply_role_mapping_result(
         session_id=session_id,

@@ -3,7 +3,6 @@ Tests for the dual-path role inference worker (tool invocation vs free-text).
 """
 
 import asyncio
-import json
 
 import pytest
 
@@ -20,7 +19,6 @@ def clear_state():
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     yield
@@ -28,7 +26,6 @@ def clear_state():
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
 
@@ -62,7 +59,7 @@ class TestDualPathToolInvoked:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run_with_tool(sid, segments, transcript, mode="medical"):
+        def fake_run_with_tool(sid, segments, transcript):
             # Simulate tool invocation: update state directly
             state = get_or_create_state(sid)
             state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.92)
@@ -107,7 +104,7 @@ class TestDualPathToolInvoked:
 
         call_count = [0]
 
-        def fake_run_with_tool(sid, segments, transcript, mode="medical"):
+        def fake_run_with_tool(sid, segments, transcript):
             state = get_or_create_state(sid)
             call_count[0] += 1
             if call_count[0] == 1:
@@ -159,7 +156,7 @@ class TestDualPathFreeText:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run_freetext(sid, segments, transcript, mode="medical"):
+        def fake_run_freetext(sid, segments, transcript):
             # No tool invocation — state unchanged, return plain dict
             return {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
@@ -198,7 +195,8 @@ class TestDualPathFreeText:
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(
-            api_server, "_run_role_inference",
+            api_server,
+            "_run_role_inference",
             lambda *a, **kw: None,
         )
 
@@ -226,10 +224,15 @@ class TestToolInvokedAttributedSegments:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run(sid, segments, transcript, mode="medical"):
+        def fake_run(sid, segments, transcript):
             state = get_or_create_state(sid)
-            state.update({"spk_0": "INTERVIEWER", "spk_1": "CANDIDATE"}, 0.88)
-            return {"mapping": state.current_mapping, "confidence": 0.88, "reasoning": "", "_tool_invoked": True}
+            state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.88)
+            return {
+                "mapping": state.current_mapping,
+                "confidence": 0.88,
+                "reasoning": "",
+                "_tool_invoked": True,
+            }
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(api_server, "_run_role_inference", fake_run)
@@ -241,7 +244,7 @@ class TestToolInvokedAttributedSegments:
 
         role_events = [e for t, e in published if "roles" in t]
         attributed = role_events[0]["attributed_segments"]
-        assert attributed[0]["role"] == "INTERVIEWER"
+        assert attributed[0]["role"] == "DOCTOR"
         assert attributed[0]["text"] == "What brings you in?"
-        assert attributed[1]["role"] == "CANDIDATE"
+        assert attributed[1]["role"] == "PATIENT"
         assert attributed[1]["text"] == "Chest pain."

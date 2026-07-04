@@ -1,6 +1,6 @@
 # CLAUDE.md — v1.13.0 (2026-07-04)
 
-Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Supports 6 modes (Medical, Meeting, Interview, TV/Media, Lecture, General). Core invariant: NeMo owns the single GPU; role inference never runs on it.
+Ambient scribe: medical consultation audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Core invariant: NeMo owns the single GPU; role inference never runs on it.
 
 Workspace boundary: this checkout is the controlling goat-flow workspace. The selected target project is the project currently being inspected or changed; it may differ from the controlling workspace. Use target-scoped commands such as `git -C <target> status` and keep writes inside the declared target. Target projects do not need goat-flow installed unless the active preset audits goat-flow installation.
 

@@ -18,13 +18,17 @@ DIRECTORY STRUCTURE (halaxy-agents-lab pattern):
     assign_roles.py         — Role mapping persistence, flip detection, confidence tracking
 """
 
-from agents.summary_agent import SUMMARY_PROMPTS, create_summary_agent
-from agents.transcription_agent import ROLE_PROMPTS, create_role_inference_agent, get_role_instruction
+from agents.summary_agent import MEDICAL_SUMMARY_PROMPT, create_summary_agent
+from agents.transcription_agent import (
+    MEDICAL_ROLE_INSTRUCTION,
+    MEDICAL_ROLE_PROMPT,
+    create_role_inference_agent,
+)
 
 __all__ = [
-    "ROLE_PROMPTS",
-    "SUMMARY_PROMPTS",
+    "MEDICAL_ROLE_INSTRUCTION",
+    "MEDICAL_ROLE_PROMPT",
+    "MEDICAL_SUMMARY_PROMPT",
     "create_role_inference_agent",
     "create_summary_agent",
-    "get_role_instruction",
 ]

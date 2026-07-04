@@ -1,0 +1,77 @@
+[
+  {
+    "filename": "osce-chest-pain-short.wav",
+    "complaint": "chest pain",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "spk_0": "DOCTOR",
+      "spk_1": "PATIENT"
+    },
+    "edge_case": "m2 default two-speaker consultation",
+    "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
+    "license": "Project-owned synthetic text/audio; no real patient data"
+  },
+  {
+    "filename": "urti-role-flip.wav",
+    "complaint": "upper respiratory tract infection",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "spk_0": "PATIENT",
+      "spk_1": "DOCTOR"
+    },
+    "edge_case": "role flip, patient speaks first",
+    "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
+    "license": "Project-owned synthetic text/audio; no real patient data"
+  },
+  {
+    "filename": "diabetes-medication-review.wav",
+    "complaint": "diabetes medication review",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "spk_0": "DOCTOR",
+      "spk_1": "PATIENT"
+    },
+    "edge_case": "drug names and dosage vocabulary",
+    "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
+    "license": "Project-owned synthetic text/audio; no real patient data"
+  },
+  {
+    "filename": "cardiology-family-member.wav",
+    "complaint": "cardiology results with family member",
+    "speakers": [
+      "DOCTOR",
+      "FAMILY_MEMBER",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "spk_0": "DOCTOR",
+      "spk_1": "PATIENT",
+      "spk_2": "FAMILY_MEMBER"
+    },
+    "edge_case": "three speakers",
+    "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
+    "license": "Project-owned synthetic text/audio; no real patient data"
+  },
+  {
+    "filename": "fatigue-monologue.wav",
+    "complaint": "single-speaker fatigue handover",
+    "speakers": [
+      "DOCTOR"
+    ],
+    "expected_roles": {
+      "spk_0": "DOCTOR"
+    },
+    "edge_case": "single speaker monologue",
+    "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
+    "license": "Project-owned synthetic text/audio; no real patient data"
+  }
+]

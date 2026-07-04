@@ -61,12 +61,11 @@ EventSource(mercureUrl?topic=scribe/session/{id}/roles)  -> onRoleUpdate
 - StreamOrchestrator handles both subscriptions with independent retry state
 - Parse `event.data` as JSON; handle parse errors gracefully (log, don't crash)
 
-## Theme and Mode System
+## Theme and Medical Role Labels
 
 - Dark/light theme persisted in `localStorage` under `ambient-scribe-theme`
-- Mode selector (Medical, Meeting, Interview, TV, Lecture, General) stored under `ambient-scribe-mode`
-- Modes remap backend speaker labels (DOCTOR/PATIENT) to context-appropriate labels
-- `relabelSegments()` re-renders existing transcript when mode changes
+- Fixed medical labels render backend DOCTOR/PATIENT roles as Doctor/Patient
+- `relabelSegments()` re-renders existing transcript when role inference or a manual override changes labels
 
 ## Testing
 

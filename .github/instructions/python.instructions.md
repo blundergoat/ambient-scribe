@@ -50,7 +50,7 @@ strands_agents/
 
 - **NeMo singleton**: One `NemoPipeline` instance created at import time, shared across all WebSocket sessions
 - **Per-session state**: Each WebSocket connection gets its own `TranscriptionSession` with an `AudioBuffer`
-- **Role inference**: The Strands agent uses Bedrock (or Ollama CPU) to assign mode-specific roles to diarized speaker labels. The internal canonical slots are DOCTOR/PATIENT, but the prompt and UI adapt them for medical, meeting, interview, TV/media, lecture, and general modes.
+- **Role inference**: The Strands agent uses Bedrock (or Ollama CPU) to assign medical DOCTOR/PATIENT roles to diarized speaker labels.
 - **Role mapping state**: `RoleMappingState` in `tools/assign_roles.py` maintains per-session speaker-to-role mappings
 - **Mercure publishing**: Transcription results are published to Mercure SSE topics for real-time browser delivery
 

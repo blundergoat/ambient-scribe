@@ -39,7 +39,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 ### Architecture
 - `ScribeController` is the single entry point; orchestrators handle sequencing -- don't add transcription logic to the controller
 - The single `StrandsClient` is injected via `#[Autowire(service: 'strands.client.scribe')]` from `config/packages/strands.yaml` -- don't hardcode service references
-- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `strands_agents/agents/transcription_agent.py` for mode-specific role inference via Strands/Bedrock or CPU Ollama
+- Audio flows through the WebSocket pipeline to `nemo_pipeline.py` for diarization + ASR, then `strands_agents/agents/transcription_agent.py` for medical role inference via Strands/Bedrock or CPU Ollama
 - Session state lives in `nemo_session.py` on the Python side -- PHP is stateless between requests
 - Mercure publishes raw segments, role updates, and summaries to the browser in real time -- don't mix sync and streaming patterns
 
@@ -75,7 +75,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - [ ] Audio frame handling in the WebSocket pipeline is robust to dropped/reordered frames
 
 ### Transcription Agent Changes
-- [ ] Mode-specific role inference logic is correct for all supported modes
+- [ ] Medical DOCTOR/PATIENT role inference logic is correct
 - [ ] Strands agent prompt changes don't break structured output parsing
 - [ ] Bedrock model configuration is consistent across environments
 - [ ] Health endpoint still works (`GET /health`)

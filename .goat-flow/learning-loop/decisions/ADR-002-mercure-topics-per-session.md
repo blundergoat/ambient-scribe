@@ -1,7 +1,7 @@
 # ADR-002: Mercure Topics Per Session (Raw + Roles + Summary)
 
 **Date:** 2026-03-14 (documented; decision made during M2 design)
-**Status:** Accepted
+**Status:** Accepted; role-label wording superseded by 0.3.0 medical-only UI
 
 ## Context
 
@@ -17,5 +17,5 @@ The transcription pipeline produces outputs at different speeds: raw transcripti
 
 ## Consequences
 
-- **Easier:** Hot path latency is NeMo inference only (~1-2s). Role inference and summary generation can take as long as needed without blocking transcript display. Browser can show `spk_0`/`spk_1` immediately, then update to the mode-specific role labels when roles arrive.
+- **Easier:** Hot path latency is NeMo inference only (~1-2s). Role inference and summary generation can take as long as needed without blocking transcript display. Browser can show `spk_0`/`spk_1` immediately, then update to medical Doctor/Patient labels when roles arrive. This wording supersedes the original multi-mode label note; the three-topic decision still stands.
 - **Harder:** Browser must handle out-of-order updates. Role updates may arrive after the user has already read the `spk_0` text, and summary updates may arrive after the transcript is complete. UI needs merge logic for retroactive role application and a separate summary render path.

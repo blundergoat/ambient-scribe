@@ -18,7 +18,6 @@ def clear_inference_state():
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
     yield
@@ -26,7 +25,6 @@ def clear_inference_state():
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
 
@@ -53,7 +51,7 @@ class TestInferenceQueue:
         monkeypatch.setattr(
             api_server,
             "_run_role_inference",
-            lambda session_id, segments, transcript, mode="medical": {
+            lambda session_id, segments, transcript: {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.88,
                 "reasoning": "Opening clinical question identifies the doctor.",
@@ -93,7 +91,7 @@ class TestInferenceQueue:
         async def fake_publish(topic, data, event_id=None):
             return None
 
-        def fake_run_role_inference(session_id, segments, transcript, mode="medical"):
+        def fake_run_role_inference(session_id, segments, transcript):
             invocations.append([segment["text"] for segment in segments])
             if len(invocations) == 1:
                 started.set()
@@ -147,7 +145,9 @@ class TestInferenceQueue:
             published_events.append((topic, data))
 
         def fail_if_called(*args, **kwargs):
-            raise AssertionError("role inference should be skipped for single-speaker sessions")
+            raise AssertionError(
+                "role inference should be skipped for single-speaker sessions"
+            )
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(api_server, "_run_role_inference", fail_if_called)

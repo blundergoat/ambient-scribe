@@ -54,7 +54,6 @@ class TestReplayEndpoint:
 
     def setup_method(self):
         sessions._sessions.clear()
-        api_server._session_modes.clear()
         api_server._mercure_event_ids.clear()
         _cancel_replay_tasks()
         app.state.nemo_pipeline = NemoPipeline()
@@ -64,16 +63,18 @@ class TestReplayEndpoint:
         _cancel_replay_tasks()
 
     def test_replay_returns_segment_count(self):
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Hello", start=0.0, end=2.0),
-            Segment(speaker_id="spk_1", text="Hi there", start=2.5, end=4.0),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", text="Hello", start=0.0, end=2.0),
+                Segment(speaker_id="spk_1", text="Hi there", start=2.5, end=4.0),
+            ]
+        )
 
         with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
             client = TestClient(app, raise_server_exceptions=False)
             wav = _make_wav_bytes(4.0)
             response = client.post(
-                f"/session/{TEST_SESSION_ID}/replay?mode=medical",
+                f"/session/{TEST_SESSION_ID}/replay",
                 files={"file": ("demo.wav", io.BytesIO(wav), "audio/wav")},
             )
 
@@ -109,9 +110,11 @@ class TestReplayEndpoint:
         assert response.status_code == 400
 
     def test_replay_accepts_speed_parameter(self):
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Fast", start=0.0, end=1.0),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", text="Fast", start=0.0, end=1.0),
+            ]
+        )
 
         with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
             client = TestClient(app, raise_server_exceptions=False)
@@ -124,43 +127,13 @@ class TestReplayEndpoint:
         assert response.status_code == 200
         assert response.json()["speed"] == 2.0
 
-    def test_replay_accepts_mode_parameter(self):
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Meeting start", start=0.0, end=1.0),
-        ])
-
-        with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
-            client = TestClient(app, raise_server_exceptions=False)
-            wav = _make_wav_bytes(1.0)
-            response = client.post(
-                f"/session/{TEST_SESSION_ID}/replay?mode=meeting",
-                files={"file": ("demo.wav", io.BytesIO(wav), "audio/wav")},
-            )
-
-        assert response.status_code == 200
-        assert api_server._session_modes.get(TEST_SESSION_ID) == "meeting"
-
-    def test_replay_invalid_mode_defaults_to_medical(self):
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Hello", start=0.0, end=1.0),
-        ])
-
-        with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
-            client = TestClient(app, raise_server_exceptions=False)
-            wav = _make_wav_bytes(1.0)
-            response = client.post(
-                f"/session/{TEST_SESSION_ID}/replay?mode=podcast",
-                files={"file": ("demo.wav", io.BytesIO(wav), "audio/wav")},
-            )
-
-        assert response.status_code == 200
-        assert api_server._session_modes.get(TEST_SESSION_ID) == "medical"
-
     def test_replay_stores_segments(self):
         """Replayed segments should be stored in the session store."""
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Stored segment", start=0.0, end=1.0),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", text="Stored segment", start=0.0, end=1.0),
+            ]
+        )
 
         with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
             with patch("api.server.publish_to_mercure", return_value=True):
@@ -174,20 +147,22 @@ class TestReplayEndpoint:
         assert response.status_code == 200
         # Give the async replay task a moment
         import time
+
         time.sleep(0.5)
 
-        stored = sessions.get_segments(TEST_SESSION_ID)
         # Segments may or may not have been stored yet depending on timing,
         # but the response shape should be correct
         assert response.json()["segments"] == 1
 
     def test_replay_duration_from_max_segment_end(self):
         """Duration should be the max end time across all segments."""
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="First", start=0.0, end=5.0),
-            Segment(speaker_id="spk_1", text="Second", start=5.0, end=12.5),
-            Segment(speaker_id="spk_0", text="Third", start=12.5, end=18.0),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", text="First", start=0.0, end=5.0),
+                Segment(speaker_id="spk_1", text="Second", start=5.0, end=12.5),
+                Segment(speaker_id="spk_0", text="Third", start=12.5, end=18.0),
+            ]
+        )
 
         with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
             client = TestClient(app, raise_server_exceptions=False)
@@ -202,9 +177,11 @@ class TestReplayEndpoint:
 
     def test_replay_speed_boundaries(self):
         """Speed at boundaries should be accepted."""
-        mock_result = TranscriptionResult(segments=[
-            Segment(speaker_id="spk_0", text="Fast", start=0.0, end=1.0),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", text="Fast", start=0.0, end=1.0),
+            ]
+        )
 
         with patch.object(NemoPipeline, "transcribe_file", return_value=mock_result):
             client = TestClient(app, raise_server_exceptions=False)
@@ -247,7 +224,7 @@ class TestReplayEndpoint:
             await release.wait()
             return True
 
-        async def fake_enqueue(session_id, segments, mode=None):
+        async def fake_enqueue(session_id, segments):
             pass
 
         monkeypatch.setattr(api_server, "publish_to_mercure", slow_publish)
@@ -258,7 +235,6 @@ class TestReplayEndpoint:
                 TEST_SESSION_ID,
                 [{"speaker_id": "spk_0", "text": "old", "start": 0.0, "end": 1.0}],
                 1.0,
-                "medical",
             )
         )
         api_server._replay_tasks[TEST_SESSION_ID] = old_task

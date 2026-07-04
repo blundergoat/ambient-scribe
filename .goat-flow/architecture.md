@@ -8,14 +8,15 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 - Symfony app (`src/Controller/ScribeController.php`, `src/Service/RoleInferenceService.php`) renders `/scribe`, redirects `/`, proxies transcript history from Python, and exposes current role mappings.
 - FastAPI agent (`strands_agents/api/server.py`) exposes batch transcription, live WebSocket transcription, history, role override/snapshot, summary, replay, and health endpoints.
 - NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`) owns the single GPU and performs diarization/ASR; role inference never uses that GPU.
-- Role and summary agents (`strands_agents/agents/transcription_agent.py`, `strands_agents/agents/summary_agent.py`, `strands_agents/tools/assign_roles.py`) run mode-aware speaker role attribution and structured end-of-session summaries.
+- Role and summary agents (`strands_agents/agents/transcription_agent.py`, `strands_agents/agents/summary_agent.py`, `strands_agents/tools/assign_roles.py`) run medical speaker role attribution and structured SOAP-style end-of-session summaries.
 - Storage (`strands_agents/session.py`, `strands_agents/storage.py`) is either in-memory `SessionStore` or SQLite `SqliteBackend`, selected by `SESSION_STORAGE`.
 - Mercure (`docker-compose.yml`) fans out per-session raw, roles, and summary events under `scribe/session/{id}/{raw|roles|summary}`.
+- Observability (`strands_agents/logging_config.py`, `src/Logging/JsonLineLogger.php`, `src/Observability/StrandsClientTelemetry.php`) emits JSON-line process logs with `session_id`/`correlation_id` join keys when `LOG_FORMAT=json`.
 
 ## Request Flow
 
-1. Browser requests `GET /scribe`; `ScribeController::index` generates a UUID and injects WebSocket URL, Mercure URL, raw topic, roles topic, mode controls, and dev scenarios into Twig.
-2. `public/js/scribe.js` captures audio, downsamples to 16 kHz 16-bit PCM, and opens `ws://.../ws/transcribe/{session_id}?mode=<mode>`.
+1. Browser requests `GET /scribe`; `ScribeController::index` generates a UUID and injects WebSocket URL, Mercure URL, raw topic, roles topic, and dev scenarios into Twig.
+2. `public/js/scribe.js` captures audio, downsamples to 16 kHz 16-bit PCM, and opens `ws://.../ws/transcribe/{session_id}`.
 3. `strands_agents/api/server.py::transcribe_stream` validates the UUID, registers the session in `SessionLifecycle`, buffers chunks in `TranscriptionSession`, and runs NeMo through `ThreadPoolExecutor`.
 4. FastAPI stores raw segments, publishes `segment` events to `scribe/session/{id}/raw`, queues role inference, then publishes `role_update` events to `scribe/session/{id}/roles`.
 5. Browser EventSource handlers merge raw and role events into the transcript timeline; on end session, FastAPI can generate and publish a summary to `scribe/session/{id}/summary`.
@@ -39,7 +40,7 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 ## Deployment / Operations
 
 - Local runtime is `docker-compose.yml` with `nemo-agent`, `app`, `mercure`, and optional CPU-only `ollama` profile.
-- `docker/nemo/Dockerfile` builds the NeMo FastAPI image from NVIDIA's NeMo base image; `Dockerfile` builds the Symfony app container.
+- `docker/nemo/Dockerfile` builds the NeMo FastAPI image from NVIDIA's `nvcr.io/nvidia/nemo:26.02` base image and pins `nemo_toolkit[asr]==2.7.3`; `Dockerfile` builds the Symfony app container.
 - `scripts/start-dev.sh`, `scripts/health-check-localdev.sh`, `scripts/gpu-check.sh`, and `scripts/preflight-checks.sh` are the main local operator commands.
 - GitHub Actions live under `.github/workflows/`; Terraform production scaffolding lives under `infra/terraform/environments/prod/` and modules under `infra/terraform/modules/`.
 

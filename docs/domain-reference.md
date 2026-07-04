@@ -5,7 +5,7 @@ Migrated from CLAUDE.md and the old root AGENTS content to separate domain knowl
 
 ## Project Overview
 
-Ambient Scribe is a real-time multi-mode transcription app that captures microphone audio, transcribes speech with speaker diarization (NeMo multitalker Parakeet), and attributes speakers using a Strands AI agent. It supports Medical, Meeting, Interview, TV/Media, Lecture, and General modes. Built with Python/FastAPI (NeMo GPU inference + WebSocket), PHP/Symfony (UI + session management), and Mercure (real-time SSE streaming).
+Ambient Scribe is a real-time medical transcription app that captures consultation audio, transcribes speech with speaker diarization (NeMo multitalker Parakeet), and attributes speakers as DOCTOR/PATIENT using a Strands AI agent. Built with Python/FastAPI (NeMo GPU inference + WebSocket), PHP/Symfony (UI + session management), and Mercure (real-time SSE streaming).
 
 ## Project Structure
 

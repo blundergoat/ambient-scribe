@@ -132,7 +132,7 @@ ROLE_AGENT_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
 
 ### Ollama Setup
 
-Ollama provides local LLM inference for mode-specific role attribution. The GPU is reserved for NeMo transcription, so Ollama always runs on CPU.
+Ollama provides local LLM inference for medical role attribution. The GPU is reserved for NeMo transcription, so Ollama always runs on CPU.
 
 #### Option A: Install Ollama natively (recommended for bare-metal dev)
 
@@ -165,7 +165,7 @@ OLLAMA_HOST=http://ollama:11434
 | `qwen2.5:7b` | ~8GB | ~15s per role inference |
 | `qwen2.5:14b` | ~16GB | ~30s per role inference |
 
-These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously — transcript segments appear immediately, and mode-specific labels update a few seconds later.
+These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously — transcript segments appear immediately, and Doctor/Patient labels update a few seconds later.
 
 ### Changing the Ollama model
 
@@ -209,8 +209,8 @@ These are set automatically by `start-dev.sh` and `docker-compose.yml`. You typi
 | `OLLAMA_HOST` | `http://host.docker.internal:11434` | `http://localhost:11434` | Python agent → Ollama URL |
 | `MERCURE_URL` | `http://mercure:3701/...` | *(empty)* | PHP → Mercure publish URL |
 | `MERCURE_PUBLIC_URL` | `http://localhost:48137/...` | *(empty)* | Browser → Mercure subscribe URL |
-| `MERCURE_JWT_SECRET` | `ambient-scribe-mercure-secret` | *(empty)* | JWT signing for Mercure |
-| `APP_SECRET` | `ambient-scribe-dev-secret-change-me` | same | Symfony CSRF/session secret |
+| `MERCURE_JWT_SECRET` | `changemechangemechangemechangeme` | same placeholder | JWT signing for Mercure; replace outside local dev |
+| `APP_SECRET` | `changeme` | same placeholder | Symfony CSRF/session secret; replace outside local dev |
 
 ## Scripts Reference
 

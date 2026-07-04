@@ -64,7 +64,7 @@ composer preflight              # All quality checks
 composer test                   # PHPUnit tests
 composer test:coverage          # Tests with HTML + clover coverage
 composer analyse                # PHPStan level 10
-composer analyse:complexity     # Cyclomatic complexity (max 20)
+composer analyse:complexity     # gruff-php PHP quality gate
 composer analyse:messdetector   # PHPMD
 composer cs:check               # PHP-CS-Fixer dry-run
 composer cs:fix                 # Auto-fix code style

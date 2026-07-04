@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
+from nemo_pipeline import NemoPipeline, Segment
 from nemo_session import AudioBuffer, TranscriptionSession
 
 
@@ -17,7 +17,9 @@ class TestSegment:
     """Tests for the Segment data class."""
 
     def test_segment_dict(self):
-        seg = Segment(speaker_id="spk_0", text="Hello", start=0.0, end=1.5, is_interim=False)
+        seg = Segment(
+            speaker_id="spk_0", text="Hello", start=0.0, end=1.5, is_interim=False
+        )
         result = seg.dict()
         assert result == {
             "speaker_id": "spk_0",
@@ -283,9 +285,9 @@ class TestFilterHallucinatedSpeakers:
     def test_suppresses_speaker_below_threshold(self):
         """A speaker with 1s out of 100s total (1%) should be suppressed."""
         parsed_diar = [
-            (0.0, 30.0, "speaker_0"),   # 30s — kept
-            (30.0, 69.0, "speaker_1"),   # 39s — kept
-            (69.0, 99.0, "speaker_0"),   # 30s — kept (total speaker_0 = 60s)
+            (0.0, 30.0, "speaker_0"),  # 30s — kept
+            (30.0, 69.0, "speaker_1"),  # 39s — kept
+            (69.0, 99.0, "speaker_0"),  # 30s — kept (total speaker_0 = 60s)
             (99.0, 100.0, "speaker_2"),  # 1s  — suppressed (1%)
         ]
 
@@ -327,8 +329,8 @@ class TestFilterHallucinatedSpeakers:
     def test_keeps_speakers_above_threshold(self):
         """Speakers with >= 5% of total duration are kept."""
         parsed_diar = [
-            (0.0, 50.0, "speaker_0"),   # 50%
-            (50.0, 100.0, "speaker_1"), # 50%
+            (0.0, 50.0, "speaker_0"),  # 50%
+            (50.0, 100.0, "speaker_1"),  # 50%
         ]
 
         result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
@@ -353,11 +355,13 @@ class TestFilterHallucinatedSpeakers:
         """Hallucinated speaker is removed before words are distributed."""
         pipeline = NemoPipeline()
         # speaker_2 has 0.5s out of 100.5s total — well below 5%
-        diar = [[
-            "0.0 50.0 speaker_0",
-            "50.0 100.0 speaker_1",
-            "100.0 100.5 speaker_2",
-        ]]
+        diar = [
+            [
+                "0.0 50.0 speaker_0",
+                "50.0 100.0 speaker_1",
+                "100.0 100.5 speaker_2",
+            ]
+        ]
         hyp = MagicMock()
         hyp.text = "word1 word2 word3 word4"
 

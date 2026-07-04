@@ -8,8 +8,9 @@ Approach:
 3. Run ASR transcription per speaker
 4. Merge results into a speaker-attributed transcript
 """
+
+# ruff: noqa: E402
 import os
-import time
 import urllib.request
 
 import torch
@@ -26,15 +27,25 @@ device = torch.device("cuda")
 # --- Load models ---
 print("Loading models...")
 from nemo.collections.asr.models import SortformerEncLabelModel
-from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+from nemo.collections.asr.models.multitalker_asr_models import (
+    EncDecMultiTalkerRNNTBPEModel,
+)
 
-diar = SortformerEncLabelModel.from_pretrained(
-    "nvidia/diar_streaming_sortformer_4spk-v2.1"
-).eval().to(device)
+diar = (
+    SortformerEncLabelModel.from_pretrained(
+        "nvidia/diar_streaming_sortformer_4spk-v2.1"
+    )
+    .eval()
+    .to(device)
+)
 
-asr = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-    "nvidia/multitalker-parakeet-streaming-0.6b-v1"
-).eval().to(device)
+asr = (
+    EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+        "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+    )
+    .eval()
+    .to(device)
+)
 asr.decoding.decoding.use_cuda_graph_decoder = False
 asr.decoding.decoding.decoding_computer.disable_cuda_graphs()
 
@@ -56,7 +67,7 @@ print(f"Speaker probs dtype: {speaker_probs.dtype}")
 print(f"Speaker probs device: {speaker_probs.device}")
 
 # Move to CUDA if needed
-if speaker_probs.device.type == 'cpu':
+if speaker_probs.device.type == "cpu":
     speaker_probs = speaker_probs.to(device)
 
 # Determine which speakers are active (have any activity > threshold)
@@ -69,8 +80,10 @@ for spk_idx in range(num_speakers):
     mean_activity = spk_activity.mean().item()
     active_frames = (spk_activity > threshold).sum().item()
     total_frames = spk_activity.shape[0]
-    print(f"  Speaker {spk_idx}: max={max_activity:.3f}, mean={mean_activity:.3f}, "
-          f"active_frames={active_frames}/{total_frames}")
+    print(
+        f"  Speaker {spk_idx}: max={max_activity:.3f}, mean={mean_activity:.3f}, "
+        f"active_frames={active_frames}/{total_frames}"
+    )
     if active_frames > 0:
         active_speakers.append(spk_idx)
 
@@ -98,7 +111,7 @@ for spk_idx in active_speakers:
     with torch.inference_mode():
         hyps = asr.transcribe([audio_path], return_hypotheses=True)
 
-    text = hyps[0].text if hasattr(hyps[0], 'text') else str(hyps[0])
+    text = hyps[0].text if hasattr(hyps[0], "text") else str(hyps[0])
     print(f"  Text: {text}")
     results[f"speaker_{spk_idx}"] = text
 

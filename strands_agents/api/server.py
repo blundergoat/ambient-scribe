@@ -1,53 +1,10 @@
 """
-FastAPI server for the Ambient Medical Scribe.
+FastAPI routes for the Ambient Medical Scribe.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-This is the HTTP + WebSocket API that handles real-time transcription.
-
-Endpoints:
-  POST /transcribe/file             — Upload a WAV file, get transcript (batch mode)
-  WS   /ws/transcribe/{session_id}  — Live audio streaming via WebSocket
-  GET  /session/{id}/history         — View session transcript history
-  POST /session/{id}/roles/override  — Manual speaker role override
-  GET  /health                       — Docker healthcheck
-
-=============================================================================
-ARCHITECTURE
-=============================================================================
-
-  Browser ──(WebSocket binary audio)──► /ws/transcribe/{session_id}
-                                             │
-                                             ▼
-                                        NemoPipeline (GPU, in thread pool)
-                                             │
-                                             ▼
-                                        Publish to Mercure (SSE)
-                                             │
-                                             ▼
-                                        Browser EventSource receives segments
-
-  NeMo pipeline is loaded once at startup and shared across all sessions.
-  GPU-bound inference runs in a ThreadPoolExecutor to avoid blocking the
-  async event loop (which would freeze all other connections + /health).
-
-=============================================================================
-MERCURE TOPICS
-=============================================================================
-
-  scribe/session/{id}/raw    — Raw spk_0/spk_1 segments (immediate)
-  scribe/session/{id}/roles  — DOCTOR/PATIENT role updates (async, higher latency)
-
-=============================================================================
-SSE EVENT CONTRACT (published to Mercure)
-=============================================================================
-
-  { "type": "segment",     "speaker_id": "spk_0", "text": "...", "start": 0.0, "end": 1.5, "is_interim": true }
-  { "type": "role_update", "mapping": {"spk_0": "DOCTOR"}, "confidence": 0.85, "flip_detected": false, "manual_override": false }
-  { "type": "finalized",   "session_id": "..." }
-  { "type": "error",       "message": "..." }
+This module keeps the browser-facing API surface: file upload, live WebSocket
+recording, session history, role overrides, summaries, replay, and health.
+Workflow helpers own the longer queue and streaming loops so these routes stay
+focused on what the clinician sees in the transcript and summary UI.
 """
 
 from __future__ import annotations
@@ -69,21 +26,44 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
+from api.role_inference_queue import (
+    RoleInferenceServices,
+    cancel_orphaned_role_inference,
+    close_role_inference as close_queued_role_inference,
+    enqueue_role_inference as enqueue_queued_role_inference,
+    prune_orphaned_role_states,
+    role_inference_queues,
+    role_inference_workers,
+)
+from api.agent_observability import (
+    agent_metric_fields as _agent_metric_fields,
+    configure_strands_telemetry as _configure_strands_telemetry,
+)
+from api.mercure_publisher import did_publish_mercure_event
+from api.replay_session import (
+    ReplayServices,
+    replay_segments,
+    replay_tasks,
+    start_replay_upload,
+)
+from api.role_heuristics import heuristic_role_inference as _heuristic_role_inference
+from api.streaming_session import StreamingServices, transcribe_stream_session
 from nemo_pipeline import NemoPipeline
-from nemo_session import TranscriptionSession
 from session import SessionStore
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
 from tools.assign_roles import (
-    apply_role_mapping_result,
-    cleanup_session as cleanup_role_state,
     get_or_create_state,
 )
+from logging_config import configure_logging
+from api.summary_generation import run_summary_generation as _run_summary_generation
+from clinical_hints import generate_clinical_hints
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -94,17 +74,42 @@ correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 
 class CorrelationIdFilter(logging.Filter):
-    """Inject correlation_id into every log record automatically."""
+    """
+    Adds the current request/session correlation ID to log records.
+
+    Use this when a browser action spans HTTP, WebSocket, Mercure, and role
+    worker logs. It lets support trace one clinician recording without exposing
+    transcript text.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Attach the current correlation ID so user-session logs group together.
+
+        Args:
+            record: Log record emitted during a browser action.
+
+        Returns:
+            True so Python logging keeps the record.
+        """
         record.correlation_id = correlation_id_var.get("-")
         return True
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    """Extract or generate X-Correlation-ID for every HTTP request."""
+    """
+    Keeps HTTP request logs tied to one browser action.
+
+    The browser or proxy may provide `X-Correlation-ID`; otherwise the API
+    creates one. WebSocket sessions set their own ID in the streaming workflow.
+    """
 
     async def dispatch(self, request: Request, call_next):
+        """Wrap one HTTP request and return the same correlation ID to the browser.
+
+        Args:
+            request: Browser or service HTTP request.
+            call_next: Next ASGI handler that produces the response.
+        """
         cid = request.headers.get("x-correlation-id") or str(uuid.uuid4())
         token = correlation_id_var.set(cid)
         try:
@@ -114,51 +119,25 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         finally:
             correlation_id_var.reset(token)
 
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-MERCURE_HUB_URL = os.environ.get("MERCURE_HUB_URL", "http://mercure:3701/.well-known/mercure")
-MERCURE_JWT_SECRET = os.environ.get("MERCURE_JWT_SECRET", "")
 NEMO_STREAM_INPUT_FORMAT = os.environ.get("NEMO_STREAM_INPUT_FORMAT", "pcm")
 NEMO_BUFFER_MAX_DURATION = float(os.environ.get("NEMO_BUFFER_MAX_DURATION", "900"))
 SESSION_STORAGE = os.environ.get("SESSION_STORAGE", "memory")
-SESSION_RECONNECT_GRACE_SECONDS = float(os.environ.get("SESSION_RECONNECT_GRACE_SECONDS", "30"))
-_mercure_jwt_cache: str | None = None
-
-
-def _resolve_mercure_jwt() -> str:
-    """Return the Mercure publisher JWT.
-
-    Prefers MERCURE_JWT (a pre-signed token) over MERCURE_JWT_SECRET.
-    Caches the result so we don't re-read env vars on every publish.
-    """
-    global _mercure_jwt_cache
-    if _mercure_jwt_cache is not None:
-        return _mercure_jwt_cache
-
-    jwt_env = os.environ.get("MERCURE_JWT", "")
-    if jwt_env:
-        _mercure_jwt_cache = jwt_env
-        return _mercure_jwt_cache
-
-    secret = MERCURE_JWT_SECRET
-    if not secret:
-        _mercure_jwt_cache = ""
-        return _mercure_jwt_cache
-
-    try:
-        import jwt as pyjwt
-        token = pyjwt.encode(
-            {"mercure": {"publish": ["*"]}},
-            secret,
-            algorithm="HS256",
-        )
-        _mercure_jwt_cache = token if isinstance(token, str) else token.decode("utf-8")
-    except Exception:
-        _mercure_jwt_cache = ""
-
-    return _mercure_jwt_cache
+SESSION_RECONNECT_GRACE_SECONDS = float(
+    os.environ.get("SESSION_RECONNECT_GRACE_SECONDS", "30")
+)
+CLINICAL_HINTS_ENABLED = os.environ.get(
+    "CLINICAL_HINTS_ENABLED", "1"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _history_duration(segments: list[dict]) -> float:
@@ -178,7 +157,9 @@ def _validate_session_id(session_id: str) -> str:
     try:
         uuid.UUID(session_id)
     except (ValueError, AttributeError):
-        raise HTTPException(status_code=400, detail="Invalid session_id: must be a valid UUID")
+        raise HTTPException(
+            status_code=400, detail="Invalid session_id: must be a valid UUID"
+        )
     return session_id
 
 
@@ -186,8 +167,14 @@ def log_vram() -> None:
     """Log current GPU VRAM usage via nvidia-smi."""
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             logger.info("gpu.vram_usage", extra={"vram": result.stdout.strip()})
@@ -199,20 +186,19 @@ def log_vram() -> None:
 # Prevents blocking the async event loop, keeping /health and other
 # WebSocket connections responsive during inference.
 NEMO_MAX_WORKERS = int(os.environ.get("NEMO_MAX_WORKERS", "2"))
-nemo_executor = ThreadPoolExecutor(max_workers=NEMO_MAX_WORKERS, thread_name_prefix="nemo")
+nemo_executor = ThreadPoolExecutor(
+    max_workers=NEMO_MAX_WORKERS, thread_name_prefix="nemo"
+)
 
-ROLE_INFERENCE_IDLE_TIMEOUT_SECONDS = 60.0
-_inference_queues: dict[str, asyncio.Queue[list[dict[str, Any]] | None]] = {}
-_inference_workers: dict[str, asyncio.Task[None]] = {}
-_session_modes: dict[str, str] = {}
+_inference_queues = role_inference_queues
+_inference_workers = role_inference_workers
 _mercure_event_ids: dict[str, int] = {}
-
-VALID_MODES = {"medical", "meeting", "interview", "tv", "lecture", "general"}
 
 
 # =============================================================================
 # LIFESPAN — Load NeMo models once at startup
 # =============================================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -220,7 +206,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     This runs once when the FastAPI server starts. It may take 30-60 seconds
     depending on model size and disk speed.
+
+    Args:
+        app: FastAPI application whose state is shared by browser requests.
+
+    Returns:
+        Async lifespan context; `None` means startup/shutdown only configure shared services.
     """
+    _configure_strands_telemetry()
     logger.info("server.startup.loading_nemo_models")
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = NEMO_STREAM_INPUT_FORMAT
@@ -242,7 +235,7 @@ async def _periodic_cleanup() -> None:
 
     Handles the case where a WebSocket handler crashes before reaching
     its finally block, leaving entries in _inference_queues, _inference_workers,
-    _session_modes, and assign_roles._session_states.
+    and assign_roles._session_states.
     """
     while True:
         await asyncio.sleep(300)  # 5 minutes
@@ -251,36 +244,27 @@ async def _periodic_cleanup() -> None:
             # Sessions with a pending grace-period destroy are still "alive"
             pending_ids = {sid for sid in lifecycle._pending_destroys}
             live_ids = active_ids | pending_ids
-            # Clean inference queues/workers for inactive sessions
-            orphaned_queues = [sid for sid in _inference_queues if sid not in live_ids]
-            for sid in orphaned_queues:
-                _inference_queues.pop(sid, None)
-                worker = _inference_workers.pop(sid, None)
-                if worker and not worker.done():
-                    worker.cancel()
-            # Clean session modes
-            orphaned_modes = [sid for sid in _session_modes if sid not in live_ids]
-            for sid in orphaned_modes:
-                _session_modes.pop(sid, None)
+            # Inactive role workers would publish labels to sessions the user cannot resume.
+            orphaned_queues = cancel_orphaned_role_inference(live_ids)
             # Clean Mercure event IDs
-            orphaned_event_ids = [sid for sid in _mercure_event_ids if sid not in live_ids]
+            orphaned_event_ids = [
+                sid for sid in _mercure_event_ids if sid not in live_ids
+            ]
             for sid in orphaned_event_ids:
                 _mercure_event_ids.pop(sid, None)
-            # Clean role states
-            from tools.assign_roles import _session_states, _states_lock
-            with _states_lock:
-                orphaned_roles = [sid for sid in _session_states if sid not in live_ids]
-                for sid in orphaned_roles:
-                    _session_states.pop(sid, None)
-            if orphaned_queues or orphaned_modes or orphaned_roles or orphaned_event_ids:
-                logger.info("periodic_cleanup.completed", extra={
-                    "orphaned_queues": len(orphaned_queues),
-                    "orphaned_modes": len(orphaned_modes),
-                    "orphaned_event_ids": len(orphaned_event_ids),
-                    "orphaned_roles": len(orphaned_roles),
-                    "active_sessions": len(active_ids),
-                    "pending_destroys": len(pending_ids),
-                })
+            # Role mappings outside live sessions could relabel a future visit incorrectly.
+            orphaned_roles = prune_orphaned_role_states(live_ids)
+            if orphaned_queues or orphaned_roles or orphaned_event_ids:
+                logger.info(
+                    "periodic_cleanup.completed",
+                    extra={
+                        "orphaned_queues": orphaned_queues,
+                        "orphaned_event_ids": len(orphaned_event_ids),
+                        "orphaned_roles": orphaned_roles,
+                        "active_sessions": len(active_ids),
+                        "pending_destroys": len(pending_ids),
+                    },
+                )
         except Exception:
             logger.exception("periodic_cleanup.failed")
 
@@ -295,13 +279,18 @@ app.add_middleware(CorrelationIdMiddleware)
 # Install correlation_id filter on root logger so ALL log records include it.
 logging.getLogger().addFilter(CorrelationIdFilter())
 
+
 def create_storage_backend() -> StorageBackend:
     """Create the storage backend based on SESSION_STORAGE env var.
 
     Returns an in-memory SessionStore (default) or a persistent SqliteBackend.
+
+    Returns:
+        Storage backend used by transcript history, role labeling, and summaries.
     """
     if SESSION_STORAGE == "sqlite":
         from storage import SqliteBackend
+
         return SqliteBackend()
     return SessionStore()
 
@@ -317,19 +306,13 @@ lifecycle = SessionLifecycle()
 # PYDANTIC MODELS
 # =============================================================================
 
+
 class TranscribeFileResponse(BaseModel):
     """Response for the /transcribe/file endpoint."""
+
     session_id: str
     segments: list[dict] = Field(default_factory=list)
     duration_seconds: float = 0.0
-
-
-# =============================================================================
-# MERCURE PUBLISHING
-# =============================================================================
-
-MERCURE_PUBLISH_MAX_RETRIES = 3
-MERCURE_PUBLISH_BACKOFF_SECONDS = 2.0
 
 
 async def publish_to_mercure(
@@ -337,241 +320,111 @@ async def publish_to_mercure(
     data: dict[str, Any],
     event_id: int | None = None,
 ) -> bool:
-    """Publish a JSON event to a Mercure topic with retry.
-
-    Retries up to MERCURE_PUBLISH_MAX_RETRIES times with exponential backoff
-    before returning False.
+    """Publish one transcript, role, or summary event to the browser.
 
     Args:
-        topic: The Mercure topic URI (e.g., "scribe/session/{id}/raw")
-        data: The event data to JSON-encode and publish
-        event_id: Optional monotonic event ID for Mercure Last-Event-ID support.
-                  When set, Mercure stores the ID so that reconnecting subscribers
-                  can resume from this point via the Last-Event-ID query parameter.
+        topic: Mercure topic for the visible browser session.
+        data: Event payload; empty still sends a browser-visible event shell.
+        event_id: Resume ID for browser reconnects; null means no replay ID is attached.
 
     Returns:
-        True if published successfully, False otherwise.
+        True when Mercure accepted the event; false means the UI did not receive this update.
     """
-    token = _resolve_mercure_jwt()
-    if token == "":
-        logger.error("mercure.publish.skipped", extra={"reason": "no JWT configured"})
-        return False
-
-    client = app.state.http_client
-    payload: dict[str, str] = {
-        "topic": topic,
-        "data": json.dumps(data),
-    }
-    if event_id is not None:
-        payload["id"] = str(event_id)
-
-    last_error: Exception | None = None
-    for attempt in range(MERCURE_PUBLISH_MAX_RETRIES):
-        try:
-            response = await client.post(
-                MERCURE_HUB_URL,
-                data=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            last_error = e
-            if attempt < MERCURE_PUBLISH_MAX_RETRIES - 1:
-                backoff = MERCURE_PUBLISH_BACKOFF_SECONDS * (2 ** attempt)
-                logger.warning("mercure.publish.retrying", extra={
-                    "topic": topic,
-                    "attempt": attempt + 1,
-                    "backoff_seconds": backoff,
-                    "error": str(e),
-                })
-                await asyncio.sleep(backoff)
-
-    logger.error("mercure.publish.failed", extra={
-        "topic": topic,
-        "attempts": MERCURE_PUBLISH_MAX_RETRIES,
-        "error": str(last_error),
-    })
-    return False
+    return await did_publish_mercure_event(
+        topic,
+        data,
+        app.state.http_client,
+        event_id,
+    )
 
 
-def _session_has_multiple_speakers(session_id: str) -> bool:
-    """Return True once at least two speakers appear in the stored transcript."""
-    speaker_ids = {
-        str(segment.get("speaker_id", "")).strip()
-        for segment in sessions.get_segments(session_id)
-        if str(segment.get("speaker_id", "")).strip() != ""
-    }
+def _role_inference_services() -> RoleInferenceServices:
+    """Bundle current server callbacks for queued role labels.
 
-    return len(speaker_ids) >= 2
+    Returns:
+        Services using the current publish and inference functions; tests may
+        patch these so queued role updates still exercise the visible seam.
+    """
+    return RoleInferenceServices(
+        sessions=sessions,
+        lifecycle=lifecycle,
+        publish_to_mercure=publish_to_mercure,
+        run_role_inference=_run_role_inference,
+        mercure_event_ids=_mercure_event_ids,
+    )
 
 
 async def enqueue_role_inference(
     session_id: str,
     segments: list[dict[str, Any]],
-    mode: str | None = None,
 ) -> None:
-    """Queue raw transcript segments for sequential per-session role inference."""
-    if segments == []:
-        return
+    """Queue transcript text for the role labels shown after raw segments.
 
-    if mode is not None:
-        _session_modes[session_id] = mode
-
-    queue = _inference_queues.get(session_id)
-    if queue is None:
-        queue = asyncio.Queue(maxsize=50)
-        _inference_queues[session_id] = queue
-
-    try:
-        queue.put_nowait([dict(segment) for segment in segments])
-    except asyncio.QueueFull:
-        logger.warning("role_inference.queue_full", extra={"session_id": session_id})
-
-    worker = _inference_workers.get(session_id)
-    if worker is None or worker.done():
-        _inference_workers[session_id] = asyncio.create_task(
-            _role_inference_worker(session_id),
-            name=f"role-inference-{session_id}",
-        )
+    Args:
+        session_id: Browser recording session that owns the transcript.
+        segments: New NeMo segments; empty means the browser has no new text to relabel.
+    """
+    await enqueue_queued_role_inference(
+        session_id, segments, _role_inference_services()
+    )
 
 
 async def close_role_inference(session_id: str) -> None:
-    """Signal the session's inference worker to exit once queued work is done."""
-    queue = _inference_queues.get(session_id)
-    if queue is None:
-        cleanup_role_state(session_id)
-        return
+    """Finish queued role labeling after the user stops or reconnects.
 
-    await queue.put(None)
+    Args:
+        session_id: Browser recording session whose role worker should close.
+    """
+    await close_queued_role_inference(session_id)
 
 
-async def _role_inference_worker(session_id: str) -> None:
-    """Process role inference requests sequentially for one session."""
-    queue = _inference_queues[session_id]
+def _streaming_services() -> StreamingServices:
+    """Bundle current server callbacks for one live browser recording.
 
-    try:
-        while True:
-            try:
-                batch = await asyncio.wait_for(
-                    queue.get(),
-                    timeout=ROLE_INFERENCE_IDLE_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.info("role_inference.worker_idle", extra={
-                    "session_id": session_id,
-                })
-                break
+    Returns:
+        Services using the current executor, publisher, role queue, and app
+        state so tests can patch the same route-level seams users exercise.
+    """
+    return StreamingServices(
+        pipeline=app.state.nemo_pipeline,
+        input_format=app.state.nemo_input_format,
+        max_buffer_duration=NEMO_BUFFER_MAX_DURATION,
+        reconnect_grace_seconds=SESSION_RECONNECT_GRACE_SECONDS,
+        executor=nemo_executor,
+        sessions=sessions,
+        lifecycle=lifecycle,
+        get_running_loop=asyncio.get_running_loop,
+        set_correlation_id=correlation_id_var.set,
+        publish_to_mercure=publish_to_mercure,
+        enqueue_role_inference=enqueue_role_inference,
+        close_role_inference=close_role_inference,
+        log_vram=log_vram,
+        mercure_event_ids=_mercure_event_ids,
+    )
 
-            close_requested = batch is None
-            merged_segments: list[dict[str, Any]] = [] if batch is None else list(batch)
 
-            while True:
-                try:
-                    queued_batch = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+def _replay_services() -> ReplayServices:
+    """Bundle current server callbacks for uploaded demo replay.
 
-                if queued_batch is None:
-                    close_requested = True
-                    continue
-
-                merged_segments.extend(queued_batch)
-
-            if merged_segments != [] and _session_has_multiple_speakers(session_id):
-                transcript = sessions.get_transcript_text(session_id)
-                mode = _session_modes.get(session_id, "medical")
-                loop = asyncio.get_running_loop()
-                started_at = time.time()
-                result = await loop.run_in_executor(
-                    None,
-                    _run_role_inference,
-                    session_id,
-                    merged_segments,
-                    transcript,
-                    mode,
-                )
-                duration_ms = int((time.time() - started_at) * 1000)
-
-                if result:
-                    tool_invoked = result.get("_tool_invoked", False)
-
-                    if tool_invoked:
-                        # Tool already called apply_role_mapping_result
-                        state = get_or_create_state(session_id)
-                        mapping = state.current_mapping
-                        confidence = state.running_confidence
-                        flip_detected = state.last_flip_detected
-                        attributed_segments = [
-                            {**seg, "role": mapping.get(str(seg.get("speaker_id", "")), "UNKNOWN")}
-                            for seg in merged_segments
-                        ]
-                        reasoning = str(result.get("reasoning", ""))
-                    else:
-                        role_update = apply_role_mapping_result(
-                            session_id=session_id,
-                            segments=merged_segments,
-                            mapping=result.get("mapping", {}),
-                            confidence=float(result.get("confidence", 0.0)),
-                            reasoning=str(result.get("reasoning", "")),
-                        )
-                        mapping = role_update.mapping
-                        confidence = role_update.confidence
-                        flip_detected = role_update.flip_detected
-                        attributed_segments = role_update.attributed_segments
-                        reasoning = role_update.reasoning
-
-                    sessions.apply_role_mapping(session_id, mapping)
-
-                    _mercure_event_ids.setdefault(session_id, 0)
-                    _mercure_event_ids[session_id] += 1
-                    await publish_to_mercure(
-                        f"scribe/session/{session_id}/roles",
-                        {
-                            "type": "role_update",
-                            "mapping": mapping,
-                            "attributed_segments": attributed_segments,
-                            "confidence": confidence,
-                            "flip_detected": flip_detected,
-                            "reasoning": reasoning,
-                            "session_id": session_id,
-                        },
-                        event_id=_mercure_event_ids[session_id],
-                    )
-                    logger.info("role_inference.completed", extra={
-                        "session_id": session_id,
-                        "segments": len(merged_segments),
-                        "confidence": confidence,
-                        "flip_detected": flip_detected,
-                        "tool_invoked": tool_invoked,
-                        "duration_ms": duration_ms,
-                    })
-                else:
-                    logger.warning("role_inference.empty_result", extra={
-                        "session_id": session_id,
-                        "segments": len(merged_segments),
-                        "duration_ms": duration_ms,
-                    })
-            elif merged_segments != []:
-                logger.info("role_inference.skipped", extra={
-                    "session_id": session_id,
-                    "reason": "insufficient_speaker_variety",
-                    "segments": len(merged_segments),
-                })
-
-            if close_requested and queue.empty():
-                break
-    finally:
-        _inference_workers.pop(session_id, None)
-        _inference_queues.pop(session_id, None)
-
-        if not lifecycle.is_active(session_id):
-            cleanup_role_state(session_id)
+    Returns:
+        Services using the current NeMo pipeline, publisher, and role queue so
+        replay behaves like the live transcript the browser already understands.
+    """
+    return ReplayServices(
+        pipeline=app.state.nemo_pipeline,
+        executor=nemo_executor,
+        sessions=sessions,
+        get_running_loop=asyncio.get_running_loop,
+        publish_to_mercure=publish_to_mercure,
+        enqueue_role_inference=enqueue_role_inference,
+        mercure_event_ids=_mercure_event_ids,
+    )
 
 
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
+
 
 @app.post("/transcribe/file", response_model=TranscribeFileResponse)
 async def transcribe_file(
@@ -586,6 +439,7 @@ async def transcribe_file(
     Args:
         file: WAV file upload (16kHz mono PCM expected)
         session_id_query: Optional session ID for grouping, accepted via query or form
+        session_id_form: Optional form session ID; missing means a new session ID is generated.
 
     Returns:
         TranscribeFileResponse with speaker-attributed segments.
@@ -596,13 +450,15 @@ async def transcribe_file(
     if session_id_query or session_id_form:
         _validate_session_id(resolved_session_id)
 
-    # Save uploaded file to a secure temp path
-    temp_fd = tempfile.NamedTemporaryFile(suffix=".wav", prefix="scribe_", delete=False)
-    temp_path = Path(temp_fd.name)
-    temp_fd.close()
+    # Uploaded demo audio is saved briefly so NeMo can read it like a normal file.
+    scratch_file_handle = tempfile.NamedTemporaryFile(
+        suffix=".wav", prefix="scribe_", delete=False
+    )
+    scratch_audio_path = Path(scratch_file_handle.name)
+    scratch_file_handle.close()
     try:
         content = await file.read()
-        temp_path.write_bytes(content)
+        scratch_audio_path.write_bytes(content)
 
         # Run NeMo inference in thread pool
         loop = asyncio.get_running_loop()
@@ -610,17 +466,20 @@ async def transcribe_file(
         result = await loop.run_in_executor(
             nemo_executor,
             app.state.nemo_pipeline.transcribe_file,
-            str(temp_path),
+            str(scratch_audio_path),
         )
         duration = time.time() - started_at
 
         segments = [s.dict() for s in result.segments]
 
-        logger.info("transcribe_file.completed", extra={
-            "session_id": resolved_session_id,
-            "segments": len(segments),
-            "duration_seconds": round(duration, 2),
-        })
+        logger.info(
+            "transcribe_file.completed",
+            extra={
+                "session_id": resolved_session_id,
+                "segments": len(segments),
+                "duration_seconds": round(duration, 2),
+            },
+        )
 
         return TranscribeFileResponse(
             session_id=resolved_session_id,
@@ -628,167 +487,23 @@ async def transcribe_file(
             duration_seconds=round(duration, 2),
         )
     finally:
-        temp_path.unlink(missing_ok=True)
+        scratch_audio_path.unlink(missing_ok=True)
 
 
 @app.websocket("/ws/transcribe/{session_id}")
 async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
-    """Live audio transcription via WebSocket.
+    """Run live audio transcription for the browser recorder.
 
-    Flow:
-      1. Browser sends binary audio chunks (5-second intervals)
-      2. NeMo processes each chunk in a thread pool (GPU-bound)
-      3. Segments published to Mercure for browser SSE pickup
-      4. On disconnect, run a final transcription pass
+    The route validates the session ID, then delegates the user's audio stream
+    to the workflow module that publishes raw segments, role work, and final
+    events.
 
     Args:
-        websocket: The WebSocket connection
-        session_id: Unique session identifier
+        websocket: Browser socket sending PCM audio chunks.
+        session_id: UUID recording session; invalid values return HTTP 400.
     """
     _validate_session_id(session_id)
-    await websocket.accept()
-
-    # Read mode from query parameter (e.g. ?mode=meeting), default to medical
-    raw_mode = websocket.query_params.get("mode", "medical")
-    mode = raw_mode if raw_mode in VALID_MODES else "medical"
-    _session_modes[session_id] = mode
-
-    # WebSocket connections bypass HTTP middleware, so set correlation_id from
-    # the upgrade headers or fall back to the session_id itself.
-    cid = websocket.headers.get("x-correlation-id", session_id)
-    correlation_id_var.set(cid)
-
-    # Reconnection support: if the session is still alive (within grace period),
-    # resume it instead of creating a new one. register() cancels pending destroys.
-    existing_session = lifecycle.get(session_id)
-    if existing_session is not None:
-        session = existing_session
-        logger.info("websocket.resumed", extra={
-            "session_id": session_id,
-            "buffer_seconds": round(session.buffer.duration_seconds, 1),
-            "chunk_count": session.chunk_count,
-        })
-    else:
-        session = TranscriptionSession(
-            session_id,
-            pipeline=app.state.nemo_pipeline,
-            input_format=app.state.nemo_input_format,
-            max_buffer_duration=NEMO_BUFFER_MAX_DURATION,
-        )
-    await lifecycle.register(session_id, session)
-
-    logger.info("websocket.connected", extra={"session_id": session_id, "mode": mode})
-
-    loop = asyncio.get_running_loop()
-    chunk_count = 0
-    mercure_warned = False
-
-    try:
-        while True:
-            audio_chunk = await websocket.receive_bytes()
-            chunk_count += 1
-
-            # Run GPU-bound NeMo inference in thread pool.
-            # Without this, all other WebSocket connections and /health
-            # freeze during inference.
-            started_at = time.time()
-            segments = await loop.run_in_executor(
-                nemo_executor,
-                session.process_chunk,
-                audio_chunk,
-            )
-            duration_ms = int((time.time() - started_at) * 1000)
-
-            # Publish raw segments immediately (hot path, low latency)
-            segment_payloads: list[dict[str, Any]] = []
-            for segment in segments:
-                segment_payload = segment.dict()
-                segment_payloads.append(segment_payload)
-                sessions.append_segment(session_id, segment_payload)
-                _mercure_event_ids.setdefault(session_id, 0)
-                _mercure_event_ids[session_id] += 1
-                published = await publish_to_mercure(
-                    f"scribe/session/{session_id}/raw",
-                    {
-                        "type": "segment",
-                        **segment.dict(),
-                    },
-                    event_id=_mercure_event_ids[session_id],
-                )
-                if not published and not mercure_warned:
-                    mercure_warned = True
-                    try:
-                        await websocket.send_json({
-                            "type": "system_error",
-                            "message": "Real-time streaming unavailable",
-                        })
-                    except Exception:
-                        pass
-
-            if segment_payloads != []:
-                await enqueue_role_inference(session_id, segment_payloads, mode=mode)
-
-            # Track total chunk-to-publish latency (inference + Mercure)
-            total_ms = int((time.time() - started_at) * 1000)
-            logger.info("websocket.chunk_e2e", extra={
-                "session_id": session_id,
-                "chunk_count": chunk_count,
-                "inference_ms": duration_ms,
-                "total_ms": total_ms,
-                "segments": len(segments),
-            })
-
-            # Log VRAM periodically (every 10th chunk) to avoid log spam
-            if chunk_count % 10 == 0:
-                log_vram()
-
-    except WebSocketDisconnect:
-        logger.info("websocket.disconnected", extra={
-            "session_id": session_id,
-            "total_chunks": chunk_count,
-        })
-
-        # Final transcription pass on disconnect
-        final_segments = await loop.run_in_executor(nemo_executor, session.finalize)
-        sessions.replace_segments(
-            session_id,
-            [segment.dict() for segment in final_segments],
-        )
-        current_state = get_or_create_state(session_id)
-        if current_state.current_mapping:
-            sessions.apply_role_mapping(session_id, current_state.current_mapping)
-
-        # Publish finalized event with event_id
-        _mercure_event_ids.setdefault(session_id, 0)
-        _mercure_event_ids[session_id] += 1
-        await publish_to_mercure(
-            f"scribe/session/{session_id}/raw",
-            {"type": "finalized", "session_id": session_id},
-            event_id=_mercure_event_ids[session_id],
-        )
-    except Exception as e:
-        logger.error("websocket.error", extra={
-            "session_id": session_id,
-            "error": str(e),
-        })
-        _mercure_event_ids.setdefault(session_id, 0)
-        _mercure_event_ids[session_id] += 1
-        await publish_to_mercure(
-            f"scribe/session/{session_id}/raw",
-            {"type": "error", "message": "Transcription error occurred"},
-            event_id=_mercure_event_ids[session_id],
-        )
-    finally:
-        # Grace period: keep the session alive for reconnection instead of
-        # destroying immediately. If no reconnect arrives within the window,
-        # schedule_destroy's timer fires and cleans up normally.
-        await lifecycle.schedule_destroy(
-            session_id, close_role_inference,
-            grace_seconds=SESSION_RECONNECT_GRACE_SECONDS,
-        )
-        # Note: _session_modes and _mercure_event_ids are cleaned up when
-        # the grace period expires and destroy() actually runs. We keep them
-        # alive so a reconnecting session can continue seamlessly.
+    await transcribe_stream_session(websocket, session_id, _streaming_services())
 
 
 @app.api_route("/session/{session_id}/history", methods=["GET", "POST"])
@@ -797,30 +512,79 @@ async def session_history(session_id: str) -> dict:
 
     Returns the accumulated transcript segments.
     Accepts both GET and POST (PHP StrandsClient uses postJson).
+
+    Args:
+        session_id: UUID for the browser recording; invalid values return HTTP 400.
+
+    Returns:
+        Transcript payload; empty segments means the user has no saved transcript yet.
     """
+    request_started_at = time.time()
     _validate_session_id(session_id)
     session = lifecycle.get(session_id)
     stored_segments = sessions.get_segments(session_id)
 
+    # Stored segments are what the browser can restore after a page refresh.
     if stored_segments:
-        return {
+        response_payload = {
             "session_id": session_id,
             "segments": stored_segments,
             "duration_seconds": round(
-                session.buffer.duration_seconds if session else _history_duration(stored_segments),
+                session.buffer.duration_seconds
+                if session
+                else _history_duration(stored_segments),
                 1,
             ),
             "chunk_count": session.chunk_count if session else 0,
         }
+        logger.info(
+            "session_history.completed",
+            extra={
+                "session_id": session_id,
+                "correlation_id": correlation_id_var.get("-"),
+                "duration_ms": int((time.time() - request_started_at) * 1000),
+                "segments": len(stored_segments),
+                "source": "stored",
+            },
+        )
+        return response_payload
 
+    # A live session may still have buffered transcript text not yet stored.
     if session:
-        return {
+        live_segments = [s.dict() for s in session.accumulated_transcript]
+        response_payload = {
             "session_id": session_id,
-            "segments": [s.dict() for s in session.accumulated_transcript],
+            "segments": live_segments,
             "duration_seconds": round(session.buffer.duration_seconds, 1),
             "chunk_count": session.chunk_count,
         }
-    return {"session_id": session_id, "segments": [], "message": "Session not found or ended"}
+        logger.info(
+            "session_history.completed",
+            extra={
+                "session_id": session_id,
+                "correlation_id": correlation_id_var.get("-"),
+                "duration_ms": int((time.time() - request_started_at) * 1000),
+                "segments": len(live_segments),
+                "source": "live",
+            },
+        )
+        return response_payload
+
+    logger.info(
+        "session_history.completed",
+        extra={
+            "session_id": session_id,
+            "correlation_id": correlation_id_var.get("-"),
+            "duration_ms": int((time.time() - request_started_at) * 1000),
+            "segments": 0,
+            "source": "missing",
+        },
+    )
+    return {
+        "session_id": session_id,
+        "segments": [],
+        "message": "Session not found or ended",
+    }
 
 
 @app.post("/session/{session_id}/roles/override")
@@ -829,12 +593,23 @@ async def roles_override(session_id: str, request: Request) -> dict:
 
     Updates the role mapping state and publishes the change to Mercure
     so all connected clients see the correction immediately.
+
+    Args:
+        session_id: UUID for the transcript the user corrected.
+        request: JSON body with speaker_id and role selected in the transcript UI.
+
+    Returns:
+        Updated role mapping shown by the browser.
+
+    Raises:
+        HTTPException: When speaker or role is empty, so the UI can show a validation error.
     """
     _validate_session_id(session_id)
     body = await request.json()
     speaker_id = str(body.get("speaker_id", ""))
     role = str(body.get("role", "")).upper()
 
+    # Empty role selections cannot update the visible transcript labels.
     if not speaker_id or not role:
         raise HTTPException(status_code=400, detail="speaker_id and role required")
 
@@ -864,12 +639,15 @@ async def roles_override(session_id: str, request: Request) -> dict:
         event_id=_mercure_event_ids[session_id],
     )
 
-    logger.info("roles_override.applied", extra={
-        "session_id": session_id,
-        "speaker_id": speaker_id,
-        "role": role,
-        "mapping": state.current_mapping,
-    })
+    logger.info(
+        "roles_override.applied",
+        extra={
+            "session_id": session_id,
+            "speaker_id": speaker_id,
+            "role": role,
+            "mapping": state.current_mapping,
+        },
+    )
 
     return {"status": "ok", "mapping": state.current_mapping}
 
@@ -881,15 +659,24 @@ async def generate_summary(session_id: str) -> dict:
     Triggered by the frontend when the user ends a session. Runs the summary
     agent against the full role-attributed transcript and publishes the result
     to Mercure.
+
+    Args:
+        session_id: UUID for the finished recording the user wants summarized.
+
+    Returns:
+        SOAP-style summary sections for the browser summary panel.
+
+    Raises:
+        HTTPException: When no transcript exists or summary generation fails.
     """
     _validate_session_id(session_id)
 
     stored_segments = sessions.get_segments(session_id)
+    # No transcript means the user ended a session before usable text was captured.
     if not stored_segments:
         raise HTTPException(status_code=404, detail="No transcript found for session")
 
     transcript = sessions.get_transcript_text(session_id, max_chars=8000)
-    mode = _session_modes.get(session_id, "medical")
 
     loop = asyncio.get_running_loop()
     started_at = time.time()
@@ -898,16 +685,22 @@ async def generate_summary(session_id: str) -> dict:
         _run_summary_generation,
         session_id,
         transcript,
-        mode,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
+    # A missing summary lets the browser show a retryable generation failure.
     if summary is None:
-        logger.warning("summary.generation_failed", extra={
-            "session_id": session_id,
-            "duration_ms": duration_ms,
-        })
+        logger.warning(
+            "summary.generation_failed",
+            extra={
+                "session_id": session_id,
+                "duration_ms": duration_ms,
+            },
+        )
         raise HTTPException(status_code=502, detail="Summary generation failed")
+
+    summary_metric_fields = summary.pop("_agent_metrics", {})
+    clinical_hints: list[dict[str, str]] = []
 
     # Publish to Mercure
     _mercure_event_ids.setdefault(session_id, 0)
@@ -922,55 +715,42 @@ async def generate_summary(session_id: str) -> dict:
         event_id=_mercure_event_ids[session_id],
     )
 
-    logger.info("summary.completed", extra={
-        "session_id": session_id,
-        "mode": mode,
-        "sections": len(summary.get("sections", [])),
-        "duration_ms": duration_ms,
-    })
+    # Clinical hints are assistive only and appear beside the generated summary.
+    if CLINICAL_HINTS_ENABLED:
+        clinical_hints = generate_clinical_hints(transcript)
+        # No hints means the clinician's sidebar stays hidden for this session.
+        if clinical_hints:
+            _mercure_event_ids[session_id] += 1
+            hints_delivered = await publish_to_mercure(
+                f"scribe/session/{session_id}/hints",
+                {
+                    "type": "clinical_hints",
+                    "session_id": session_id,
+                    "hints": clinical_hints,
+                },
+                event_id=_mercure_event_ids[session_id],
+            )
+            # A failed Mercure publish still leaves hints in the HTTP summary response.
+            if not hints_delivered:
+                logger.warning(
+                    "clinical_hints.publish_failed",
+                    extra={"session_id": session_id},
+                )
 
-    return {"session_id": session_id, **summary}
-
-
-def _run_summary_generation(
-    session_id: str,
-    transcript: str,
-    mode: str = "medical",
-) -> dict | None:
-    """Run the summary agent synchronously.
-
-    Called via run_in_executor() to avoid blocking the event loop.
-    """
-    try:
-        from agents import create_summary_agent
-
-        agent = create_summary_agent(mode=mode)
-        result = agent(
-            f"Generate a {mode} summary for this session transcript:\n\n{transcript}"
-        )
-
-        response_text = str(result)
-        try:
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            logger.warning("summary.no_json_found", extra={
-                "session_id": session_id,
-                "response_preview": response_text[:200],
-            })
-            return None
-    except Exception as e:
-        logger.error("summary.agent_failed", extra={
+    logger.info(
+        "summary.completed",
+        extra={
             "session_id": session_id,
-            "error_type": type(e).__name__,
-            "error": str(e)[:200],
-        })
-        return None
+            "sections": len(summary.get("sections", [])),
+            "duration_ms": duration_ms,
+            **summary_metric_fields,
+        },
+    )
+
+    return {"session_id": session_id, **summary, "clinical_hints": clinical_hints}
 
 
-_replay_tasks: dict[str, asyncio.Task[None]] = {}
+_replay_tasks = replay_tasks
 
 
 @app.post("/session/{session_id}/replay")
@@ -978,124 +758,31 @@ async def replay_file(
     session_id: str,
     file: UploadFile,
     speed: float = Query(1.0, ge=0.25, le=10.0),
-    mode: str = Query("medical"),
 ) -> dict:
     """Replay a WAV file through the pipeline with real-time pacing.
 
     Processes the WAV through NeMo in batch, then replays segments to Mercure
     with delays matching actual timestamps (adjusted by speed factor).
+
+    Args:
+        session_id: UUID for the browser replay session.
+        file: WAV file the user selected in the demo replay control.
+        speed: Replay speed multiplier; low values slow the visible transcript.
+
+    Returns:
+        Replay metadata; zero segments means no transcript will appear.
     """
     _validate_session_id(session_id)
-
-    if mode not in VALID_MODES:
-        mode = "medical"
-    _session_modes[session_id] = mode
-
-    # Save and process through NeMo
-    temp_fd = tempfile.NamedTemporaryFile(suffix=".wav", prefix="replay_", delete=False)
-    temp_path = Path(temp_fd.name)
-    temp_fd.close()
-    try:
-        content = await file.read()
-        temp_path.write_bytes(content)
-
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            nemo_executor,
-            app.state.nemo_pipeline.transcribe_file,
-            str(temp_path),
-        )
-        segments = [s.dict() for s in result.segments]
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-    if not segments:
-        return {"session_id": session_id, "segments": 0, "duration_seconds": 0}
-
-    # Calculate total audio duration from segment timestamps
-    max_end = max(float(s.get("end", 0)) for s in segments)
-
-    # Cancel any existing replay for this session
-    existing = _replay_tasks.pop(session_id, None)
-    if existing and not existing.done():
-        existing.cancel()
-
-    # Spawn paced replay task
-    replay_task = asyncio.create_task(
-        _replay_segments(session_id, segments, speed, mode),
-        name=f"replay-{session_id}",
-    )
-    _replay_tasks[session_id] = replay_task
-
-    logger.info("replay.started", extra={
-        "session_id": session_id,
-        "segments": len(segments),
-        "duration_seconds": round(max_end, 1),
-        "speed": speed,
-        "mode": mode,
-    })
-
-    return {
-        "session_id": session_id,
-        "segments": len(segments),
-        "duration_seconds": round(max_end, 1),
-        "speed": speed,
-    }
+    return await start_replay_upload(session_id, file, speed, _replay_services())
 
 
 async def _replay_segments(
     session_id: str,
     segments: list[dict[str, Any]],
     speed: float,
-    mode: str,
 ) -> None:
-    """Replay segments to Mercure with real-time pacing."""
-    try:
-        clock_start = time.time()
-
-        for i, segment in enumerate(segments):
-            seg_start = float(segment.get("start", 0))
-            # Wait until the real-time moment for this segment
-            target_wall_time = clock_start + (seg_start / speed)
-            delay = target_wall_time - time.time()
-            if delay > 0:
-                await asyncio.sleep(delay)
-
-            # Store and publish
-            sessions.append_segment(session_id, segment)
-            _mercure_event_ids.setdefault(session_id, 0)
-            _mercure_event_ids[session_id] += 1
-            await publish_to_mercure(
-                f"scribe/session/{session_id}/raw",
-                {"type": "segment", **segment},
-                event_id=_mercure_event_ids[session_id],
-            )
-
-            # Enqueue role inference periodically (every 3 segments)
-            if (i + 1) % 3 == 0 or i == len(segments) - 1:
-                recent = segments[max(0, i - 2):i + 1]
-                await enqueue_role_inference(session_id, recent, mode=mode)
-
-        # Publish finalized
-        _mercure_event_ids[session_id] += 1
-        await publish_to_mercure(
-            f"scribe/session/{session_id}/raw",
-            {"type": "finalized", "session_id": session_id},
-            event_id=_mercure_event_ids[session_id],
-        )
-
-        logger.info("replay.completed", extra={
-            "session_id": session_id,
-            "segments": len(segments),
-        })
-    except asyncio.CancelledError:
-        logger.info("replay.cancelled", extra={"session_id": session_id})
-    except Exception:
-        logger.exception("replay.failed", extra={"session_id": session_id})
-    finally:
-        current_task = asyncio.current_task()
-        if _replay_tasks.get(session_id) is current_task:
-            _replay_tasks.pop(session_id, None)
+    """Replay segments through the current server seams used by tests and UI."""
+    await replay_segments(session_id, segments, speed, _replay_services())
 
 
 @app.api_route("/session/{session_id}/roles", methods=["GET", "POST"])
@@ -1104,126 +791,38 @@ async def roles_snapshot(session_id: str) -> dict:
 
     Quick lookup — no inference, just the last known state.
     Accepts both GET and POST (PHP StrandsClient uses postJson).
+
+    Args:
+        session_id: UUID for the transcript whose visible role labels are requested.
+
+    Returns:
+        Current role mapping and confidence; empty mapping means labels are still raw.
     """
+    request_started_at = time.time()
     _validate_session_id(session_id)
     state = get_or_create_state(session_id)
-    return {
+    response_payload = {
         "session_id": session_id,
         "mapping": state.current_mapping,
         "confidence": state.running_confidence,
     }
-
-
-def _heuristic_role_inference(
-    segments: list[dict[str, Any]],
-    transcript: str,
-    mode: str = "medical",
-) -> dict | None:
-    """Keyword-based role assignment fallback when the LLM agent is unavailable.
-
-    Returns a result dict with mapping, confidence (always 0.4), and reasoning,
-    or None if the transcript is empty and no segments are provided.
-    """
-    if not segments and not transcript.strip():
-        return None
-
-    # Build per-speaker text from segments
-    speaker_texts: dict[str, str] = {}
-    speaker_order: list[str] = []
-    for seg in segments:
-        spk = str(seg.get("speaker_id", ""))
-        text = str(seg.get("text", ""))
-        if spk:
-            speaker_texts.setdefault(spk, "")
-            speaker_texts[spk] += " " + text
-            if spk not in speaker_order:
-                speaker_order.append(spk)
-
-    mapping: dict[str, str] = {}
-
-    if mode == "medical":
-        doctor_keywords = {"prescribe", "diagnosis", "symptoms", "mg", "dosage", "treatment plan", "medication"}
-        patient_keywords = {"i feel", "my pain", "hurts", "i've been feeling", "it hurts", "i have a"}
-
-        for spk, text in speaker_texts.items():
-            text_lower = text.lower()
-            doc_score = sum(1 for kw in doctor_keywords if kw in text_lower)
-            pat_score = sum(1 for kw in patient_keywords if kw in text_lower)
-            if doc_score > pat_score:
-                mapping[spk] = "DOCTOR"
-            elif pat_score > doc_score:
-                mapping[spk] = "PATIENT"
-
-        # Fill unmapped speakers
-        assigned_roles = set(mapping.values())
-        for spk in speaker_order:
-            if spk not in mapping:
-                if "DOCTOR" not in assigned_roles:
-                    mapping[spk] = "DOCTOR"
-                    assigned_roles.add("DOCTOR")
-                elif "PATIENT" not in assigned_roles:
-                    mapping[spk] = "PATIENT"
-                    assigned_roles.add("PATIENT")
-                else:
-                    mapping[spk] = "PATIENT"
-
-    elif mode == "meeting":
-        organiser_keywords = {"agenda", "action items", "let's move on", "let's review", "next item", "meeting"}
-
-        for spk, text in speaker_texts.items():
-            text_lower = text.lower()
-            org_score = sum(1 for kw in organiser_keywords if kw in text_lower)
-            if org_score > 0:
-                mapping[spk] = "ORGANISER"
-
-        assigned_roles = set(mapping.values())
-        for spk in speaker_order:
-            if spk not in mapping:
-                if "ORGANISER" not in assigned_roles:
-                    mapping[spk] = "ORGANISER"
-                    assigned_roles.add("ORGANISER")
-                else:
-                    mapping[spk] = "PARTICIPANT"
-
-    elif mode == "interview":
-        interviewer_keywords = {"tell me about", "experience with", "your background", "walk me through", "why did you"}
-
-        for spk, text in speaker_texts.items():
-            text_lower = text.lower()
-            int_score = sum(1 for kw in interviewer_keywords if kw in text_lower)
-            if int_score > 0:
-                mapping[spk] = "INTERVIEWER"
-
-        assigned_roles = set(mapping.values())
-        for spk in speaker_order:
-            if spk not in mapping:
-                if "INTERVIEWER" not in assigned_roles:
-                    mapping[spk] = "INTERVIEWER"
-                    assigned_roles.add("INTERVIEWER")
-                else:
-                    mapping[spk] = "CANDIDATE"
-
-    else:
-        # general / tv / lecture / unknown — assign SPEAKER_A, SPEAKER_B by order
-        for idx, spk in enumerate(speaker_order):
-            label = chr(ord("A") + idx) if idx < 26 else str(idx)
-            mapping[spk] = f"SPEAKER_{label}"
-
-    if not mapping:
-        return None
-
-    return {
-        "mapping": mapping,
-        "confidence": 0.4,
-        "reasoning": f"Heuristic keyword-based assignment for mode={mode}",
-    }
+    logger.info(
+        "roles_snapshot.completed",
+        extra={
+            "session_id": session_id,
+            "correlation_id": correlation_id_var.get("-"),
+            "duration_ms": int((time.time() - request_started_at) * 1000),
+            "roles": len(state.current_mapping),
+            "confidence": state.running_confidence,
+        },
+    )
+    return response_payload
 
 
 def _run_role_inference(
     session_id: str,
     segments: list[dict[str, Any]],
     transcript: str,
-    mode: str = "medical",
 ) -> dict | None:
     """Run the Strands role inference agent synchronously.
 
@@ -1238,9 +837,9 @@ def _run_role_inference(
     """
     # --- Tier 1: LLM agent ---
     try:
-        from agents import create_role_inference_agent, get_role_instruction
+        from agents import MEDICAL_ROLE_INSTRUCTION, create_role_inference_agent
 
-        agent = create_role_inference_agent(mode=mode)
+        agent = create_role_inference_agent()
         state = get_or_create_state(session_id)
         history_len_before = len(state.mapping_history)
         payload = {
@@ -1251,11 +850,8 @@ def _run_role_inference(
             "new_segments": segments,
             "transcript_so_far": transcript,
         }
-        instruction = get_role_instruction(mode)
-        result = agent(
-            f"{instruction}\n\n"
-            f"{json.dumps(payload)}"
-        )
+        agent_result = agent(f"{MEDICAL_ROLE_INSTRUCTION}\n\n{json.dumps(payload)}")
+        metric_fields = _agent_metric_fields(agent_result, "role-inference")
 
         # Check if the assign_roles tool was invoked (it persists state directly)
         if len(state.mapping_history) > history_len_before:
@@ -1264,47 +860,62 @@ def _run_role_inference(
                 "confidence": state.running_confidence,
                 "reasoning": "",
                 "_tool_invoked": True,
+                "path": "tool",
+                **metric_fields,
             }
 
         # Fallback: parse the agent's free-text JSON response
-        response_text = str(result)
+        response_text = str(agent_result)
         try:
             parsed = json.loads(response_text)
         except json.JSONDecodeError:
-            match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            match = re.search(r"\{.*\}", response_text, re.DOTALL)
             if match:
                 parsed = json.loads(match.group())
             else:
-                logger.warning("role_inference.no_json_found", extra={
-                    "session_id": session_id,
-                    "response_preview": response_text[:200],
-                })
+                logger.warning(
+                    "role_inference.no_json_found",
+                    extra={
+                        "session_id": session_id,
+                        **metric_fields,
+                    },
+                )
                 return None
+        parsed["path"] = "freetext"
+        parsed.update(metric_fields)
         return parsed
     except Exception as e:
-        logger.warning("role_inference.agent_failed_falling_back_to_heuristic", extra={
-            "session_id": session_id,
-            "error_type": type(e).__name__,
-            "error": str(e)[:200],
-            "mode": mode,
-        })
+        logger.warning(
+            "role_inference.agent_failed_falling_back_to_heuristic",
+            extra={
+                "session_id": session_id,
+                "error_type": type(e).__name__,
+                "error": str(e)[:200],
+            },
+        )
 
     # --- Tier 2: Heuristic fallback ---
     try:
-        heuristic_result = _heuristic_role_inference(segments, transcript, mode)
+        heuristic_result = _heuristic_role_inference(segments, transcript)
         if heuristic_result is not None:
-            logger.info("role_inference.heuristic_used", extra={
-                "session_id": session_id,
-                "mode": mode,
-                "mapping": heuristic_result.get("mapping", {}),
-            })
+            heuristic_result["path"] = "heuristic"
+            logger.info(
+                "role_inference.heuristic_used",
+                extra={
+                    "session_id": session_id,
+                    "roles": len(heuristic_result.get("mapping", {})),
+                },
+            )
             return heuristic_result
     except Exception as e:
-        logger.error("role_inference.heuristic_failed", extra={
-            "session_id": session_id,
-            "error_type": type(e).__name__,
-            "error": str(e)[:200],
-        })
+        logger.error(
+            "role_inference.heuristic_failed",
+            extra={
+                "session_id": session_id,
+                "error_type": type(e).__name__,
+                "error": str(e)[:200],
+            },
+        )
 
     # --- Tier 3: None (graceful degradation) ---
     return None

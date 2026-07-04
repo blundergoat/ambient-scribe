@@ -1,35 +1,10 @@
 """
-Transcription session — per-WebSocket stateful wrapper around the NeMo pipeline.
+Per-recording audio state for live transcription.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-Each WebSocket connection creates one TranscriptionSession. The session:
-
-  1. Holds per-session state (WebM accumulator, accumulated transcript, timing)
-  2. References the shared NemoPipeline singleton (does NOT load models)
-  3. Converts WebM/Opus audio → WAV via ffmpeg for NeMo ingestion
-  4. Implements the growing buffer strategy (re-process full audio each chunk)
-
-=============================================================================
-ARCHITECTURE
-=============================================================================
-
-  NemoPipeline (singleton, loaded at startup)
-       ↑
-  TranscriptionSession (per-WebSocket, holds state)
-       ↑
-  WebSocket handler (FastAPI, calls process_chunk)
-
-Audio flow per chunk:
-  1. Browser sends WebM/Opus chunk via WebSocket
-  2. Session accumulates raw WebM bytes (first chunk contains container header)
-  3. Full accumulated WebM is converted to 16kHz mono WAV via ffmpeg
-  4. WAV file is passed to pipeline.transcribe_file() (growing buffer strategy)
-
-The session's process_chunk() is SYNCHRONOUS and GPU-bound. The WebSocket
-handler must call it via run_in_executor() to avoid blocking the event loop.
+Each browser WebSocket owns one `TranscriptionSession` and shares the process
+wide NeMo pipeline. The session buffers PCM or WebM chunks, runs synchronous
+GPU work from the API executor, and returns only transcript lines the user has
+not already seen.
 """
 
 from __future__ import annotations
@@ -63,7 +38,9 @@ class AudioBuffer:
         """
         self._chunks: deque[bytes] = deque()
         self._total_bytes: int = 0
-        self._max_bytes: int = int(max_duration_seconds * 16000 * 2)  # 16kHz, 16-bit = 32KB/s
+        self._max_bytes: int = int(
+            max_duration_seconds * 16000 * 2
+        )  # 16kHz, 16-bit = 32KB/s
 
     def append(self, pcm_audio: bytes) -> None:
         """Append PCM audio to the buffer.
@@ -100,12 +77,20 @@ class AudioBuffer:
 
     @property
     def duration_seconds(self) -> float:
-        """Estimated duration of buffered audio in seconds."""
+        """Estimated audio duration shown by live-session diagnostics.
+
+        Returns:
+            Seconds of buffered audio; `0.0` means the user has not sent audio yet.
+        """
         return self._total_bytes / (16000 * 2)  # 16kHz, 16-bit
 
     @property
     def total_bytes(self) -> int:
-        """Total bytes in the buffer."""
+        """Raw buffered audio size used to decide whether finalization can run.
+
+        Returns:
+            Byte count; `0` means ending the session reuses existing transcript text.
+        """
         return self._total_bytes
 
 
@@ -151,12 +136,17 @@ class TranscriptionSession:
         self._format_validated: bool = False
 
         if self.input_format not in {"pcm", "webm"}:
-            raise ValueError(f"Unsupported transcription input format: {self.input_format}")
+            raise ValueError(
+                f"Unsupported transcription input format: {self.input_format}"
+            )
 
-        logger.info("transcription_session.created", extra={
-            "session_id": session_id,
-            "input_format": self.input_format,
-        })
+        logger.info(
+            "transcription_session.created",
+            extra={
+                "session_id": session_id,
+                "input_format": self.input_format,
+            },
+        )
 
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
         """Process a single audio chunk through the NeMo pipeline.
@@ -184,10 +174,13 @@ class TranscriptionSession:
 
         pcm_audio = self._decode_audio(raw_audio)
         if pcm_audio == b"":
-            logger.info("transcription_session.chunk_skipped", extra={
-                "session_id": self.session_id,
-                "reason": "empty_after_decode",
-            })
+            logger.info(
+                "transcription_session.chunk_skipped",
+                extra={
+                    "session_id": self.session_id,
+                    "reason": "empty_after_decode",
+                },
+            )
             return []
 
         self.buffer.append(pcm_audio)
@@ -197,13 +190,16 @@ class TranscriptionSession:
         self.accumulated_transcript.extend(new_segments)
 
         duration_ms = int((time.time() - chunk_started_at) * 1000)
-        logger.info("transcription_session.chunk_processed", extra={
-            "session_id": self.session_id,
-            "chunk_number": self.chunk_count,
-            "audio_seconds": round(self.buffer.duration_seconds, 1),
-            "segments_returned": len(new_segments),
-            "duration_ms": duration_ms,
-        })
+        logger.info(
+            "transcription_session.chunk_processed",
+            extra={
+                "session_id": self.session_id,
+                "chunk_number": self.chunk_count,
+                "audio_seconds": round(self.buffer.duration_seconds, 1),
+                "segments_returned": len(new_segments),
+                "duration_ms": duration_ms,
+            },
+        )
 
         return new_segments
 
@@ -216,12 +212,15 @@ class TranscriptionSession:
         Returns:
             Complete transcript segments for the entire session.
         """
-        logger.info("transcription_session.finalizing", extra={
-            "session_id": self.session_id,
-            "total_chunks": self.chunk_count,
-            "audio_seconds": round(self.buffer.duration_seconds, 1),
-            "duration_seconds": round(time.time() - self.started_at, 1),
-        })
+        logger.info(
+            "transcription_session.finalizing",
+            extra={
+                "session_id": self.session_id,
+                "total_chunks": self.chunk_count,
+                "audio_seconds": round(self.buffer.duration_seconds, 1),
+                "duration_seconds": round(time.time() - self.started_at, 1),
+            },
+        )
 
         if self.buffer.total_bytes == 0:
             return self.accumulated_transcript
@@ -265,10 +264,13 @@ class TranscriptionSession:
                 )
         elif self.input_format == "webm":
             if len(raw_audio) >= 4 and raw_audio[:4] != _WEBM_MAGIC:
-                logger.warning("audio_format.webm_magic_missing", extra={
-                    "session_id": self.session_id,
-                    "first_bytes": raw_audio[:4].hex(),
-                })
+                logger.warning(
+                    "audio_format.webm_magic_missing",
+                    extra={
+                        "session_id": self.session_id,
+                        "first_bytes": raw_audio[:4].hex(),
+                    },
+                )
 
     def _decode_audio(self, raw_audio: bytes) -> bytes:
         """Decode the incoming browser chunk into 16kHz mono PCM."""
@@ -288,18 +290,29 @@ class TranscriptionSession:
         input_path = None
         output_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".webm", delete=False
+            ) as input_file:
                 input_file.write(raw_audio)
                 input_path = input_file.name
 
-            with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as output_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".raw", delete=False
+            ) as output_file:
                 output_path = output_file.name
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-i", input_path,
-                    "-ar", "16000", "-ac", "1",
-                    "-f", "s16le",
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    input_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "s16le",
                     output_path,
                 ],
                 capture_output=True,
@@ -308,9 +321,12 @@ class TranscriptionSession:
             )
             return Path(output_path).read_bytes()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error("transcription_session.webm_decode.failed", extra={
-                "error": str(e),
-            })
+            logger.error(
+                "transcription_session.webm_decode.failed",
+                extra={
+                    "error": str(e),
+                },
+            )
             return b""
         finally:
             if input_path:
@@ -320,49 +336,69 @@ class TranscriptionSession:
 
     @staticmethod
     def _convert_webm_to_wav(webm_bytes: bytes) -> str | None:
-        """Convert WebM/Opus audio to 16kHz mono WAV via ffmpeg.
+        """Convert accumulated WebM audio into a WAV path for older replay tests.
 
         Args:
-            webm_bytes: Raw WebM container bytes (accumulated from browser chunks)
+            webm_bytes: Browser WebM bytes; empty or invalid bytes return `None`.
 
         Returns:
-            Path to the temporary WAV file, or None on conversion failure.
-            Caller is responsible for deleting the file.
+            Path to a WAV file the caller must delete, or `None` when decoding fails.
         """
         webm_path = None
         wav_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as infile:
-                webm_path = infile.name
-                infile.write(webm_bytes)
+            with tempfile.NamedTemporaryFile(
+                suffix=".webm", delete=False
+            ) as input_file:
+                webm_path = input_file.name
+                input_file.write(webm_bytes)
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as outfile:
-                wav_path = outfile.name
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False
+            ) as output_file:
+                wav_path = output_file.name
 
             result = subprocess.run(
                 [
-                    "ffmpeg", "-y", "-i", webm_path,
-                    "-ar", "16000", "-ac", "1",
-                    "-acodec", "pcm_s16le",
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    webm_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-acodec",
+                    "pcm_s16le",
                     wav_path,
                 ],
                 capture_output=True,
                 check=True,
                 timeout=30,
             )
-            logger.debug("transcription_session.ffmpeg.completed", extra={
-                "input_bytes": len(webm_bytes),
-                "stderr": result.stderr.decode("utf-8", errors="replace")[-200:],
-            })
+            logger.debug(
+                "transcription_session.ffmpeg.completed",
+                extra={
+                    "input_bytes": len(webm_bytes),
+                    "stderr": result.stderr.decode("utf-8", errors="replace")[-200:],
+                },
+            )
             return wav_path
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error("transcription_session.ffmpeg.failed", extra={
-                "error": str(e),
-                "stderr": (getattr(e, "stderr", None) or b"").decode("utf-8", errors="replace")[-200:],
-            })
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            logger.error(
+                "transcription_session.ffmpeg.failed",
+                extra={
+                    "error": str(error),
+                    "stderr": (getattr(error, "stderr", None) or b"").decode(
+                        "utf-8", errors="replace"
+                    )[-200:],
+                },
+            )
+            # A failed conversion leaves the browser without usable WebM transcript text.
             if wav_path:
                 Path(wav_path).unlink(missing_ok=True)
             return None
         finally:
+            # The uploaded WebM scratch file is never needed after conversion.
             if webm_path:
                 Path(webm_path).unlink(missing_ok=True)

@@ -23,17 +23,18 @@
 #                          Pre-installed in the NeMo Docker image; listed here for
 #                          local dev outside Docker.
 #
-# NOTE: NeMo toolkit and CUDA dependencies come from the base Docker image
-# (nvcr.io/nvidia/nemo:25.09). Do NOT add nemo_toolkit here — it would
-# conflict with the pre-installed version.
+# NOTE: NeMo toolkit and CUDA dependencies are owned by docker/nemo/Dockerfile.
+# Keep this file focused on the FastAPI agent packages that the user reaches
+# through the browser, replay, summary, and role-inference flows.
 # =============================================================================
 
-strands-agents[ollama]>=1.0.0
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-pydantic>=2.0.0
-httpx>=0.27.0
-websockets>=12.0
-sse-starlette>=2.0.0
+strands-agents[ollama]>=1.45.0
+fastapi>=0.139.0
+uvicorn[standard]>=0.49.0
+pydantic>=2.13.4
+httpx>=0.28.1
+websockets>=16.0
+sse-starlette>=3.4.5
 numpy>=1.26.0
-soundfile>=0.12.0
+soundfile>=0.14.0
+huggingface_hub>=0.36.2,<1.0

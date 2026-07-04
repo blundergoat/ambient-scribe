@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Medical-only agent behavior** - removed Python-side mode selection for role inference, summaries, replay, and WebSocket ingest so the agent lane always uses DOCTOR/PATIENT role mapping and medical SOAP summaries.
+- **Medical-only scribe UI** - removed the browser mode selector, stored mode preference, and mode query parameters from live WebSocket and replay requests.
+- **Medical-only demo scenarios** - removed meeting, interview, TV/media, and lecture scenario fixtures from the developer scenario corpus.
+- **Gruff TypeScript scope** - excluded the vendored Tailwind runtime from gruff-ts so analyzer findings focus on maintained frontend and workflow source.
+- **Frontend structure** - split transcript rendering, replay, summary, and download behavior out of the core recording script for easier gruff-ts verification.
+- **Gruff Python scope** - excluded one-off NeMo exploration scripts from gruff-py so Python analyzer findings focus on maintained runtime and test code.
+- **Python API structure** - moved live streaming and role-inference queue workflows out of `server.py` while preserving FastAPI routes and browser-visible Mercure behavior.
+- **Python quality gates** - scoped gruff-py to maintained runtime code and kept pytest as the behavioral test-quality gate for integration-heavy Python tests.
+- **PHP complexity gate** - retired the bespoke cyclomatic checker and rewired Composer/preflight complexity checks to gruff-php.
+- **PHP dependency bounds** - pinned the PHP runtime range and moved `blundergoat/strands-php-client` from the moving `dev-dev` branch to the tagged 1.4 series.
+- **PHP generated reference scope** - excluded the generated Symfony/Psalm `config/reference.php` from gruff-php instead of hand-editing generated output.
+- **PHPUnit strictness** - enabled failure-on-warning, failure-on-deprecation, risky-test, output, and global-state strict flags.
+- **Observable process logs** - added JSON-line logging on Python and PHP with `session_id`/`correlation_id` join keys, Strands SDK token/latency metrics, and Mercure delivery outcomes.
+- **Pinned NeMo image build** - moved the GPU agent image to `nvcr.io/nvidia/nemo:26.02`, pinned `nemo_toolkit[asr]==2.7.3`, and made the container install the checked-in Python requirements file.
+- **Python dependency floors** - raised FastAPI, Uvicorn, Pydantic, HTTPX, websockets, SSE Starlette, soundfile, Strands Agents, pytest, pytest-asyncio, and Ruff floors while keeping numpy at the NeMo-compatible 1.x floor until the GPU image is verified.
+- **WebSocket server backend** - set Uvicorn to `websockets-sansio` in both Dockerfile and Compose entrypoints so local browser sessions use the same backend.
+- **PHP dependency floors** - raised Mercure, Mercure Bundle, PHPUnit, and Infection within the PHP 8.3/Symfony 6.4 lane, and tightened `symfony/dotenv` back to the Symfony 6.4 series.
+- **Clinical summary grounding** - added a CPU-only PoC clinical knowledge helper so generated SOAP summaries can include short documentation reminders without using the NeMo GPU.
+
+### Added
+
+- **Log analysis and eval tooling** - added `scripts/analyze-logs.py` for process-quality reports and `scripts/eval-role-heuristic.py` for GPU-free scenario role-attribution evaluation.
+- **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
+- **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
+- **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.
+
+### Security
+
+- **Frontend transcript rendering** - moved transcript, summary, status, and dev-panel output away from HTML-string rendering so model and scenario text is inserted as text.
+- **Deploy workflow actions** - pinned third-party AWS GitHub Actions to reviewed commit SHAs.
+- **Env template placeholders** - replaced realistic-looking committed secret examples with obvious local placeholders and removed copied AWS credential slots from `.env.example`.
+- **Remote health-check secret path** - moved the production API key secret path behind a required `SECRET_PATH` override instead of committing the deployed path.
+
+### Removed
+
+- **Multi-mode support** - removed Meeting, Interview, TV/Media, Lecture, and General modes, including the `?mode=` transport parameter, `_session_modes`, mode prompt dictionaries, and the browser mode selector.
+
 ## [0.2.0] - 2026-03-16
 
 Release covering tool-based role mapping, summaries, replay, transcript grouping, scenario gates, JS extraction, UI polish, developer guidance, multi-mode role inference, local-first defaults, SQLite persistence, manual speaker overrides, and full-stack hardening.

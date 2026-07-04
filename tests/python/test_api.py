@@ -3,7 +3,6 @@ Tests for the FastAPI server endpoints.
 """
 
 import asyncio
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -12,6 +11,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import api.server as api_server
+import tools.assign_roles as role_tools
 from api.server import app, lifecycle, session_history, sessions, transcribe_stream
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 
@@ -19,7 +19,6 @@ from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000001"
 TEST_SESSION_ID_2 = "00000000-0000-4000-8000-000000000002"
 TEST_SESSION_ID_3 = "00000000-0000-4000-8000-000000000003"
-import tools.assign_roles as role_tools
 
 
 def _cancel_replay_tasks() -> None:
@@ -40,7 +39,6 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     _cancel_replay_tasks()
     app.state.nemo_pipeline = NemoPipeline()
@@ -52,7 +50,6 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     _cancel_replay_tasks()
     executor.shutdown(wait=False, cancel_futures=True)
@@ -80,7 +77,9 @@ class TestHealthEndpoint:
     async def test_health_degraded_on_load_error(self):
         app.state.nemo_pipeline._load_error = "CUDA out of memory"
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.get("/health")
 
         assert response.status_code == 503
@@ -104,7 +103,9 @@ class TestSessionHistory:
     async def test_history_accepts_post(self):
         """PHP StrandsClient uses postJson() — endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(f"/session/{TEST_SESSION_ID}/history")
 
         assert response.status_code == 200
@@ -115,7 +116,9 @@ class TestSessionHistory:
     async def test_roles_accepts_post(self):
         """PHP StrandsClient uses postJson() — endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(f"/session/{TEST_SESSION_ID}/roles")
 
         assert response.status_code == 200
@@ -132,19 +135,23 @@ class TestTranscriptionEndpoints:
         class StubPipeline:
             def transcribe_file(self, audio_path):
                 assert audio_path.endswith(".wav")
-                return TranscriptionResult(segments=[
-                    Segment(
-                        speaker_id="spk_0",
-                        text="What brings you in today?",
-                        start=0.0,
-                        end=1.9,
-                    )
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(
+                            speaker_id="spk_0",
+                            text="What brings you in today?",
+                            start=0.0,
+                            end=1.9,
+                        )
+                    ]
+                )
 
         app.state.nemo_pipeline = StubPipeline()
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/transcribe/file",
                 params={"session_id": TEST_SESSION_ID},
@@ -166,7 +173,9 @@ class TestTranscriptionEndpoints:
         app.state.nemo_pipeline = StubPipeline()
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/transcribe/file",
                 data={"session_id": TEST_SESSION_ID_2},
@@ -185,14 +194,16 @@ class TestTranscriptionEndpoints:
         class StubPipeline:
             def transcribe_buffer(self, audio_buffer):
                 assert audio_buffer != b""
-                return TranscriptionResult(segments=[
-                    Segment(
-                        speaker_id="spk_1",
-                        text="I have had a cough for three days.",
-                        start=0.0,
-                        end=2.4,
-                    )
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(
+                            speaker_id="spk_1",
+                            text="I have had a cough for three days.",
+                            start=0.0,
+                            end=2.4,
+                        )
+                    ]
+                )
 
         class FakeWebSocket:
             def __init__(self):
@@ -215,11 +226,13 @@ class TestTranscriptionEndpoints:
             published_events.append((topic, data))
             return True
 
-        async def fake_enqueue(session_id, segments, mode=None):
+        async def fake_enqueue(session_id, segments):
             enqueued_segments.append((session_id, segments))
 
         # Use a real executor that runs synchronously in-process
-        sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-sync")
+        sync_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="test-sync"
+        )
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
@@ -238,16 +251,20 @@ class TestTranscriptionEndpoints:
         assert any(event[1]["type"] == "segment" for event in published_events)
         assert any(event[1]["type"] == "finalized" for event in published_events)
         sync_executor.shutdown(wait=False)
-        assert enqueued_segments == [(
-            TEST_SESSION_ID,
-            [{
-                "speaker_id": "spk_1",
-                "text": "I have had a cough for three days.",
-                "start": 0.0,
-                "end": 2.4,
-                "is_interim": False,
-            }],
-        )]
+        assert enqueued_segments == [
+            (
+                TEST_SESSION_ID,
+                [
+                    {
+                        "speaker_id": "spk_1",
+                        "text": "I have had a cough for three days.",
+                        "start": 0.0,
+                        "end": 2.4,
+                        "is_interim": False,
+                    }
+                ],
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_websocket_warns_on_mercure_failure(self, monkeypatch):
@@ -260,9 +277,11 @@ class TestTranscriptionEndpoints:
 
         class StubPipeline:
             def transcribe_buffer(self, audio_buffer):
-                return TranscriptionResult(segments=[
-                    Segment(speaker_id="spk_0", text="test", start=0.0, end=1.0)
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(speaker_id="spk_0", text="test", start=0.0, end=1.0)
+                    ]
+                )
 
         class FakeWebSocket:
             def __init__(self):
@@ -286,12 +305,14 @@ class TestTranscriptionEndpoints:
         async def failing_publish(topic, data, event_id=None):
             return False
 
-        async def fake_enqueue(session_id, segments, mode=None):
+        async def fake_enqueue(session_id, segments):
             pass
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
-        monkeypatch.setattr("api.server.asyncio.get_running_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr(
+            "api.server.asyncio.get_running_loop", lambda: ImmediateLoop()
+        )
         monkeypatch.setattr("api.server.publish_to_mercure", failing_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
         # Use 0 grace period so schedule_destroy fires immediately in tests
@@ -301,7 +322,9 @@ class TestTranscriptionEndpoints:
         await transcribe_stream(websocket, TEST_SESSION_ID)
 
         # Should have sent exactly one system_error warning
-        error_messages = [m for m in sent_json_messages if m.get("type") == "system_error"]
+        error_messages = [
+            m for m in sent_json_messages if m.get("type") == "system_error"
+        ]
         assert len(error_messages) == 1
         assert error_messages[0]["message"] == "Real-time streaming unavailable"
 
@@ -312,7 +335,8 @@ class TestPublishToMercure:
     @pytest.mark.asyncio
     async def test_publish_returns_false_on_empty_jwt(self, monkeypatch):
         from api.server import publish_to_mercure
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
         result = await publish_to_mercure("test/topic", {"type": "test"})
         assert result is False
 
@@ -336,6 +360,7 @@ class TestSessionLifecycle:
 
         # Create role state
         from tools.assign_roles import get_or_create_state, _session_states
+
         state = get_or_create_state("lifecycle-test")
         state.update({"spk_0": "DOCTOR"}, 0.9)
         assert "lifecycle-test" in _session_states
@@ -406,7 +431,7 @@ class TestThreadSafety:
     def test_concurrent_get_or_create_no_crash(self):
         """Two threads racing on get_or_create_state don't crash."""
         import threading
-        from tools.assign_roles import get_or_create_state, _session_states
+        from tools.assign_roles import get_or_create_state
 
         errors = []
 
@@ -419,8 +444,7 @@ class TestThreadSafety:
                 errors.append(e)
 
         threads = [
-            threading.Thread(target=worker, args=(f"thread-{i}",))
-            for i in range(4)
+            threading.Thread(target=worker, args=(f"thread-{i}",)) for i in range(4)
         ]
         for t in threads:
             t.start()
@@ -470,7 +494,9 @@ class TestSessionStore:
 
         store = SessionStore(max_sessions=100, ttl_seconds=1, max_segments=100)
         store.append_segment("old-session", {"speaker_id": "spk_0", "text": "old"})
-        assert store.get_segments("old-session") == [{"speaker_id": "spk_0", "text": "old"}]
+        assert store.get_segments("old-session") == [
+            {"speaker_id": "spk_0", "text": "old"}
+        ]
 
         # Wait for TTL to expire
         _time.sleep(1.1)
@@ -501,7 +527,9 @@ class TestSessionStore:
 
         store = SessionStore(max_sessions=100, ttl_seconds=7200, max_segments=100)
         for i in range(20):
-            store.append_segment("s1", {"speaker_id": "spk_0", "text": f"segment {i} " + ("x" * 40)})
+            store.append_segment(
+                "s1", {"speaker_id": "spk_0", "text": f"segment {i} " + ("x" * 40)}
+            )
 
         result = store.get_transcript_text("s1", max_chars=120)
 

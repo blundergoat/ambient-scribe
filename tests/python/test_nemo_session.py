@@ -117,9 +117,11 @@ class TestProcessChunk:
         pipeline = NemoPipeline()
         session = TranscriptionSession("test-session", pipeline, input_format="pcm")
 
-        mock_result = TranscriptionResult(segments=[
-            MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
+            ]
+        )
 
         with patch.object(pipeline, "transcribe_buffer", return_value=mock_result):
             segments = session.process_chunk(b"\x00" * 3200)
@@ -141,7 +143,9 @@ class TestProcessChunk:
 class TestProcessChunkWebM:
     """Tests for TranscriptionSession.process_chunk with WebM input."""
 
-    @patch.object(TranscriptionSession, "_decode_webm_chunk", return_value=b"\x00" * 3200)
+    @patch.object(
+        TranscriptionSession, "_decode_webm_chunk", return_value=b"\x00" * 3200
+    )
     def test_process_chunk_webm_decodes_and_accumulates(self, mock_decode):
         """process_chunk with webm input decodes via _decode_webm_chunk and appends PCM."""
         pipeline = NemoPipeline()
@@ -230,9 +234,11 @@ class TestFinalize:
         # Simulate having processed a chunk
         session.buffer.append(b"\x00" * 3200)
 
-        mock_result = TranscriptionResult(segments=[
-            MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
-        ])
+        mock_result = TranscriptionResult(
+            segments=[
+                MagicMock(speaker_id="spk_0", start=0.0, end=1.0, text="hello"),
+            ]
+        )
 
         with patch.object(pipeline, "transcribe_buffer", return_value=mock_result):
             result = session.finalize()
@@ -247,6 +253,7 @@ class TestInputFormatValidation:
         """Unsupported input_format raises ValueError on construction."""
         pipeline = NemoPipeline()
         import pytest
+
         with pytest.raises(ValueError, match="Unsupported transcription input format"):
             TranscriptionSession("test-session", pipeline, input_format="mp3")
 
@@ -264,5 +271,6 @@ class TestInputFormatValidation:
         session = TranscriptionSession("test-session", pipeline, input_format="pcm")
 
         import pytest
+
         with pytest.raises(ValueError, match="Audio format mismatch"):
             session.process_chunk(b"\x1a\x45\xdf\xa3webm-container-data")

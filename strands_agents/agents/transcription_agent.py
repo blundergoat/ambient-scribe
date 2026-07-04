@@ -92,8 +92,7 @@ _SHARED_OUTPUT_FORMAT = """{
 }
 """
 
-ROLE_PROMPTS: dict[str, str] = {
-    "medical": f"""You are a medical transcription agent.
+MEDICAL_ROLE_PROMPT = f"""You are a medical transcription agent.
 
 You receive transcript segments with speaker labels (spk_0, spk_1).
 Your job is to determine which speaker is the DOCTOR and which is the PATIENT.
@@ -106,94 +105,19 @@ Reasoning signals:
 - Medical jargon density is higher for the doctor
 - Nurses may relay vitals or prep instructions
 - Family members advocate or translate for the patient
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
+{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}"""
 
-    "meeting": f"""You are a meeting transcription agent.
-
-You receive transcript segments with speaker labels (spk_0, spk_1, etc.).
-Your job is to determine which speaker is the ORGANISER and which are PARTICIPANT speakers.
-
-Reasoning signals:
-- Organisers set agendas, facilitate discussion, assign action items
-- Organisers typically speak first (welcome, agenda overview)
-- Participants contribute ideas, ask clarifying questions, report status
-- Organisers redirect off-topic discussion and summarise decisions
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
-
-    "interview": f"""You are an interview transcription agent.
-
-You receive transcript segments with speaker labels (spk_0, spk_1).
-Your job is to determine which speaker is the INTERVIEWER and which is the CANDIDATE.
-
-Reasoning signals:
-- Interviewers ask questions, probe for detail, steer the conversation
-- Interviewers typically open the session (introductions, role overview)
-- Candidates describe experience, answer questions, ask about the role
-- Interviewers evaluate and follow up; candidates elaborate
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
-
-    "tv": f"""You are a broadcast media transcription agent.
-
-You receive transcript segments with speaker labels (spk_0, spk_1, etc.).
-Your job is to determine which speaker is the HOST, which is a GUEST, and which (if any) is a COMMENTATOR.
-
-Reasoning signals:
-- Hosts introduce segments, ask questions, manage transitions
-- Hosts typically speak first and last in a segment
-- Guests answer questions and share expertise or stories
-- Commentators provide analysis, often speaking over events
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
-
-    "lecture": f"""You are a lecture transcription agent.
-
-You receive transcript segments with speaker labels (spk_0, spk_1).
-Your job is to determine which speaker is the LECTURER and which is a STUDENT.
-
-Reasoning signals:
-- Lecturers deliver extended explanations, introduce topics, use pedagogical framing
-- Lecturers typically dominate speaking time and speak first
-- Students ask questions, request clarification, give short responses
-- Lecturers reference slides, readings, or course material
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
-
-    "general": f"""You are a general transcription agent.
-
-You receive transcript segments with speaker labels (spk_0, spk_1, etc.).
-Your job is to assign stable roles: SPEAKER_A, SPEAKER_B, SPEAKER_C, etc.
-
-Reasoning signals:
-- Assign SPEAKER_A to the first speaker detected
-- Assign SPEAKER_B to the second speaker detected, and so on
-- Maintain consistent mapping throughout the session
-- Focus on voice continuity rather than content-based role inference
-{_SHARED_EDGE_CASES}{_SHARED_OUTPUT_FORMAT}""",
-}
-
-# Map each mode to its primary role pair (used for the agent invocation prompt)
-_MODE_ROLE_INSTRUCTIONS: dict[str, str] = {
-    "medical": "Assign DOCTOR/PATIENT roles for this consultation transcript.",
-    "meeting": "Assign ORGANISER/PARTICIPANT roles for this meeting transcript.",
-    "interview": "Assign INTERVIEWER/CANDIDATE roles for this interview transcript.",
-    "tv": "Assign HOST/GUEST/COMMENTATOR roles for this broadcast transcript.",
-    "lecture": "Assign LECTURER/STUDENT roles for this lecture transcript.",
-    "general": "Assign SPEAKER_A/SPEAKER_B roles for this transcript.",
-}
+MEDICAL_ROLE_INSTRUCTION = (
+    "Assign DOCTOR/PATIENT roles for this consultation transcript."
+)
 
 
-def get_role_instruction(mode: str) -> str:
-    """Return the agent invocation instruction for the given mode."""
-    return _MODE_ROLE_INSTRUCTIONS.get(mode, _MODE_ROLE_INSTRUCTIONS["general"])
-
-
-@lru_cache(maxsize=6)
-def create_role_inference_agent(mode: str = "medical"):
+@lru_cache(maxsize=1)
+def create_role_inference_agent():
     """Create a Strands Agent for role inference.
 
     Returns a configured agent that uses Bedrock or CPU-only Ollama
     (never GPU — NeMo owns the GPU).
-
-    Args:
-        mode: Scribe mode key (medical, meeting, interview, tv, lecture, general).
 
     Returns:
         A Strands Agent configured for role inference.
@@ -206,12 +130,14 @@ def create_role_inference_agent(mode: str = "medical"):
         from tools.assign_roles import assign_roles
 
         model = _create_role_agent_model()
-        system_prompt = ROLE_PROMPTS.get(mode, ROLE_PROMPTS["general"])
 
         return Agent(
             model=model,
             tools=[assign_roles],
-            system_prompt=system_prompt,
+            system_prompt=MEDICAL_ROLE_PROMPT,
+            name="role-inference",
+            agent_id="ambient-scribe-role-inference",
+            trace_attributes={"scribe.specialty": "medical"},
         )
     except Exception as e:
         raise RuntimeError(f"Failed to create role inference agent: {e}") from e

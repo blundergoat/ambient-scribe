@@ -18,7 +18,7 @@ Communication: `app` → `nemo-agent` via `http://nemo-agent:8000`. `nemo-agent`
 
 ## NeMo Container
 
-Base: `nvcr.io/nvidia/nemo:25.09` + pip install NeMo from main branch (v2.8.0rc0). See `docker/nemo/Dockerfile`.
+Base: `nvcr.io/nvidia/nemo:26.02` + pinned `nemo_toolkit[asr]==2.7.3`. See `docker/nemo/Dockerfile`.
 
 Must include:
 - ffmpeg (for WebM → WAV conversion)

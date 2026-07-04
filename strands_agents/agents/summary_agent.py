@@ -2,14 +2,8 @@
 Strands summary agent — generates structured session summaries.
 
 Triggered when a session ends ("End Session" button). Receives the full
-role-attributed transcript and produces a mode-appropriate summary:
-
-  - Medical: SOAP note (Subjective, Objective, Assessment, Plan)
-  - Meeting: Action items, decisions, attendees, next steps
-  - Interview: Key topics, candidate strengths/concerns, follow-ups
-  - TV/Media: Key moments, speaker highlights, topics covered
-  - Lecture: Key concepts, questions raised, learning objectives
-  - General: Key points, speaker contributions, topics covered
+role-attributed medical transcript and produces a SOAP note with Subjective,
+Objective, Assessment, and Plan sections.
 
 GPU CONSTRAINT: Same as the role agent — Bedrock or CPU-only Ollama.
 """
@@ -47,8 +41,7 @@ Output format:
 }
 """
 
-SUMMARY_PROMPTS: dict[str, str] = {
-    "medical": f"""You are a medical documentation agent.
+MEDICAL_SUMMARY_PROMPT = f"""You are a medical documentation agent.
 
 You receive a complete, role-attributed consultation transcript.
 Generate a SOAP note summarising the encounter.
@@ -61,84 +54,15 @@ Required sections:
 
 If the doctor did not explicitly state an assessment or plan, note what was discussed
 and indicate that formal documentation was not captured in the transcript.
-{_SHARED_SUMMARY_RULES}""",
-
-    "meeting": f"""You are a meeting documentation agent.
-
-You receive a complete, role-attributed meeting transcript.
-Generate a structured meeting summary.
-
-Required sections:
-- **Attendees**: List speakers and their roles
-- **Agenda Items**: Topics discussed, in order
-- **Decisions**: What was decided, by whom
-- **Action Items**: Who does what, by when (if mentioned)
-- **Next Steps**: Follow-up meetings, deadlines
-
-If no clear decisions or action items were stated, note the discussion topics instead.
-{_SHARED_SUMMARY_RULES}""",
-
-    "interview": f"""You are an interview documentation agent.
-
-You receive a complete, role-attributed interview transcript.
-Generate a structured interview summary.
-
-Required sections:
-- **Position/Context**: Role or topic discussed
-- **Key Topics**: Main areas of discussion
-- **Candidate Strengths**: Notable skills or experience demonstrated
-- **Areas of Concern**: Gaps, unclear answers, or red flags
-- **Follow-Up Items**: Questions deferred, next steps mentioned
-{_SHARED_SUMMARY_RULES}""",
-
-    "tv": f"""You are a broadcast media documentation agent.
-
-You receive a complete, role-attributed broadcast transcript.
-Generate a structured segment summary.
-
-Required sections:
-- **Topic**: Main subject of the segment
-- **Key Moments**: Notable quotes, revelations, or exchanges
-- **Speaker Highlights**: Main contributions from each speaker
-- **Context**: Background information referenced
-{_SHARED_SUMMARY_RULES}""",
-
-    "lecture": f"""You are an educational documentation agent.
-
-You receive a complete, role-attributed lecture transcript.
-Generate a structured lecture summary.
-
-Required sections:
-- **Topic**: Main subject of the lecture
-- **Key Concepts**: Core ideas and definitions introduced
-- **Examples**: Illustrative examples or case studies mentioned
-- **Questions Raised**: Student questions and lecturer responses
-- **Learning Objectives**: What students should take away
-{_SHARED_SUMMARY_RULES}""",
-
-    "general": f"""You are a transcription documentation agent.
-
-You receive a complete, role-attributed conversation transcript.
-Generate a structured summary.
-
-Required sections:
-- **Overview**: Brief description of the conversation
-- **Key Points**: Main topics and ideas discussed
-- **Speaker Contributions**: Notable input from each speaker
-- **Outcomes**: Any conclusions, agreements, or next steps
-{_SHARED_SUMMARY_RULES}""",
-}
+{_SHARED_SUMMARY_RULES}"""
 
 
-@lru_cache(maxsize=6)
-def create_summary_agent(mode: str = "medical"):
+@lru_cache(maxsize=1)
+def create_summary_agent():
     """Create a Strands Agent for session summary generation.
 
     Uses the same model provider as the role inference agent
     (Bedrock or CPU-only Ollama — never GPU).
-
-    Args:
-        mode: Scribe mode key (medical, meeting, interview, tv, lecture, general).
 
     Returns:
         A Strands Agent configured for summary generation.
@@ -150,12 +74,14 @@ def create_summary_agent(mode: str = "medical"):
         from strands import Agent
 
         model = _create_summary_model()
-        system_prompt = SUMMARY_PROMPTS.get(mode, SUMMARY_PROMPTS["general"])
 
         return Agent(
             model=model,
             tools=[],
-            system_prompt=system_prompt,
+            system_prompt=MEDICAL_SUMMARY_PROMPT,
+            name="summary",
+            agent_id="ambient-scribe-summary",
+            trace_attributes={"scribe.specialty": "medical"},
         )
     except Exception as e:
         raise RuntimeError(f"Failed to create summary agent: {e}") from e

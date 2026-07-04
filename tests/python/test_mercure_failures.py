@@ -42,14 +42,14 @@ class TestMercurePublishFailures:
 
     @pytest.mark.asyncio
     async def test_publish_returns_false_on_empty_jwt(self, monkeypatch):
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
         result = await publish_to_mercure("test/topic", {"type": "test"})
         assert result is False
 
     @pytest.mark.asyncio
     async def test_segments_persisted_despite_publish_failure(self, monkeypatch):
         """Segments are saved to SessionStore even when Mercure fails."""
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
 
         session_id = "persist-test"
         segment = {"speaker_id": "spk_0", "text": "Hello", "start": 0.0, "end": 1.0}
@@ -73,19 +73,26 @@ class TestMercurePublishFailures:
         async def mock_post(self, url, **kwargs):
             nonlocal call_count
             call_count += 1
+            # The first visible event exhausts all retries so the UI sees a failed publish.
             if call_count <= 3:
                 raise ConnectionError("hub down")
 
             class FakeResponse:
                 status_code = 200
+
                 def raise_for_status(self):
                     pass
+
             return FakeResponse()
 
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "test-jwt")
+        monkeypatch.setattr(
+            "api.mercure_publisher._resolve_mercure_jwt", lambda: "test-jwt"
+        )
         monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
         # Speed up retries for testing
-        monkeypatch.setattr("api.server.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01)
+        monkeypatch.setattr(
+            "api.mercure_publisher.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01
+        )
 
         # First publish: all 3 retries fail
         result1 = await publish_to_mercure("test/topic", {"data": "first"})
@@ -104,18 +111,25 @@ class TestMercurePublishFailures:
         async def mock_post(self, url, **kwargs):
             nonlocal call_count
             call_count += 1
+            # The first Mercure attempt fails like a brief hub outage during recording.
             if call_count == 1:
                 raise ConnectionError("transient failure")
 
             class FakeResponse:
                 status_code = 200
+
                 def raise_for_status(self):
                     pass
+
             return FakeResponse()
 
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "test-jwt")
+        monkeypatch.setattr(
+            "api.mercure_publisher._resolve_mercure_jwt", lambda: "test-jwt"
+        )
         monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
-        monkeypatch.setattr("api.server.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01)
+        monkeypatch.setattr(
+            "api.mercure_publisher.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01
+        )
 
         result = await publish_to_mercure("test/topic", {"data": "retry"})
         assert result is True

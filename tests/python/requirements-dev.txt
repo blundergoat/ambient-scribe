@@ -1,6 +1,8 @@
-# Python test dependencies
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-httpx>=0.27.0  # Required by FastAPI TestClient
-ruff>=0.9.0    # Python linting + formatting (used by hooks)
+# Python test dependencies for user-facing transcript, replay, and agent flows.
+# Keep these floors close to the runtime stack so tests fail where a browser or
+# operator would feel the break, especially around async WebSocket sessions.
+pytest>=9.1.1
+pytest-asyncio>=1.4.0
+httpx>=0.28.1  # Required by FastAPI TestClient
+ruff>=0.15.20  # Python linting + formatting (used by hooks)
 gruff-py>=0.4.1  # Python project quality analyzer

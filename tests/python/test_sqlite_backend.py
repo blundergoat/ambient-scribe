@@ -6,8 +6,6 @@ Uses a temp file for the database so tests are isolated and leave no artifacts.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from storage import SqliteBackend
@@ -138,8 +136,12 @@ class TestApplyRoleMapping:
     """Test apply_role_mapping updates role column."""
 
     def test_maps_speaker_to_role(self, backend):
-        backend.append_segment("s1", _make_segment(speaker_id="spk_0", text="Doctor says"))
-        backend.append_segment("s1", _make_segment(speaker_id="spk_1", text="Patient says"))
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_0", text="Doctor says")
+        )
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_1", text="Patient says")
+        )
 
         backend.apply_role_mapping("s1", {"spk_0": "DOCTOR", "spk_1": "PATIENT"})
 
@@ -158,7 +160,9 @@ class TestApplyRoleMapping:
         assert "role" not in result[1]
 
     def test_mapping_overwrites_previous_role(self, backend):
-        backend.append_segment("s1", _make_segment(speaker_id="spk_0", text="Hello", role="PATIENT"))
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_0", text="Hello", role="PATIENT")
+        )
 
         backend.apply_role_mapping("s1", {"spk_0": "DOCTOR"})
 
@@ -174,15 +178,23 @@ class TestGetTranscriptText:
     """Test get_transcript_text returns formatted text."""
 
     def test_basic_transcript(self, backend):
-        backend.append_segment("s1", _make_segment(speaker_id="spk_0", text="Good morning"))
-        backend.append_segment("s1", _make_segment(speaker_id="spk_1", text="Hi doctor"))
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_0", text="Good morning")
+        )
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_1", text="Hi doctor")
+        )
 
         result = backend.get_transcript_text("s1")
         assert result == "[spk_0] Good morning\n[spk_1] Hi doctor"
 
     def test_uses_role_when_available(self, backend):
-        backend.append_segment("s1", _make_segment(speaker_id="spk_0", text="How are you", role="DOCTOR"))
-        backend.append_segment("s1", _make_segment(speaker_id="spk_1", text="Not great"))
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_0", text="How are you", role="DOCTOR")
+        )
+        backend.append_segment(
+            "s1", _make_segment(speaker_id="spk_1", text="Not great")
+        )
 
         result = backend.get_transcript_text("s1")
         assert "[DOCTOR] How are you" in result
@@ -191,7 +203,14 @@ class TestGetTranscriptText:
     def test_truncation_with_ellipsis(self, backend):
         # Create enough text to exceed max_chars
         for i in range(100):
-            backend.append_segment("s1", _make_segment(text=f"Segment number {i} with some extra padding text", start=float(i), end=float(i + 1)))
+            backend.append_segment(
+                "s1",
+                _make_segment(
+                    text=f"Segment number {i} with some extra padding text",
+                    start=float(i),
+                    end=float(i + 1),
+                ),
+            )
 
         result = backend.get_transcript_text("s1", max_chars=200)
         assert "\n...\n" in result

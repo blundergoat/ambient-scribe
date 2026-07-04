@@ -1,33 +1,10 @@
 """
-In-memory session store for transcript history.
+In-memory transcript history for live scribe sessions.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-Stores transcript segments per session for:
-  1. Session history retrieval (GET /session/{id}/history)
-  2. Role inference context (accumulated transcript for the Strands agent)
-  3. Session export (final transcript on consultation end)
-
-This store manages TRANSCRIPT SEGMENTS (speaker-attributed text with timestamps).
-
-=============================================================================
-BOUNDS & EVICTION
-=============================================================================
-
-  - MAX_SESSIONS: Hard cap on concurrent sessions. Oldest session evicted
-    when exceeded (LRU eviction).
-  - SESSION_TTL_SECONDS: Sessions older than this are evicted on access.
-  - MAX_SEGMENTS_PER_SESSION: Prevents unbounded growth from long recordings.
-
-=============================================================================
-LIMITATIONS (this is a PoC)
-=============================================================================
-
-  - IN-MEMORY BACKEND: All history is lost when this backend is active and the
-    container restarts. Use a persistent backend such as SESSION_STORAGE=sqlite
-    when transcript history must survive process restarts.
+The browser history view, role inference, exports, and summaries all read this
+store while the process is alive. It keeps local development simple, but users
+lose stored transcript history after restart unless `SESSION_STORAGE=sqlite`
+is selected.
 """
 
 from __future__ import annotations
@@ -105,9 +82,13 @@ class SessionStore:
 
         Useful after a final transcription pass where the caller already has
         the full deduplicated transcript in memory.
+
+        Args:
+            session_id: Recording session whose visible transcript is replaced.
+            segments: Final transcript lines; empty clears the browser history.
         """
         session = self._get_or_create(session_id)
-        session.segments = list(segments[:self._max_segments])
+        session.segments = list(segments[: self._max_segments])
         session.last_accessed_at = time.monotonic()
 
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
@@ -187,7 +168,11 @@ class SessionStore:
 
     @property
     def session_count(self) -> int:
-        """Number of active sessions."""
+        """Count transcript histories still available to browser views.
+
+        Returns:
+            Number of sessions in memory; `0` means no history can be restored.
+        """
         return len(self._sessions)
 
     def _get_or_create(self, session_id: str) -> _SessionData:
@@ -215,7 +200,8 @@ class SessionStore:
         """Remove all expired sessions."""
         now = time.monotonic()
         expired = [
-            sid for sid, s in self._sessions.items()
+            sid
+            for sid, s in self._sessions.items()
             if (now - s.last_accessed_at) > self._ttl_seconds
         ]
         for sid in expired:

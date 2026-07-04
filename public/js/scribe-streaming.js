@@ -1,0 +1,451 @@
+// =========================================================================
+// Ambient Scribe streaming and microphone helpers.
+// Runs after shared page state is loaded and before recording controls.
+// Owns Mercure reconnect behavior, Web Audio PCM conversion, and audio level UI.
+// Users reach this code after starting a live consultation or replay feed.
+// =========================================================================
+
+/**
+ * Keeps Mercure event streams alive for the visible consultation.
+ * Users reach this after recording starts or a demo replay subscribes to events.
+ * It reconnects dropped UI feeds without touching microphone PCM streaming.
+ */
+class StreamOrchestrator {
+    /**
+     * Stores the Mercure hub URL and prepares cleanup for page close.
+     * Use once per visible consultation session.
+     */
+    constructor(mercureUrl) {
+        this._mercureUrl = mercureUrl;
+        this._streams = new Map();
+        this._active = false;
+        window.addEventListener('beforeunload', () => this.disconnectAll());
+    }
+
+    /**
+     * Opens a Mercure topic for transcript, role, summary, or hint updates.
+     * Use when the clinician starts a live or replay session.
+     */
+    subscribe(topic, eventHandler) {
+        // Duplicate subscriptions would show the clinician repeated segments.
+        if (this._streams.has(topic)) {
+            return;
+        }
+
+        const streamState = {
+            source: null,
+            eventHandler,
+            retries: 0,
+            backoffMs: 1000,
+            timer: null,
+            lastEventId: null,
+        };
+
+        this._streams.set(topic, streamState);
+        this._active = true;
+        this._connect(topic, streamState);
+    }
+
+    /**
+     * Closes one Mercure topic.
+     * Use when a specific visit feed is no longer needed.
+     */
+    unsubscribe(topic) {
+        const streamState = this._streams.get(topic);
+
+        // If the topic was never opened, there is no UI feed to close.
+        if (!streamState) {
+            return;
+        }
+
+        clearTimeout(streamState.timer);
+        streamState.source?.close();
+        this._streams.delete(topic);
+    }
+
+    /**
+     * Closes all Mercure topics for the current visit.
+     * Use when the clinician stops, resets, or leaves the session.
+     */
+    disconnectAll() {
+        this._active = false;
+
+        // Every open feed can otherwise keep adding stale transcript events.
+        for (const [, streamState] of this._streams) {
+            clearTimeout(streamState.timer);
+            streamState.source?.close();
+        }
+
+        this._streams.clear();
+    }
+
+    /**
+     * Reports whether any Mercure stream is open.
+     * Use by the dev panel to show if the live transcript feed is connected.
+     */
+    get isConnected() {
+        // Any open feed means the browser can still receive visit updates.
+        for (const streamState of this._streams.values()) {
+            if (streamState.source?.readyState === EventSource.OPEN) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Counts Mercure reconnect attempts across the visible visit.
+     * Use by the dev panel when diagnosing dropped transcript events.
+     */
+    get totalRetries() {
+        let totalRetries = 0;
+
+        // The dev panel displays a single retry count for all visit topics.
+        for (const streamState of this._streams.values()) {
+            totalRetries += streamState.retries;
+        }
+
+        return totalRetries;
+    }
+
+    /**
+     * Connects or reconnects one Mercure topic.
+     * Bad JSON is logged and stream errors back off, so the visible transcript can recover.
+     */
+    _connect(topic, streamState) {
+        // No active session or hub URL means no browser updates can be opened.
+        if (!this._active || !this._mercureUrl) {
+            return;
+        }
+
+        const streamUrl = new URL(this._mercureUrl);
+        streamUrl.searchParams.append('topic', topic);
+
+        // Resume after a brief network drop so the clinician does not miss text.
+        if (streamState.lastEventId) {
+            streamUrl.searchParams.append('Last-Event-ID', streamState.lastEventId);
+        }
+
+        const source = new EventSource(streamUrl);
+        streamState.source = source;
+
+        source.onmessage = (event) => {
+            streamState.backoffMs = 1000;
+            streamState.retries = 0;
+
+            // Store the last event id for a later reconnect of this UI feed.
+            if (event.lastEventId) {
+                streamState.lastEventId = event.lastEventId;
+            }
+
+            try {
+                streamState.eventHandler(JSON.parse(event.data));
+            } catch (parseError) {
+                console.error(`Mercure event parse failed for ${topic}`, parseError);
+            }
+        };
+
+        source.onerror = () => {
+            source.close();
+
+            // Once the visit is stopped, reconnecting would resurrect stale UI.
+            if (!this._active) {
+                return;
+            }
+
+            streamState.retries++;
+            streamState.timer = setTimeout(() => this._connect(topic, streamState), streamState.backoffMs);
+            streamState.backoffMs = Math.min(streamState.backoffMs * 2, 30000);
+        };
+    }
+}
+
+/**
+ * Converts microphone audio into 16 kHz PCM chunks for NeMo.
+ * Users reach this after clicking Start Consultation and granting mic access.
+ * Keep this contract aligned with NEMO_STREAM_INPUT_FORMAT=pcm.
+ */
+class PcmStreamer {
+    /**
+     * Stores the microphone stream and browser callbacks.
+     * Use once per live recording socket.
+     */
+    constructor(stream, options = {}) {
+        this._stream = stream;
+        this._targetSampleRate = options.targetSampleRate ?? TARGET_AUDIO_SAMPLE_RATE;
+        this._chunkMs = options.chunkMs ?? PCM_CHUNK_MS;
+        this._onChunk = options.onChunk ?? (() => {});
+        this._onAudioLevel = options.onAudioLevel ?? null;
+        this._audioContext = null;
+        this._source = null;
+        this._processor = null;
+        this._silence = null;
+        this._buffers = [];
+        this._bufferedBytes = 0;
+        this._bytesPerChunk = this._targetSampleRate * 2 * (this._chunkMs / 1000);
+    }
+
+    /**
+     * Starts browser audio processing for the active consultation.
+     * Throws when Web Audio cannot support PCM, which the recording UI shows as setup failure.
+     */
+    async start() {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+        // Without Web Audio support the clinician cannot stream microphone PCM.
+        if (!AudioContextClass) {
+            throw new Error('Web Audio API is not supported');
+        }
+
+        this._audioContext = new AudioContextClass();
+        await this._audioContext.resume();
+
+        this._source = this._audioContext.createMediaStreamSource(this._stream);
+        this._processor = this._audioContext.createScriptProcessor(4096, 1, 1);
+        this._silence = this._audioContext.createGain();
+        this._silence.gain.value = 0;
+
+        this._processor.onaudioprocess = (event) => {
+            const microphoneSamples = event.inputBuffer.getChannelData(0);
+            const downsampledSamples = this._downsampleBuffer(
+                microphoneSamples,
+                this._audioContext.sampleRate,
+                this._targetSampleRate
+            );
+            const pcmChunk = this._floatTo16BitPcm(downsampledSamples);
+
+            // Empty chunks mean there is no audio for the visible transcript yet.
+            if (pcmChunk.byteLength === 0) {
+                return;
+            }
+
+            // The audio meter shows whether the clinician is too quiet or clipping.
+            if (this._onAudioLevel) {
+                let sumSquares = 0;
+
+                // RMS needs every downsampled frame to estimate current volume.
+                for (let sampleIndex = 0; sampleIndex < downsampledSamples.length; sampleIndex++) {
+                    sumSquares += downsampledSamples[sampleIndex] * downsampledSamples[sampleIndex];
+                }
+
+                this._onAudioLevel(Math.sqrt(sumSquares / downsampledSamples.length));
+            }
+
+            this._buffers.push(pcmChunk);
+            this._bufferedBytes += pcmChunk.byteLength;
+
+            // Send one stable chunk cadence to the server for smoother transcripts.
+            if (this._bufferedBytes >= this._bytesPerChunk) {
+                this.flush();
+            }
+        };
+
+        this._source.connect(this._processor);
+        this._processor.connect(this._silence);
+        this._silence.connect(this._audioContext.destination);
+    }
+
+    /**
+     * Sends buffered PCM to the active transcription socket.
+     * Use on chunk boundaries and when the clinician stops recording.
+     */
+    flush() {
+        // No buffered audio means the transcript has nothing new to receive.
+        if (this._bufferedBytes === 0) {
+            return;
+        }
+
+        const mergedChunk = new Uint8Array(this._bufferedBytes);
+        let chunkOffset = 0;
+
+        // Preserve microphone chunk order before sending to NeMo.
+        for (const pcmChunk of this._buffers) {
+            mergedChunk.set(pcmChunk, chunkOffset);
+            chunkOffset += pcmChunk.byteLength;
+        }
+
+        this._buffers = [];
+        this._bufferedBytes = 0;
+        this._onChunk(mergedChunk.buffer);
+    }
+
+    /**
+     * Stops browser audio processing and releases Web Audio nodes.
+     * Reports cleanup failures as warnings after the visible recording has stopped.
+     */
+    stop() {
+        this.flush();
+        this._processor?.disconnect();
+        this._source?.disconnect();
+        this._silence?.disconnect();
+        this._processor = null;
+        this._source = null;
+        this._silence = null;
+
+        // A close failure only affects cleanup after the visible stream has stopped.
+        if (this._audioContext) {
+            this._audioContext.close().catch((closeError) => {
+                console.warn('Audio context cleanup failed after recording stopped', closeError);
+            });
+            this._audioContext = null;
+        }
+    }
+
+    /**
+     * Downsamples browser audio to the NeMo PCM sample rate.
+     * Throws on impossible upsampling so the user sees an audio setup failure instead of bad text.
+     */
+    _downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+        // Matching sample rates can pass straight through to the transcript stream.
+        if (inputSampleRate === outputSampleRate) {
+            return new Float32Array(buffer);
+        }
+
+        // Upsampling would fake audio detail and degrade transcription quality.
+        if (inputSampleRate < outputSampleRate) {
+            throw new Error(`Cannot upsample audio from ${inputSampleRate}Hz to ${outputSampleRate}Hz`);
+        }
+
+        const sampleRatio = inputSampleRate / outputSampleRate;
+        const outputLength = Math.round(buffer.length / sampleRatio);
+        const outputBuffer = new Float32Array(outputLength);
+        let outputIndex = 0;
+        let inputIndex = 0;
+
+        // Each output sample averages the browser frames that fall into its window.
+        while (outputIndex < outputLength) {
+            const nextInputIndex = Math.round((outputIndex + 1) * sampleRatio);
+            let accumulatedSample = 0;
+            let sampleCount = 0;
+
+            // Average source samples so the clinician's speech timing remains stable.
+            for (let sourceIndex = inputIndex; sourceIndex < nextInputIndex && sourceIndex < buffer.length; sourceIndex++) {
+                accumulatedSample += buffer[sourceIndex];
+                sampleCount++;
+            }
+
+            outputBuffer[outputIndex] = sampleCount > 0 ? accumulatedSample / sampleCount : 0;
+            outputIndex++;
+            inputIndex = nextInputIndex;
+        }
+
+        return outputBuffer;
+    }
+
+    /**
+     * Converts floating-point samples into signed 16-bit PCM bytes.
+     * Use internally because the Python stream expects raw PCM chunks.
+     */
+    _floatTo16BitPcm(floatBuffer) {
+        const pcmBuffer = new Int16Array(floatBuffer.length);
+
+        // Clamp each sample so clipping cannot overflow the PCM payload.
+        for (let sampleIndex = 0; sampleIndex < floatBuffer.length; sampleIndex++) {
+            const clampedSample = Math.max(-1, Math.min(1, floatBuffer[sampleIndex]));
+            pcmBuffer[sampleIndex] = clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff;
+        }
+
+        return new Uint8Array(pcmBuffer.buffer);
+    }
+}
+
+/**
+ * Updates the audio-level warning shown beside the recording status.
+ * Use while the clinician is speaking into the microphone.
+ */
+function updateAudioLevel(rms) {
+    const audioLevelElement = document.getElementById('audioLevel');
+
+    // No meter on the page means there is no visible audio feedback to update.
+    if (!audioLevelElement) {
+        return;
+    }
+
+    // Clipping means the clinician is too loud and may lose words.
+    if (rms > 0.95) {
+        lowLevelCount = 0;
+        setAudioLevelMessage(audioLevelElement, 'Audio clipping detected', '#ef4444', true);
+        return;
+    }
+
+    // Repeated quiet frames mean the clinician may be too far from the mic.
+    if (rms < 0.005) {
+        lowLevelCount++;
+
+        // Wait a few frames so short pauses do not flash a warning.
+        if (lowLevelCount >= LOW_AUDIO_WARNING_FRAMES) {
+            setAudioLevelMessage(audioLevelElement, 'Low audio level - move closer to the microphone', '#eab308', true);
+        }
+
+        return;
+    }
+
+    lowLevelCount = 0;
+    setAudioLevelMessage(audioLevelElement, '', '#22c55e', false);
+}
+
+/**
+ * Renders the tiny colored audio meter status safely.
+ * Use when microphone energy changes while recording is active.
+ */
+function setAudioLevelMessage(audioLevelElement, message, color, includeMessage) {
+    const dot = createElement('span', {
+        style: `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:4px;`,
+    });
+
+    audioLevelElement.classList.remove('hidden');
+    audioLevelElement.style.color = color;
+    audioLevelElement.replaceChildren(dot);
+
+    // Warning text appears only when the clinician needs to adjust microphone use.
+    if (includeMessage) {
+        audioLevelElement.appendChild(document.createTextNode(message));
+    }
+}
+
+/**
+ * Hides microphone feedback after recording stops.
+ * Use when the clinician stops, resets, or loses the live stream.
+ */
+function hideAudioLevel() {
+    lowLevelCount = 0;
+    const audioLevelElement = document.getElementById('audioLevel');
+
+    // The meter is optional in tests and hidden layouts.
+    if (audioLevelElement) {
+        audioLevelElement.classList.add('hidden');
+        clearElement(audioLevelElement);
+    }
+}
+
+/**
+ * Closes any Mercure streams tied to the visible visit.
+ * Use before starting, stopping, replaying, or resetting the consultation.
+ */
+function disconnectMercureStreams() {
+    streams?.disconnectAll();
+    streams = null;
+}
+
+/**
+ * Shows that role inference is waiting for enough transcript context.
+ * Use immediately after the clinician starts a live consultation.
+ */
+function showRoleIdentificationPending() {
+    // Role updates can be disabled for local or degraded environments.
+    if (!CONFIG.enableRoleUpdates) {
+        return;
+    }
+
+    const badge = document.getElementById('confidenceBadge');
+
+    // Without the badge, the transcript can still render normally.
+    if (!badge) {
+        return;
+    }
+
+    badge.classList.remove('hidden');
+    badge.textContent = 'Identifying speakers...';
+    badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
+}

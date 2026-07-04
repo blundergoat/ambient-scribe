@@ -19,7 +19,7 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 - **SessionLifecycle** — `strands_agents/session_lifecycle.py`. Owns active WebSocket sessions and per-session cleanup with reconnect grace window.
 - **SessionStore** — `strands_agents/session.py`. In-memory or SQLite transcript history with independent TTL eviction.
 - **SqliteBackend** — `strands_agents/storage.py`. Persistent transcript backend stored at `SESSION_DB_PATH` when `SESSION_STORAGE=sqlite`.
-- **Mode** — One of 6 capture profiles: Medical, Meeting, Interview, TV/Media, Lecture, General. Drives role taxonomy and summary prompt.
+- **Medical role taxonomy** — Ambient Scribe now uses one consultation profile: DOCTOR/PATIENT role inference plus SOAP-style summaries. The previous profile selector was removed in 0.3.0.
 - **Role inference** — Bedrock or CPU Ollama agent (`strands_agents/agents/transcription_agent.py`) that calls `assign_roles` as a tool. Never runs on the NeMo GPU.
 
 ## Runtime / infra

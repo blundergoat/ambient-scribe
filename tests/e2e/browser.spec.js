@@ -14,11 +14,15 @@
 
 const { test, expect } = require("@playwright/test");
 
-const APP_PORT = process.env.APP_PORT || "48082";
-const AGENT_PORT = process.env.AGENT_PORT || "48101";
+const APP_PORT = process.env.APP_PORT ?? "48082";
+const AGENT_PORT = process.env.AGENT_PORT ?? "48101";
 const APP_URL = `http://localhost:${APP_PORT}`;
 
-// Helper: inject fake segments into the page (simulates Mercure SSE delivery)
+/**
+ * Injects fake segments through the same browser function Mercure uses.
+ * The loop alternates speakers because tests must cover grouping, reconnect preservation,
+ * and download output without needing live Mercure or microphone services.
+ */
 async function injectFakeSegments(page, count = 3) {
   await page.evaluate((n) => {
     for (let i = 0; i < n; i++) {
@@ -101,7 +105,7 @@ test.describe("Reconnect functionality", () => {
     // Simulate: set state as if recording was active and WS dropped
     await page.evaluate(() => {
       isRecording = true;
-      userInitiatedStop = false;
+      didUserStopRecording = false;
       reconnectAttempts = 3; // Already exhausted retries
       segmentIndex = 5;
 
@@ -134,7 +138,7 @@ test.describe("Reconnect functionality", () => {
     // Simulate disconnect (segments should NOT be cleared)
     await page.evaluate(() => {
       isRecording = true;
-      userInitiatedStop = false;
+      didUserStopRecording = false;
       reconnectAttempts = 3;
       handleUnexpectedDisconnect(1006);
     });
@@ -152,7 +156,7 @@ test.describe("Reconnect functionality", () => {
     // Show reconnect button
     await page.evaluate(() => {
       isRecording = true;
-      userInitiatedStop = false;
+      didUserStopRecording = false;
       reconnectAttempts = 3;
       handleUnexpectedDisconnect(1006);
     });

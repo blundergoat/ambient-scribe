@@ -58,7 +58,7 @@ This is the demo's centrepiece. Prerequisites: preflight green, M2 GPU-verified 
 ### Session A (~2 hours): Agent + Queue
 
 - [ ] Fill `strands_agents/agents/transcription_agent.py` — Strands Agent with Bedrock Haiku 4.5
-  - System prompt for mode-specific role reasoning (medical, meeting, interview, TV/media, lecture, general)
+  - System prompt for role reasoning (superseded in 0.3.0 by medical-only DOCTOR/PATIENT inference)
   - Edge case handling: monologues, silence, Sortformer label flips
 - [ ] Implement per-session inference queue in server.py
   - `asyncio.Queue` per session — sequential processing, no race conditions
