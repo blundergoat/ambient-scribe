@@ -1,4 +1,4 @@
-# Backend — Ambient Scribe
+# Backend - Ambient Scribe
 
 PHP 8.3+ with Symfony 6.4. Two PHP source files handle the HTTP layer; the real-time audio pipeline is handled by the Python agent via WebSocket.
 
@@ -40,13 +40,13 @@ public function history(string $sessionId): JsonResponse
 Wired as `strands.client.scribe` in `config/packages/strands.yaml`. Injected via `#[Autowire(service: 'strands.client.scribe')]`. Never create new client instances.
 
 Methods used:
-- `postJson(path, data, timeout)` — synchronous JSON request to the Python agent
-- `streamSse(path, data, timeout)` — SSE streaming from the Python agent (future: clinical summaries)
+- `postJson(path, data, timeout)` - synchronous JSON request to the Python agent
+- `streamSse(path, data, timeout)` - SSE streaming from the Python agent (future: clinical summaries)
 
 ### Error Handling
 ScribeController handles two exception types from StrandsClient:
-- `AgentErrorException` — Python agent returned an error (map to 502 or 404 based on status code)
-- `StrandsException` — connection failure (map to 503 Service Unavailable)
+- `AgentErrorException` - Python agent returned an error (map to 502 or 404 based on status code)
+- `StrandsException` - connection failure (map to 503 Service Unavailable)
 
 Both return a JSON response with `session_id`, `segments`, and `error` fields.
 

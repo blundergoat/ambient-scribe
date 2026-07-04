@@ -23,7 +23,6 @@ use StrandsPhpClient\StrandsClient;
 use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -196,7 +195,7 @@ final class ScribeControllerTest extends TestCase
     /**
      * Serves a known generated WAV to the browser in dev mode.
      *
-     * @return void No payload; failure means Demo Audio rows cannot feed the replay uploader.
+     * @return void No payload; failure means Demo Audio rows cannot fetch fixture audio to stream.
      */
     public function testDemoAudioServesKnownFixtureInDevMode(): void
     {
@@ -258,88 +257,6 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Proxies a Demo Audio upload to FastAPI while keeping the browser on the app origin.
-     *
-     * @return void No payload; failure means clicking a WAV row would hit Symfony instead of replay.
-     */
-    public function testReplayProxyForwardsUploadedWavToAgent(): void
-    {
-        $sessionId = '00000000-0000-4000-8000-000000000088';
-        $uploadedWavPath = $this->createTemporaryWavFile();
-        $seenRequests = [];
-        $httpClient = $this->createReplayProxyHttpClient($sessionId, $seenRequests);
-        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
-
-        try {
-            $request = $this->createReplayUploadRequest(
-                "/session/{$sessionId}/replay?speed=2.0",
-                $uploadedWavPath,
-            );
-            $response = $controller->replay($sessionId, $request);
-        } finally {
-            $this->removeTemporaryFile($uploadedWavPath);
-        }
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertSame([
-            'session_id' => $sessionId,
-            'segments' => 1,
-            'duration_seconds' => 2,
-            'speed' => 2,
-        ], $this->decodeJsonResponse($response));
-        self::assertCount(1, $seenRequests);
-        self::assertSame('POST', $seenRequests[0]['method']);
-        self::assertSame("http://agent.test/session/{$sessionId}/replay?speed=2.0", $seenRequests[0]['url']);
-    }
-
-    /**
-     * Returns JSON when the replay button posts without a usable WAV file.
-     *
-     * @return void No payload; failure means the UI could see an HTML upload error.
-     */
-    public function testReplayProxyRejectsMissingUploadAsJson(): void
-    {
-        $sessionId = '00000000-0000-4000-8000-000000000088';
-        $controller = $this->createController();
-        $request = Request::create("/session/{$sessionId}/replay", 'POST');
-
-        $response = $controller->replay($sessionId, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        self::assertSame([
-            'detail' => 'Replay upload requires a WAV file',
-        ], $this->decodeJsonResponse($response));
-    }
-
-    /**
-     * Proxies early replay stop requests through Symfony to FastAPI.
-     *
-     * @return void No payload; failure means Stop could pause audio while the server keeps replaying text.
-     */
-    public function testReplayStopProxyForwardsToAgent(): void
-    {
-        $sessionId = '00000000-0000-4000-8000-000000000088';
-        $seenRequests = [];
-        $httpClient = $this->createReplayStopProxyHttpClient($sessionId, $seenRequests);
-        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
-        $request = $this->createJsonPostRequest("/session/{$sessionId}/replay/stop", [
-            'visible_segments' => [
-                ['speaker_id' => 'spk_0', 'text' => 'Visible so far'],
-            ],
-            'audio_time_seconds' => 12.5,
-            'was_completed' => false,
-        ]);
-        $response = $controller->stopReplay($sessionId, $request);
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertTrue($this->decodeJsonResponse($response)['cancelled']);
-        self::assertCount(1, $seenRequests);
-        self::assertSame('POST', $seenRequests[0]['method']);
-        self::assertSame("http://agent.test/session/{$sessionId}/replay/stop", $seenRequests[0]['url']);
-        self::assertStringContainsString('Visible so far', $seenRequests[0]['options']['body']);
-    }
-
-    /**
      * Proxies post-consult summary requests through Symfony to FastAPI.
      *
      * @return void No payload; failure means automatic summary would hit an app-origin 404.
@@ -389,34 +306,26 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Converts replay transport failures into JSON the browser can render.
+     * Converts summary transport failures into JSON the browser can render.
      *
      * @return void No payload; failure means agent outages could still leak as HTML or uncaught errors.
-     * @throws TransportException When the mock client simulates an unreachable replay service.
+     * @throws TransportException When the mock client simulates an unreachable summary service.
      */
-    public function testReplayProxyMapsTransportFailureToJson(): void
+    public function testSummaryProxyMapsTransportFailureToJson(): void
     {
-        $sessionId = '00000000-0000-4000-8000-000000000088';
-        $uploadedWavPath = $this->createTemporaryWavFile();
+        $sessionId = '00000000-0000-4000-8000-000000000099';
         $httpClient = new MockHttpClient(
             static fn (): never => throw new TransportException('Connection refused'),
             'http://agent.test',
         );
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
 
-        try {
-            $request = $this->createReplayUploadRequest(
-                "/session/{$sessionId}/replay",
-                $uploadedWavPath,
-            );
-            $response = $controller->replay($sessionId, $request);
-        } finally {
-            $this->removeTemporaryFile($uploadedWavPath);
-        }
+        $request = Request::create("/session/{$sessionId}/summary", 'POST');
+        $response = $controller->summary($sessionId, $request);
 
         self::assertSame(503, $response->getStatusCode());
         self::assertStringContainsString(
-            'Replay service unavailable',
+            'Summary service unavailable',
             $this->decodeJsonResponse($response)['detail'],
         );
     }
@@ -589,7 +498,7 @@ final class ScribeControllerTest extends TestCase
      * @param StrandsClient|null $client Null creates a stub so history calls never reach Python.
      * @param RoleInferenceService|null $roleInferenceService Null creates a stub so role polling stays local.
      * @param LoggerInterface|null $logger Null uses a no-op logger; tests inject one when warning output matters.
-     * @param HttpClientInterface|null $httpClient Null creates a mock so replay/summary calls stay local.
+     * @param HttpClientInterface|null $httpClient Null creates a mock so summary calls stay local.
      * @param string $agentEndpoint FastAPI base URL used by same-origin proxy tests; empty would make bad URLs.
      * @return TestableScribeController Controller double that exposes the same page flow with deterministic responses.
      */
@@ -611,102 +520,6 @@ final class ScribeControllerTest extends TestCase
                 'nemo_websocket_url' => 'ws://localhost:48101',
                 'mercure_url' => 'http://localhost:48137/.well-known/mercure',
             ],
-        );
-    }
-
-    /**
-     * Creates a tiny temp WAV payload that can be wrapped as a browser upload.
-     *
-     * @return string Temp file path; empty never occurs because tempnam is checked.
-     */
-    private function createTemporaryWavFile(): string
-    {
-        $wavPath = tempnam(sys_get_temp_dir(), 'ambient-scribe-upload-');
-        // Failed temp-file creation should fail the test before an upload is attempted.
-        if (!\is_string($wavPath)) {
-            self::fail('Could not create temporary WAV file');
-        }
-
-        file_put_contents($wavPath, 'RIFFdemo');
-
-        return $wavPath;
-    }
-
-    /**
-     * Builds a replay upload request like the Demo Audio row sends.
-     *
-     * @param string $replayProxyUri Replay proxy URI; empty would not reach the session route.
-     * @param string $uploadedWavPath Temp WAV path; empty means there is no file to replay.
-     * @return Request Multipart request containing one uploaded WAV file.
-     */
-    private function createReplayUploadRequest(string $replayProxyUri, string $uploadedWavPath): Request
-    {
-        return Request::create(
-            uri: $replayProxyUri,
-            method: 'POST',
-            parameters: [],
-            cookies: [],
-            files: [
-                'file' => new UploadedFile(
-                    path: $uploadedWavPath,
-                    originalName: 'demo.wav',
-                    mimeType: 'audio/wav',
-                    error: null,
-                    test: true,
-                ),
-            ],
-        );
-    }
-
-    /**
-     * Creates a mock FastAPI replay response and records the proxied request.
-     *
-     * @param string $sessionId Replay session UUID; empty would make the response unusable.
-     * @param array<int, array<string, mixed>> $seenRequests Request log; empty before replay starts.
-     * @return MockHttpClient Client that returns accepted replay metadata.
-     */
-    private function createReplayProxyHttpClient(string $sessionId, array &$seenRequests): MockHttpClient
-    {
-        return new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'segments' => 1,
-                        'duration_seconds' => 2.0,
-                        'speed' => 2.0,
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
-        );
-    }
-
-    /**
-     * Creates a mock FastAPI replay-stop response and records the proxied request.
-     *
-     * @param string $sessionId Replay session UUID; empty would make the stop response unusable.
-     * @param array<int, array<string, mixed>> $seenRequests Request log; empty before the user clicks Stop.
-     * @return MockHttpClient Client that returns a successful replay-stop payload.
-     */
-    private function createReplayStopProxyHttpClient(string $sessionId, array &$seenRequests): MockHttpClient
-    {
-        return new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'cancelled' => true,
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
         );
     }
 
@@ -742,7 +555,7 @@ final class ScribeControllerTest extends TestCase
      *
      * @param string $proxyRoutePath Proxy URI; empty would not reach a controller route.
      * @param array<string, mixed> $payload Browser payload; empty means FastAPI should use stored state.
-     * @return Request JSON request body for replay stop or summary generation.
+     * @return Request JSON request body for summary generation.
      */
     private function createJsonPostRequest(string $proxyRoutePath, array $payload): Request
     {
@@ -751,20 +564,6 @@ final class ScribeControllerTest extends TestCase
             method: 'POST',
             content: json_encode($payload, JSON_THROW_ON_ERROR),
         );
-    }
-
-    /**
-     * Removes a temp upload if it still exists after a controller test.
-     *
-     * @param string $path Temp file path; empty means there is nothing safe to remove.
-     * @return void No payload; the local filesystem is restored for the next test.
-     */
-    private function removeTemporaryFile(string $path): void
-    {
-        // Some upload paths may already be consumed or absent after a failed test setup.
-        if ($path !== '' && is_file($path)) {
-            unlink($path);
-        }
     }
 
     /**
@@ -848,8 +647,8 @@ final class TestableScribeController extends ScribeController
      * @param StrandsClient $strandsClient Stubbed Python client; never sends live audio or network calls.
      * @param RoleInferenceService $roleInferenceService Stubbed role service; null is not expected in this double.
      * @param LoggerInterface $logger Captures fixture warnings that matter to the developer panel.
-     * @param HttpClientInterface $httpClient Stubbed HTTP client for replay and summary proxy routes.
-     * @param string $agentEndpoint FastAPI base URL; empty would make replay/summary proxy URLs invalid.
+     * @param HttpClientInterface $httpClient Stubbed HTTP client for the summary proxy route.
+     * @param string $agentEndpoint FastAPI base URL; empty would make summary proxy URLs invalid.
      * @param array<string, \UnitEnum|array|string|int|float|bool|null> $parameters Page config; empty means helpers can return null.
      */
     public function __construct(

@@ -32,10 +32,10 @@ jobs:
           LINES=$(wc -l < AGENTS.md)
           echo "AGENTS.md: $LINES lines"
           if [ "$LINES" -gt 150 ]; then
-            echo "::error::AGENTS.md is $LINES lines — hard limit is 150"
+            echo "::error::AGENTS.md is $LINES lines - hard limit is 150"
             exit 1
           elif [ "$LINES" -gt 135 ]; then
-            echo "::warning::AGENTS.md is $LINES lines — target is under 135"
+            echo "::warning::AGENTS.md is $LINES lines - target is under 135"
           fi
 
       - name: Context validation script
@@ -47,7 +47,7 @@ jobs:
             [ -n "$f" ] || continue
             LINES=$(wc -l < "$f")
             if [ "$LINES" -gt 20 ]; then
-              echo "::error::$f is $LINES lines — local instruction files MUST stay under 20 lines"
+              echo "::error::$f is $LINES lines - local instruction files MUST stay under 20 lines"
               exit 1
             fi
           done < <(find . \( -name "CLAUDE.md" -o -name "AGENTS.md" \) \

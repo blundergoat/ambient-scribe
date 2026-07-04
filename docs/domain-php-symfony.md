@@ -44,7 +44,7 @@ Single template: `templates/scribe/index.html.twig`. Contains inline JS for:
 - Mercure SSE subscription via `StreamOrchestrator`
 - Tailwind CSS styling
 
-Template variables are set in `ScribeController::index()`. When adding new config, pass it as a Twig variable — don't hardcode URLs in JS.
+Template variables are set in `ScribeController::index()`. When adding new config, pass it as a Twig variable - don't hardcode URLs in JS.
 
 ## Quality Standards
 

@@ -38,7 +38,7 @@ for num in $(printf '%s\n' "${!STEM[@]}" | sort); do
 
   # Only fetch transcripts that pair with an existing WAV fixture.
   if [[ ! -f "${DEST}/${stem}.wav" ]]; then
-    echo "skip  ${stem}.wav not present — run generate-demo-consultation-audio.py first"
+    echo "skip  ${stem}.wav not present - run generate-demo-consultation-audio.py first"
     skipped=$((skipped + 1))
     continue
   fi

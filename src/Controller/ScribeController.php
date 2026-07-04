@@ -5,7 +5,7 @@
  *
  * The browser reaches this file when a user opens `/scribe`, requests saved transcript history,
  * asks for the latest role labels, or selects a dev-only demo audio fixture.
- * Live microphone audio stays on the browser-to-Python path.
+ * Microphone and demo replay audio both stream on the browser-to-Python WebSocket path.
  * Keep this file focused on page setup and lightweight UI helper responses.
  */
 
@@ -20,7 +20,6 @@ use StrandsPhpClient\Exceptions\StrandsException;
 use StrandsPhpClient\StrandsClient;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -40,7 +39,7 @@ use Symfony\Contracts\HttpClient\ResponseInterface;
  */
 class ScribeController extends AbstractController
 {
-    /** Long replay uploads and summaries should wait for NeMo/agent work without hanging forever. */
+    /** Summaries should wait for agent work without hanging forever. */
     private const AGENT_WORKFLOW_TIMEOUT_SECONDS = 120;
 
     /**
@@ -49,8 +48,8 @@ class ScribeController extends AbstractController
      * @param StrandsClient $strandsClient Sends history requests to Python; no live audio is routed here.
      * @param RoleInferenceService $roleInferenceService Reads the role snapshot the UI can poll after recording.
      * @param LoggerInterface $logger Records fixture issues that only affect the developer audio picker.
-     * @param HttpClientInterface $httpClient Proxies browser replay/summary actions to FastAPI.
-     * @param string $agentEndpoint FastAPI base URL; empty means replay/summary cannot be proxied.
+     * @param HttpClientInterface $httpClient Proxies browser summary and model-health actions to FastAPI.
+     * @param string $agentEndpoint FastAPI base URL; empty means summaries cannot be proxied.
      */
     public function __construct(
         #[Autowire(service: 'strands.client.scribe')]
@@ -123,7 +122,7 @@ class ScribeController extends AbstractController
     /**
      * Builds the dev-only WAV response for the selected picker file.
      *
-     * Use when the browser asks Symfony for a generated test fixture before replay upload.
+     * Use when the browser asks Symfony for a generated test fixture before streaming replay.
      * Empty, unsafe, unknown, or missing files all return 404 from the user's perspective.
      *
      * @param string $filename Fixture filename selected in the UI; empty or unsafe names return 404.
@@ -243,103 +242,6 @@ class ScribeController extends AbstractController
     }
 
     /**
-     * Proxies a selected WAV replay upload to FastAPI from the same browser origin.
-     *
-     * Use when a clinician or local tester clicks a Demo Audio row. Empty or missing files
-     * return JSON so the browser never tries to parse a Symfony HTML error page.
-     *
-     * @param string $sessionId Browser session UUID; invalid values mean no replay can be attached.
-     * @param Request $request Browser multipart upload; missing `file` means no WAV was selected.
-     * @return JsonResponse Replay metadata; non-200 means the UI can show a recoverable replay error.
-     */
-    #[Route('/session/{sessionId}/replay', name: 'scribe_replay_proxy', methods: ['POST'])]
-    public function replay(string $sessionId, Request $request): JsonResponse
-    {
-        // Invalid sessions cannot be joined to the visible transcript or Mercure topics.
-        if (!Uuid::isValid($sessionId)) {
-            return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
-        }
-
-        $uploadedReplayFile = $request->files->get('file');
-        // Without an uploaded WAV, FastAPI would reject the replay and the user would see no transcript.
-        if (!$uploadedReplayFile instanceof UploadedFile) {
-            return $this->json(['detail' => 'Replay upload requires a WAV file'], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        $replayFileStream = fopen($uploadedReplayFile->getPathname(), 'rb');
-        // An unreadable temp upload means the browser selected a file PHP cannot forward.
-        if (!\is_resource($replayFileStream)) {
-            return $this->json(['detail' => 'Replay upload could not be read'], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        try {
-            $agentResponse = $this->httpClient->request(
-                'POST',
-                $this->agentUrl("/session/{$sessionId}/replay"),
-                [
-                    'query' => ['speed' => (string) $request->query->get('speed', '1.0')],
-                    'body' => ['file' => $replayFileStream],
-                    'timeout' => self::AGENT_WORKFLOW_TIMEOUT_SECONDS,
-                ],
-            );
-
-            return $this->jsonAgentResponse($agentResponse, 'Replay failed');
-        } catch (TransportExceptionInterface $e) {
-            return $this->json([
-                'detail' => 'Replay service unavailable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
-        } finally {
-            // Close the uploaded file handle once FastAPI has received or rejected it.
-            fclose($replayFileStream);
-        }
-    }
-
-    /**
-     * Proxies early replay stop requests to FastAPI from the same browser origin.
-     *
-     * Use when the user stops demo audio before the WAV ends. JSON is returned even
-     * when FastAPI is unavailable so the transcript UI can stay in a stopped state.
-     *
-     * @param string $sessionId Browser session UUID; invalid values mean no replay task can be stopped.
-     * @param Request $request Browser stop request; empty body means only cancellation is requested.
-     * @return JsonResponse Stop result; `cancelled=false` means replay had already ended or was absent.
-     */
-    #[Route('/session/{sessionId}/replay/stop', name: 'scribe_replay_stop_proxy', methods: ['POST'])]
-    public function stopReplay(string $sessionId, Request $request): JsonResponse
-    {
-        // Invalid sessions cannot map to an active browser replay task.
-        if (!Uuid::isValid($sessionId)) {
-            return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
-        }
-
-        $replayStopRequestBody = $request->getContent();
-        $agentRequestOptions = [
-            'headers' => ['Accept' => 'application/json'],
-            'timeout' => self::AGENT_WORKFLOW_TIMEOUT_SECONDS,
-        ];
-
-        // Browser-clock replay sends the transcript rows revealed up to the stop point.
-        if ($replayStopRequestBody !== '') {
-            $agentRequestOptions['headers']['Content-Type'] = 'application/json';
-            $agentRequestOptions['body'] = $replayStopRequestBody;
-        }
-
-        try {
-            $agentResponse = $this->httpClient->request(
-                'POST',
-                $this->agentUrl("/session/{$sessionId}/replay/stop"),
-                $agentRequestOptions,
-            );
-
-            return $this->jsonAgentResponse($agentResponse, 'Replay stop failed');
-        } catch (TransportExceptionInterface $e) {
-            return $this->json([
-                'detail' => 'Replay stop service unavailable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
-        }
-    }
-
-    /**
      * Proxies post-consult summary generation to FastAPI from the same browser origin.
      *
      * Use after a live stop or replay completion when transcript text exists. The response stays JSON
@@ -363,7 +265,7 @@ class ScribeController extends AbstractController
             'timeout' => self::AGENT_WORKFLOW_TIMEOUT_SECONDS,
         ];
 
-        // Demo replay summaries send the browser-visible transcript subset after early stop.
+        // The browser sends its visible transcript subset so the note matches the screen.
         if ($summaryRequestBody !== '') {
             $agentRequestOptions['headers']['Content-Type'] = 'application/json';
             $agentRequestOptions['body'] = $summaryRequestBody;
@@ -380,6 +282,36 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $e) {
             return $this->json([
                 'detail' => 'Summary service unavailable: ' . $e->getMessage(),
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+    }
+
+    /**
+     * Proxies the off-GPU model-health pre-flight check to FastAPI from the browser origin.
+     *
+     * The browser calls this before starting a consultation so it does not transcribe when
+     * role inference and the summary would fail. An unreachable agent is reported as unavailable.
+     *
+     * @return JsonResponse `{available: bool, detail: string}` the UI uses to gate the start.
+     */
+    #[Route('/agent/model-health', name: 'scribe_model_health_proxy', methods: ['GET'])]
+    public function modelHealth(): JsonResponse
+    {
+        try {
+            $agentResponse = $this->httpClient->request(
+                'GET',
+                $this->agentUrl('/agent/model-health'),
+                [
+                    'headers' => ['Accept' => 'application/json'],
+                    'timeout' => 8,
+                ],
+            );
+
+            return $this->jsonAgentResponse($agentResponse, 'Model health check failed');
+        } catch (TransportExceptionInterface $e) {
+            return $this->json([
+                'available' => false,
+                'detail' => 'agent unreachable: ' . $e->getMessage(),
             ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }

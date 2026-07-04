@@ -48,7 +48,7 @@ class SessionLifecycle:
             session_id: Recording UUID used by the browser.
             session: Audio/transcript state to resume or show live.
         """
-        # Cancel any pending graceful destroy — the session is being resumed.
+        # Cancel any pending graceful destroy - the session is being resumed.
         pending = self._pending_destroys.pop(session_id, None)
         if pending is not None and not pending.done():
             pending.cancel()

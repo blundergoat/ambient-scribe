@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile — Builds the PHP Symfony application container
+# Dockerfile - Builds the PHP Symfony application container
 # =============================================================================
 #
 # This is a simple development Dockerfile that:
@@ -18,7 +18,7 @@
 #   The build context is the ambient-scribe/ directory (set in docker-compose.yml).
 # =============================================================================
 
-# Use PHP 8.3 CLI as the base image (no Apache/Nginx — we use the built-in server)
+# Use PHP 8.3 CLI as the base image (no Apache/Nginx - we use the built-in server)
 FROM php:8.3-cli
 
 # Install system packages needed by PHP extensions and Composer

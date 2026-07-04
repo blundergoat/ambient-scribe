@@ -10,10 +10,11 @@ let isReplayActive = false;
 let replayDuration = 0;
 let replayTimerInterval = null;
 let replayAudioObjectUrl = null;
-let replayTranscriptSegments = [];
-let replayNextSegmentIndex = 0;
-let isBrowserClockReplaySession = false;
 let hasReplayAudioPlaybackStarted = false;
+let wavStreamer = null;
+let isReplayDraining = false;
+let replayDrainReason = null;
+let replayDrainTimeout = null;
 
 /**
  * Builds summary rows from the transcript cards visible in the browser.
@@ -253,29 +254,6 @@ async function sendRoleOverride(speakerId, role) {
 }
 
 /**
- * Shows a temporary toast for visible role corrections.
- * Use when inference changes labels after the clinician already saw a speaker.
- */
-function showToast(message, duration = 3000) {
-    const toastContainer = document.getElementById('toastContainer');
-
-    // No toast container means there is no place to show the correction notice.
-    if (!toastContainer) {
-        return;
-    }
-
-    const toast = createElement('div', {
-        text: message,
-        style: 'padding:0.5rem 1rem;margin-top:0.5rem;border-radius:0.5rem;font-size:0.875rem;font-weight:500;background:#fef3c7;color:#92400e;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);opacity:1;transition:opacity 0.3s ease;',
-    });
-    toastContainer.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    }, duration);
-}
-
-/**
  * Applies inferred role mapping updates to visible transcript cards.
  * Use when the role agent publishes Doctor/Patient confidence.
  */
@@ -301,31 +279,8 @@ function handleRoleUpdate(roleUpdateEvent) {
     }
 
     confidence = roleUpdateEvent.confidence ?? 0;
-    maybeShowRoleFlipToast(roleUpdateEvent.mapping);
     updateConfidenceBadge();
     relabelSegments();
-}
-
-/**
- * Notifies the clinician when model labels change after earlier text.
- * Use after a role update arrives with prior mapping state.
- */
-function maybeShowRoleFlipToast(newMapping) {
-    const hadPreviousRoles = Object.keys(previousRoleMapping).length > 0;
-
-    // First mapping is expected and does not need a correction toast.
-    if (!hadPreviousRoles) {
-        return;
-    }
-
-    const didFlip = Object.keys(newMapping).some((speakerId) =>
-        previousRoleMapping[speakerId] && previousRoleMapping[speakerId] !== newMapping[speakerId]
-    );
-
-    // A flip means the visible transcript labels have been corrected.
-    if (didFlip) {
-        showToast('Speaker labels corrected');
-    }
 }
 
 /**
@@ -356,8 +311,10 @@ function updateConfidenceBadge() {
         return;
     }
 
-    badge.textContent = 'Identifying speakers...';
-    badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
+    // Inference has run but could not confidently label speakers - a settled state,
+    // not the pulsing "identifying" placeholder (which implies work still in progress).
+    badge.textContent = `Speakers unclear (${Math.round(confidence * 100)}%)`;
+    badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600';
 }
 
 /**

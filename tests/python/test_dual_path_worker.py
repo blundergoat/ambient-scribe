@@ -110,7 +110,7 @@ class TestDualPathToolInvoked:
             if call_count[0] == 1:
                 state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8)
             else:
-                # Swap roles — triggers flip
+                # Swap roles - triggers flip
                 state.update({"spk_0": "PATIENT", "spk_1": "DOCTOR"}, 0.9)
             return {
                 "mapping": state.current_mapping,
@@ -122,13 +122,13 @@ class TestDualPathToolInvoked:
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(api_server, "_run_role_inference", fake_run_with_tool)
 
-        # First call — establishes mapping
+        # First call - establishes mapping
         await api_server.enqueue_role_inference(session_id, SEGMENTS)
         worker = api_server._inference_workers[session_id]
         await api_server.close_role_inference(session_id)
         await asyncio.wait_for(worker, timeout=2.0)
 
-        # Second call — flips roles
+        # Second call - flips roles
         await api_server.enqueue_role_inference(session_id, SEGMENTS)
         worker = api_server._inference_workers[session_id]
         await api_server.close_role_inference(session_id)
@@ -157,7 +157,7 @@ class TestDualPathFreeText:
             published.append((topic, data))
 
         def fake_run_freetext(sid, segments, transcript):
-            # No tool invocation — state unchanged, return plain dict
+            # No tool invocation - state unchanged, return plain dict
             return {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.85,
@@ -240,7 +240,7 @@ class TestDualPathFreeText:
         system_errors = [e for e in role_events if e.get("type") == "system_error"]
         role_updates = [e for e in role_events if e.get("type") == "role_update"]
         assert len(system_errors) == 1
-        assert "README_STACK.md" in system_errors[0]["message"]
+        assert "check-ai-model.sh" in system_errors[0]["message"]
         assert len(role_updates) == 0
 
 

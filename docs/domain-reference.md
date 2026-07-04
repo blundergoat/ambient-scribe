@@ -1,4 +1,4 @@
-# Domain Reference — Ambient Scribe
+# Domain Reference - Ambient Scribe
 
 Technical reference for project architecture, components, and conventions.
 Migrated from CLAUDE.md and the old root AGENTS content to separate domain knowledge from workflow instructions.

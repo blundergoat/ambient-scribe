@@ -26,7 +26,7 @@ Transcription results are delivered back to the browser via Mercure Server-Sent 
 - Use `{{ mercure_public_url }}` from Twig globals for the Mercure hub URL, not hardcoded URLs
 - Subscribe to the session-specific `raw`, `roles`, and `summary` topics via `StreamOrchestrator`
 - Parse incoming SSE events to render transcript segments, role updates, and summaries in real time
-- Handle `EventSource.onerror` — show a user-facing error if the SSE connection drops
+- Handle `EventSource.onerror` - show a user-facing error if the SSE connection drops
 
 ## Conventions
 
@@ -37,6 +37,6 @@ Transcription results are delivered back to the browser via Mercure Server-Sent 
 ## Error Handling
 
 - Handle `getUserMedia()` rejection (microphone permission denied)
-- Handle WebSocket `onerror` and `onclose` — show connection status to the user
-- Handle `EventSource.onerror` — display a reconnection or failure message
+- Handle WebSocket `onerror` and `onclose` - show connection status to the user
+- Handle `EventSource.onerror` - display a reconnection or failure message
 - Show a clear recording state indicator (recording vs. idle)

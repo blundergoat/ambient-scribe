@@ -362,13 +362,13 @@ class TestHeuristicRoleInference:
         assert result["mapping"]["spk_1"] == "PATIENT"
 
     def test_heuristic_with_transcript_only(self):
-        """Segments empty but transcript non-empty — returns None (no speaker_ids)."""
+        """Segments empty but transcript non-empty - returns None (no speaker_ids)."""
         result = _heuristic_role_inference([], "some transcript")
         assert result is None
 
 
 # =========================================================================
-# Task 3.8 — @tool assign_roles tests
+# Task 3.8 - @tool assign_roles tests
 # =========================================================================
 
 
@@ -462,7 +462,7 @@ class TestAssignRolesTool:
         """Second call with swapped roles sets flip_detected=True."""
         cleanup_session("tool-flip-session")
 
-        # First call — establish mapping
+        # First call - establish mapping
         assign_roles(
             session_id="tool-flip-session",
             mapping=json.dumps({"spk_0": "DOCTOR", "spk_1": "PATIENT"}),
@@ -470,7 +470,7 @@ class TestAssignRolesTool:
             confidence=0.8,
         )
 
-        # Second call — swap roles
+        # Second call - swap roles
         result = assign_roles(
             session_id="tool-flip-session",
             mapping=json.dumps({"spk_0": "PATIENT", "spk_1": "DOCTOR"}),

@@ -3,7 +3,7 @@ Tests for scenario fixture validation.
 
 Ensures all scenario definitions are structurally valid and have proper
 expectedEndState assertions. This serves as the automated gate for the
-scenario runner — the actual browser execution is manual, but the fixture
+scenario runner - the actual browser execution is manual, but the fixture
 integrity is machine-checkable.
 """
 

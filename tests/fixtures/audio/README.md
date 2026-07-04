@@ -18,7 +18,7 @@ python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 
 ```
 
 The generator downloads CC BY 4.0 PriMock57 doctor/patient channels, mixes each
-pair to a 90-second 16 kHz mono 16-bit PCM WAV, and writes `generated-manifest.json`.
+pair to a full-length 16 kHz mono 16-bit PCM WAV, and writes `generated-manifest.json`.
 Cases 01, 09, and 10 are intentionally excluded from the local demo picker.
 
 ## Ground-truth transcripts
@@ -61,7 +61,7 @@ ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels,b
 ```
 
 Expected values are `sample_rate=16000`, `channels=1`, and `bits_per_sample=16`.
-Expected duration for PriMock57 replay fixtures is about 90 seconds so the Demo
-Audio picker does not ask NeMo to process a full consultation in one request.
+PriMock57 replay fixtures are full-length consultations (roughly 8-12 minutes);
+`NEMO_BUFFER_MAX_DURATION` (default 900s) must comfortably exceed the clip length.
 Only CC-BY compatible mock audio belongs here; never commit scraped,
 real-patient, PHI, NonCommercial, ShareAlike, or NoDerivatives recordings.

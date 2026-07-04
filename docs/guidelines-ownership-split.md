@@ -1,4 +1,4 @@
-# Guidelines Ownership Split — Ambient Scribe
+# Guidelines Ownership Split - Ambient Scribe
 
 This document records the migration of domain knowledge and agent instructions to separate files.
 

@@ -4,9 +4,9 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 
 ## System Overview
 
-- Browser UI (`templates/scribe/index.html.twig`, `public/js/scribe.js`, `public/js/scribe-fixtures.js`) creates a session, captures microphone audio with `PcmStreamer`, replays generated demo WAVs, sends PCM chunks to the FastAPI WebSocket, and subscribes to Mercure topics through `StreamOrchestrator`.
+- Browser UI (`templates/scribe/index.html.twig`, `public/js/scribe.js`, `public/js/scribe-fixtures.js`) creates a session, captures microphone audio with `PcmStreamer`, streams generated demo WAVs with `WavPcmStreamer`, sends PCM chunks to the FastAPI WebSocket, and subscribes to Mercure topics through `StreamOrchestrator`.
 - Symfony app (`src/Controller/ScribeController.php`, `src/Service/RoleInferenceService.php`) renders `/scribe`, redirects `/`, proxies transcript history from Python, and exposes current role mappings.
-- FastAPI agent (`strands_agents/api/server.py`) exposes batch transcription, live WebSocket transcription, history, role override/snapshot, summary, replay, and health endpoints.
+- FastAPI agent (`strands_agents/api/server.py`) exposes batch transcription (test-only), live WebSocket transcription, history, role override/snapshot, summary, and health endpoints.
 - NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`) owns the single GPU and performs diarization/ASR; role inference never uses that GPU.
 - Role and summary agents (`strands_agents/agents/transcription_agent.py`, `strands_agents/agents/summary_agent.py`, `strands_agents/tools/assign_roles.py`) run medical speaker role attribution and structured SOAP-style end-of-session summaries.
 - Storage (`strands_agents/session.py`, `strands_agents/storage.py`) is either in-memory `SessionStore` or SQLite `SqliteBackend`, selected by `SESSION_STORAGE`.
@@ -19,7 +19,7 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 2. `public/js/scribe.js` captures audio, downsamples to 16 kHz 16-bit PCM, and opens `ws://.../ws/transcribe/{session_id}`.
 3. `strands_agents/api/server.py::transcribe_stream` validates the UUID, registers the session in `SessionLifecycle`, buffers chunks in `TranscriptionSession`, and runs NeMo through `ThreadPoolExecutor`.
 4. FastAPI stores raw segments, publishes `segment` events to `scribe/session/{id}/raw`, queues role inference, then publishes `role_update` events to `scribe/session/{id}/roles`.
-5. Browser EventSource handlers merge live raw and role events into the transcript timeline; demo replay receives batch segments from FastAPI and reveals them from the browser audio clock before summary generation.
+5. Browser EventSource handlers merge live raw and role events into the transcript timeline; demo replay decodes the WAV locally and streams PCM over the same WebSocket, paced by the browser audio clock, so its segments arrive through the identical Mercure path.
 6. On end session, FastAPI can generate a summary and optional hints on `scribe/session/{id}/summary` and `scribe/session/{id}/hints`.
 7. PHP non-live paths call Python history and role endpoints through `StrandsClient` and `RoleInferenceService`.
 
@@ -36,7 +36,7 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 - Transcript segments are written to `SessionStore` memory or `SqliteBackend` at `/data/sessions.db` inside the `session_data` Docker volume.
 - `SessionLifecycle` tracks active WebSocket sessions, reconnect grace, and teardown; storage TTL and cleanup are separate from active WebSocket state.
 - Role state is kept per session by `assign_roles` and is cleaned with lifecycle teardown or periodic orphan cleanup.
-- Demo replay stores batch-transcribed segments for role inference and summary context, but visible transcript pacing follows the browser audio element.
+- Demo replay is a live session fed from a decoded WAV: the browser audio element paces PCM chunk streaming, so segments, role inference, and summary context flow through the same streaming session storage as a microphone visit.
 - Mercure carries JSON events only; it is the browser-facing event fan-out, not the source of durable transcript state.
 
 ## Deployment / Operations

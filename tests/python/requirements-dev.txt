@@ -1,4 +1,4 @@
-# Python test dependencies for user-facing transcript, replay, and agent flows.
+# Python test dependencies for user-facing transcript, streaming, and agent flows.
 # Keep these floors close to the runtime stack so tests fail where a browser or
 # operator would feel the break, especially around async WebSocket sessions.
 pytest>=9.1.1

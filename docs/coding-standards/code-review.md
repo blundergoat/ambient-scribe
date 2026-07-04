@@ -1,11 +1,11 @@
-# Code Review — Ambient Scribe
+# Code Review - Ambient Scribe
 
 ## Priority Order
 
-1. **Correctness** — Does the medical transcription flow work end-to-end?
-2. **Security** — Patient data handling, auth boundaries, session isolation
-3. **Cross-stack consistency** — PHP ↔ Python API contracts match, Mercure topics aligned
-4. **Performance** — Real-time streaming latency, NeMo pipeline efficiency
+1. **Correctness** - Does the medical transcription flow work end-to-end?
+2. **Security** - Patient data handling, auth boundaries, session isolation
+3. **Cross-stack consistency** - PHP ↔ Python API contracts match, Mercure topics aligned
+4. **Performance** - Real-time streaming latency, NeMo pipeline efficiency
 
 ## Approval Criteria
 

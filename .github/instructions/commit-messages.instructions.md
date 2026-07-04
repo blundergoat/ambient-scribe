@@ -12,9 +12,9 @@ All commit messages MUST start with the corresponding GitHub issue number.
 
 ### Subject Line Rules
 
-- **Max 72 characters** — the `#<issue> <Area> - ` prefix takes ~15-20 chars, so keep the action portion under ~50 chars
-- **Use imperative mood** — write as if completing the sentence "This commit will ..." (e.g., "Add", "Fix", "Remove", not "Added", "Fixes", "Removing")
-- **Describe what AND why** — if the "why" doesn't fit in the subject, put it in the body
+- **Max 72 characters** - the `#<issue> <Area> - ` prefix takes ~15-20 chars, so keep the action portion under ~50 chars
+- **Use imperative mood** - write as if completing the sentence "This commit will ..." (e.g., "Add", "Fix", "Remove", not "Added", "Fixes", "Removing")
+- **Describe what AND why** - if the "why" doesn't fit in the subject, put it in the body
 - **No trailing period**
 
 ### Commit Scope
@@ -44,7 +44,7 @@ Use these standard area prefixes for consistency. Choose the area where the **mo
 
 ### Multi-Area Commits
 
-When a commit spans multiple areas (e.g., PHP controller + Python agent + Twig template), use the area containing the **primary logic change** — typically where the new behavior originates. Mention the other affected areas in the body.
+When a commit spans multiple areas (e.g., PHP controller + Python agent + Twig template), use the area containing the **primary logic change** - typically where the new behavior originates. Mention the other affected areas in the body.
 
 ```
 #55 Agent - Add session timeout to NeMo pipeline
@@ -89,7 +89,7 @@ Separate the body from the subject with a **blank line**. Wrap lines at **72 cha
 ```
 #<issue> <Area> - <Subject>
 
-<What changed and why — 1-3 short paragraphs>
+<What changed and why - 1-3 short paragraphs>
 
 <Optional: references, co-authors, trailers>
 ```
@@ -98,7 +98,7 @@ Separate the body from the subject with a **blank line**. Wrap lines at **72 cha
 
 | Question | When to include |
 |----------|----------------|
-| **What** changed? | Always — summarize the key changes |
+| **What** changed? | Always - summarize the key changes |
 | **Why** this approach? | When the reasoning isn't obvious from the diff |
 | **What alternatives** were considered? | When you chose between meaningful options |
 | **What's the impact?** | When behavior changes for users or other code |
@@ -127,7 +127,7 @@ Use Git trailers and GitHub keywords in the commit body to link related work:
 | Syntax | Effect |
 |--------|--------|
 | `Closes #42` | Automatically closes issue #42 when merged |
-| `Fixes #42` | Same as Closes — auto-closes the issue |
+| `Fixes #42` | Same as Closes - auto-closes the issue |
 | `Refs #38` | Links to issue #38 without closing it |
 | `See also: #50` | Informal reference to related issue/PR |
 
@@ -173,7 +173,7 @@ During development on a feature branch, work-in-progress and fixup commits are a
 | `WIP: #12 Backend - ...` | Work in progress, not ready for review | Squash or rewrite into a proper commit |
 | `fixup! #12 Backend - ...` | Fixes a previous commit on the branch | Squash into the target commit with `git rebase --autosquash` |
 
-**Main branch must only contain clean, atomic commits** — no WIP or fixup commits should survive the merge.
+**Main branch must only contain clean, atomic commits** - no WIP or fixup commits should survive the merge.
 
 ## Merge Strategy
 
@@ -181,4 +181,4 @@ When merging PRs to main:
 
 - **Prefer squash-and-merge** for feature branches with messy history (multiple WIP/fixup commits)
 - **Prefer rebase-and-merge** for branches with clean, atomic commits that each tell a meaningful story
-- **Avoid merge commits** — they add noise to `git log` and make bisecting harder
+- **Avoid merge commits** - they add noise to `git log` and make bisecting harder

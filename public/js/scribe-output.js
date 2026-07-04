@@ -10,13 +10,20 @@
 let isSummaryRequestInFlight = false;
 
 /**
- * Uploads a WAV file, plays it locally, and replays it through the transcript UI.
- * Reports upload/backend errors in status and keeps audio controls usable.
- * Returns whether the backend accepted replay for the visible session.
+ * Decodes a WAV file, plays it locally, and streams its PCM to live transcription.
+ * The WAV goes over the same WebSocket as microphone audio, paced by the audible
+ * replay clock, so transcript rows arrive from Mercure exactly like a live visit.
+ * Reports decode/connection errors in status and keeps audio controls usable.
+ * Returns whether streaming replay started for the visible session.
  */
 async function startReplay(file, options = {}) {
     // No file selected means the user cancelled the picker.
     if (!file) {
+        return false;
+    }
+
+    // Do not replay/transcribe if roles and the summary would fail - warn and stop.
+    if (!(await ensureAiModelAvailable())) {
         return false;
     }
 
@@ -36,33 +43,43 @@ async function startReplay(file, options = {}) {
     resetSession();
     await new Promise((resolveReplayReset) => setTimeout(resolveReplayReset, 100));
     isReplayActive = true;
-    setReplayControlsBusy(true, 'Processing...');
+    setReplayControlsBusy(true, 'Preparing...');
     setElementHidden('startBtn', true);
     setElementHidden('stopBtn', true);
     setElementHidden('summaryBtn', true);
     setElementHidden('emptyState', true);
-    setRecordingStatus('Processing WAV...', 'color:var(--color-speaker-a);font-weight:500;');
+    setRecordingStatus('Preparing audio...', 'color:var(--color-speaker-a);font-weight:500;');
     subscribeToMercure();
 
-    const replayFormData = new FormData();
-    replayFormData.append('file', file);
-
     try {
-        const response = await fetch(`/session/${CONFIG.sessionId}/replay?speed=1.0`, {
-            method: 'POST',
-            body: replayFormData,
-        });
+        // Decoding locally keeps replay on the same 16 kHz PCM contract as the microphone.
+        const decodedReplayAudio = await decodeWavToPcm(file);
 
-        const replayPayload = await readJsonResponse(response, {
-            detail: 'Replay service returned an unreadable response.',
-        });
+        // Silent or empty audio would open a session that can never produce text.
+        if (decodedReplayAudio.pcmBytes.byteLength === 0) {
+            throw new Error('Audio file contains no samples.');
+        }
 
-        const replayMetadata = requireAcceptedReplayPayload(response, replayPayload);
-        replayDuration = replayMetadata.durationSeconds;
-        replayTranscriptSegments = replayMetadata.transcriptSegments;
-        replayNextSegmentIndex = 0;
-        isBrowserClockReplaySession = true;
+        replayDuration = decodedReplayAudio.durationSeconds;
+        connectWebSocket();
+        // Audio must not start until the socket can carry the first heard chunk.
+        await waitForTranscriptionSocketOpen();
+
+        wavStreamer = new WavPcmStreamer(
+            document.getElementById('replayAudio'),
+            decodedReplayAudio.pcmBytes,
+            {
+                onChunk: (pcmChunk) => {
+                    // A closed socket means this audio should not reach a stale visit.
+                    if (transcriptionSocket?.readyState === WebSocket.OPEN) {
+                        transcriptionSocket.send(pcmChunk);
+                    }
+                },
+            },
+        );
+
         wasReplayAudioUrlAdopted = await startReplayAudioPlayback(file, options.audioUrl ?? null);
+        wavStreamer.start();
         startReplayProgress();
         updateReplayProgress();
 
@@ -79,6 +96,9 @@ async function startReplay(file, options = {}) {
         setPlainStatus(`Replay error: ${replayError.message}`);
         setReplayControlsBusy(false, 'Upload WAV');
         isReplayActive = false;
+        wavStreamer?.stop();
+        wavStreamer = null;
+        transcriptionSocket?.close();
         setElementHidden('startBtn', false);
         setElementHidden('stopBtn', true);
         disconnectMercureStreams();
@@ -90,31 +110,6 @@ async function startReplay(file, options = {}) {
 
         return false;
     }
-}
-
-/**
- * Validates the replay response before the UI shows progress.
- * Use after a WAV upload so parser warnings or empty transcripts stay visible as errors.
- * Throws when the backend response would leave the replay UI stuck or misleading.
- */
-function requireAcceptedReplayPayload(response, replayPayload) {
-    // Failed uploads should leave the clinician in a recoverable replay state.
-    if (!response.ok || replayPayload.isFallbackPayload) {
-        throw new Error(replayPayload.detail || `HTTP ${response.status}`);
-    }
-
-    const replaySegmentCount = Number(replayPayload.segments ?? 0);
-    const replayDurationSeconds = Number(replayPayload.duration_seconds ?? 0);
-    const transcriptSegments = Array.isArray(replayPayload.transcript_segments)
-        ? replayPayload.transcript_segments
-        : [];
-
-    // A replay with no transcript text would leave the progress bar stuck.
-    if (replaySegmentCount <= 0 || replayDurationSeconds <= 0 || transcriptSegments.length === 0) {
-        throw new Error(replayPayload.detail || 'Replay did not return transcript segments.');
-    }
-
-    return { durationSeconds: replayDurationSeconds, transcriptSegments };
 }
 
 /**
@@ -175,9 +170,9 @@ async function startReplayAudioPlayback(file, suppliedAudioUrl = null) {
         updateReplayProgress();
     };
     replayAudio.onended = () => {
-        // Audio ending should reveal the final transcript rows before post-visit actions.
+        // Audio ending sends the PCM tail, then waits for the backend to finalize.
         if (isReplayActive) {
-            endReplay();
+            enterReplayDrain('completed');
         }
     };
     replayAudio.classList.remove('hidden');
@@ -254,26 +249,20 @@ function updateReplayProgress() {
         return;
     }
 
-    // Blocked autoplay should not reveal transcript before the user hears audio.
+    // Blocked autoplay means no audio has been heard or streamed yet.
     if (!isReplayAudioClockReady()) {
         return;
     }
 
     const elapsedSeconds = getReplayAudioCurrentTime();
-    revealReplaySegmentsUpToAudioTime(elapsedSeconds);
     const progress = Math.min(elapsedSeconds / replayDuration, 1);
     document.getElementById('replayProgressFill').style.width = `${progress * 100}%`;
     document.getElementById('timer').textContent = formatTime(elapsedSeconds);
-
-    // Reaching the audio end unlocks the same post-visit actions as live stop.
-    if (progress >= 1 && replayNextSegmentIndex >= replayTranscriptSegments.length) {
-        endReplay();
-    }
 }
 
 /**
  * Checks whether the replay audio clock has started moving.
- * Use before revealing text so blocked autoplay does not show unheard speech.
+ * Use before showing progress so blocked autoplay reads as not started.
  */
 function isReplayAudioClockReady() {
     const replayAudio = document.getElementById('replayAudio');
@@ -288,7 +277,7 @@ function isReplayAudioClockReady() {
 
 /**
  * Reads the current demo audio clock.
- * Use so transcript reveal follows what the user can hear, not backend processing speed.
+ * Use so replay progress follows what the user can hear.
  */
 function getReplayAudioCurrentTime() {
     const replayAudio = document.getElementById('replayAudio');
@@ -299,34 +288,6 @@ function getReplayAudioCurrentTime() {
     }
 
     return replayAudio.currentTime || 0;
-}
-
-/**
- * Reveals replay transcript rows up to the browser audio time.
- * Use while audio plays, pauses, or stops so visible text matches heard speech.
- */
-function revealReplaySegmentsUpToAudioTime(audioTimeSeconds) {
-    // Tolerance threshold: 0.2s because sub-second ASR timestamps can feel late.
-    const revealToleranceSeconds = 0.2;
-
-    // Empty replay metadata means there are no prepared rows to reveal.
-    if (replayTranscriptSegments.length === 0) {
-        return;
-    }
-
-    // Each due segment is appended once as the audible WAV reaches its timestamp.
-    while (replayNextSegmentIndex < replayTranscriptSegments.length) {
-        const replaySegment = replayTranscriptSegments[replayNextSegmentIndex];
-        const segmentStartSeconds = Number(replaySegment.start ?? 0);
-
-        // Future segments remain hidden until the user hears that part of the WAV.
-        if (segmentStartSeconds > audioTimeSeconds + revealToleranceSeconds) {
-            break;
-        }
-
-        handleRawSegment({ type: 'segment', ...replaySegment });
-        replayNextSegmentIndex++;
-    }
 }
 
 /**
@@ -347,8 +308,8 @@ function stopCurrentSession() {
 }
 
 /**
- * Stops demo audio before the file ends and reveals post-visit actions.
- * Use when the user wants to summarize only the transcript captured so far.
+ * Stops demo audio before the file ends and drains in-flight transcription.
+ * Use when the user wants to summarize only the audio heard so far.
  */
 function stopReplay() {
     // Hidden or repeated Stop clicks should not mutate the completed visit twice.
@@ -356,78 +317,77 @@ function stopReplay() {
         return false;
     }
 
-    const stoppedAtSeconds = getReplayAudioCurrentTime();
-    revealReplaySegmentsUpToAudioTime(stoppedAtSeconds);
-    isReplayActive = false;
-    clearReplayTimer();
-    stopReplayAudioPlayback(false);
-    disconnectMercureStreams();
-    setReplayControlsBusy(false, 'Upload WAV');
-    setElementHidden('startBtn', false);
-    setElementHidden('stopBtn', true);
-    setElementHidden('replayProgress', true);
-    setPlainStatus('Replay stopped');
-    revealPostVisitActions();
-    const summaryButton = document.getElementById('summaryBtn');
-
-    // Summary waits for the stop request so late replay text is less likely to leak in.
-    if (summaryButton) {
-        summaryButton.disabled = true;
+    // Stopping during the finalize wait skips straight to the finished UI.
+    if (isReplayDraining) {
+        endReplay();
+        return false;
     }
 
+    stopReplayAudioPlayback(false);
+    enterReplayDrain('stopped');
     announce('Replay stopped');
-    syncStoppedReplayOnServer(readVisibleTranscriptSegments(), {
-        audioTimeSeconds: stoppedAtSeconds,
-        wasCompleted: false,
-    }).finally(() => {
-        // Once replay stop has synced, the captured transcript can be summarized.
-        if (summaryButton) {
-            summaryButton.disabled = false;
-        }
-    });
 
     return true;
 }
 
+// A dead backend must not leave replay stuck waiting for the `finalized` event.
+const REPLAY_FINALIZE_TIMEOUT_MS = 15000;
+
 /**
- * Syncs stopped replay state for the current browser session.
- * Reports network failures to the console and does not roll back the stopped UI.
- * Use after stop/end so summary uses the visible transcript snapshot.
+ * Stops sending replay PCM and waits for the backend `finalized` event.
+ * The socket close makes the server run its final NeMo pass - the same path a
+ * live recording stop uses - and `handleRawSegment` calls `endReplay` when the
+ * `finalized` event arrives, so late transcript rows still render meanwhile.
+ * Use when replay audio ends, the user stops early, or the socket drops.
  */
-async function syncStoppedReplayOnServer(visibleSegments = [], options = {}) {
-    try {
-        await fetch(`/session/${CONFIG.sessionId}/replay/stop`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                visible_segments: visibleSegments,
-                audio_time_seconds: options.audioTimeSeconds ?? null,
-                was_completed: options.wasCompleted ?? false,
-            }),
-        });
-    } catch (stopSyncError) {
-        console.warn('Replay stop sync failed:', stopSyncError);
+function enterReplayDrain(reason) {
+    // A second drain request means the finalize wait is already running.
+    if (!isReplayActive || isReplayDraining) {
+        return;
     }
+
+    isReplayDraining = true;
+    replayDrainReason = reason;
+
+    // Completion streams the WAV tail; an early stop sends only heard audio.
+    if (reason === 'completed') {
+        wavStreamer?.finish();
+    } else {
+        wavStreamer?.flushHeard();
+    }
+
+    wavStreamer?.stop();
+    // Closing the socket tells the backend to finalize and publish `finalized`.
+    transcriptionSocket?.close();
+    setElementHidden('stopBtn', true);
+    setRecordingStatus('Finishing transcription...', 'color:var(--color-speaker-a);font-weight:500;');
+    replayDrainTimeout = setTimeout(endReplay, REPLAY_FINALIZE_TIMEOUT_MS);
 }
 
 /**
  * Finishes audio replay and reveals post-visit actions.
- * Use when the local WAV reaches the end or the visible transcript is complete.
+ * Use when the backend publishes `finalized` or the drain timeout fires.
  */
 function endReplay() {
-    revealReplaySegmentsUpToAudioTime(replayDuration + 0.2);
+    // The finalize event and the drain timeout can race; only one may finish the UI.
+    if (!isReplayActive) {
+        return;
+    }
+
+    clearTimeout(replayDrainTimeout);
+    replayDrainTimeout = null;
     isReplayActive = false;
+    isReplayDraining = false;
+    wavStreamer?.stop();
+    wavStreamer = null;
     clearReplayTimer();
     setReplayControlsBusy(false, 'Upload WAV');
     setElementHidden('startBtn', false);
     setElementHidden('stopBtn', true);
     setElementHidden('replayProgress', true);
-    setPlainStatus('Replay complete');
+    setPlainStatus(replayDrainReason === 'stopped' ? 'Replay stopped' : 'Replay complete');
+    replayDrainReason = null;
     revealPostVisitActions();
-    syncStoppedReplayOnServer(readVisibleTranscriptSegments(), {
-        audioTimeSeconds: replayDuration,
-        wasCompleted: true,
-    });
 }
 
 /**
@@ -769,13 +729,40 @@ function showSummaryFailure(detail) {
     });
     const fixNote = createElement('p', {
         className: 'text-xs',
-        text: 'The summary model looks unavailable. Check that Ollama (or Bedrock) is running and the agent container can reach it, then use Retry Summary. See README_STACK.md.',
+        text: 'The AI model is unavailable. Run  ./scripts/check-ai-model.sh  to start it, then use Retry Summary.',
         style: 'color:var(--text-subtle); margin:0; line-height:1.5',
     });
     summaryContent.replaceChildren(failureMessage, fixNote);
 
     // A page-level warning keeps the cause visible even when the summary panel is scrolled away.
-    showSystemBanner('AI model unavailable — summaries and speaker roles need Ollama or Bedrock reachable from the agent container. See README_STACK.md.');
+    showSystemBanner('AI model unavailable - run  ./scripts/check-ai-model.sh  to start it (or set ROLE_AGENT_MODEL_PROVIDER=bedrock).');
+}
+
+/**
+ * Pre-flight check that the off-GPU role/summary model is reachable.
+ * Returns true when a consultation may start; otherwise warns and returns false so the
+ * caller aborts, since transcribing without the model yields no roles and no summary.
+ */
+async function ensureAiModelAvailable() {
+    let available = false;
+    let detail = 'agent unreachable';
+    try {
+        const response = await fetch('/agent/model-health', { headers: { Accept: 'application/json' } });
+        const payload = await readJsonResponse(response, { available: false, detail: 'model health check failed' });
+        available = payload.available === true;
+        detail = payload.detail || detail;
+    } catch (modelHealthError) {
+        console.warn('Model health check failed:', modelHealthError);
+    }
+
+    if (!available) {
+        showSystemBanner('AI model unavailable - run  ./scripts/check-ai-model.sh  to start it (or set ROLE_AGENT_MODEL_PROVIDER=bedrock).');
+        setPlainStatus('AI model unavailable - consultation not started');
+        return false;
+    }
+
+    hideSystemBanner();
+    return true;
 }
 
 /**

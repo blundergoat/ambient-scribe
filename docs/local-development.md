@@ -16,7 +16,7 @@ docker compose up --build
 # Open http://localhost:48082
 ```
 
-First run builds the NeMo image and warms large model layers — this can take a while.
+First run builds the NeMo image and warms large model layers - this can take a while.
 
 ### Option B: Bare-metal (recommended for development)
 
@@ -47,7 +47,7 @@ Runs PHP and Python directly. Faster iteration, no container rebuilds.
 ```
 projects/
 ├── ambient-scribe/         # This repo
-└── strands-php-client/        # Required — local Composer path dependency
+└── strands-php-client/        # Required - local Composer path dependency
 ```
 
 ## Architecture
@@ -65,7 +65,7 @@ graph LR
     style Mercure stroke-dasharray: 5 5
 ```
 
-Mercure is optional (Docker Compose only) — without it, the app falls back to sync mode.
+Mercure is optional (Docker Compose only) - without it, the app falls back to sync mode.
 
 ### Docker Compose mode
 
@@ -94,7 +94,7 @@ If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST
 | **Ollama** | 11434 | `ollama serve` (started automatically if not running) |
 | **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on host port 48101 |
 | **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
-| **PHP app** | 48082 | PHP built-in server with 128M upload limits for PriMock replay WAVs |
+| **PHP app** | 48082 | PHP built-in server (demo replay streams WAV PCM to FastAPI directly, so no PHP upload path is involved) |
 
 Services talk via `localhost`, and `start-dev.sh` keeps the streaming path available by starting the agent and Mercure containers alongside the local PHP server.
 
@@ -108,13 +108,13 @@ cp .env.example .env
 
 ### Choosing a model provider
 
-#### Ollama (default — local, free)
+#### Ollama (default - local, free)
 
 No credentials needed. The model runs on your machine.
 
 ```env
 ROLE_AGENT_MODEL_PROVIDER=ollama
-ROLE_AGENT_OLLAMA_MODEL=qwen2.5:14b
+ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b
 ```
 
 #### AWS Bedrock (cloud)
@@ -139,7 +139,7 @@ Ollama provides local LLM inference for medical role attribution. The GPU is res
 Install from https://ollama.com, then pull the recommended model:
 
 ```bash
-ollama pull qwen2.5:14b
+ollama pull qwen3.5:9b
 ```
 
 `start-dev.sh` auto-starts Ollama if the binary is installed but the server is not running.
@@ -162,10 +162,10 @@ OLLAMA_HOST=http://ollama:11434
 
 | Model | RAM needed | Inference time (CPU, 64GB RAM) |
 |-------|-----------|-------------------------------|
-| `qwen2.5:7b` | ~8GB | ~15s per role inference |
-| `qwen2.5:14b` | ~16GB | ~30s per role inference |
+| `qwen3.5:9b` | ~8GB | default local demo model |
+| `qwen2.5:7b` | ~8GB | faster, lower quality fallback |
 
-These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously — transcript segments appear immediately, and Doctor/Patient labels update a few seconds later.
+These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously - transcript segments appear immediately, and Doctor/Patient labels update a few seconds later.
 
 ### Changing the Ollama model
 
@@ -175,9 +175,9 @@ Edit `.env`:
 ROLE_AGENT_OLLAMA_MODEL=mistral
 ```
 
-Good options: `qwen2.5:14b` (default, 9GB), `qwen2.5:7b` (5GB), `mistral` (4GB), `llama3.1` (4.7GB).
+Good options: `qwen3.5:9b` (default), `qwen2.5:7b` (5GB), `mistral` (4GB), `llama3.1` (4.7GB).
 
-Smaller models are faster but produce lower quality role attribution. The 14b model is a good balance for machines with 16GB+ RAM.
+Smaller models are faster but produce lower quality role attribution. The 9b default is a good balance for the local demo app.
 
 **For Docker Compose**: restart to pull the new model:
 
@@ -196,7 +196,7 @@ ROLE_AGENT_OLLAMA_MODEL=mistral ./scripts/start-dev.sh
 **To pull a model manually**:
 
 ```bash
-ollama pull qwen2.5:14b
+ollama pull qwen3.5:9b
 ```
 
 ### Other environment variables
@@ -330,7 +330,7 @@ The Ollama model hasn't been pulled yet:
 ollama list
 
 # Pull the configured model
-ollama pull qwen2.5:14b
+ollama pull qwen3.5:9b
 ```
 
 ### Python agent won't start (bare-metal)

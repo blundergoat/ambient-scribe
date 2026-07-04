@@ -1,10 +1,10 @@
 """
-Summary and replay-stop request helpers for browser-visible transcript text.
+Summary request helpers for browser-visible transcript text.
 
-The browser may stop demo audio before the WAV ends, then ask for a summary of
-only the transcript rows it actually revealed. These helpers normalise that
-browser snapshot, update session storage, and publish summary/hint outputs while
-keeping `server.py` focused on HTTP routing and status codes.
+The browser asks for a summary of the transcript rows the user can see. These
+helpers normalise that browser snapshot, update session storage, and publish
+summary/hint outputs while keeping `server.py` focused on HTTP routing and
+status codes.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ GenerateClinicalHints = Callable[[str], list[dict[str, str]]]
 
 class BrowserVisibleSegment(BaseModel):
     """
-    Transcript segment sent back from the browser-visible replay view.
+    Transcript segment sent back from the browser-visible transcript view.
 
-    Use when the user stops demo audio early and the server needs the same
-    transcript subset the user can see before generating a summary.
+    Use when the server needs the same transcript subset the user can see
+    before generating a summary.
     Empty text means the row is ignored because it would not help the note.
     """
 
@@ -41,26 +41,12 @@ class SummaryRequest(BaseModel):
     """
     Optional summary body containing browser-visible transcript text.
 
-    Use when the browser has replayed or stopped a WAV and the user asks for a
-    note from only the transcript currently on screen. Empty segments mean the
-    route should use the stored live-session transcript instead.
+    Use when the user asks for a note from only the transcript currently on
+    screen. Empty segments mean the route should use the stored session
+    transcript instead.
     """
 
     segments: list[BrowserVisibleSegment] = Field(default_factory=list)
-
-
-class ReplayStopRequest(BaseModel):
-    """
-    Optional replay-stop body containing the transcript revealed so far.
-
-    Use when the user stops or finishes demo audio and the backend needs the
-    same transcript snapshot before summary generation. Empty segments mean
-    the route only cancels any legacy replay task.
-    """
-
-    visible_segments: list[BrowserVisibleSegment] = Field(default_factory=list)
-    audio_time_seconds: float | None = None
-    was_completed: bool = False
 
 
 @dataclass(slots=True)
@@ -69,8 +55,8 @@ class SummaryContext:
     Transcript context selected for one summary request.
 
     Use in the FastAPI summary route after the clinician clicks Summarise.
-    Browser-visible sources mean replay stopped early; session-store sources
-    mean the user summarized the full live/stored transcript.
+    Browser-visible sources mean the UI sent the rows on screen; session-store
+    sources mean the user summarized the full stored transcript.
 
     Attributes:
         stored_segments: Rows selected for summary; empty means the user has no text.
@@ -99,7 +85,7 @@ def build_summary_context(
         SummaryContext with selected rows, text, and source label for logs.
     """
     browser_visible_segments = browser_visible_segments_from_summary(summary_request)
-    # Replay summaries use exactly the transcript the browser has revealed.
+    # Browser-provided rows summarize exactly the transcript the user can see.
     if browser_visible_segments:
         sessions.replace_segments(session_id, browser_visible_segments)
         return SummaryContext(
@@ -133,31 +119,13 @@ def browser_visible_segments_from_summary(
     return normalise_browser_visible_segments(summary_request.segments)
 
 
-def browser_visible_segments_from_replay_stop(
-    replay_stop_request: ReplayStopRequest | None,
-) -> list[dict[str, Any]]:
-    """Return visible transcript rows from a replay stop request.
-
-    Args:
-        replay_stop_request: Optional stop JSON; null means no visible rows were sent.
-
-    Returns:
-        Segment dicts with text; empty means backend history is left unchanged.
-    """
-    # Stop can still be called by older clients that only want task cancellation.
-    if replay_stop_request is None:
-        return []
-
-    return normalise_browser_visible_segments(replay_stop_request.visible_segments)
-
-
 def normalise_browser_visible_segments(
     browser_segments: list[BrowserVisibleSegment],
 ) -> list[dict[str, Any]]:
     """Convert browser-visible segment models into storage-safe dictionaries.
 
     Args:
-        browser_segments: Browser transcript rows; empty means no replay text is visible.
+        browser_segments: Browser transcript rows; empty means no text is visible.
 
     Returns:
         Segment dictionaries; rows with blank text are skipped for summary quality.

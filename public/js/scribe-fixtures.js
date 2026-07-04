@@ -6,9 +6,10 @@
 // =========================================================================
 
 /**
- * Plays generated consultation WAV files through the real replay pipeline.
- * Users click one row in the Demo Audio panel, then the existing replay route
- * transcribes the file with NeMo and the browser reveals rows from audio time.
+ * Plays generated consultation WAV files through the live streaming pipeline.
+ * Users click one row in the Demo Audio panel, then the browser streams the WAV
+ * as PCM over the same WebSocket the microphone uses and transcript rows arrive
+ * from Mercure as NeMo transcribes the audio the user has heard.
  */
 class AudioFixtureRunner {
     /**
@@ -21,9 +22,9 @@ class AudioFixtureRunner {
     }
 
     /**
-     * Fetches one fixture WAV and starts replay transcription.
+     * Fetches one fixture WAV and starts streaming replay transcription.
      * Use when a developer clicks a Demo Audio row.
-     * Reports fetch/upload errors in the row and keeps the transcript recoverable.
+     * Reports fetch/decode errors in the row and keeps the transcript recoverable.
      */
     async play(filename) {
         const audioFixture = this._audioFixtures.find((candidateFixture) => candidateFixture.filename === filename);
@@ -60,7 +61,7 @@ class AudioFixtureRunner {
             const replayAudioUrl = URL.createObjectURL(audioBlob);
             const didStart = await startReplay(replayFile, { audioUrl: replayAudioUrl });
 
-            // If the replay upload failed, startReplay already showed the main status error.
+            // If streaming replay could not start, startReplay already showed the status error.
             if (!didStart) {
                 this._markAudioFixture(filename, 'error', 'Replay failed');
                 this._activeFilename = null;

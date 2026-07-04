@@ -1,7 +1,8 @@
 // =========================================================================
 // Ambient Scribe streaming and microphone helpers.
 // Runs after shared page state is loaded and before recording controls.
-// Owns Mercure reconnect behavior, Web Audio PCM conversion, and audio level UI.
+// Owns Mercure reconnect behavior, Web Audio PCM conversion, demo WAV PCM
+// streaming, and audio level UI.
 // Users reach this code after starting a live consultation or replay feed.
 // =========================================================================
 
@@ -213,7 +214,7 @@ class PcmStreamer {
                 this._audioContext.sampleRate,
                 this._targetSampleRate
             );
-            const pcmChunk = this._floatTo16BitPcm(downsampledSamples);
+            const pcmChunk = floatTo16BitPcm(downsampledSamples);
 
             // Empty chunks mean there is no audio for the visible transcript yet.
             if (pcmChunk.byteLength === 0) {
@@ -333,20 +334,162 @@ class PcmStreamer {
         return outputBuffer;
     }
 
-    /**
-     * Converts floating-point samples into signed 16-bit PCM bytes.
-     * Use internally because the Python stream expects raw PCM chunks.
-     */
-    _floatTo16BitPcm(floatBuffer) {
-        const pcmBuffer = new Int16Array(floatBuffer.length);
+}
 
-        // Clamp each sample so clipping cannot overflow the PCM payload.
-        for (let sampleIndex = 0; sampleIndex < floatBuffer.length; sampleIndex++) {
-            const clampedSample = Math.max(-1, Math.min(1, floatBuffer[sampleIndex]));
-            pcmBuffer[sampleIndex] = clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff;
+/**
+ * Converts floating-point samples into signed 16-bit PCM bytes.
+ * Shared by microphone capture and demo WAV replay so both feeds honour
+ * the NEMO_STREAM_INPUT_FORMAT=pcm contract.
+ */
+function floatTo16BitPcm(floatBuffer) {
+    const pcmBuffer = new Int16Array(floatBuffer.length);
+
+    // Clamp each sample so clipping cannot overflow the PCM payload.
+    for (let sampleIndex = 0; sampleIndex < floatBuffer.length; sampleIndex++) {
+        const clampedSample = Math.max(-1, Math.min(1, floatBuffer[sampleIndex]));
+        pcmBuffer[sampleIndex] = clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff;
+    }
+
+    return new Uint8Array(pcmBuffer.buffer);
+}
+
+/**
+ * Decodes a demo WAV file into the 16 kHz mono PCM bytes NeMo expects.
+ * Use before replay streaming so the WAV enters the same PCM pipeline as
+ * the microphone. Throws when the browser cannot decode the file, which
+ * replay reports as a visible error.
+ */
+async function decodeWavToPcm(file) {
+    const wavBytes = await file.arrayBuffer();
+    // An offline context resamples during decode without opening an audible output.
+    const decodingContext = new OfflineAudioContext(1, 1, TARGET_AUDIO_SAMPLE_RATE);
+    const decodedBuffer = await decodingContext.decodeAudioData(wavBytes);
+
+    return {
+        pcmBytes: floatTo16BitPcm(mixToMonoSamples(decodedBuffer)),
+        durationSeconds: decodedBuffer.duration,
+    };
+}
+
+/**
+ * Mixes a decoded audio buffer down to one channel of samples.
+ * Use because manual WAV uploads can be stereo while NeMo expects mono.
+ */
+function mixToMonoSamples(decodedBuffer) {
+    // Generated fixtures are already mono and can stream without mixing.
+    if (decodedBuffer.numberOfChannels === 1) {
+        return decodedBuffer.getChannelData(0);
+    }
+
+    const monoSamples = new Float32Array(decodedBuffer.length);
+
+    // Averaging channels keeps both speakers audible in transcription.
+    for (let channelIndex = 0; channelIndex < decodedBuffer.numberOfChannels; channelIndex++) {
+        const channelSamples = decodedBuffer.getChannelData(channelIndex);
+
+        for (let sampleIndex = 0; sampleIndex < channelSamples.length; sampleIndex++) {
+            monoSamples[sampleIndex] += channelSamples[sampleIndex] / decodedBuffer.numberOfChannels;
+        }
+    }
+
+    return monoSamples;
+}
+
+/**
+ * Streams decoded demo WAV PCM over the live transcription socket.
+ * Users reach this by playing demo audio; pacing follows the audible replay
+ * clock so NeMo only receives audio the user has already heard, exactly as
+ * it would from a live microphone.
+ */
+class WavPcmStreamer {
+    /**
+     * Stores the replay audio element, PCM bytes, and chunk callback.
+     * Use once per demo replay session after the WAV is decoded.
+     */
+    constructor(audioElement, pcmBytes, options = {}) {
+        this._audioElement = audioElement;
+        this._pcmBytes = pcmBytes;
+        this._sampleRate = options.sampleRate ?? TARGET_AUDIO_SAMPLE_RATE;
+        this._chunkBytes = this._sampleRate * 2 * ((options.chunkMs ?? PCM_CHUNK_MS) / 1000);
+        this._onChunk = options.onChunk ?? (() => {});
+        this._sentBytes = 0;
+        this._pumpInterval = null;
+        this._boundPump = () => this.pump();
+    }
+
+    /**
+     * Starts following the replay audio clock.
+     * Use once the transcription socket is open and playback is starting.
+     */
+    start() {
+        this._audioElement?.addEventListener('timeupdate', this._boundPump);
+        // Background tabs throttle timeupdate events, so a coarse interval keeps chunks flowing.
+        this._pumpInterval = setInterval(this._boundPump, 250);
+    }
+
+    /**
+     * Sends every full chunk of audio the user has already heard.
+     * Use on audio clock ticks; forward seeks send the skipped span as a burst.
+     */
+    pump() {
+        const heardBytes = this._heardBytes();
+
+        // Full chunks keep the cadence the live microphone path uses.
+        while (heardBytes - this._sentBytes >= this._chunkBytes) {
+            this._sendUpTo(this._sentBytes + this._chunkBytes);
+        }
+    }
+
+    /**
+     * Sends the partial chunk heard before an early stop.
+     * Use so the transcript covers exactly the audio the user listened to.
+     */
+    flushHeard() {
+        this._sendUpTo(this._heardBytes());
+    }
+
+    /**
+     * Sends all remaining PCM after the WAV reaches its natural end.
+     * Use so the transcript tail is not lost to chunk-boundary rounding.
+     */
+    finish() {
+        this._sendUpTo(this._pcmBytes.byteLength);
+    }
+
+    /**
+     * Stops following the audio clock.
+     * Use on stop, completion, socket loss, or visit reset.
+     */
+    stop() {
+        this._audioElement?.removeEventListener('timeupdate', this._boundPump);
+        clearInterval(this._pumpInterval);
+        this._pumpInterval = null;
+    }
+
+    /**
+     * Converts the audible playback position into a PCM byte offset.
+     * Whole samples keep the byte offset aligned to 16-bit frames.
+     */
+    _heardBytes() {
+        const currentTimeSeconds = this._audioElement?.currentTime ?? 0;
+        const heardSamples = Math.floor(currentTimeSeconds * this._sampleRate);
+
+        return Math.min(heardSamples * 2, this._pcmBytes.byteLength);
+    }
+
+    /**
+     * Sends unsent PCM up to the requested byte offset.
+     * Backward seeks are ignored so NeMo never receives duplicate audio.
+     */
+    _sendUpTo(untilByte) {
+        // Nothing new means a pause, a backward seek, or an already-flushed tail.
+        if (untilByte <= this._sentBytes) {
+            return;
         }
 
-        return new Uint8Array(pcmBuffer.buffer);
+        const pcmChunk = this._pcmBytes.slice(this._sentBytes, untilByte);
+        this._sentBytes = untilByte;
+        this._onChunk(pcmChunk.buffer);
     }
 }
 
@@ -446,6 +589,6 @@ function showRoleIdentificationPending() {
     }
 
     badge.classList.remove('hidden');
-    badge.textContent = 'Identifying speakers...';
-    badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 recording-pulse';
+    badge.textContent = 'Identifying speakers…';
+    badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600';
 }

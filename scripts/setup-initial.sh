@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Setup Initial — First-time Docker-first setup for Ambient Scribe
+# Setup Initial - First-time Docker-first setup for Ambient Scribe
 # =============================================================================
 # Usage: ./scripts/setup-initial.sh [OPTIONS]
 #
@@ -74,7 +74,7 @@ warn() {
 
 header() {
     echo ""
-    echo -e "${BOLD}  Ambient Scribe — Initial Setup${RESET}"
+    echo -e "${BOLD}  Ambient Scribe - Initial Setup${RESET}"
     echo -e "  ${DIM}$(printf '─%.0s' {1..44})${RESET}"
     echo ""
 }
@@ -129,12 +129,12 @@ echo ""
 # Docker daemon
 step "Docker daemon"
 if ! command -v docker &>/dev/null; then
-    fail "not found — install Docker Engine or Docker Desktop"
+    fail "not found - install Docker Engine or Docker Desktop"
     echo ""
     echo -e "  ${RED}${BOLD}Cannot continue without Docker${RESET}"
     exit 1
 elif ! docker ps &>/dev/null 2>&1; then
-    fail "not running — start Docker Desktop or dockerd"
+    fail "not running - start Docker Desktop or dockerd"
     echo ""
     echo -e "  ${RED}${BOLD}Cannot continue without Docker${RESET}"
     exit 1
@@ -175,7 +175,7 @@ step "nvidia-smi"
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
 else
-    fail "not found — install NVIDIA drivers"
+    fail "not found - install NVIDIA drivers"
     echo -e "     ${DIM}WSL2: install the Windows NVIDIA driver (not the Linux one)${RESET}"
 fi
 
@@ -196,15 +196,15 @@ if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     if [[ $GPU_VRAM_MB -ge 12288 ]]; then
         pass "${vram_gb} GB (${GPU_VRAM_MB} MB)"
     else
-        fail "${vram_gb} GB — need >= 12 GB for NeMo (Sortformer + Parakeet)"
+        fail "${vram_gb} GB - need >= 12 GB for NeMo (Sortformer + Parakeet)"
     fi
 else
-    fail "cannot check — nvidia-smi not available"
+    fail "cannot check - nvidia-smi not available"
 fi
 
 if [[ $ERRORS -gt 0 ]]; then
     echo ""
-    echo -e "  ${RED}${BOLD}Cannot continue — ${ERRORS} preflight check(s) failed${RESET}"
+    echo -e "  ${RED}${BOLD}Cannot continue - ${ERRORS} preflight check(s) failed${RESET}"
     echo ""
     exit 1
 fi
@@ -253,7 +253,7 @@ print(f'{header}.{payload}.{sig}')
         export MERCURE_PUBLISHER_JWT="$JWT_PAYLOAD"
         pass "generated and saved to .env"
     else
-        fail "could not generate — install PHP or Python"
+        fail "could not generate - install PHP or Python"
     fi
 fi
 
@@ -263,7 +263,7 @@ echo ""
 # STEP 3: Build Docker Images
 # =============================================================================
 echo -e "  ${BOLD}Building Docker images${RESET}"
-echo -e "  ${DIM}NeMo image is large — first build takes 15-30 minutes${RESET}"
+echo -e "  ${DIM}NeMo image is large - first build takes 15-30 minutes${RESET}"
 echo ""
 
 if dc build --progress=tty 2>&1; then
@@ -339,7 +339,7 @@ else
             fail "composer install failed"
         fi
     else
-        warn "composer not found — skip host-side PHP deps"
+        warn "composer not found - skip host-side PHP deps"
     fi
 
     # Python venv + test deps
@@ -365,7 +365,7 @@ else
             warn "tests/python/requirements-dev.txt not found"
         fi
     else
-        warn "python3 not found — skip host-side Python deps"
+        warn "python3 not found - skip host-side Python deps"
     fi
 fi
 
@@ -382,7 +382,7 @@ HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://
 if [[ "$HTTP_CODE" == "200" ]]; then
     pass
 else
-    warn "HTTP ${HTTP_CODE} — may still be loading models"
+    warn "HTTP ${HTTP_CODE} - may still be loading models"
 fi
 
 step "/scribe (app)"

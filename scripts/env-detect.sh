@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# env-detect.sh — Shared environment context for ambient-scribe scripts
+# env-detect.sh - Shared environment context for ambient-scribe scripts
 # =============================================================================
 # Source this file from any script:
 #   source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"

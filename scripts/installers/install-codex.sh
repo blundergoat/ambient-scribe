@@ -15,7 +15,7 @@ echo -e "${CYAN}Starting Codex CLI installation process...${NC}"
 echo -e "${YELLOW}This will install Codex CLI from OpenAI${NC}"
 print_platform
 
-# macOS — prefer Homebrew
+# macOS - prefer Homebrew
 installed_via_brew="false"
 if [[ "$GOAT_OS" == "macOS" ]] && command_exists brew; then
     echo -e "\n${YELLOW}Homebrew detected. Installing via Homebrew...${NC}"

@@ -18,13 +18,13 @@ applyTo: 'strands_agents/**/*.py'
 strands_agents/
 ├── api/
 │   ├── __init__.py
-│   └── server.py              # FastAPI — /health, /transcribe/file, /ws/transcribe/{id}, /session/{id}/history
+│   └── server.py              # FastAPI - /health, /transcribe/file, /ws/transcribe/{id}, /session/{id}/history
 ├── agents/
 │   ├── __init__.py            # Agent package
 │   └── transcription_agent.py # Strands role inference agent (Bedrock or Ollama)
 ├── tools/
 │   └── assign_roles.py        # RoleMapping, RoleMappingState, per-session store
-├── nemo_pipeline.py           # NeMo Parakeet wrapper — Segment, TranscriptionResult, NemoPipeline
+├── nemo_pipeline.py           # NeMo Parakeet wrapper - Segment, TranscriptionResult, NemoPipeline
 ├── nemo_session.py            # AudioBuffer, TranscriptionSession
 ├── session.py                 # In-memory SessionStore for transcript history
 └── requirements.txt
@@ -44,7 +44,7 @@ strands_agents/
 - `snake_case` for functions, methods, variables, and modules
 - `PascalCase` for classes and Pydantic models
 - `UPPER_SNAKE_CASE` for module-level constants
-- Descriptive names — `session_store` not `ss`, `transcription_result` not `tr`
+- Descriptive names - `session_store` not `ss`, `transcription_result` not `tr`
 
 ## Architecture Patterns
 
@@ -56,10 +56,10 @@ strands_agents/
 
 ## API Contract
 
-- `POST /transcribe/file` — Upload a WAV file, returns batch transcription result
-- `WS /ws/transcribe/{session_id}` — Live audio streaming via WebSocket; binary audio frames in, transcription events out
-- `GET /session/{id}/history` — Returns transcript history for a session
-- `GET /health` — Returns `{ "status": "ok" }` (Docker healthcheck)
+- `POST /transcribe/file` - Upload a WAV file, returns batch transcription result
+- `WS /ws/transcribe/{session_id}` - Live audio streaming via WebSocket; binary audio frames in, transcription events out
+- `GET /session/{id}/history` - Returns transcript history for a session
+- `GET /health` - Returns `{ "status": "ok" }` (Docker healthcheck)
 
 Changes to Pydantic models or WebSocket message formats MUST be coordinated with the Symfony frontend (Twig template WebSocket/SSE handling).
 

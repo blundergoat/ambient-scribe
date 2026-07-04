@@ -57,7 +57,7 @@ When changing any layer, check:
 
 ## Git Hygiene
 
-- Keep commits atomic — one logical change per commit.
+- Keep commits atomic - one logical change per commit.
 - Don't mix formatting-only changes with behavioral changes.
 - Don't rewrite history unless explicitly asked.
 

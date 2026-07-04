@@ -452,8 +452,8 @@ async def _publish_provider_unavailable_once(
         {
             "type": "system_error",
             "message": (
-                "AI model unavailable — speaker roles and the summary need Ollama or "
-                "Bedrock reachable from the agent. See README_STACK.md."
+                "AI model unavailable - run  ./scripts/check-ai-model.sh  to start it "
+                "(or set ROLE_AGENT_MODEL_PROVIDER=bedrock)."
             ),
             "session_id": session_id,
         },

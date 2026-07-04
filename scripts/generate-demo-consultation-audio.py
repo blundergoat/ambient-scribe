@@ -674,13 +674,13 @@ def read_json_url(url: str) -> object:
         raise RuntimeError(f"could not read {url}: {exc}") from exc
 
 
-def primock57_replay_clip_seconds() -> float:
-    """Return the replay length used for PriMock57 demo clips.
+def primock57_replay_clip_seconds() -> float | None:
+    """Return the replay length cap used for PriMock57 demo clips.
 
     Returns:
-        Seconds of source audio mixed for the picker; zero would create no replay.
+        Seconds of source audio to keep, or None to mix the full consultation.
     """
-    return 90.0
+    return None
 
 
 def download_file(url: str, output_path: Path) -> None:
@@ -958,9 +958,8 @@ def primock57_manifest_entry(
             "patient_channel": "PATIENT",
         },
         "edge_case": (
-            f"First {int(primock57_replay_clip_seconds())} seconds of a PriMock57 "
-            "mock primary care consultation with separate doctor/patient "
-            "channels mixed to mono"
+            "Full-length PriMock57 mock primary care consultation with separate "
+            "doctor/patient channels mixed to mono"
         ),
         "duration_seconds": wav_duration_seconds(output_path),
         "clip_seconds": primock57_replay_clip_seconds(),

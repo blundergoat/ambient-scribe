@@ -125,7 +125,7 @@ test.describe("Reconnect functionality", () => {
 
     await expect(page.locator("#reconnectBtn")).toBeVisible();
 
-    // Click reconnect — it will try to start recording (will fail without mic,
+    // Click reconnect - it will try to start recording (will fail without mic,
     // but the button should hide and state should reset)
     // We need to handle the getUserMedia rejection
     await page.evaluate(() => {

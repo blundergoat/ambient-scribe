@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Start Dev — Daily lightweight startup for Ambient Scribe
+# Start Dev - Daily lightweight startup for Ambient Scribe
 # =============================================================================
 # Usage: ./scripts/start-dev.sh
 #
@@ -33,7 +33,7 @@
 #   APP_PORT_MAX   - Highest PHP app port to try (default: 48090)
 #   MERCURE_PORT   - Mercure hub port (default: 48137)
 #   OLLAMA_HOST    - Ollama URL (default: http://localhost:11434)
-#   OLLAMA_MODEL   - Model name (default: from .env or qwen2.5:14b)
+#   OLLAMA_MODEL   - Model name (default: from .env or qwen3.5:9b)
 #
 # Press Ctrl+C to stop all services and containers started by this script.
 # =============================================================================
@@ -52,7 +52,7 @@ MERCURE_PORT="${MERCURE_PORT:-48137}"
 # ── Role inference provider & Ollama defaults ──────────────────────
 MODEL_PROVIDER="${ROLE_AGENT_MODEL_PROVIDER:-${MODEL_PROVIDER:-ollama}}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:14b}}"
+OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen3.5:9b}}"
 
 # ── Ollama helpers ─────────────────────────────────────────────────
 detect_running_ollama_host() {
@@ -110,7 +110,7 @@ fail() {
 
 header() {
     echo ""
-    echo -e "${BOLD}  Ambient Scribe — Dev Server${RESET}"
+    echo -e "${BOLD}  Ambient Scribe - Dev Server${RESET}"
     echo -e "  ${DIM}$(printf '─%.0s' {1..44})${RESET}"
     echo ""
 }
@@ -134,7 +134,7 @@ wait_healthy() {
             return 0
         fi
 
-        # Containers without a HEALTHCHECK (e.g., Mercure) — treat "running" as ready
+        # Containers without a HEALTHCHECK (e.g., Mercure) - treat "running" as ready
         if [[ "$status" == "no-healthcheck" || "$status" == "none" ]]; then
             echo -ne "\r\033[K"
             echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}running (no healthcheck)${RESET}"
@@ -168,7 +168,7 @@ STARTUP_START=$SECONDS
 
 step "Docker daemon"
 if ! command -v docker &>/dev/null || ! docker ps &>/dev/null 2>&1; then
-    fail "not running — start Docker Desktop or dockerd"
+    fail "not running - start Docker Desktop or dockerd"
     echo ""
     exit 1
 else
@@ -345,7 +345,7 @@ echo ""
 export MODEL_PROVIDER
 NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
 
-# GPU is required — NeMo transcription is the core feature
+# GPU is required - NeMo transcription is the core feature
 if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
     echo -e "  ${FAIL} ${RED}NVIDIA GPU required for NeMo transcription${RESET}"
     echo -e "     ${DIM}Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/${RESET}"
@@ -393,7 +393,7 @@ step ".env file"
 if [[ -f "$REPO_ROOT/.env" ]]; then
     pass
 else
-    fail "not found — run: cp .env.example .env"
+    fail "not found - run: cp .env.example .env"
     echo ""
     exit 1
 fi
@@ -402,9 +402,9 @@ step "nvidia-smi"
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
 elif [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
-    echo -e "${WARN}  ${DIM}no GPU — using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
+    echo -e "${WARN}  ${DIM}no GPU - using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
 else
-    fail "not found — GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
+    fail "not found - GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
     echo ""
     exit 1
 fi
@@ -424,7 +424,7 @@ ALL_RUNNING=false
 step "Containers"
 if [[ "$RUNNING_COUNT" -eq "$EXPECTED_COUNT" && "$EXPECTED_COUNT" -gt 0 ]]; then
     ALL_RUNNING=true
-    pass "all ${RUNNING_COUNT}/${EXPECTED_COUNT} running — skipping to health checks"
+    pass "all ${RUNNING_COUNT}/${EXPECTED_COUNT} running - skipping to health checks"
 else
     pass "${RUNNING_COUNT}/${EXPECTED_COUNT} running"
 fi
@@ -449,7 +449,7 @@ if [[ "$ALL_RUNNING" == "false" ]]; then
 
     if [[ "$MISSING" == "true" ]]; then
         step "Build strategy"
-        fail "images missing — run ./scripts/setup-initial.sh for first-time setup"
+        fail "images missing - run ./scripts/setup-initial.sh for first-time setup"
         echo ""
         exit 1
     fi
@@ -520,5 +520,5 @@ dc logs -f nemo-agent 2>&1 | while IFS= read -r line; do
 done &
 TAIL_PID=$!
 
-# Wait — Ctrl+C triggers cleanup
+# Wait - Ctrl+C triggers cleanup
 wait $TAIL_PID 2>/dev/null

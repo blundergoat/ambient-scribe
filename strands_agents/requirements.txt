@@ -2,24 +2,24 @@
 # Python Dependencies for the Ambient Scribe Agent
 # =============================================================================
 #
-# strands-agents[ollama] — The Strands AI SDK with Ollama model support.
+# strands-agents[ollama] - The Strands AI SDK with Ollama model support.
 #                          Used for the role inference agent (DOCTOR/PATIENT
 #                          attribution). NOT used for NeMo transcription.
 #
-# fastapi                — Web framework for HTTP + WebSocket endpoints.
+# fastapi                - Web framework for HTTP + WebSocket endpoints.
 #
-# uvicorn[standard]      — ASGI server (uvloop + httptools for performance).
+# uvicorn[standard]      - ASGI server (uvloop + httptools for performance).
 #
-# pydantic               — Request/response validation for FastAPI.
+# pydantic               - Request/response validation for FastAPI.
 #
-# httpx                  — Async HTTP client for publishing to Mercure.
+# httpx                  - Async HTTP client for publishing to Mercure.
 #
-# websockets             — WebSocket support for FastAPI (required for ws:// endpoints).
+# websockets             - WebSocket support for FastAPI (required for ws:// endpoints).
 #
-# sse-starlette          — Server-Sent Events support for FastAPI.
+# sse-starlette          - Server-Sent Events support for FastAPI.
 #                          Used for streaming role inference results to PHP.
 #
-# numpy / soundfile      — Used by nemo_pipeline.py for PCM buffer → WAV conversion.
+# numpy / soundfile      - Used by nemo_pipeline.py for PCM buffer → WAV conversion.
 #                          Pre-installed in the NeMo Docker image; listed here for
 #                          local dev outside Docker.
 #

@@ -10,8 +10,8 @@ The transcription pipeline produces outputs at different speeds: raw transcripti
 ## Decision
 
 - Three Mercure topics per session: `scribe/session/{id}/raw`, `scribe/session/{id}/roles`, and `scribe/session/{id}/summary`
-- Raw segments published immediately after NeMo inference — the hot path
-- Role updates published asynchronously after Strands agent inference — decoupled from hot path
+- Raw segments published immediately after NeMo inference - the hot path
+- Role updates published asynchronously after Strands agent inference - decoupled from hot path
 - Summary updates published when the session summary endpoint completes
 - Browser subscribes to topics independently
 

@@ -1,5 +1,5 @@
 """
-Strands role inference agent — assigns DOCTOR/PATIENT roles to transcript segments.
+Strands role inference agent - assigns DOCTOR/PATIENT roles to transcript segments.
 
 =============================================================================
 WHAT THIS FILE DOES
@@ -54,11 +54,11 @@ from functools import lru_cache
 logger = logging.getLogger(__name__)
 
 # Model configuration for the role inference agent
-# NeMo owns the GPU — this agent uses Bedrock or CPU-only Ollama
+# NeMo owns the GPU - this agent uses Bedrock or CPU-only Ollama
 ROLE_AGENT_MODEL_PROVIDER = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
 ROLE_AGENT_MODEL_ID = os.environ.get(
     "ROLE_AGENT_MODEL_ID",
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "au.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
 _SHARED_EDGE_CASES = """
@@ -117,7 +117,7 @@ def create_role_inference_agent():
     """Create a Strands Agent for role inference.
 
     Returns a configured agent that uses Bedrock or CPU-only Ollama
-    (never GPU — NeMo owns the GPU).
+    (never GPU - NeMo owns the GPU).
 
     Returns:
         A Strands Agent configured for role inference.
@@ -163,7 +163,7 @@ def _create_role_agent_model():
 
         return OllamaModel(
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen2.5:14b"),
+            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b"),
             max_tokens=1024,
         )
     else:

@@ -26,7 +26,7 @@ class AudioBuffer:
 
     The buffer strategy (growing vs sliding window vs hybrid) is determined
     by the Milestone 1 buffer spike. This implementation starts with a simple
-    growing buffer — replace with the chosen strategy after benchmarking.
+    growing buffer - replace with the chosen strategy after benchmarking.
     """
 
     def __init__(self, max_duration_seconds: float = 900.0) -> None:
@@ -98,7 +98,7 @@ class TranscriptionSession:
     """Manages WebM accumulation and NeMo processing across WebSocket chunks.
 
     One instance per WebSocket connection. References the shared NemoPipeline
-    singleton — does NOT load models.
+    singleton - does NOT load models.
 
     Audio strategy (growing buffer):
       - Accumulates raw WebM bytes from the browser (first chunk has container header)
@@ -151,7 +151,7 @@ class TranscriptionSession:
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
         """Process a single audio chunk through the NeMo pipeline.
 
-        SYNCHRONOUS — must be called via run_in_executor().
+        SYNCHRONOUS - must be called via run_in_executor().
 
         Flow:
           1. Append WebM bytes to accumulator

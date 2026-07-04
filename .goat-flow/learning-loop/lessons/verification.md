@@ -5,7 +5,19 @@ last_reviewed: 2026-07-04
 
 # READ / SCOPE / VERIFY Lessons
 
-## Lesson: Audio format mismatch — read both pipeline ends (2026-03-21)
+## Lesson: Guard shared socket handlers against stale-socket events (2026-07-05)
+
+While converting demo replay to stream over the live WebSocket, the shared `onclose` handler gained a replay branch (`public/js/scribe-recording.js`, search: "A drop of the replay's own socket"). Self-review before runtime caught a race: starting a replay while a live recording is active closes the OLD socket, and if that close event fires after `isReplayActive` becomes true, the handler would have stopped the brand-new replay. Fixed by requiring `event.target === transcriptionSocket` before treating a close as the replay's own.
+
+**Lesson:** When one event handler serves sockets that are replaced across session transitions, compare `event.target` against the current socket before acting — flags like `isReplayActive` describe the NEW session, not the socket that emitted the event.
+
+## Lesson: Verify the running container's env, not the compose default (2026-07-04)
+
+After changing the `docker-compose.yml` default to `OLLAMA_HOST=http://ollama:11434`, one `docker compose up -d` showed the agent with the fixed value, so the "agent can't reach Ollama" bug was declared fixed. But the user's own `start-dev.sh` (`dc up -d`) recreated the agent with `OLLAMA_HOST=http://host.docker.internal:11434` - because `.env` sets it and `${OLLAMA_HOST:-…}` lets `.env` override the compose default. Summaries kept returning 502 and role inference kept falling back to the heuristic on every recreate.
+
+**Lesson:** For env-driven behaviour, verify the RUNNING container's effective value (`docker compose exec <svc> sh -c 'echo $VAR'`) after the user's own startup path - not the compose file, and not a single ad-hoc recreate. `.env` overrides `${VAR:-default}`, so a stale `.env` silently reintroduces the bug. When a value must not be overridable, pin the literal in compose. Related footgun: `.goat-flow/learning-loop/footguns/role-agent.md`.
+
+## Lesson: Audio format mismatch - read both pipeline ends (2026-03-21)
 
 AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while the browser MediaRecorder sent WebM/Opus. NeMo received garbage audio and produced nonsensical transcriptions with no errors in logs. Root cause was found only after reading both `templates/scribe/index.html.twig` (producer) and `strands_agents/nemo_session.py` (consumer).
 
@@ -15,7 +27,7 @@ AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while 
 
 "How does session cleanup work?" was treated as a directive to implement changes to session cleanup. The SCOPE step should have identified this as a question and kept the agent in Explain mode.
 
-**Lesson:** Questions get explanations, not edits — do NOT migrate to Implement mode unless a Directive is issued.
+**Lesson:** Questions get explanations, not edits - do NOT migrate to Implement mode unless a Directive is issued.
 
 ## Lesson: Stale references after rename (2026-03-21)
 

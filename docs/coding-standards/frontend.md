@@ -1,4 +1,4 @@
-# Frontend — Ambient Scribe
+# Frontend - Ambient Scribe
 
 Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig template (`templates/scribe/index.html.twig`). No bundler, no npm build step. Tailwind CSS loaded from `public/js/tailwind.js`.
 

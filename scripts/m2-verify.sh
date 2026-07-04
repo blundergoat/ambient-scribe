@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# M2 Verification — Pipeline Smoke Tests for Ambient Scribe
+# M2 Verification - Pipeline Smoke Tests for Ambient Scribe
 # =============================================================================
 # Usage: ./scripts/m2-verify.sh [OPTIONS]
 #
@@ -16,9 +16,9 @@
 #
 # What this tests (M2 exit criteria from .goat-flow/plans/):
 #   1. NeMo models loaded at startup (structlog marker in logs)
-#   2. POST /transcribe/file — upload WAV, get speaker-attributed segments
+#   2. POST /transcribe/file - upload WAV, get speaker-attributed segments
 #   3. /health responds during active transcription (event loop not blocked)
-#   4. /session/{id}/history — returns segments after transcription
+#   4. /session/{id}/history - returns segments after transcription
 #   5. WebSocket connect → send chunk → disconnect → finalize (optional)
 #   6. Mercure reachable from nemo-agent container
 #   7. VRAM usage within budget after inference
@@ -74,7 +74,7 @@ check() {
 
 # ── Header ────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  Ambient Scribe — M2 Pipeline Verification${RESET}"
+echo -e "${BOLD}  Ambient Scribe - M2 Pipeline Verification${RESET}"
 echo -e "  ${DIM}$(printf '─%.0s' {1..50})${RESET}"
 
 # ═════════════════════════════════════════════════════════════════
@@ -88,7 +88,7 @@ HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "$NEMO_U
 if [[ "$HTTP_CODE" == "200" ]]; then
     check "nemo-agent reachable" "pass" "HTTP $HTTP_CODE"
 else
-    check "nemo-agent reachable" "fail" "HTTP $HTTP_CODE — run ./scripts/start-dev.sh -b first"
+    check "nemo-agent reachable" "fail" "HTTP $HTTP_CODE - run ./scripts/start-dev.sh -b first"
     echo ""
     exit 1
 fi
@@ -148,7 +148,7 @@ else
         if [[ "$SEG_COUNT" -gt 0 ]]; then
             check "Segments returned" "pass" "$SEG_COUNT segments"
         else
-            check "Segments returned" "fail" "0 segments — NeMo produced no output"
+            check "Segments returned" "fail" "0 segments - NeMo produced no output"
         fi
 
         if [[ "$RETURNED_SID" == "$SESSION_ID" ]]; then
@@ -210,7 +210,7 @@ HEALTH_MS=$(( (SECONDS - HEALTH_START) * 1000 ))
 if [[ "$HEALTH_CODE" == "200" ]]; then
     check "/health during inference" "pass" "HTTP $HEALTH_CODE (${HEALTH_MS}ms)"
 else
-    check "/health during inference" "fail" "HTTP $HEALTH_CODE — event loop may be blocked"
+    check "/health during inference" "fail" "HTTP $HEALTH_CODE - event loop may be blocked"
 fi
 
 # Clean up background job
@@ -250,12 +250,12 @@ echo ""
 if [[ "$SKIP_WS" == "true" ]]; then
     check "WebSocket test" "warn" "skipped (--skip-ws)"
 elif ! command -v websocat &>/dev/null; then
-    check "WebSocket test" "warn" "websocat not installed — install: cargo install websocat"
+    check "WebSocket test" "warn" "websocat not installed - install: cargo install websocat"
 else
     WS_SID="m2-ws-$(date +%s)"
 
     # Connect, send a small audio chunk (first few KB of the WAV), then disconnect
-    # We send raw bytes — NeMo expects WebM/Opus, but this tests the lifecycle
+    # We send raw bytes - NeMo expects WebM/Opus, but this tests the lifecycle
     # (connect → receive bytes → disconnect → finalize)
     WS_OUTPUT=$(timeout 15 bash -c "
         head -c 8192 '$WAV_FILE' | websocat -b --no-close 'ws://localhost:8001/ws/transcribe/$WS_SID' 2>&1
@@ -291,7 +291,7 @@ if find_container "$NEMO_CONTAINER"; then
     if [[ "$MERCURE_CODE" =~ ^(200|401|400)$ ]]; then
         check "nemo-agent → Mercure" "pass" "HTTP $MERCURE_CODE"
     else
-        check "nemo-agent → Mercure" "fail" "HTTP $MERCURE_CODE — segments won't reach the browser"
+        check "nemo-agent → Mercure" "fail" "HTTP $MERCURE_CODE - segments won't reach the browser"
     fi
 else
     check "nemo-agent → Mercure" "fail" "nemo-agent container not running"
@@ -313,9 +313,9 @@ if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     if [[ $VRAM_PCT -le 85 ]]; then
         check "VRAM usage" "pass" "${VRAM_USED}/${VRAM_TOTAL} MB (${VRAM_PCT}%)"
     elif [[ $VRAM_PCT -le 95 ]]; then
-        check "VRAM usage" "warn" "${VRAM_USED}/${VRAM_TOTAL} MB (${VRAM_PCT}%) — close to limit"
+        check "VRAM usage" "warn" "${VRAM_USED}/${VRAM_TOTAL} MB (${VRAM_PCT}%) - close to limit"
     else
-        check "VRAM usage" "fail" "${VRAM_USED}/${VRAM_TOTAL} MB (${VRAM_PCT}%) — may OOM on longer audio"
+        check "VRAM usage" "fail" "${VRAM_USED}/${VRAM_TOTAL} MB (${VRAM_PCT}%) - may OOM on longer audio"
     fi
 else
     check "VRAM usage" "warn" "nvidia-smi not available on host"
@@ -350,11 +350,11 @@ echo -e "  ${DIM}$(printf '─%.0s' {1..50})${RESET}"
 echo ""
 
 if [[ $FAILED -eq 0 && $WARNINGS -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}M2 VERIFIED — All ${TOTAL} checks passed${RESET}"
+    echo -e "  ${GREEN}${BOLD}M2 VERIFIED - All ${TOTAL} checks passed${RESET}"
 elif [[ $FAILED -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}M2 VERIFIED${RESET} — ${GREEN}${PASSED} passed${RESET}, ${YELLOW}${WARNINGS} warning(s)${RESET}  ${DIM}(${TOTAL} total)${RESET}"
+    echo -e "  ${GREEN}${BOLD}M2 VERIFIED${RESET} - ${GREEN}${PASSED} passed${RESET}, ${YELLOW}${WARNINGS} warning(s)${RESET}  ${DIM}(${TOTAL} total)${RESET}"
 else
-    echo -e "  ${RED}${BOLD}M2 NOT VERIFIED${RESET} — ${RED}${FAILED} failed${RESET}, ${GREEN}${PASSED} passed${RESET}, ${YELLOW}${WARNINGS} warning(s)${RESET}  ${DIM}(${TOTAL} total)${RESET}"
+    echo -e "  ${RED}${BOLD}M2 NOT VERIFIED${RESET} - ${RED}${FAILED} failed${RESET}, ${GREEN}${PASSED} passed${RESET}, ${YELLOW}${WARNINGS} warning(s)${RESET}  ${DIM}(${TOTAL} total)${RESET}"
 fi
 
 echo ""

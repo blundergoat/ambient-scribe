@@ -2,7 +2,7 @@
 FastAPI routes for the Ambient Medical Scribe.
 
 This module keeps the browser-facing API surface: file upload, live WebSocket
-recording, session history, role overrides, summaries, replay, and health.
+recording, session history, role overrides, summaries, and health.
 Workflow helpers own the longer queue and streaming loops so these routes stay
 focused on what the clinician sees in the transcript and summary UI.
 """
@@ -44,20 +44,11 @@ from api.agent_observability import (
     configure_strands_telemetry as _configure_strands_telemetry,
 )
 from api.mercure_publisher import did_publish_mercure_event
-from api.replay_session import (
-    ReplayServices,
-    did_cancel_replay,
-    replay_segments,
-    replay_tasks,
-    start_replay_upload,
-)
 from api.role_heuristics import heuristic_role_inference as _heuristic_role_inference
 from api.streaming_session import StreamingServices, transcribe_stream_session
 from api.summary_request import (
-    ReplayStopRequest,
     SummaryRequest,
     build_summary_context,
-    browser_visible_segments_from_replay_stop,
     publish_summary_outputs,
 )
 from nemo_pipeline import NemoPipeline
@@ -75,7 +66,7 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# CORRELATION ID — request-scoped tracing
+# CORRELATION ID - request-scoped tracing
 # =============================================================================
 
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
@@ -204,7 +195,7 @@ _mercure_event_ids: dict[str, int] = {}
 
 
 # =============================================================================
-# LIFESPAN — Load NeMo models once at startup
+# LIFESPAN - Load NeMo models once at startup
 # =============================================================================
 
 
@@ -303,7 +294,7 @@ def create_storage_backend() -> StorageBackend:
     return SessionStore()
 
 
-# Transcript storage — in-memory (default) or SQLite (SESSION_STORAGE=sqlite)
+# Transcript storage - in-memory (default) or SQLite (SESSION_STORAGE=sqlite)
 sessions: StorageBackend = create_storage_backend()
 
 # Coordinated session lifecycle (replaces bare active_sessions dict)
@@ -406,24 +397,6 @@ def _streaming_services() -> StreamingServices:
     )
 
 
-def _replay_services() -> ReplayServices:
-    """Bundle current server callbacks for uploaded demo replay.
-
-    Returns:
-        Services using the current NeMo pipeline, publisher, and role queue so
-        replay behaves like the live transcript the browser already understands.
-    """
-    return ReplayServices(
-        pipeline=app.state.nemo_pipeline,
-        executor=nemo_executor,
-        sessions=sessions,
-        get_running_loop=asyncio.get_running_loop,
-        publish_to_mercure=publish_to_mercure,
-        enqueue_role_inference=enqueue_role_inference,
-        mercure_event_ids=_mercure_event_ids,
-    )
-
-
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -437,7 +410,8 @@ async def transcribe_file(
 ) -> TranscribeFileResponse:
     """Upload a WAV file and get a complete transcript.
 
-    Batch mode entry point for testing and demo replay.
+    Batch mode entry point for tests and offline tooling; the browser demo
+    streams WAV PCM through the live WebSocket route instead.
 
     Args:
         file: WAV file upload (16kHz mono PCM expected)
@@ -453,7 +427,7 @@ async def transcribe_file(
     if session_id_query or session_id_form:
         _validate_session_id(resolved_session_id)
 
-    # Uploaded demo audio is saved briefly so NeMo can read it like a normal file.
+    # Uploaded audio is saved briefly so NeMo can read it like a normal file.
     scratch_file_handle = tempfile.NamedTemporaryFile(
         suffix=".wav", prefix="scribe_", delete=False
     )
@@ -664,11 +638,11 @@ async def generate_summary(
 
     Triggered by the frontend when the user ends a session. Runs the summary
     agent against role-attributed transcript text and publishes the result to
-    Mercure. Demo replay may pass only the browser-visible text after early stop.
+    Mercure. The browser may pass only its visible transcript rows.
 
     Args:
         session_id: UUID for the finished recording the user wants summarized.
-        summary_request: Optional visible replay transcript; null uses stored session text.
+        summary_request: Optional browser-visible transcript; null uses stored session text.
 
     Returns:
         SOAP-style summary sections for the browser summary panel.
@@ -750,95 +724,11 @@ async def generate_summary(
     return {"session_id": session_id, **summary, "clinical_hints": clinical_hints}
 
 
-_replay_tasks = replay_tasks
-
-
-@app.post("/session/{session_id}/replay")
-async def replay_file(
-    session_id: str,
-    file: UploadFile,
-    speed: float = Query(1.0, ge=0.25, le=10.0),
-) -> dict:
-    """Prepare a WAV file for browser-audio-clock replay.
-
-    Processes the WAV through NeMo in batch, stores the transcript for role
-    inference/history, and returns segments for the browser to reveal from audio time.
-
-    Args:
-        session_id: UUID for the browser replay session.
-        file: WAV file the user selected in the demo replay control.
-        speed: Legacy replay speed parameter; browser audio now owns visible pacing.
-
-    Returns:
-        Replay metadata and segment list; zero segments means no transcript will appear.
-    """
-    _validate_session_id(session_id)
-    return await start_replay_upload(session_id, file, speed, _replay_services())
-
-
-@app.post("/session/{session_id}/replay/stop")
-async def stop_replay_file(
-    session_id: str,
-    replay_stop_request: ReplayStopRequest | None = None,
-) -> dict:
-    """Stop an in-progress demo replay for the visible browser session.
-
-    Args:
-        session_id: UUID for the browser replay session the user stopped.
-        replay_stop_request: Optional visible rows captured at the audio stop time.
-
-    Returns:
-        Cancellation status; false means replay had already ended or was not running.
-    """
-    _validate_session_id(session_id)
-    was_cancelled = did_cancel_replay(session_id)
-    visible_segments = browser_visible_segments_from_replay_stop(replay_stop_request)
-    # Early stop should make backend history match what the user actually heard.
-    if visible_segments:
-        sessions.replace_segments(session_id, visible_segments)
-
-    replay_stop_audio_time_seconds = (
-        replay_stop_request.audio_time_seconds if replay_stop_request else None
-    )
-    replay_stop_was_completed = (
-        replay_stop_request.was_completed if replay_stop_request else False
-    )
-    logger.info(
-        "replay.stop_requested cancelled=%s visible_segments=%s audio_time_seconds=%s completed=%s",
-        was_cancelled,
-        len(visible_segments),
-        replay_stop_audio_time_seconds,
-        replay_stop_was_completed,
-        extra={
-            "session_id": session_id,
-            "cancelled": was_cancelled,
-            "visible_segments": len(visible_segments),
-            "audio_time_seconds": replay_stop_audio_time_seconds,
-            "was_completed": replay_stop_was_completed,
-        },
-    )
-
-    return {
-        "session_id": session_id,
-        "cancelled": was_cancelled,
-        "visible_segments": len(visible_segments),
-    }
-
-
-async def _replay_segments(
-    session_id: str,
-    segments: list[dict[str, Any]],
-    speed: float,
-) -> None:
-    """Replay segments through the current server seams used by tests and UI."""
-    await replay_segments(session_id, segments, speed, _replay_services())
-
-
 @app.api_route("/session/{session_id}/roles", methods=["GET", "POST"])
 async def roles_snapshot(session_id: str) -> dict:
     """Return the current role mapping for a session.
 
-    Quick lookup — no inference, just the last known state.
+    Quick lookup - no inference, just the last known state.
     Accepts both GET and POST (PHP StrandsClient uses postJson).
 
     Args:
@@ -1032,3 +922,41 @@ async def health():
         "service": "ambient-scribe-agent",
         "models_loaded": pipeline.is_loaded,
     }
+
+
+def _summary_model_reachable() -> tuple[bool, str]:
+    """Best-effort reachability check for the off-GPU role/summary model.
+
+    Used by the browser pre-flight so a consultation is not started when roles
+    and the summary would fail. Ollama is verified by listing tags; other
+    providers (Bedrock) cannot be cheaply probed here and are assumed configured.
+
+    Returns:
+        (available, detail) - detail is a short reason shown to the clinician.
+    """
+    provider = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+    if provider != "ollama":
+        return True, provider
+    host = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
+    model = os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
+    try:
+        response = httpx.get(f"{host}/api/tags", timeout=4.0)
+        response.raise_for_status()
+        names = [entry.get("name", "") for entry in response.json().get("models", [])]
+        if any(model.split(":")[0] in name for name in names):
+            return True, f"ollama:{model}"
+        return False, f"model '{model}' is not pulled"
+    except Exception as exc:
+        return False, f"ollama unreachable ({type(exc).__name__})"
+
+
+@app.get("/agent/model-health")
+async def agent_model_health() -> dict:
+    """Report whether the off-GPU role/summary model can be reached.
+
+    The browser calls this before starting a consultation so it does not
+    transcribe when DOCTOR/PATIENT roles and the summary would fail.
+    """
+    loop = asyncio.get_running_loop()
+    available, detail = await loop.run_in_executor(None, _summary_model_reachable)
+    return {"available": available, "detail": detail}

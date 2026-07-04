@@ -1,11 +1,11 @@
 """
-Strands summary agent — generates structured session summaries.
+Strands summary agent - generates structured session summaries.
 
 Triggered when a session ends ("End Session" button). Receives the full
 role-attributed medical transcript and produces a SOAP note with Subjective,
 Objective, Assessment, and Plan sections.
 
-GPU CONSTRAINT: Same as the role agent — Bedrock or CPU-only Ollama.
+GPU CONSTRAINT: Same as the role agent - Bedrock or CPU-only Ollama.
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 SUMMARY_AGENT_MODEL_PROVIDER = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
 SUMMARY_AGENT_MODEL_ID = os.environ.get(
     "ROLE_AGENT_MODEL_ID",
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "au.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
 _SHARED_SUMMARY_RULES = """
 Rules:
 - Cite transcript timestamps in square brackets, e.g. [02:15-02:30].
-- Keep the summary concise — aim for 200-400 words.
+- Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
 - If the transcript is too short or uninformative, say so briefly rather than inventing content.
 - Respond with valid JSON only. No text outside the JSON.
@@ -62,7 +62,7 @@ def create_summary_agent():
     """Create a Strands Agent for session summary generation.
 
     Uses the same model provider as the role inference agent
-    (Bedrock or CPU-only Ollama — never GPU).
+    (Bedrock or CPU-only Ollama - never GPU).
 
     Returns:
         A Strands Agent configured for summary generation.
@@ -107,7 +107,7 @@ def _create_summary_model():
 
         return OllamaModel(
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen2.5:14b"),
+            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b"),
             max_tokens=2048,
         )
     else:

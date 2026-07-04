@@ -45,9 +45,9 @@ visible transcript to make the generated summary and review sidebar more useful.
 Together they make the app feel less like a generic speech demo and more like a
 medical documentation workspace.
 
-## M11: Medical Phrase Normalisation
+## Medical Phrase Normalisation
 
-M11's long-term target is NeMo decode-time phrase boosting for the multitalker
+NeMo decode-time phrase boosting for the multitalker
 transducer model. That exact GPU-container API is still pending proof.
 
 What is shipped now is deliberately narrower: an opt-in post-ASR correction
@@ -108,9 +108,9 @@ replacement only. It does not fuzzy-match random words into clinical terms.
 - Before/after clinical ASR accuracy on real GPU replay remains human-pending.
 - This feature should stay off for baseline ASR comparisons.
 
-## M12: Clinical RAG And Hints
+## Clinical RAG And Hints
 
-M12 adds the assistive layer around the completed consultation: summary
+Assistive layer around the completed consultation: summary
 grounding plus structured hints. It is CPU-only and rule-based for the current
 PoC.
 
@@ -118,10 +118,8 @@ PoC.
 
 After a consult is summarised, the UI can show:
 
-- a SOAP-style summary that had access to short, relevant documentation
-  reminders;
-- a dismissible clinical hints sidebar when the transcript matches a simple
-  review rule;
+- a SOAP-style summary that had access to short, relevant documentation reminders;
+- a dismissible clinical hints sidebar when the transcript matches a simple review rule;
 - no sidebar at all when there are no useful hints.
 
 Hints are suggestions for clinician review. They do not diagnose, prescribe,

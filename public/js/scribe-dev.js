@@ -258,6 +258,23 @@ class DevPanel {
     }
 
     /**
+     * Shows whether the browser has a live Mercure feed, in the dev-panel header.
+     * Use each refresh tick so the clinician/dev sees the transcript feed connection state.
+     */
+    updateConnectionStatus() {
+        const statusElement = document.getElementById('devConnectionStatus');
+
+        // Production pages without the dev panel have no indicator to update.
+        if (!statusElement) {
+            return;
+        }
+
+        const connected = typeof streams !== 'undefined' && !!streams && streams.isConnected;
+        statusElement.textContent = connected ? '● connected' : '○ disconnected';
+        statusElement.classList.toggle('dev-panel__status--on', connected);
+    }
+
+    /**
      * Instruments the active WebSocket once for dev metrics.
      * Use when a live socket exists and the WS tab needs byte counts.
      */
@@ -295,6 +312,7 @@ class DevPanel {
     refreshState() {
         this._instrumentWs();
         this.updateWsStatus();
+        this.updateConnectionStatus();
         const stateElement = document.getElementById('devStateSnapshot');
 
         // Only update the state tab while it is visible to reduce DOM churn.
@@ -480,7 +498,7 @@ function audioFixtureSubLabel(audioFixture) {
     const speakerText = Array.isArray(audioFixture.speakers)
         ? audioFixture.speakers.join(' / ').toLowerCase()
         : '';
-    return ['90-second PriMock57', speakerText].filter(Boolean).join(' · ');
+    return ['PriMock57 consultation', speakerText].filter(Boolean).join(' · ');
 }
 
 /**

@@ -10,6 +10,11 @@
  * Reports microphone or setup errors in the status region for the clinician.
  */
 async function startRecording() {
+    // Do not capture audio if roles and the summary would fail - warn and stop.
+    if (!(await ensureAiModelAvailable())) {
+        return;
+    }
+
     try {
         mediaStream = await navigator.mediaDevices.getUserMedia(createMedicalMicrophoneConstraints());
         connectWebSocket();
@@ -39,7 +44,7 @@ function createMedicalMicrophoneConstraints() {
 
 /**
  * Opens the transcription WebSocket for the current session id.
- * Use when a live session starts or reconnects after a dropped socket.
+ * Use when a live session starts, a demo replay starts, or a live socket reconnects.
  */
 function connectWebSocket() {
     transcriptionSocket = new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`);
@@ -53,11 +58,50 @@ function connectWebSocket() {
 }
 
 /**
+ * Resolves once the current transcription socket is open.
+ * Use before demo replay playback so the first heard chunk has a live socket.
+ */
+function waitForTranscriptionSocketOpen(timeoutMs = 10000) {
+    return new Promise((resolve, reject) => {
+        const socket = transcriptionSocket;
+
+        // A missing socket means connectWebSocket was not called for this session.
+        if (!socket) {
+            reject(new Error('Transcription socket is not connected.'));
+            return;
+        }
+
+        // An already-open socket can carry replay chunks immediately.
+        if (socket.readyState === WebSocket.OPEN) {
+            resolve();
+            return;
+        }
+
+        const openTimeout = setTimeout(() => {
+            reject(new Error('Transcription service did not respond.'));
+        }, timeoutMs);
+        socket.addEventListener('open', () => {
+            clearTimeout(openTimeout);
+            resolve();
+        }, { once: true });
+        socket.addEventListener('close', () => {
+            clearTimeout(openTimeout);
+            reject(new Error('Transcription service refused the session.'));
+        }, { once: true });
+    });
+}
+
+/**
  * Starts PCM audio once the WebSocket is ready.
  * Reports audio setup failures, stops streaming, and avoids sending bad chunks.
  */
 async function handleTranscriptionSocketOpened() {
     reconnectAttempts = 0;
+
+    // Demo replay streams decoded WAV PCM and owns its own status line.
+    if (isReplayActive) {
+        return;
+    }
 
     // Reuse the current microphone stream so reconnect does not reprompt the user.
     if (!pcmStreamer && mediaStream) {
@@ -119,6 +163,14 @@ function handleTranscriptionSocketMessage(event) {
  */
 function handleTranscriptionSocketClosed(event) {
     stopPcmStreaming();
+
+    // A drop of the replay's own socket cannot be resumed; keep what was heard and
+    // finish. A stale close from a previous live socket must not stop the new replay.
+    if (isReplayActive && !isReplayDraining && event.target === transcriptionSocket) {
+        setPlainStatus('Streaming connection lost - finishing replay');
+        stopReplay();
+        return;
+    }
 
     // If the user did not press Stop, preserve transcript state and recover.
     if (isRecording && !didUserStopRecording) {
@@ -262,9 +314,12 @@ function resetVisitState() {
     clearInterval(replayTimerInterval);
     replayTimerInterval = null;
     replayDuration = 0;
-    replayTranscriptSegments = [];
-    replayNextSegmentIndex = 0;
-    isBrowserClockReplaySession = false;
+    wavStreamer?.stop();
+    wavStreamer = null;
+    isReplayDraining = false;
+    replayDrainReason = null;
+    clearTimeout(replayDrainTimeout);
+    replayDrainTimeout = null;
     hasReplayAudioPlaybackStarted = false;
     releaseReplayAudioObjectUrl();
     clearInterval(timerInterval);

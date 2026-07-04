@@ -1,5 +1,5 @@
 """
-E2E test configuration — runs against live local services.
+E2E test configuration - runs against live local services.
 
 Prerequisites (started by scripts/e2e-test.sh):
   - Python agent on AGENT_PORT (NEMO_MODEL_PROVIDER=mock)

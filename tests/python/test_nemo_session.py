@@ -1,5 +1,5 @@
 """
-Tests for the transcription session — AudioBuffer accumulation and audio decoding.
+Tests for the transcription session - AudioBuffer accumulation and audio decoding.
 
 NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock).
 """

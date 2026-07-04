@@ -8,12 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Streaming demo replay** - demo audio now streams through the live transcription pipeline instead of a batch upload: the browser decodes the WAV to 16 kHz PCM, sends chunks over the same WebSocket as the microphone paced by the audible replay clock, and transcript rows arrive via Mercure exactly like a live visit. Removed the FastAPI `/session/{id}/replay` and `/session/{id}/replay/stop` endpoints, `replay_session.py`, and the Symfony replay proxy routes; this also retires the PHP upload-size and full-file NeMo GPU-memory footguns for demo audio.
 - **Medical-only agent behavior** - removed Python-side mode selection for role inference, summaries, replay, and WebSocket ingest so the agent lane always uses DOCTOR/PATIENT role mapping and medical SOAP summaries.
 - **Medical-only scribe UI** - removed the browser mode selector, stored mode preference, and mode query parameters from live WebSocket and replay requests.
 - **Medical-only demo scenarios** - removed meeting, interview, TV/media, and lecture scenario fixtures from the developer scenario corpus.
 - **Demo audio picker** - replaced the left-side dev scenario runner and duplicate header demo button with generated `tests/fixtures/audio/` WAV options that use a built-in-server-safe replay URL.
 - **PriMock57 demo audio set** - excluded consultations 01, 09, and 10 from local fixture generation, manifest output, and the default M2 replay smoke.
-- **PriMock57 replay clip length** - capped generated PriMock57 demo WAVs to 90 seconds so replay stays within local GPU memory and review time.
+- **PriMock57 replay clip length** - generate full-length PriMock57 demo consultations (previously capped to 90 seconds) so replay and transcription-quality checks cover the whole encounter; `NEMO_BUFFER_MAX_DURATION` (default 900s) bounds GPU memory.
 - **Gruff TypeScript scope** - excluded the vendored Tailwind runtime from gruff-ts so analyzer findings focus on maintained frontend and workflow source.
 - **Frontend structure** - split transcript rendering, replay, summary, and download behavior out of the core recording script for easier gruff-ts verification.
 - **Gruff Python scope** - excluded one-off NeMo exploration scripts from gruff-py so Python analyzer findings focus on maintained runtime and test code.
@@ -32,13 +33,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Scribe workspace design** - refreshed the consultation UI toward the 0.3.0 mockup with a compact left demo-audio/dev rail, softer clinical palette, pill controls, and a transcript/summary split workspace.
 - **Session summary panel states** - gave the summary panel explicit pending, generating, generated, and failed states with a status badge (`✓ Generated` / `Summary unavailable`) and a retry control, showed the pending placeholder only once transcript text exists, made the panel a fixed non-collapsible header (removed the toggle and chevron), and guarded against overlapping in-flight summary requests per session.
 - **Consultation fonts** - loaded the Libre Franklin (UI) and IBM Plex Mono (dev/log) webfonts so the rendered consultation UI matches the 0.3.0 mockup typography instead of falling back to system fonts.
-- **Demo audio dropdown** - replaced the demo-audio card list with a compact dropdown selector ("consultation-0X · complaint" plus a "90-second PriMock57 · doctor / patient" descriptor) matching the 0.3.0 mockup; picking a clip starts its replay and replay status still marks the chosen option.
+- **Demo audio dropdown** - replaced the demo-audio card list with a compact dropdown selector ("consultation-0X · complaint" plus a "PriMock57 consultation · doctor / patient" descriptor) matching the 0.3.0 mockup; picking a clip starts its replay and replay status still marks the chosen option.
 
 ### Added
 
 - **PriMock57 ground-truth transcripts** - added `scripts/download-primock57-transcripts.sh` to fetch the CC BY 4.0 Praat TextGrid transcripts paired by name with each demo consultation WAV, enabling transcription-quality measurement against a reference.
 - **Summary failure guidance** - when summary generation fails, the panel now shows an actionable fix note and a page-level warning banner ("AI model unavailable … See README_STACK.md") pointing at Ollama/Bedrock reachability, instead of a bare "Summary generation failed" message; the banner clears once a summary renders.
 - **Live model-unavailable warning** - when the role/summary model is unreachable, the agent publishes a one-time `system_error` on the session roles topic so the browser shows the warning banner during the consultation, not only at summary time; it clears once a summary renders.
+- **Pre-flight AI-model gate** - a consultation no longer starts (recording or replay) when the off-GPU role/summary model is unreachable. The browser checks a new `GET /agent/model-health` endpoint first and, if unavailable, shows an actionable banner and aborts instead of transcribing with no roles/summary. Added `scripts/check-ai-model.sh` (referenced by the UI) to diagnose and pull the model, replacing the unhelpful "See README_STACK.md" copy.
+- **Dev Panel connection indicator** - the Dev Panel header shows a green "● connected" / "○ disconnected" state reflecting the live Mercure feed, matching the 0.3.0 mockup.
+- **Settled speaker-confidence badge** - the "Identifying speakers…" badge no longer pulses indefinitely; once inference returns it shows a settled state ("Roles identified" / "Low confidence" / "Speakers unclear (N%)") with no flashing.
 
 - **Log analysis and eval tooling** - added `scripts/analyze-logs.py` for process-quality reports and `scripts/eval-role-heuristic.py` for GPU-free scenario role-attribution evaluation.
 - **Stack inventory documentation** - added `README_STACK.md` with the current model, service, runtime, topic, and dependency inventory for the medical scribe stack.
@@ -49,6 +53,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Ollama host unreachable via stale `.env`** - the agent's `OLLAMA_HOST` is now pinned to the in-network `http://ollama:11434` in `docker-compose.yml` and is no longer overridable by `.env`. A stale `.env` value of `http://host.docker.internal:11434` (unreachable from the agent on WSL2) was silently making every summary 502 and forcing role inference onto the weak keyword heuristic across container recreates.
+- **Demo Audio panel gap** - the demo-audio panel is now content-height (grid `auto` row) so the Upload WAV button sits directly under the selector and the Dev Panel fills the remaining rail, instead of a fixed 42vh panel with a large empty gap.
+- **Consultation viewport layout** - the scribe page now fits the viewport height with the transcript and summary panels scrolling internally, instead of growing past the viewport and producing a page-level vertical scrollbar.
 - **Agent image boto3/botocore conflict** - the NeMo base image's runtime venv (`/opt/venv`) shipped `botocore 1.42.61`, which shadowed the boto3/botocore that `strands-agents` installed into the system site and crashed the FastAPI agent at import (`cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'`), leaving the container unhealthy and blocking `setup-initial.sh`. The `docker/nemo/Dockerfile` now installs a matched `boto3==1.42.61`/`botocore==1.42.61` pair into `/opt/venv`, which also satisfies the base image's `aiobotocore<1.42.62` pin.
 - **Ollama Compose wiring** - the agent now defaults to the bundled `ollama` service (`http://ollama:11434`), which starts with the stack; removed the `local` profile, added a `nemo-agent`→`ollama` dependency, and dropped the host port so it never clashes with a host-side Ollama. Fixes summaries returning 502 and role inference falling back to the heuristic when `host.docker.internal:11434` was unreachable (e.g. on WSL2).
 - **Demo audio replay routing** - added same-origin Symfony proxies for replay and summary requests so the browser receives JSON from FastAPI instead of app-origin HTML errors.
@@ -83,7 +90,7 @@ Release covering tool-based role mapping, summaries, replay, transcript grouping
 - **Replay demo mode** - added WAV upload replay through NeMo with paced Mercure events, speed control, progress UI, and automatic role inference.
 - **Transcript grouping** - merges consecutive same-speaker segments into chat blocks that relabel and download correctly.
 - **Scenario assertions** - added duration, content, and fixture-structure validation for the scenario runner.
-- **Ollama tool-calling footgun** - documented models that support `assign_roles`, including `qwen2.5:14b`.
+- **Ollama tool-calling footgun** - documented models that support `assign_roles`, including `qwen3.5:9b`.
 - **Frontend extraction** - moved production code to `public/js/scribe.js` and dev-only panel code to `public/js/scribe-dev.js`.
 - **Developer instrumentation** - added WebSocket frame/byte counters, Docker hot reload, template rebuild guidance, five multi-mode scenarios, and 37 Python tests.
 - **Mode-aware role inference** - added six mode-specific prompts, browser-passed mode, context labels, and per-mode agent caching.
@@ -98,7 +105,7 @@ Release covering tool-based role mapping, summaries, replay, transcript grouping
 ### Changed
 
 - **BREAKING: PHP baseline is now 8.3+.** Upgrade local, CI, and deployment PHP from 8.2 to 8.3 before running Composer; this has no deprecation window because the PHP Gruff dev tool requires PHP 8.3.
-- **Ollama default model** - changed `llama3.1:8b` to `qwen2.5:14b` to match local pulls, `.env.example`, and Docker Compose.
+- **Ollama default model** - changed `llama3.1:8b` to `qwen3.5:9b` to match local pulls, `.env.example`, and Docker Compose.
 - **Role inference worker** - detects tool invocation via mapping-history growth and avoids duplicate role mapping application.
 - **Role inference prompt and agent setup** - instructs tool calling with JSON fallback and passes `assign_roles` in the agent tool list.
 - **Role flip detection** - moved client-side so Mercure reporting reflects visible mapping changes.

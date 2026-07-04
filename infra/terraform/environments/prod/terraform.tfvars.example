@@ -18,7 +18,7 @@ environment  = "prod"
 project_name = "ambient-scribe"
 
 # -----------------------------------------------------------------------------
-# VPC — Option A: Create new (default, no changes needed)
+# VPC - Option A: Create new (default, no changes needed)
 # -----------------------------------------------------------------------------
 
 # A new VPC is created automatically. Customize CIDRs if needed:
@@ -29,7 +29,7 @@ project_name = "ambient-scribe"
 # single_nat_gateway   = true
 
 # -----------------------------------------------------------------------------
-# VPC — Option B: Bring your own (uncomment to use existing VPC)
+# VPC - Option B: Bring your own (uncomment to use existing VPC)
 # -----------------------------------------------------------------------------
 
 # vpc_id             = "vpc-0123456789abcdef0"

@@ -1,5 +1,5 @@
 # =============================================================================
-# .copilotignore — Files excluded from GitHub Copilot context
+# .copilotignore - Files excluded from GitHub Copilot context
 # =============================================================================
 # These files are not useful for code suggestions and waste context window.
 

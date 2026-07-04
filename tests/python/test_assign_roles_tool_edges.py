@@ -175,7 +175,7 @@ class TestFlipDetectionEdges:
     def test_speaker_added_is_not_flip(self):
         state = RoleMappingState()
         state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8)
-        # Adding a third speaker — different key set, not a flip
+        # Adding a third speaker - different key set, not a flip
         flip = state.update(
             {"spk_0": "DOCTOR", "spk_1": "PATIENT", "spk_2": "NURSE"}, 0.85
         )
@@ -190,7 +190,7 @@ class TestFlipDetectionEdges:
     def test_single_speaker_role_change_is_not_flip(self):
         state = RoleMappingState()
         state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8)
-        # Only one speaker changes — not a permutation
+        # Only one speaker changes - not a permutation
         flip = state.update({"spk_0": "NURSE", "spk_1": "PATIENT"}, 0.7)
         assert flip is False
 

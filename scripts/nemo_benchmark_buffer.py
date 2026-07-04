@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NeMo Buffer Strategy Benchmark — Milestone 1, Task 1.6
+NeMo Buffer Strategy Benchmark - Milestone 1, Task 1.6
 
 Tests diarization + ASR inference time as a function of audio length.
 Determines whether growing-buffer, sliding-window, or hybrid is viable.
@@ -221,7 +221,7 @@ def main():
             time_ratio = t / prev_total
             scale = f"{time_ratio:.2f}x"
         else:
-            scale = "—"
+            scale = "-"
         prev_total = t
         print(
             f"{dur:>8}s | {d:>10.2f} | {a:>10.2f} | {t:>10.2f} | {rtf:>8.4f} | {scale:>8}"
@@ -255,7 +255,7 @@ def main():
         else:
             print("\n  => SCALING IS QUADRATIC+. Sliding window required.")
             print(
-                "     Cannot re-process full audio — processing time will exceed real-time."
+                "     Cannot re-process full audio - processing time will exceed real-time."
             )
 
     # Sortformer limit check

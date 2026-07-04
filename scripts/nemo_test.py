@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NeMo API Discovery Test Script — Milestone 1, Task 1.4
+NeMo API Discovery Test Script - Milestone 1, Task 1.4
 
 Run this inside the NeMo Docker container to:
   1. Load the streaming Sortformer diarizer + multitalker Parakeet ASR
@@ -118,7 +118,7 @@ def main():
         .eval()
         .to(device)
     )
-    # Disable CUDA graphs in decoding — incompatible with PyTorch 2.8.0a0 pre-release
+    # Disable CUDA graphs in decoding - incompatible with PyTorch 2.8.0a0 pre-release
     # (cu_call returns 5 values instead of expected 6)
     if hasattr(asr_model, "decoding") and hasattr(asr_model.decoding, "decoding"):
         dd = asr_model.decoding.decoding

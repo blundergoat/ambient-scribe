@@ -39,7 +39,7 @@ class TestRoleAgentModelProviderSelection:
             {
                 "ROLE_AGENT_MODEL_PROVIDER": "ollama",
                 "OLLAMA_HOST": "http://localhost:11434",
-                "ROLE_AGENT_OLLAMA_MODEL": "qwen2.5:14b",
+                "ROLE_AGENT_OLLAMA_MODEL": "qwen3.5:9b",
             },
         ):
             import importlib

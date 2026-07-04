@@ -49,7 +49,7 @@ This creates:
 - **S3 bucket**: `the-summit-terraform-state-prod` (versioned, KMS-encrypted, public access blocked)
 - **DynamoDB table**: `the-summit-terraform-locks-prod` (prevents concurrent applies)
 
-The bootstrap module uses **local state** (stored in `infra/terraform/bootstrap/terraform.tfstate`). Keep this file safe — it tracks the backend infrastructure itself.
+The bootstrap module uses **local state** (stored in `infra/terraform/bootstrap/terraform.tfstate`). Keep this file safe - it tracks the backend infrastructure itself.
 
 ### Step 2: Create backend.hcl
 
@@ -98,7 +98,7 @@ infra/terraform/
 │   └── versions.tf                 # Provider version constraints
 ├── environments/prod/              # Production environment
 │   ├── backend.tf                  # Empty S3 backend block (configured via backend.hcl)
-│   ├── backend.hcl                 # Actual backend config (not committed — create from .example)
+│   ├── backend.hcl                 # Actual backend config (not committed - create from .example)
 │   ├── backend.hcl.example         # Template for backend.hcl
 │   ├── main.tf                     # Module composition and wiring
 │   ├── outputs.tf                  # ALB URL, ECR repos, ECS cluster, etc.
@@ -129,7 +129,7 @@ Production settings live in `infra/terraform/environments/prod/terraform.tfvars`
 | `vpc_id` | `vpc-0f0662b880e75845a` | Shared VPC from blundergoat-platform |
 | `domain_name` | `blundergoat.com` | |
 | `subdomain` | `summit` | Deploys to summit.blundergoat.com |
-| `model_id` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for agents |
+| `model_id` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for agents |
 | `waf_rate_limit` | `2000` | Requests per 5-minute window per IP |
 
 ## Architecture

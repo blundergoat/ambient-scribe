@@ -208,7 +208,7 @@
         {
             "id": "permanent-disconnect",
             "name": "Permanent Disconnect",
-            "description": "Disconnect without reconnect — UI reaches terminal error state",
+            "description": "Disconnect without reconnect - UI reaches terminal error state",
             "events": [
                 {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Let me check your vitals first.", "start": 0.0, "end": 2.5}},
                 {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Sure, go ahead.", "start": 3.0, "end": 4.5}},

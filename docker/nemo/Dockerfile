@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile — NeMo Multitalker Parakeet Agent (GPU)
+# Dockerfile - NeMo Multitalker Parakeet Agent (GPU)
 # =============================================================================
 #
 # This container runs:
@@ -65,7 +65,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Download NeMo models at build time (avoids re-download on restart)
-# These are multi-GB files — cached in the Docker layer
+# These are multi-GB files - cached in the Docker layer
 #
 # IMPORTANT: The multitalker Parakeet requires the STREAMING Sortformer (v2.1),
 # NOT the offline v1. The offline v1 is for standalone diarization only.

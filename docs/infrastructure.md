@@ -109,7 +109,7 @@ the-summit-chatroom/
 
 ## Prerequisites
 
-1. **blundergoat-platform deployed** — this infrastructure shares its VPC and subnets
+1. **blundergoat-platform deployed** - this infrastructure shares its VPC and subnets
 2. **Terraform >= 1.5.0** and **AWS CLI** installed
 3. **AWS profile** `aws_devgoat` configured (`aws sso login --profile aws_devgoat`)
 4. **Domain** `blundergoat.com` Route 53 hosted zone (from blundergoat-platform)
@@ -207,7 +207,7 @@ After `terraform apply`, set these in your GitHub repo settings (Settings > Secr
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `AWS_REGION` | `us-east-1` | — |
+| `AWS_REGION` | `us-east-1` | - |
 | `AWS_ROLE_ARN` | `arn:aws:iam::...` | `./scripts/terraform.sh output github_actions_role_arn` |
 
 ## Module Dependency Order
@@ -304,7 +304,7 @@ These are injected into the ECS task at runtime:
 | WAF | ~$15 |
 | **Total** | **~$35-50/month** |
 
-No NAT Gateway cost — shared from blundergoat-platform's VPC.
+No NAT Gateway cost - shared from blundergoat-platform's VPC.
 
 ## Confirming No Conflicts with blundergoat
 

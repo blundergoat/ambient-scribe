@@ -5,6 +5,16 @@ last_reviewed: 2026-07-04
 
 # Runtime / Session / Mercure Footguns
 
+## Footgun: The NeMo image's /opt/venv botocore shadows strands' boto3 and crashes the agent at import
+
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `docker/nemo/Dockerfile` (search: "boto3==1.42.61")
+- **Files:** `strands_agents/agents/transcription_agent.py` (search: "from strands import Agent")
+- **What breaks:** The `nvcr.io/nvidia/nemo` base image ships an older `botocore` in its runtime venv (`/opt/venv`), while `strands-agents` installs a newer boto3/botocore into `/usr/local/lib/python3.12/dist-packages`. `/opt/venv` wins on `sys.path`, so `import boto3` - pulled in unconditionally by `strands.models.bedrock` even when the provider is Ollama - fails with `cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'`. The FastAPI agent then crashes at import, the container never passes `/health`, and `setup-initial.sh` fails at the "Starting containers" step ("dependency ... is unhealthy"). Because the image's `pip` targets `/usr/local` (NOT the runtime `/opt/venv`), pinning in `requirements.txt` does NOT fix it.
+- **aiobotocore constraint:** The base image's `aiobotocore` pins `botocore<1.42.62`, so you cannot just upgrade botocore to match the newer boto3 - install the matched **1.42.61** pair (which is `<1.42.62`) directly INTO `/opt/venv`.
+- **Fix:** `RUN /opt/venv/bin/python -m pip install --no-cache-dir "boto3==1.42.61" "botocore==1.42.61"`, placed AFTER the model-download layer so a rebuild keeps the multi-GB model cache. Bump the pair only alongside the pinned `nemo:26.02` base image. Diagnose with `docker compose exec nemo-agent /opt/venv/bin/python -c "import boto3"`.
+
 ## Footgun: Mercure publish failure only surfaces as a browser banner
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
@@ -70,53 +80,27 @@ last_reviewed: 2026-07-04
 - **What breaks:** A Symfony route that puts a dotted filename such as `.wav` in the path can return the PHP built-in server's static-file 404 before Symfony sees the request. The Demo Audio picker must use a non-dotted path with the filename in the query string, or the dev server command needs an explicit router script.
 - **Evidence:** `GET /scribe/demo-audio/primock57-day1-consultation01.wav` was handled as a missing static file, while `GET /scribe/demo-audio?filename=primock57-day1-consultation01.wav` reached `ScribeController::demoAudio()` and served `audio/wav`.
 
-## Footgun: App-origin replay and summary routes must stay proxied to FastAPI
+## Footgun: App-origin summary route must stay proxied to FastAPI
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
 
-- **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${CONFIG.sessionId}/replay")
 - **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${CONFIG.sessionId}/summary")
 - **Files:** `public/js/scribe-actions.js` (search: "async function readJsonResponse")
-- **Files:** `src/Controller/ScribeController.php` (search: "public function replay")
 - **Files:** `src/Controller/ScribeController.php` (search: "public function summary")
-- **Files:** `strands_agents/api/server.py` (search: "async def replay_file")
 - **Files:** `strands_agents/api/server.py` (search: "async def generate_summary")
-- **What breaks:** The browser posts replay and summary requests to app-origin `/session/{id}/...` URLs, but FastAPI owns the actual work. Without Symfony proxy routes, the browser can receive Symfony/PHP HTML errors and then show JSON parser failures such as `Unexpected token '<'`.
-- **Evidence:** The browser fetch path is same-origin, FastAPI defines the replay/summary endpoints, and Symfony must translate those app-origin requests into FastAPI calls while preserving JSON error responses.
+- **What breaks:** The browser posts summary requests to the app-origin `/session/{id}/summary` URL, but FastAPI owns the actual work. Without the Symfony proxy route, the browser can receive Symfony/PHP HTML errors and then show JSON parser failures such as `Unexpected token '<'`. (Replay uploads used to share this trap; demo replay now streams over the WebSocket and has no app-origin HTTP action.)
+- **Evidence:** The browser fetch path is same-origin, FastAPI defines the summary endpoint, and Symfony must translate the app-origin request into a FastAPI call while preserving JSON error responses.
 - **Prevention:** When adding or changing browser-to-FastAPI HTTP actions, add a Symfony same-origin proxy or explicitly prove browser CORS/config. Include a route smoke that checks `Content-Type: application/json` for failure states, not just happy-path API tests.
 
-## Footgun: Replay transcription does not make demo audio audible
+## Footgun: Replay transcription must stay coupled to audible browser audio
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
 
 - **Files:** `public/js/scribe-fixtures.js` (search: "new File([audioBlob], audioFixture.filename")
 - **Files:** `public/js/scribe-output.js` (search: "async function startReplayAudioPlayback")
-- **Files:** `public/js/scribe-output.js` (search: "async function syncStoppedReplayOnServer")
-- **Files:** `strands_agents/api/replay_session.py` (search: "replay_tasks: dict[str, asyncio.Task")
-- **Files:** `strands_agents/api/server.py` (search: "async def stop_replay_file")
-- **What breaks:** A replay upload can produce transcript text without any browser audio playback if the selected WAV is only posted to FastAPI. Even with audible playback, transcript text can appear faster than speech if server-side replay pacing is independent of the browser audio clock.
-- **Evidence:** The browser smoke for `primock57-day1-consultation02-i-have-sore-red-skin.wav` first showed transcript replay and a visible `#replayAudio` control after wiring the fixture blob into an `<audio>` element; the next fix moved visible transcript reveal to `revealReplaySegmentsUpToAudioTime()` and synced stopped replay rows through `/session/{id}/replay/stop`.
-- **Prevention:** Replay UI changes must verify four browser-visible states together: audio controls have a playable source, transcript rows advance only as the audio clock advances, Stop pauses local audio and sends visible rows to the replay-stop proxy, and Summarise uses that visible transcript snapshot.
-
-## Footgun: PriMock replay WAVs exceed PHP's default upload ceiling
-**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
-
-- **Files:** `Dockerfile` (search: "upload_max_filesize=128M")
-- **Files:** `scripts/e2e-test.sh` (search: "-d upload_max_filesize=128M")
-- **Files:** `tests/fixtures/audio/generated-manifest.json` (search: "primock57-day1-consultation02")
-- **Files:** `public/js/scribe-output.js` (search: "Replay service returned an unreadable response")
-- **What breaks:** PHP's built-in server defaults `post_max_size` to 8M, but generated PriMock WAVs are around 15-27M. Oversized uploads can prepend an HTML PHP warning before JSON, causing the browser to report a replay parser failure or treat a malformed 200 as success.
-- **Evidence:** Posting `primock57-day1-consultation02-i-have-sore-red-skin.wav` through the app route produced `POST Content-Length ... exceeds the limit of 8388608 bytes` before the JSON body.
-- **Prevention:** Keep Docker and local/e2e PHP launch paths at `upload_max_filesize=128M` and `post_max_size=128M`. Smoke one real fixture upload after changing demo audio size, PHP startup commands, or the replay proxy.
-
-## Footgun: Full-file PriMock replay can exceed NeMo GPU memory
-**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
-
-- **Files:** `strands_agents/api/replay_session.py` (search: "segments = await _transcribe_replay_upload")
-- **Files:** `strands_agents/api/replay_session.py` (search: "services.pipeline.transcribe_file")
-- **Files:** `strands_agents/nemo_pipeline.py` (search: "def transcribe_file")
-- **Files:** `tests/fixtures/audio/generated-manifest.json` (search: "primock57-day1-consultation02-i-have-sore-red-skin.wav")
-- **What breaks:** Replay upload currently transcribes the entire selected WAV before background pacing starts. Long PriMock fixtures can fit through PHP but still push the multitalker ASR forward pass over available GPU memory, returning a JSON 500 instead of streamed transcript text.
-- **Evidence:** After raising PHP upload limits, posting the 18 MB `primock57-day1-consultation02-i-have-sore-red-skin.wav` reached FastAPI and failed in `NemoPipeline.transcribe_file()` with `torch.OutOfMemoryError: CUDA out of memory`.
-- **Prevention:** Keep replay transcription bounded by chunking long uploads or by enforcing fixture durations proven under the GPU memory budget. Any demo-audio change should smoke one real PriMock WAV through `/session/{id}/replay`, not only check that `/scribe/demo-audio` returns `audio/wav`.
+- **Files:** `public/js/scribe-streaming.js` (search: "class WavPcmStreamer")
+- **Files:** `public/js/scribe-output.js` (search: "function enterReplayDrain")
+- **What breaks:** Demo replay can produce transcript text without any browser audio playback, or transcript text decoupled from what the user has heard, if replay PCM is fed to NeMo independently of the audible `#replayAudio` element. `WavPcmStreamer` sends chunks only as the audio clock advances; bypassing it (or timing chunks off wall-clock instead of `currentTime`) silently reintroduces the decoupling.
+- **Evidence:** The original batch replay showed transcript rows with no audible audio until the fixture blob was wired into an `<audio>` element; the design has since been reworked so the audio clock drives PCM streaming itself (`WavPcmStreamer._heardBytes` derives the send offset from `currentTime`).
+- **Prevention:** Replay UI changes must verify four browser-visible states together: audio controls have a playable source, PCM chunks stream only as the audio clock advances, transcript rows arrive over Mercure like a live visit, and Stop flushes only heard audio then waits for the backend `finalized` event before enabling Summarise.
 
 ## Footgun: Defaulted mode maps can hide hard fallback keys
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
@@ -127,3 +111,21 @@ last_reviewed: 2026-07-04
 - **What breaks:** A one-value migration that keeps `PROMPTS.get(mode, PROMPTS["general"])` can still crash when the fallback key is deleted. The default argument is evaluated before `.get()` returns, so deleting `["general"]` without flattening the map reintroduces a `KeyError`.
 - **Evidence:** Before 0.3.0 the role and summary factories used mode prompt dictionaries with a hard-indexed `"general"` fallback. 0.3.0 removed the trap by replacing those dictionaries with medical constants and argless factories.
 - **Prevention:** When a user-facing selector collapses to one supported behavior, collapse the data structure to a named constant and remove the selector parameter at every call site.
+
+## Resolved Entries
+
+## Footgun: PriMock replay WAVs exceed PHP's default upload ceiling
+**Status:** resolved | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `Dockerfile` (search: "upload_max_filesize=128M")
+- **Files:** `scripts/e2e-test.sh` (search: "-d upload_max_filesize=128M")
+- **What breaks:** PHP's built-in server defaults `post_max_size` to 8M, but generated PriMock WAVs are around 15-27M. Oversized uploads prepended an HTML PHP warning before JSON, causing browser replay parser failures.
+- **Resolution:** Demo replay no longer uploads WAVs through PHP at all — the browser decodes the WAV locally and streams 16 kHz PCM over the FastAPI WebSocket (`public/js/scribe-streaming.js`, search: "class WavPcmStreamer"). The raised PHP upload limits remain configured but no user flow depends on them.
+
+## Footgun: Full-file PriMock replay can exceed NeMo GPU memory
+**Status:** resolved | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "def transcribe_file")
+- **Files:** `strands_agents/api/server.py` (search: "async def transcribe_file")
+- **What breaks:** Batch replay transcribed the entire selected WAV in one NeMo forward pass; the 18 MB `primock57-day1-consultation02` fixture failed with `torch.OutOfMemoryError: CUDA out of memory`.
+- **Resolution:** Demo replay now streams chunked PCM through the same `TranscriptionSession` path as live recording, so no full-file forward pass happens for demo audio. Residual risk: the test-only `POST /transcribe/file` batch endpoint still runs `transcribe_file` on whole files — keep its inputs short.

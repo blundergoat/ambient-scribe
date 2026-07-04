@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NeMo Edge Cases Test — Milestone 1, Task 1.8
+NeMo Edge Cases Test - Milestone 1, Task 1.8
 
 Tests NeMo behaviour with:
   1. Single-speaker monologue (30+ seconds of one person)
@@ -181,7 +181,7 @@ def main():
 
     # Test 1: Original two-speaker audio (baseline)
     results["baseline"] = run_pipeline(
-        diar_model, asr_model, source_path, "Baseline — original two-speaker OSCE audio"
+        diar_model, asr_model, source_path, "Baseline - original two-speaker OSCE audio"
     )
 
     # Test 2: Pure silence

@@ -92,13 +92,13 @@ class TestSummaryEndpoint:
         assert len(data["key_points"]) == 1
 
     def test_summary_uses_browser_visible_segments_from_request(self):
-        """Replay summaries can use only the transcript rows revealed by audio."""
+        """Summaries can use only the transcript rows visible in the browser."""
         mock_summary = {
-            "title": "Partial Replay",
+            "title": "Partial Transcript",
             "sections": [
                 {"heading": "Subjective", "content": "Patient reports visible rash."},
             ],
-            "key_points": ["Visible replay text only"],
+            "key_points": ["Visible transcript text only"],
         }
 
         with patch("api.server._run_summary_generation", return_value=mock_summary) as summary_runner:
@@ -260,7 +260,7 @@ class TestRunSummaryGeneration:
         assert result["title"] == "Test"
 
     def test_extracts_json_from_preamble(self):
-        """Agent may include text before JSON — regex fallback should work."""
+        """Agent may include text before JSON - regex fallback should work."""
         mock_agent = MagicMock()
         mock_agent.return_value = (
             'Here is the summary:\n{"title": "Extracted", "sections": []}'

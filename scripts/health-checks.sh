@@ -1,11 +1,11 @@
 #!/bin/bash
 # =============================================================================
-# Health Check — Read-only diagnostics for Ambient Scribe
+# Health Check - Read-only diagnostics for Ambient Scribe
 # =============================================================================
 # Usage: ./scripts/health-checks.sh
 #
 # Checks Docker, GPU, containers, services, configuration, and connectivity.
-# Does not modify anything — safe to run at any time.
+# Does not modify anything - safe to run at any time.
 #
 # Exit codes:
 #   0 - All checks passed (warnings are OK)
@@ -21,7 +21,7 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 
-# ── check() — unified pass/warn/fail reporter ───────────────────────
+# ── check() - unified pass/warn/fail reporter ───────────────────────
 check() {
     local label="$1" status="$2" detail="${3:-}"
     TOTAL=$((TOTAL + 1))
@@ -41,7 +41,7 @@ check() {
 
 # ── Header ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  Ambient Scribe — Health Check${RESET}"
+echo -e "${BOLD}  Ambient Scribe - Health Check${RESET}"
 echo -e "  ${DIM}$(printf '─%.0s' {1..44})${RESET}"
 
 # ═════════════════════════════════════════════════════════════════════
@@ -74,7 +74,7 @@ if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     if [[ $GPU_VRAM_MB -ge 12288 ]]; then
         check "GPU VRAM" "pass" "${vram_gb} GB (${GPU_VRAM_MB} MB)"
     else
-        check "GPU VRAM" "warn" "${vram_gb} GB — NeMo needs >= 12 GB"
+        check "GPU VRAM" "warn" "${vram_gb} GB - NeMo needs >= 12 GB"
     fi
 
     # Docker GPU passthrough
@@ -96,7 +96,7 @@ if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
         fi
     fi
 else
-    check "nvidia-smi" "fail" "not found — install NVIDIA drivers"
+    check "nvidia-smi" "fail" "not found - install NVIDIA drivers"
     check "GPU model" "fail" "n/a"
     check "GPU VRAM" "fail" "n/a"
     check "Docker GPU passthrough" "fail" "n/a"
@@ -181,7 +181,7 @@ echo ""
 if [[ -f "$REPO_ROOT/.env" ]]; then
     check ".env file" "pass" "exists"
 else
-    check ".env file" "fail" "not found — run setup-initial.sh"
+    check ".env file" "fail" "not found - run setup-initial.sh"
 fi
 
 # MERCURE_JWT_SECRET
@@ -197,7 +197,7 @@ fi
 if [[ -n "${MERCURE_PUBLISHER_JWT:-}" ]]; then
     check "MERCURE_PUBLISHER_JWT" "pass" "set (${#MERCURE_PUBLISHER_JWT} chars)"
 else
-    check "MERCURE_PUBLISHER_JWT" "fail" "not set — run setup-initial.sh to generate"
+    check "MERCURE_PUBLISHER_JWT" "fail" "not set - run setup-initial.sh to generate"
 fi
 
 # ROLE_AGENT_MODEL_PROVIDER

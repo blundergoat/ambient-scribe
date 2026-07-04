@@ -1,6 +1,6 @@
 {
     "name": "blundergoat/ambient-scribe",
-    "description": "Real-time ambient medical scribe — speaker diarization + role attribution. Built with NeMo, Strands Agents, Symfony, and Mercure.",
+    "description": "Real-time ambient medical scribe - speaker diarization + role attribution. Built with NeMo, Strands Agents, Symfony, and Mercure.",
     "type": "project",
     "license": "Apache-2.0",
     "homepage": "https://github.com/blundergoat/ambient-scribe",

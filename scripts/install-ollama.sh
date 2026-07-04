@@ -222,7 +222,7 @@ if [[ "$NEEDS_INSTALL" == true ]]; then
             pass "NVIDIA GPU detected by installer"
         fi
     else
-        fail "install failed — check https://ollama.com/download"
+        fail "install failed - check https://ollama.com/download"
         echo "$install_output" | tail -5 | while IFS= read -r line; do
             info "$line"
         done
@@ -260,7 +260,7 @@ else
     if [[ "$STARTED" == true ]]; then
         pass "started (pid ${OLLAMA_PID})"
     else
-        fail "failed to start — check ${OLLAMA_LOG}"
+        fail "failed to start - check ${OLLAMA_LOG}"
         if [[ -f "$OLLAMA_LOG" ]]; then
             tail -5 "$OLLAMA_LOG" | while IFS= read -r line; do
                 info "$line"
@@ -283,14 +283,14 @@ if [[ -f "$OLLAMA_LOG" ]]; then
     else
         NO_GPU=$(grep -iE "no compatible GPU|no gpu|cpu only" "$OLLAMA_LOG" 2>/dev/null || true)
         if [[ -n "$NO_GPU" ]]; then
-            echo -e "${YELLOW}!${RESET}  ${DIM}No GPU detected — Ollama will use CPU${RESET}"
+            echo -e "${YELLOW}!${RESET}  ${DIM}No GPU detected - Ollama will use CPU${RESET}"
             info "This is much slower. Check GPU drivers and CUDA installation."
         else
             echo -e "${YELLOW}!${RESET}  ${DIM}Could not confirm GPU status from logs${RESET}"
         fi
     fi
 else
-    echo -e "${DIM}skipped${RESET}  ${DIM}(Ollama was already running — check with: curl ${OLLAMA_URL}/api/ps)${RESET}"
+    echo -e "${DIM}skipped${RESET}  ${DIM}(Ollama was already running - check with: curl ${OLLAMA_URL}/api/ps)${RESET}"
 fi
 
 # ── 5. Pull model ───────────────────────────────────────────────────
@@ -342,7 +342,7 @@ if [[ "$VRAM_BYTES" -gt 0 ]] 2>/dev/null; then
     VRAM_GB=$(python3 -c "print(f'{${VRAM_BYTES}/(1024**3):.1f}')" 2>/dev/null || echo "?")
     pass "${VRAM_GB} GB in VRAM"
 else
-    echo -e "${YELLOW}!${RESET}  ${DIM}Model not loaded to GPU — will run on CPU (slower)${RESET}"
+    echo -e "${YELLOW}!${RESET}  ${DIM}Model not loaded to GPU - will run on CPU (slower)${RESET}"
     info "Check Ollama logs: ${OLLAMA_LOG}"
 fi
 
@@ -387,7 +387,7 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
     fi
 else
     step ".env"
-    echo -e "${YELLOW}!${RESET}  ${DIM}not found — run ./scripts/setup-initial.sh first${RESET}"
+    echo -e "${YELLOW}!${RESET}  ${DIM}not found - run ./scripts/setup-initial.sh first${RESET}"
 fi
 
 # ── Summary ─────────────────────────────────────────────────────────

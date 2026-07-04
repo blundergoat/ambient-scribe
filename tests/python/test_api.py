@@ -21,13 +21,6 @@ TEST_SESSION_ID_2 = "00000000-0000-4000-8000-000000000002"
 TEST_SESSION_ID_3 = "00000000-0000-4000-8000-000000000003"
 
 
-def _cancel_replay_tasks() -> None:
-    for task in list(api_server._replay_tasks.values()):
-        if not task.done():
-            task.cancel()
-    api_server._replay_tasks.clear()
-
-
 @pytest.fixture(autouse=True)
 def clear_sessions():
     """Keep the module-level in-memory stores isolated across tests."""
@@ -40,7 +33,6 @@ def clear_sessions():
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
     api_server._mercure_event_ids.clear()
-    _cancel_replay_tasks()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     app.state.http_client = httpx.AsyncClient(timeout=5.0)
@@ -51,7 +43,6 @@ def clear_sessions():
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
     api_server._mercure_event_ids.clear()
-    _cancel_replay_tasks()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
 
@@ -101,7 +92,7 @@ class TestSessionHistory:
 
     @pytest.mark.asyncio
     async def test_history_accepts_post(self):
-        """PHP StrandsClient uses postJson() — endpoint must accept POST."""
+        """PHP StrandsClient uses postJson() - endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver"
@@ -114,7 +105,7 @@ class TestSessionHistory:
 
     @pytest.mark.asyncio
     async def test_roles_accepts_post(self):
-        """PHP StrandsClient uses postJson() — endpoint must accept POST."""
+        """PHP StrandsClient uses postJson() - endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver"
@@ -454,7 +445,7 @@ class TestThreadSafety:
         assert errors == []
 
     def test_concurrent_cleanup_no_crash(self):
-        """One thread creating, another cleaning up — no RuntimeError."""
+        """One thread creating, another cleaning up - no RuntimeError."""
         import threading
         from tools.assign_roles import get_or_create_state, cleanup_session
 

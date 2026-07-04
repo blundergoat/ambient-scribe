@@ -6,7 +6,7 @@ Rules and patterns for the Python layer. This service owns the GPU, runs NeMo in
 
 1. **NeMo owns the GPU exclusively.** No other GPU workload may run in the same container or on the same card.
 2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `.goat-flow/learning-loop/footguns/runtime.md`.
-3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous — without `run_in_executor`, the async event loop freezes. See `api/server.py:131-134` for the executor and `:243-250`, `:307-311` for usage.
+3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous - without `run_in_executor`, the async event loop freezes. See `api/server.py:131-134` for the executor and `:243-250`, `:307-311` for usage.
 4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `.goat-flow/learning-loop/footguns/runtime.md`.
 
 ## NeMo Models
@@ -36,16 +36,16 @@ Any change to browser capture format, sample rate, or `NEMO_STREAM_INPUT_FORMAT`
 |---|---|---|---|
 | `/ws/transcribe/{session_id}` | WebSocket | Browser → Server | Binary ArrayBuffer (16kHz PCM by default; WebM only when explicitly configured) |
 
-No server-to-client WebSocket messages — segments are delivered via Mercure SSE.
+No server-to-client WebSocket messages - segments are delivered via Mercure SSE.
 
 ### HTTP
 
 | Method | Path | Request | Response |
 |---|---|---|---|
 | POST | `/transcribe/file` | Multipart file upload | `{segments: [...], duration_ms: int}` |
-| GET | `/session/{id}/history` | — | `{segments: [...]}` |
-| GET | `/session/{id}/roles` | — | `{mapping: {spk_0: "DOCTOR", ...}}` |
-| GET | `/health` | — | `{status: "ok"}` |
+| GET | `/session/{id}/history` | - | `{segments: [...]}` |
+| GET | `/session/{id}/roles` | - | `{mapping: {spk_0: "DOCTOR", ...}}` |
+| GET | `/health` | - | `{status: "ok"}` |
 
 ### Pydantic Models
 
@@ -68,8 +68,8 @@ Requires `MERCURE_JWT` env var (pre-signed JWT). See `.goat-flow/learning-loop/f
 
 ## Session Management
 
-- `TranscriptionSession` (`nemo_session.py`) — per-WebSocket: audio buffer, accumulated transcript, chunk count
-- `SessionStore` (`session.py`) — in-memory transcript history across sessions
+- `TranscriptionSession` (`nemo_session.py`) - per-WebSocket: audio buffer, accumulated transcript, chunk count
+- `SessionStore` (`session.py`) - in-memory transcript history across sessions
 - Sessions keyed by UUID (generated in PHP, passed through WebSocket URL)
 
 ## Testing
@@ -83,7 +83,7 @@ cd strands_agents && .venv/bin/pip install -r ../tests/python/requirements-dev.t
 
 Test files: `tests/python/test_api.py`, `test_nemo_pipeline.py`, `test_nemo_session.py`, `test_role_inference.py`
 
-Fixtures in `tests/python/conftest.py` — mock NeMo models and provide test audio files.
+Fixtures in `tests/python/conftest.py` - mock NeMo models and provide test audio files.
 
 ## Feature Checklist
 

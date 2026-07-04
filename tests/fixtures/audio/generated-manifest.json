@@ -13,9 +13,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 559.2,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation02_doctor.wav",
       "audio/day1_consultation02_patient.wav"
@@ -38,9 +38,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 544.3,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation03_doctor.wav",
       "audio/day1_consultation03_patient.wav"
@@ -63,9 +63,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 615.5,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation04_doctor.wav",
       "audio/day1_consultation04_patient.wav"
@@ -88,9 +88,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 577.0,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation05_doctor.wav",
       "audio/day1_consultation05_patient.wav"
@@ -113,9 +113,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 662.5,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation06_doctor.wav",
       "audio/day1_consultation06_patient.wav"
@@ -138,9 +138,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 858.2,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation07_doctor.wav",
       "audio/day1_consultation07_patient.wav"
@@ -163,9 +163,9 @@
       "doctor_channel": "DOCTOR",
       "patient_channel": "PATIENT"
     },
-    "edge_case": "First 90 seconds of a PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 90.0,
-    "clip_seconds": 90.0,
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 466.2,
+    "clip_seconds": null,
     "source_audio": [
       "audio/day1_consultation08_doctor.wav",
       "audio/day1_consultation08_patient.wav"

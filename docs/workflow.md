@@ -6,12 +6,12 @@ This project includes a tuned [Claude Code](https://claude.ai/code) setup that c
 
 ```
 .claude/
-├── settings.json                  # Hooks — run automatically on events
+├── settings.json                  # Hooks - run automatically on events
 ├── settings.local.json            # Local permissions (gitignored)
 └── skills/
-    ├── preflight/SKILL.md         # /preflight — run all quality gates
-    ├── review/SKILL.md            # /review — deep code review
-    └── audit/SKILL.md             # /audit — multi-pass codebase audit
+    ├── preflight/SKILL.md         # /preflight - run all quality gates
+    ├── review/SKILL.md            # /review - deep code review
+    └── audit/SKILL.md             # /audit - multi-pass codebase audit
 CLAUDE.md                          # Project context + workflow rules
 ```
 
@@ -34,14 +34,14 @@ graph TD
     style L fill:#7c3aed,color:#fff,stroke:none
 ```
 
-## CLAUDE.md — Project Context
+## CLAUDE.md - Project Context
 
 Claude Code reads `CLAUDE.md` at the start of every session. It contains:
 
-- **Commands** — build, test, lint, and analysis commands so Claude doesn't guess
-- **Architecture** — data flow from Twig UI → PHP → Python agent → LLM provider
-- **Code style** — PSR-12, PHPStan level 10, naming conventions
-- **Workflow rules** — behavioral instructions (see below)
+- **Commands** - build, test, lint, and analysis commands so Claude doesn't guess
+- **Architecture** - data flow from Twig UI → PHP → Python agent → LLM provider
+- **Code style** - PSR-12, PHPStan level 10, naming conventions
+- **Workflow rules** - behavioral instructions (see below)
 
 ### Workflow Rules
 
@@ -51,11 +51,11 @@ These rules exist because of real problems observed during AI-assisted developme
 
 ```markdown
 When debugging issues, ALWAYS read the actual code and configuration files before
-proposing a fix. Trace the real code path — do not guess based on class names, env
+proposing a fix. Trace the real code path - do not guess based on class names, env
 vars, or conventions.
 ```
 
-**Why:** Without this, Claude tends to jump to fixes based on pattern-matching class names or env vars rather than reading what the code actually does. This leads to wrong diagnoses — e.g., misidentifying a CORS issue as a CSP issue because the symptoms look similar.
+**Why:** Without this, Claude tends to jump to fixes based on pattern-matching class names or env vars rather than reading what the code actually does. This leads to wrong diagnoses - e.g., misidentifying a CORS issue as a CSP issue because the symptoms look similar.
 
 #### Check all layers
 
@@ -78,7 +78,7 @@ After implementing any feature or fix, verify completeness across affected layer
 Always run composer preflight BEFORE reporting that a task is complete.
 ```
 
-**Why:** Without this, Claude declares "done" and the developer discovers failures manually. The preflight script takes seconds — faster to run automatically than to fix after the fact.
+**Why:** Without this, Claude declares "done" and the developer discovers failures manually. The preflight script takes seconds - faster to run automatically than to fix after the fact.
 
 #### Deep investigation
 
@@ -97,7 +97,7 @@ suggestions. Investigate each one against the actual codebase first.
 
 **Why:** External tools (Copilot PR reviews, static analysis suggestions) sometimes produce false positives. Blindly applying them has caused breaking changes in real projects.
 
-## Hooks — Automatic Quality Gates
+## Hooks - Automatic Quality Gates
 
 Hooks are defined in `.claude/settings.json` and fire automatically on specific events.
 
@@ -112,9 +112,9 @@ Hooks are defined in `.claude/settings.json` and fire automatically on specific 
 
 **Event:** Fires after every `Edit` or `Write` tool call. If Claude edits 10 files in one turn, it fires 10 times.
 
-**What it does:** Runs `php-cs-fixer fix` on the changed file. Only targets `.php` files — skips Python, Twig, YAML, etc.
+**What it does:** Runs `php-cs-fixer fix` on the changed file. Only targets `.php` files - skips Python, Twig, YAML, etc.
 
-**Why PostToolUse:** Formatting is sub-second and should happen on every file change. This prevents style drift from accumulating — every file is always clean.
+**Why PostToolUse:** Formatting is sub-second and should happen on every file change. This prevents style drift from accumulating - every file is always clean.
 
 **Adapting for other stacks:**
 ```json
@@ -139,8 +139,8 @@ Hooks are defined in `.claude/settings.json` and fire automatically on specific 
 **Event:** Fires once when Claude finishes a full response, regardless of how many tool calls were made.
 
 **What it does:** Two checks in one pass:
-1. **PHPStan** (level 10) — catches type errors, undefined methods, wrong argument types
-2. **Ruff check** — catches Python lint and import issues in the agent files
+1. **PHPStan** (level 10) - catches type errors, undefined methods, wrong argument types
+2. **Ruff check** - catches Python lint and import issues in the agent files
 
 Output is truncated to 10 lines to keep feedback concise.
 
@@ -158,7 +158,7 @@ Output is truncated to 10 lines to keep feedback concise.
 { "command": "mypy src/ 2>&1 | head -10" }
 ```
 
-## Skills — Reusable Commands
+## Skills - Reusable Commands
 
 Skills are markdown files in `.claude/skills/<name>/SKILL.md`. Invoke them by typing `/<name>` in Claude Code.
 
@@ -167,12 +167,12 @@ Skills are markdown files in `.claude/skills/<name>/SKILL.md`. Invoke them by ty
 Runs all quality gates in sequence and fixes failures before declaring success.
 
 ```
-1. composer cs:fix              — auto-fix code style
-2. composer analyse             — PHPStan level 10
-3. composer analyse:complexity  — cyclomatic complexity (max 20)
-4. composer analyse:messdetector — PHPMD
-5. composer test                — PHPUnit
-6. Python Ruff check            — all agent files
+1. composer cs:fix              - auto-fix code style
+2. composer analyse             - PHPStan level 10
+3. composer analyse:complexity  - cyclomatic complexity (max 20)
+4. composer analyse:messdetector - PHPMD
+5. composer test                - PHPUnit
+6. Python Ruff check            - all agent files
 7. Fix and re-run on failure
 8. Only report success when everything passes
 ```
@@ -197,7 +197,7 @@ Structured code review with mandatory verification of each finding.
 
 **When to use:** Before submitting a PR, or when triaging external review comments.
 
-**Why verification matters:** Without it, Claude reports surface-level findings that turn out to be false positives — wasting time on investigation and sometimes introducing bugs when "fixes" are applied to non-issues.
+**Why verification matters:** Without it, Claude reports surface-level findings that turn out to be false positives - wasting time on investigation and sometimes introducing bugs when "fixes" are applied to non-issues.
 
 ### /audit
 
@@ -251,7 +251,7 @@ For any project, start with:
 
 ### For other languages
 
-The pattern is the same — fast formatting on every edit, slower analysis once per response:
+The pattern is the same - fast formatting on every edit, slower analysis once per response:
 
 | Language | PostToolUse (per-file) | Stop (per-response) |
 |----------|----------------------|---------------------|
@@ -263,11 +263,11 @@ The pattern is the same — fast formatting on every edit, slower analysis once 
 
 ### Adding workflow rules to CLAUDE.md
 
-Start with these three — they address the most common failure modes:
+Start with these three - they address the most common failure modes:
 
-1. **Investigate before fixing** — prevents wrong-root-cause debugging
-2. **Check all layers** — prevents incomplete implementations
-3. **Preflight before done** — prevents "works on my machine" surprises
+1. **Investigate before fixing** - prevents wrong-root-cause debugging
+2. **Check all layers** - prevents incomplete implementations
+3. **Preflight before done** - prevents "works on my machine" surprises
 
 Add project-specific rules as you discover failure patterns in your own sessions. The Claude Code `/insights` command can help identify recurring issues.
 
@@ -286,5 +286,5 @@ The skill name matches the directory name. Invoke with `/my-skill`.
 
 Edit `.claude/settings.json`. The two hook types:
 
-- **PostToolUse** — fires after each tool call. Use `matcher` to filter by tool name. Keep commands sub-second.
-- **Stop** — fires once when Claude finishes responding. Good for analysis that needs the full picture.
+- **PostToolUse** - fires after each tool call. Use `matcher` to filter by tool name. Keep commands sub-second.
+- **Stop** - fires once when Claude finishes responding. Good for analysis that needs the full picture.

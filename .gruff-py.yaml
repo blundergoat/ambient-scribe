@@ -42,7 +42,7 @@ allowlists:
   - url
   secretPreviews:
   # Public Bedrock model IDs are identifiers, not credentials.
-  - us.anthropic.claude-haiku-4-5-20251001-v1:0
+  - au.anthropic.claude-haiku-4-5-20251001-v1:0
   deadCode:
     symbols:
     # Compatibility seam for replay tests and manual task-state cleanup.
