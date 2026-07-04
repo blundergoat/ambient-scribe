@@ -91,6 +91,38 @@ class TestSummaryEndpoint:
         assert data["sections"][0]["heading"] == "Subjective"
         assert len(data["key_points"]) == 1
 
+    def test_summary_uses_browser_visible_segments_from_request(self):
+        """Replay summaries can use only the transcript rows revealed by audio."""
+        mock_summary = {
+            "title": "Partial Replay",
+            "sections": [
+                {"heading": "Subjective", "content": "Patient reports visible rash."},
+            ],
+            "key_points": ["Visible replay text only"],
+        }
+
+        with patch("api.server._run_summary_generation", return_value=mock_summary) as summary_runner:
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(
+                f"/session/{TEST_SESSION_ID}/summary",
+                json={
+                    "segments": [
+                        {
+                            "speaker_id": "spk_1",
+                            "role": "PATIENT",
+                            "text": "I have sore red skin.",
+                            "start": 16.0,
+                            "end": 20.0,
+                        }
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        summary_runner.assert_called_once()
+        assert "[PATIENT] I have sore red skin." in summary_runner.call_args.args[1]
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "I have sore red skin."
+
     def test_summary_502_on_generation_failure(self):
         sessions.append_segment(
             TEST_SESSION_ID,

@@ -134,6 +134,8 @@ Browser source files:
 - `public/js/scribe-streaming.js` owns Mercure streams, reconnects, and PCM capture.
 - `public/js/scribe-transcript.js` owns transcript card rendering and relabelling.
 - `public/js/scribe-output.js` owns replay, summary rendering, downloads, and hints.
+- `public/js/scribe-dev.js` owns the local dev inspector panel.
+- `public/js/scribe-fixtures.js` owns the dev-only Demo Audio picker for generated WAV replay.
 
 ## Clinical Assistance Lane
 

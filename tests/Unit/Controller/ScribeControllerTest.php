@@ -13,20 +13,27 @@ namespace App\Tests\Unit\Controller;
 
 use App\Controller\ScribeController;
 use App\Service\RoleInferenceService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use StrandsPhpClient\Exceptions\AgentErrorException;
 use StrandsPhpClient\Exceptions\StrandsException;
 use StrandsPhpClient\StrandsClient;
+use Symfony\Component\HttpClient\Exception\TransportException;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
  * Verifies the browser-facing Scribe controller without starting Symfony or Python.
  *
- * The suite focuses on what the clinician page sees: startup config, dev scenario choices,
+ * The suite focuses on what the clinician page sees: startup config, dev audio choices,
  * history JSON, role JSON, and fallback responses when the Python agent cannot answer.
  */
 final class ScribeControllerTest extends TestCase
@@ -71,7 +78,7 @@ final class ScribeControllerTest extends TestCase
         );
         self::assertTrue($payload['parameters']['enable_role_updates']);
         self::assertFalse($payload['parameters']['dev_panel_enabled']);
-        self::assertSame([], $payload['parameters']['scenarios']);
+        self::assertSame([], $payload['parameters']['audio_fixtures']);
 
         $sessionId = $payload['parameters']['session_id'];
         self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $sessionId);
@@ -106,33 +113,36 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Shows the developer scenario picker is populated when a local tester opens the page in dev mode.
+     * Shows the developer audio picker is populated when a local tester opens the page in dev mode.
      *
-     * @return void No payload; failure means fixture replay would not be available to testers.
+     * @return void No payload; failure means generated WAV replay would not be available to testers.
      */
-    public function testIndexLoadsScenarioFixturesInDevMode(): void
+    public function testIndexLoadsAudioFixturesInDevMode(): void
     {
-        $projectDir = \dirname(__DIR__, 3);
+        [$projectDir, $fixtureDir] = $this->createAudioFixtureProject();
         $controller = $this->createController([
             'kernel.environment' => 'dev',
             'kernel.project_dir' => $projectDir,
         ]);
 
-        $response = $controller->index();
-        $payload = $this->decodeJsonResponse($response);
+        try {
+            $response = $controller->index();
+            $payload = $this->decodeJsonResponse($response);
 
-        self::assertTrue($payload['parameters']['dev_panel_enabled']);
-        self::assertNotEmpty($payload['parameters']['scenarios']);
+            self::assertTrue($payload['parameters']['dev_panel_enabled']);
+            self::assertNotEmpty($payload['parameters']['audio_fixtures']);
 
-        $firstScenario = $payload['parameters']['scenarios'][0];
-        self::assertArrayHasKey('id', $firstScenario);
-        self::assertArrayHasKey('name', $firstScenario);
-        self::assertArrayHasKey('events', $firstScenario);
-        self::assertArrayHasKey('expectedEndState', $firstScenario);
+            $firstFixture = $payload['parameters']['audio_fixtures'][0];
+            self::assertSame('demo.wav', $firstFixture['filename']);
+            self::assertSame('chest pain', $firstFixture['complaint']);
+            self::assertSame('/scribe/demo-audio?filename=demo.wav', $firstFixture['url']);
+        } finally {
+            $this->removeAudioFixtureProject($projectDir, $fixtureDir);
+        }
     }
 
     /**
-     * Keeps the dev page usable when a tester has no scenario fixture file checked out.
+     * Keeps the dev page usable when a tester has no generated audio manifest checked out.
      *
      * @return void No payload; failure means the developer panel could break local page loads.
      */
@@ -147,25 +157,25 @@ final class ScribeControllerTest extends TestCase
         $payload = $this->decodeJsonResponse($response);
 
         self::assertTrue($payload['parameters']['dev_panel_enabled']);
-        self::assertSame([], $payload['parameters']['scenarios']);
+        self::assertSame([], $payload['parameters']['audio_fixtures']);
     }
 
     /**
-     * Keeps the dev page visible and logs a warning when a tester edits scenarios into invalid JSON.
+     * Keeps the dev page visible and logs a warning when a tester edits the audio manifest into invalid JSON.
      *
      * @return void No payload; failure means a bad fixture could hide the clinician page.
      */
-    public function testIndexHandlesInvalidScenarioFixtureJsonInDevMode(): void
+    public function testIndexHandlesInvalidAudioFixtureJsonInDevMode(): void
     {
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::once())
             ->method('warning')
             ->with(
-                'Scribe scenarios fixture is invalid JSON',
+                'Scribe audio fixture manifest is invalid JSON',
                 self::arrayHasKey('path'),
             );
 
-        [$projectDir, $fixtureDir] = $this->createInvalidScenarioFixture();
+        [$projectDir, $fixtureDir] = $this->createInvalidAudioFixtureProject();
 
         try {
             $controller = $this->createController([
@@ -177,10 +187,238 @@ final class ScribeControllerTest extends TestCase
             $payload = $this->decodeJsonResponse($response);
 
             self::assertTrue($payload['parameters']['dev_panel_enabled']);
-            self::assertSame([], $payload['parameters']['scenarios']);
+            self::assertSame([], $payload['parameters']['audio_fixtures']);
         } finally {
-            $this->removeInvalidScenarioFixture($projectDir, $fixtureDir);
+            $this->removeAudioFixtureProject($projectDir, $fixtureDir);
         }
+    }
+
+    /**
+     * Serves a known generated WAV to the browser in dev mode.
+     *
+     * @return void No payload; failure means Demo Audio rows cannot feed the replay uploader.
+     */
+    public function testDemoAudioServesKnownFixtureInDevMode(): void
+    {
+        [$projectDir, $fixtureDir] = $this->createAudioFixtureProject();
+        $controller = $this->createController([
+            'kernel.environment' => 'dev',
+            'kernel.project_dir' => $projectDir,
+        ]);
+
+        try {
+            $request = Request::create('/scribe/demo-audio', 'GET', ['filename' => 'demo.wav']);
+            $response = $controller->demoAudio($request);
+
+            self::assertSame(200, $response->getStatusCode());
+            self::assertSame('audio/wav', $response->headers->get('Content-Type'));
+        } finally {
+            $this->removeAudioFixtureProject($projectDir, $fixtureDir);
+        }
+    }
+
+    /**
+     * Rejects demo-audio requests that should not expose a WAV to the browser.
+     *
+     * @param string $environment App mode; prod means local fixtures must stay hidden.
+     * @param array<string, string> $query Query values; empty means the UI did not select a file.
+     * @return void No payload; failure means the Demo Audio route is too permissive.
+     */
+    #[DataProvider('demoAudioUnavailableRequestProvider')]
+    public function testDemoAudioRejectsUnavailableFixtureRequests(string $environment, array $query): void
+    {
+        [$projectDir, $fixtureDir] = $this->createAudioFixtureProject();
+        $controller = $this->createController([
+            'kernel.environment' => $environment,
+            'kernel.project_dir' => $projectDir,
+        ]);
+
+        try {
+            $request = Request::create('/scribe/demo-audio', 'GET', $query);
+            $response = $controller->demoAudio($request);
+
+            self::assertSame(404, $response->getStatusCode());
+        } finally {
+            $this->removeAudioFixtureProject($projectDir, $fixtureDir);
+        }
+    }
+
+    /**
+     * Lists fixture-request states that should show a recoverable 404 in the UI.
+     *
+     * @return array<string, array{0: string, 1: array<string, string>}> Cases; empty query means no selected file.
+     */
+    public static function demoAudioUnavailableRequestProvider(): array
+    {
+        return [
+            'missing filename' => ['dev', []],
+            'unknown fixture' => ['dev', ['filename' => 'missing.wav']],
+            'production mode' => ['prod', ['filename' => 'demo.wav']],
+        ];
+    }
+
+    /**
+     * Proxies a Demo Audio upload to FastAPI while keeping the browser on the app origin.
+     *
+     * @return void No payload; failure means clicking a WAV row would hit Symfony instead of replay.
+     */
+    public function testReplayProxyForwardsUploadedWavToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000088';
+        $uploadedWavPath = $this->createTemporaryWavFile();
+        $seenRequests = [];
+        $httpClient = $this->createReplayProxyHttpClient($sessionId, $seenRequests);
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+
+        try {
+            $request = $this->createReplayUploadRequest(
+                "/session/{$sessionId}/replay?speed=2.0",
+                $uploadedWavPath,
+            );
+            $response = $controller->replay($sessionId, $request);
+        } finally {
+            $this->removeTemporaryFile($uploadedWavPath);
+        }
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame([
+            'session_id' => $sessionId,
+            'segments' => 1,
+            'duration_seconds' => 2,
+            'speed' => 2,
+        ], $this->decodeJsonResponse($response));
+        self::assertCount(1, $seenRequests);
+        self::assertSame('POST', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/replay?speed=2.0", $seenRequests[0]['url']);
+    }
+
+    /**
+     * Returns JSON when the replay button posts without a usable WAV file.
+     *
+     * @return void No payload; failure means the UI could see an HTML upload error.
+     */
+    public function testReplayProxyRejectsMissingUploadAsJson(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000088';
+        $controller = $this->createController();
+        $request = Request::create("/session/{$sessionId}/replay", 'POST');
+
+        $response = $controller->replay($sessionId, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame([
+            'detail' => 'Replay upload requires a WAV file',
+        ], $this->decodeJsonResponse($response));
+    }
+
+    /**
+     * Proxies early replay stop requests through Symfony to FastAPI.
+     *
+     * @return void No payload; failure means Stop could pause audio while the server keeps replaying text.
+     */
+    public function testReplayStopProxyForwardsToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000088';
+        $seenRequests = [];
+        $httpClient = $this->createReplayStopProxyHttpClient($sessionId, $seenRequests);
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/session/{$sessionId}/replay/stop", [
+            'visible_segments' => [
+                ['speaker_id' => 'spk_0', 'text' => 'Visible so far'],
+            ],
+            'audio_time_seconds' => 12.5,
+            'was_completed' => false,
+        ]);
+        $response = $controller->stopReplay($sessionId, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertTrue($this->decodeJsonResponse($response)['cancelled']);
+        self::assertCount(1, $seenRequests);
+        self::assertSame('POST', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/replay/stop", $seenRequests[0]['url']);
+        self::assertStringContainsString('Visible so far', $seenRequests[0]['options']['body']);
+    }
+
+    /**
+     * Proxies post-consult summary requests through Symfony to FastAPI.
+     *
+     * @return void No payload; failure means automatic summary would hit an app-origin 404.
+     */
+    public function testSummaryProxyForwardsToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000099';
+        $seenRequests = [];
+        $httpClient = $this->createSummaryProxyHttpClient($sessionId, $seenRequests);
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/session/{$sessionId}/summary", [
+            'segments' => [
+                ['speaker_id' => 'spk_1', 'text' => 'I have a rash.', 'role' => 'PATIENT'],
+            ],
+        ]);
+        $response = $controller->summary($sessionId, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('Session Summary', $this->decodeJsonResponse($response)['title']);
+        self::assertCount(1, $seenRequests);
+        self::assertSame('POST', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/summary", $seenRequests[0]['url']);
+        self::assertStringContainsString('I have a rash.', $seenRequests[0]['options']['body']);
+    }
+
+    /**
+     * Converts upstream HTML errors into JSON so the browser does not show a parser exception.
+     *
+     * @return void No payload; failure means users could still see `Unexpected token '<'`.
+     */
+    public function testSummaryProxyTurnsNonJsonAgentErrorIntoJson(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000099';
+        $httpClient = new MockHttpClient(
+            new MockResponse('<br /><b>Warning</b>', ['http_code' => 502]),
+            'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+
+        $request = Request::create("/session/{$sessionId}/summary", 'POST');
+        $response = $controller->summary($sessionId, $request);
+
+        self::assertSame(502, $response->getStatusCode());
+        self::assertSame([
+            'detail' => 'Summary generation failed',
+        ], $this->decodeJsonResponse($response));
+    }
+
+    /**
+     * Converts replay transport failures into JSON the browser can render.
+     *
+     * @return void No payload; failure means agent outages could still leak as HTML or uncaught errors.
+     * @throws TransportException When the mock client simulates an unreachable replay service.
+     */
+    public function testReplayProxyMapsTransportFailureToJson(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000088';
+        $uploadedWavPath = $this->createTemporaryWavFile();
+        $httpClient = new MockHttpClient(
+            static fn (): never => throw new TransportException('Connection refused'),
+            'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+
+        try {
+            $request = $this->createReplayUploadRequest(
+                "/session/{$sessionId}/replay",
+                $uploadedWavPath,
+            );
+            $response = $controller->replay($sessionId, $request);
+        } finally {
+            $this->removeTemporaryFile($uploadedWavPath);
+        }
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertStringContainsString(
+            'Replay service unavailable',
+            $this->decodeJsonResponse($response)['detail'],
+        );
     }
 
     /**
@@ -351,6 +589,8 @@ final class ScribeControllerTest extends TestCase
      * @param StrandsClient|null $client Null creates a stub so history calls never reach Python.
      * @param RoleInferenceService|null $roleInferenceService Null creates a stub so role polling stays local.
      * @param LoggerInterface|null $logger Null uses a no-op logger; tests inject one when warning output matters.
+     * @param HttpClientInterface|null $httpClient Null creates a mock so replay/summary calls stay local.
+     * @param string $agentEndpoint FastAPI base URL used by same-origin proxy tests; empty would make bad URLs.
      * @return TestableScribeController Controller double that exposes the same page flow with deterministic responses.
      */
     private function createController(
@@ -358,11 +598,15 @@ final class ScribeControllerTest extends TestCase
         ?StrandsClient $client = null,
         ?RoleInferenceService $roleInferenceService = null,
         ?LoggerInterface $logger = null,
+        ?HttpClientInterface $httpClient = null,
+        string $agentEndpoint = 'http://agent.test',
     ): TestableScribeController {
         return new TestableScribeController(
             $client ?? $this->createStub(StrandsClient::class),
             $roleInferenceService ?? $this->createStub(RoleInferenceService::class),
             $logger ?? new NullLogger(),
+            $httpClient ?? new MockHttpClient(),
+            $agentEndpoint,
             $parameters + [
                 'nemo_websocket_url' => 'ws://localhost:48101',
                 'mercure_url' => 'http://localhost:48137/.well-known/mercure',
@@ -371,30 +615,218 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Creates a broken scenario file to mimic a tester editing fixtures into invalid JSON.
+     * Creates a tiny temp WAV payload that can be wrapped as a browser upload.
+     *
+     * @return string Temp file path; empty never occurs because tempnam is checked.
+     */
+    private function createTemporaryWavFile(): string
+    {
+        $wavPath = tempnam(sys_get_temp_dir(), 'ambient-scribe-upload-');
+        // Failed temp-file creation should fail the test before an upload is attempted.
+        if (!\is_string($wavPath)) {
+            self::fail('Could not create temporary WAV file');
+        }
+
+        file_put_contents($wavPath, 'RIFFdemo');
+
+        return $wavPath;
+    }
+
+    /**
+     * Builds a replay upload request like the Demo Audio row sends.
+     *
+     * @param string $replayProxyUri Replay proxy URI; empty would not reach the session route.
+     * @param string $uploadedWavPath Temp WAV path; empty means there is no file to replay.
+     * @return Request Multipart request containing one uploaded WAV file.
+     */
+    private function createReplayUploadRequest(string $replayProxyUri, string $uploadedWavPath): Request
+    {
+        return Request::create(
+            uri: $replayProxyUri,
+            method: 'POST',
+            parameters: [],
+            cookies: [],
+            files: [
+                'file' => new UploadedFile(
+                    path: $uploadedWavPath,
+                    originalName: 'demo.wav',
+                    mimeType: 'audio/wav',
+                    error: null,
+                    test: true,
+                ),
+            ],
+        );
+    }
+
+    /**
+     * Creates a mock FastAPI replay response and records the proxied request.
+     *
+     * @param string $sessionId Replay session UUID; empty would make the response unusable.
+     * @param array<int, array<string, mixed>> $seenRequests Request log; empty before replay starts.
+     * @return MockHttpClient Client that returns accepted replay metadata.
+     */
+    private function createReplayProxyHttpClient(string $sessionId, array &$seenRequests): MockHttpClient
+    {
+        return new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'session_id' => $sessionId,
+                        'segments' => 1,
+                        'duration_seconds' => 2.0,
+                        'speed' => 2.0,
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+    }
+
+    /**
+     * Creates a mock FastAPI replay-stop response and records the proxied request.
+     *
+     * @param string $sessionId Replay session UUID; empty would make the stop response unusable.
+     * @param array<int, array<string, mixed>> $seenRequests Request log; empty before the user clicks Stop.
+     * @return MockHttpClient Client that returns a successful replay-stop payload.
+     */
+    private function createReplayStopProxyHttpClient(string $sessionId, array &$seenRequests): MockHttpClient
+    {
+        return new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'session_id' => $sessionId,
+                        'cancelled' => true,
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+    }
+
+    /**
+     * Creates a mock FastAPI summary response and records the proxied request.
+     *
+     * @param string $sessionId Summary session UUID; empty would make the response unusable.
+     * @param array<int, array<string, mixed>> $seenRequests Request log; empty before Summarise is clicked.
+     * @return MockHttpClient Client that returns a successful summary payload.
+     */
+    private function createSummaryProxyHttpClient(string $sessionId, array &$seenRequests): MockHttpClient
+    {
+        return new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'session_id' => $sessionId,
+                        'title' => 'Session Summary',
+                        'sections' => [],
+                        'clinical_hints' => [],
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+    }
+
+    /**
+     * Builds a JSON POST request like the browser sends to same-origin proxies.
+     *
+     * @param string $uri Proxy URI; empty would not reach a controller route.
+     * @param array<string, mixed> $payload Browser payload; empty means FastAPI should use stored state.
+     * @return Request JSON request body for replay stop or summary generation.
+     */
+    private function createJsonPostRequest(string $uri, array $payload): Request
+    {
+        return Request::create(
+            uri: $uri,
+            method: 'POST',
+            content: json_encode($payload, JSON_THROW_ON_ERROR),
+        );
+    }
+
+    /**
+     * Removes a temp upload if it still exists after a controller test.
+     *
+     * @param string $path Temp file path; empty means there is nothing safe to remove.
+     * @return void No payload; the local filesystem is restored for the next test.
+     */
+    private function removeTemporaryFile(string $path): void
+    {
+        // Some upload paths may already be consumed or absent after a failed test setup.
+        if ($path !== '' && is_file($path)) {
+            unlink($path);
+        }
+    }
+
+    /**
+     * Creates a temporary project with one generated WAV fixture.
      *
      * @return array{0: string, 1: string} Project and fixture paths; empty never occurs because temp paths are created.
      */
-    private function createInvalidScenarioFixture(): array
+    private function createAudioFixtureProject(): array
     {
-        $projectDir = sys_get_temp_dir() . '/ambient-scribe-invalid-' . uniqid(prefix: '', more_entropy: true);
-        $fixtureDir = $projectDir . '/tests/fixtures/scribe';
+        $projectDir = sys_get_temp_dir() . '/ambient-scribe-audio-' . uniqid(prefix: '', more_entropy: true);
+        $fixtureDir = $projectDir . '/tests/fixtures/audio';
         mkdir(directory: $fixtureDir, permissions: 0777, recursive: true);
-        file_put_contents(filename: $fixtureDir . '/scenarios.json', data: '{"scenarios": [}');
+        file_put_contents(filename: $fixtureDir . '/demo.wav', data: 'RIFFdemo');
+        file_put_contents(
+            filename: $fixtureDir . '/generated-manifest.json',
+            data: json_encode([
+                [
+                    'filename' => 'demo.wav',
+                    'complaint' => 'chest pain',
+                    'edge_case' => 'two speakers',
+                    'speakers' => ['DOCTOR', 'PATIENT'],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        );
 
         return [$projectDir, $fixtureDir];
     }
 
     /**
-     * Removes the temporary broken fixture after the invalid-JSON page test finishes.
+     * Creates a broken audio manifest to mimic a tester editing fixture metadata into invalid JSON.
+     *
+     * @return array{0: string, 1: string} Project and fixture paths; empty never occurs because temp paths are created.
+     */
+    private function createInvalidAudioFixtureProject(): array
+    {
+        $projectDir = sys_get_temp_dir() . '/ambient-scribe-invalid-audio-' . uniqid(prefix: '', more_entropy: true);
+        $fixtureDir = $projectDir . '/tests/fixtures/audio';
+        mkdir(directory: $fixtureDir, permissions: 0777, recursive: true);
+        file_put_contents(filename: $fixtureDir . '/generated-manifest.json', data: '[}');
+
+        return [$projectDir, $fixtureDir];
+    }
+
+    /**
+     * Removes temporary audio fixtures after dev audio tests finish.
      *
      * @param string $projectDir Temporary project root; empty would risk deleting the wrong local path.
      * @param string $fixtureDir Temporary fixture folder; empty would leave test files behind.
      * @return void No payload; the local filesystem is restored for the next controller test.
      */
-    private function removeInvalidScenarioFixture(string $projectDir, string $fixtureDir): void
+    private function removeAudioFixtureProject(string $projectDir, string $fixtureDir): void
     {
-        unlink(filename: $fixtureDir . '/scenarios.json');
+        // Test projects may or may not include a dummy WAV depending on the fixture case.
+        if (is_file($fixtureDir . '/demo.wav')) {
+            unlink(filename: $fixtureDir . '/demo.wav');
+        }
+
+        // Every temporary audio project includes a generated manifest file.
+        if (is_file($fixtureDir . '/generated-manifest.json')) {
+            unlink(filename: $fixtureDir . '/generated-manifest.json');
+        }
+
         rmdir(directory: $fixtureDir);
         rmdir(directory: $projectDir . '/tests/fixtures');
         rmdir(directory: $projectDir . '/tests');
@@ -416,15 +848,25 @@ final class TestableScribeController extends ScribeController
      * @param StrandsClient $strandsClient Stubbed Python client; never sends live audio or network calls.
      * @param RoleInferenceService $roleInferenceService Stubbed role service; null is not expected in this double.
      * @param LoggerInterface $logger Captures fixture warnings that matter to the developer panel.
+     * @param HttpClientInterface $httpClient Stubbed HTTP client for replay and summary proxy routes.
+     * @param string $agentEndpoint FastAPI base URL; empty would make replay/summary proxy URLs invalid.
      * @param array<string, \UnitEnum|array|string|int|float|bool|null> $parameters Page config; empty means helpers can return null.
      */
     public function __construct(
         StrandsClient $strandsClient,
         RoleInferenceService $roleInferenceService,
         LoggerInterface $logger,
+        HttpClientInterface $httpClient,
+        string $agentEndpoint,
         private readonly array $parameters,
     ) {
-        parent::__construct($strandsClient, $roleInferenceService, $logger);
+        parent::__construct(
+            strandsClient: $strandsClient,
+            roleInferenceService: $roleInferenceService,
+            logger: $logger,
+            httpClient: $httpClient,
+            agentEndpoint: $agentEndpoint,
+        );
     }
 
     /**

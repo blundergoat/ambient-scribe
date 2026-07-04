@@ -28,7 +28,7 @@
         "twig/twig": "^3.0"
     },
     "require-dev": {
-        "blundergoat/gruff-php": "^0.4.1",
+        "blundergoat/gruff-php": "~0.5",
         "friendsofphp/php-cs-fixer": "^3.0",
         "infection/infection": "^0.34",
         "phpmd/phpmd": "^2.15",

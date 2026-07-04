@@ -1,21 +1,28 @@
 // =========================================================================
-// Ambient Scribe replay, summary, and keyboard output flow.
+// Ambient Scribe replay, summary, and clinical hint output flow.
 // Runs after transcript rendering helpers are loaded.
-// Owns WAV replay progress, generated summary display, and keyboard shortcuts.
-// Users reach this code by choosing Demo, stopping a visit, or pressing keys.
+// Owns WAV replay progress, generated summary display, and clinical hints.
+// Users reach this code by choosing demo audio or requesting a summary.
 // =========================================================================
 
 /**
- * Uploads a WAV file and replays it through the transcript UI.
- * Reports upload/backend errors in status and recovers the Demo button.
+ * Uploads a WAV file, plays it locally, and replays it through the transcript UI.
+ * Reports upload/backend errors in status and keeps audio controls usable.
+ * Returns whether the backend accepted replay for the visible session.
  */
-async function startReplay(file) {
+async function startReplay(file, options = {}) {
     // No file selected means the user cancelled the picker.
     if (!file) {
-        return;
+        return false;
     }
 
-    document.getElementById('demoFileInput').value = '';
+    const demoFileInput = document.getElementById('demoFileInput');
+    let wasReplayAudioUrlAdopted = false;
+
+    // Manual upload should be clear after the browser hands us the selected WAV.
+    if (demoFileInput) {
+        demoFileInput.value = '';
+    }
 
     // Stop live capture before replaying a prerecorded consultation.
     if (isRecording) {
@@ -25,8 +32,10 @@ async function startReplay(file) {
     resetSession();
     await new Promise((resolveReplayReset) => setTimeout(resolveReplayReset, 100));
     isReplayActive = true;
-    setDemoButtonBusy(true, 'Processing...');
+    setReplayControlsBusy(true, 'Processing...');
     setElementHidden('startBtn', true);
+    setElementHidden('stopBtn', true);
+    setElementHidden('summaryBtn', true);
     setElementHidden('emptyState', true);
     setRecordingStatus('Processing WAV...', 'color:var(--color-speaker-a);font-weight:500;');
     subscribeToMercure();
@@ -40,33 +49,90 @@ async function startReplay(file) {
             body: replayFormData,
         });
 
-        // Failed uploads should leave the clinician in a recoverable demo state.
-        if (!response.ok) {
-            const errorPayload = await response.json().catch(() => ({ detail: 'Upload failed' }));
-            throw new Error(errorPayload.detail || `HTTP ${response.status}`);
+        const replayPayload = await readJsonResponse(response, {
+            detail: 'Replay service returned an unreadable response.',
+        });
+
+        const replayMetadata = requireAcceptedReplayPayload(response, replayPayload);
+        replayDuration = replayMetadata.durationSeconds;
+        replayTranscriptSegments = replayMetadata.transcriptSegments;
+        replayNextSegmentIndex = 0;
+        isBrowserClockReplaySession = true;
+        wasReplayAudioUrlAdopted = await startReplayAudioPlayback(file, options.audioUrl ?? null);
+        startReplayProgress();
+        updateReplayProgress();
+
+        // Test-only pages without audio markup should not retain fixture blob URLs.
+        if (options.audioUrl && !wasReplayAudioUrlAdopted) {
+            URL.revokeObjectURL(options.audioUrl);
         }
 
-        const replayPayload = await response.json();
-        replayDuration = replayPayload.duration_seconds ?? 0;
-        startReplayProgress();
-        setDemoButtonBusy(false, 'Demo');
+        setElementHidden('stopBtn', false);
+        setReplayControlsBusy(false, 'Upload WAV');
+        return true;
     } catch (replayError) {
         console.error('Replay failed:', replayError);
-        setPlainStatus(`Demo error: ${replayError.message}`);
-        setDemoButtonBusy(false, 'Demo');
+        setPlainStatus(`Replay error: ${replayError.message}`);
+        setReplayControlsBusy(false, 'Upload WAV');
         isReplayActive = false;
+        setElementHidden('startBtn', false);
+        setElementHidden('stopBtn', true);
         disconnectMercureStreams();
+
+        // A fixture-created audio URL must be cleaned up if replay never adopted it.
+        if (options.audioUrl && !wasReplayAudioUrlAdopted) {
+            URL.revokeObjectURL(options.audioUrl);
+        }
+
+        return false;
     }
 }
 
 /**
- * Toggles the replay button while a WAV upload is processing.
- * Use so the user cannot start two demo replays at once.
+ * Validates the replay response before the UI shows progress.
+ * Use after a WAV upload so parser warnings or empty transcripts stay visible as errors.
+ * Throws when the backend response would leave the replay UI stuck or misleading.
  */
-function setDemoButtonBusy(isBusy, label) {
-    const demoButton = document.getElementById('demoBtn');
-    demoButton.disabled = isBusy;
-    demoButton.textContent = label;
+function requireAcceptedReplayPayload(response, replayPayload) {
+    // Failed uploads should leave the clinician in a recoverable replay state.
+    if (!response.ok || replayPayload.isFallbackPayload) {
+        throw new Error(replayPayload.detail || `HTTP ${response.status}`);
+    }
+
+    const replaySegmentCount = Number(replayPayload.segments ?? 0);
+    const replayDurationSeconds = Number(replayPayload.duration_seconds ?? 0);
+    const transcriptSegments = Array.isArray(replayPayload.transcript_segments)
+        ? replayPayload.transcript_segments
+        : [];
+
+    // A replay with no transcript text would leave the progress bar stuck.
+    if (replaySegmentCount <= 0 || replayDurationSeconds <= 0 || transcriptSegments.length === 0) {
+        throw new Error(replayPayload.detail || 'Replay did not return transcript segments.');
+    }
+
+    return { durationSeconds: replayDurationSeconds, transcriptSegments };
+}
+
+/**
+ * Toggles available replay controls while a WAV upload is processing.
+ * Use so the user cannot start two audio replays at once from the UI.
+ */
+function setReplayControlsBusy(isBusy, label) {
+    const uploadButton = document.querySelector('.audio-fixture-panel__footer button');
+    const summaryButton = document.getElementById('summaryBtn');
+
+    // Summary should not be requested while replay upload is still being prepared.
+    if (summaryButton) {
+        summaryButton.disabled = isBusy;
+    }
+
+    // Production pages have no demo audio panel, so replay status is enough.
+    if (!uploadButton) {
+        return;
+    }
+
+    uploadButton.disabled = isBusy;
+    uploadButton.textContent = label;
 }
 
 /**
@@ -76,50 +142,297 @@ function setDemoButtonBusy(isBusy, label) {
 function startReplayProgress() {
     setElementHidden('replayProgress', false);
     setElementHidden('timer', false);
-    setRecordingStatus('Replaying demo', 'color:var(--color-speaker-a);font-weight:500;');
-    replayStartTime = Date.now();
-    replayTimerInterval = setInterval(updateReplayProgress, 500);
+    setRecordingStatus('Replaying audio', 'color:var(--color-speaker-a);font-weight:500;');
+    replayTimerInterval = setInterval(updateReplayProgress, 200);
 }
 
 /**
- * Updates the demo replay progress bar.
- * Use while a prerecorded consultation is publishing transcript events.
+ * Plays the same WAV the user selected while browser time reveals transcript text.
+ * Use after FastAPI accepts the upload so audio and transcript begin together.
+ * Reports playback errors in status and leaves the audio controls visible.
  */
-function updateReplayProgress() {
-    // Without active replay timing, there is no progress for the user to see.
-    if (!isReplayActive || !replayStartTime || !replayDuration) {
+async function startReplayAudioPlayback(file, suppliedAudioUrl = null) {
+    const replayAudio = document.getElementById('replayAudio');
+
+    // Test-only pages may skip the production audio element.
+    if (!replayAudio) {
+        return false;
+    }
+
+    releaseReplayAudioObjectUrl();
+    replayAudioObjectUrl = suppliedAudioUrl ?? URL.createObjectURL(file);
+    replayAudio.src = replayAudioObjectUrl;
+    replayAudio.currentTime = 0;
+    replayAudio.ontimeupdate = updateReplayProgress;
+    hasReplayAudioPlaybackStarted = false;
+    replayAudio.onplay = () => {
+        hasReplayAudioPlaybackStarted = true;
+        setRecordingStatus('Replaying audio', 'color:var(--color-speaker-a);font-weight:500;');
+        updateReplayProgress();
+    };
+    replayAudio.onended = () => {
+        // Audio ending should reveal the final transcript rows before post-visit actions.
+        if (isReplayActive) {
+            endReplay();
+        }
+    };
+    replayAudio.classList.remove('hidden');
+
+    try {
+        await replayAudio.play();
+        hasReplayAudioPlaybackStarted = true;
+        updateReplayProgress();
+    } catch (playError) {
+        console.warn('Browser blocked replay autoplay:', playError);
+        setPlainStatus('Audio ready - press play to hear replay');
+    }
+
+    return true;
+}
+
+/**
+ * Pauses or hides replay audio without touching transcript text.
+ * Use when replay stops, completes, fails, or the visit resets.
+ */
+function stopReplayAudioPlayback(shouldHideAudio = false) {
+    const replayAudio = document.getElementById('replayAudio');
+
+    // Missing markup means there is no local audio playback to stop.
+    if (!replayAudio) {
+        releaseReplayAudioObjectUrl();
         return;
     }
 
-    const elapsedSeconds = (Date.now() - replayStartTime) / 1000;
+    replayAudio.pause();
+    hasReplayAudioPlaybackStarted = false;
+    replayAudio.onended = null;
+    replayAudio.onplay = null;
+    replayAudio.ontimeupdate = null;
+
+    // A reset hides the player; a manual stop leaves paused controls visible.
+    if (shouldHideAudio) {
+        replayAudio.removeAttribute('src');
+        replayAudio.load();
+        replayAudio.classList.add('hidden');
+        releaseReplayAudioObjectUrl();
+    }
+}
+
+/**
+ * Clears replay audio and revokes the browser object URL.
+ * Use when the visible visit is reset or replay cannot continue.
+ */
+function resetReplayAudioPlayback() {
+    stopReplayAudioPlayback(true);
+}
+
+/**
+ * Releases the temporary URL created from the user's WAV file.
+ * Use after replay reset so repeated demos do not retain large audio blobs.
+ */
+function releaseReplayAudioObjectUrl() {
+    // Empty URL means the browser has no blob reference to release.
+    if (!replayAudioObjectUrl) {
+        return;
+    }
+
+    URL.revokeObjectURL(replayAudioObjectUrl);
+    replayAudioObjectUrl = null;
+}
+
+/**
+ * Updates the audio replay progress bar.
+ * Use while a prerecorded consultation is playing in the browser.
+ */
+function updateReplayProgress() {
+    // Without active replay timing, there is no progress for the user to see.
+    if (!isReplayActive || !replayDuration) {
+        return;
+    }
+
+    // Blocked autoplay should not reveal transcript before the user hears audio.
+    if (!isReplayAudioClockReady()) {
+        return;
+    }
+
+    const elapsedSeconds = getReplayAudioCurrentTime();
+    revealReplaySegmentsUpToAudioTime(elapsedSeconds);
     const progress = Math.min(elapsedSeconds / replayDuration, 1);
     document.getElementById('replayProgressFill').style.width = `${progress * 100}%`;
     document.getElementById('timer').textContent = formatTime(elapsedSeconds);
 
-    // Reaching 100% should unlock the same post-visit actions as live stop.
-    if (progress >= 1) {
+    // Reaching the audio end unlocks the same post-visit actions as live stop.
+    if (progress >= 1 && replayNextSegmentIndex >= replayTranscriptSegments.length) {
         endReplay();
     }
 }
 
 /**
- * Finishes demo replay and reveals post-visit actions.
- * Use when the replay timer completes or the backend sends finalized.
+ * Checks whether the replay audio clock has started moving.
+ * Use before revealing text so blocked autoplay does not show unheard speech.
+ */
+function isReplayAudioClockReady() {
+    const replayAudio = document.getElementById('replayAudio');
+
+    // Test-only pages without an audio element have no local clock to wait for.
+    if (!replayAudio) {
+        return true;
+    }
+
+    return hasReplayAudioPlaybackStarted || replayAudio.currentTime > 0 || replayAudio.ended;
+}
+
+/**
+ * Reads the current demo audio clock.
+ * Use so transcript reveal follows what the user can hear, not backend processing speed.
+ */
+function getReplayAudioCurrentTime() {
+    const replayAudio = document.getElementById('replayAudio');
+
+    // Missing audio markup means replay has no browser clock to follow.
+    if (!replayAudio) {
+        return 0;
+    }
+
+    return replayAudio.currentTime || 0;
+}
+
+/**
+ * Reveals replay transcript rows up to the browser audio time.
+ * Use while audio plays, pauses, or stops so visible text matches heard speech.
+ */
+function revealReplaySegmentsUpToAudioTime(audioTimeSeconds) {
+    // A small grace window prevents sub-second ASR timestamps from feeling late.
+    const revealToleranceSeconds = 0.2;
+
+    // Empty replay metadata means there are no prepared rows to reveal.
+    if (replayTranscriptSegments.length === 0) {
+        return;
+    }
+
+    // Each due segment is appended once as the audible WAV reaches its timestamp.
+    while (replayNextSegmentIndex < replayTranscriptSegments.length) {
+        const replaySegment = replayTranscriptSegments[replayNextSegmentIndex];
+        const segmentStartSeconds = Number(replaySegment.start ?? 0);
+
+        // Future segments remain hidden until the user hears that part of the WAV.
+        if (segmentStartSeconds > audioTimeSeconds + revealToleranceSeconds) {
+            break;
+        }
+
+        handleRawSegment({ type: 'segment', ...replaySegment });
+        replayNextSegmentIndex++;
+    }
+}
+
+/**
+ * Stops whichever active session owns the shared Stop button.
+ * Use when the clinician clicks Stop during recording or demo audio replay.
+ */
+function stopCurrentSession() {
+    // Demo replay uses local audio and a backend replay task, not the microphone stream.
+    if (isReplayActive) {
+        stopReplay();
+        return;
+    }
+
+    // Live recording still uses the original microphone stop path.
+    if (isRecording) {
+        stopRecording();
+    }
+}
+
+/**
+ * Stops demo audio before the file ends and reveals post-visit actions.
+ * Use when the user wants to summarize only the transcript captured so far.
+ */
+function stopReplay() {
+    // Hidden or repeated Stop clicks should not mutate the completed visit twice.
+    if (!isReplayActive) {
+        return false;
+    }
+
+    const stoppedAtSeconds = getReplayAudioCurrentTime();
+    revealReplaySegmentsUpToAudioTime(stoppedAtSeconds);
+    isReplayActive = false;
+    clearReplayTimer();
+    stopReplayAudioPlayback(false);
+    disconnectMercureStreams();
+    setReplayControlsBusy(false, 'Upload WAV');
+    setElementHidden('startBtn', false);
+    setElementHidden('stopBtn', true);
+    setElementHidden('replayProgress', true);
+    setPlainStatus('Replay stopped');
+    revealPostVisitActions();
+    const summaryButton = document.getElementById('summaryBtn');
+
+    // Summary waits for the stop request so late replay text is less likely to leak in.
+    if (summaryButton) {
+        summaryButton.disabled = true;
+    }
+
+    announce('Replay stopped');
+    syncStoppedReplayOnServer(readVisibleTranscriptSegments(), {
+        audioTimeSeconds: stoppedAtSeconds,
+        wasCompleted: false,
+    }).finally(() => {
+        // Once replay stop has synced, the captured transcript can be summarized.
+        if (summaryButton) {
+            summaryButton.disabled = false;
+        }
+    });
+
+    return true;
+}
+
+/**
+ * Syncs stopped replay state for the current browser session.
+ * Reports network failures to the console and does not roll back the stopped UI.
+ * Use after stop/end so summary uses the visible transcript snapshot.
+ */
+async function syncStoppedReplayOnServer(visibleSegments = [], options = {}) {
+    try {
+        await fetch(`/session/${CONFIG.sessionId}/replay/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                visible_segments: visibleSegments,
+                audio_time_seconds: options.audioTimeSeconds ?? null,
+                was_completed: options.wasCompleted ?? false,
+            }),
+        });
+    } catch (stopSyncError) {
+        console.warn('Replay stop sync failed:', stopSyncError);
+    }
+}
+
+/**
+ * Finishes audio replay and reveals post-visit actions.
+ * Use when the local WAV reaches the end or the visible transcript is complete.
  */
 function endReplay() {
+    revealReplaySegmentsUpToAudioTime(replayDuration + 0.2);
     isReplayActive = false;
+    clearReplayTimer();
+    setReplayControlsBusy(false, 'Upload WAV');
+    setElementHidden('startBtn', false);
+    setElementHidden('stopBtn', true);
+    setElementHidden('replayProgress', true);
+    setPlainStatus('Replay complete');
+    revealPostVisitActions();
+    syncStoppedReplayOnServer(readVisibleTranscriptSegments(), {
+        audioTimeSeconds: replayDuration,
+        wasCompleted: true,
+    });
+}
+
+/**
+ * Clears replay progress timing state.
+ * Use when replay stops early, completes, or the visit resets.
+ */
+function clearReplayTimer() {
     clearInterval(replayTimerInterval);
     replayTimerInterval = null;
-    replayStartTime = null;
-    setElementHidden('replayProgress', true);
-    setPlainStatus('Demo complete');
-
-    // Replayed transcript text can be downloaded and summarized like live text.
-    if (segmentIndex > 0) {
-        setElementHidden('downloadBtn', false);
-        setElementHidden('resetBtn', false);
-        requestSummary();
-    }
 }
 
 /**
@@ -135,6 +448,13 @@ async function requestSummary() {
     const summaryPanel = document.getElementById('summaryPanel');
     const summaryLoading = document.getElementById('summaryLoading');
     const summaryContent = document.getElementById('summaryContent');
+    const summaryButton = document.getElementById('summaryBtn');
+
+    // While the note is generating, the button should not start duplicate requests.
+    if (summaryButton) {
+        summaryButton.disabled = true;
+    }
+
     summaryPanel.classList.remove('hidden');
     summaryPanel.classList.add('summary-panel--open');
     summaryLoading.classList.remove('hidden');
@@ -144,24 +464,32 @@ async function requestSummary() {
         const response = await fetch(`/session/${CONFIG.sessionId}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ segments: readVisibleTranscriptSegments() }),
         });
 
+        const summaryPayload = await readJsonResponse(response, { detail: 'Summary generation failed.' });
+
         // Successful responses render sectioned summary content for review.
-        if (response.ok) {
-            const summaryPayload = await response.json();
+        if (response.ok && !summaryPayload.isFallbackPayload) {
             renderSummary(summaryPayload);
             handleClinicalHintsEvent({
                 type: 'clinical_hints',
                 hints: summaryPayload.clinical_hints ?? [],
             });
         } else {
-            showSummaryMessage('Summary generation failed. Try downloading the transcript instead.');
+            showSummaryMessage(summaryPayload.detail || 'Summary generation failed. Try downloading the transcript instead.');
         }
     } catch (summaryError) {
         console.error('Summary request failed:', summaryError);
         showSummaryMessage('Could not reach the summary service.');
     } finally {
         summaryLoading.classList.add('hidden');
+
+        // A completed request can be rerun if the clinician wants to regenerate the note.
+        if (summaryButton) {
+            summaryButton.disabled = false;
+            setElementHidden('summaryBtn', false);
+        }
     }
 }
 
@@ -400,48 +728,3 @@ function showSummaryMessage(message) {
     });
     summaryContent.replaceChildren(messageElement);
 }
-
-/**
- * Opens or collapses the summary panel body.
- * Use when the clinician clicks the Session Summary header.
- */
-function toggleSummary() {
-    const summaryPanel = document.getElementById('summaryPanel');
-    const summaryToggle = summaryPanel.querySelector('.summary-panel__toggle');
-    const isOpen = summaryPanel.classList.toggle('summary-panel--open');
-    summaryToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-}
-
-document.addEventListener('keydown', (event) => {
-    // Typing in a form field should not start or stop the consultation.
-    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-        return;
-    }
-
-    switch (event.key) {
-        case ' ':
-            event.preventDefault();
-
-            // Space mirrors the main Start/Stop button for keyboard users.
-            if (isRecording) {
-                stopRecording();
-            } else {
-                startRecording();
-            }
-            break;
-        case 'Escape':
-            // Escape is a quick stop for an active recording.
-            if (isRecording) {
-                stopRecording();
-            }
-            break;
-        case 'd':
-            // Ctrl/Cmd+D belongs to the browser bookmark shortcut.
-            if (event.ctrlKey || event.metaKey) {
-                return;
-            }
-
-            document.getElementById('downloadBtn')?.click();
-            break;
-    }
-});

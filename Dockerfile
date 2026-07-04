@@ -42,6 +42,14 @@ COPY . /app/
 # strands-php-client resolves from the tagged Composer constraint in composer.lock.
 RUN composer install --no-dev --optimize-autoloader
 
+# Large PriMock demo WAVs are uploaded through Symfony before FastAPI replays them.
+# Keep local dev upload limits above the checked-in fixture corpus.
+RUN { \
+    echo "upload_max_filesize=128M"; \
+    echo "post_max_size=128M"; \
+    echo "memory_limit=512M"; \
+} > /usr/local/etc/php/conf.d/ambient-scribe-dev.ini
+
 # The PHP built-in server listens on this port
 EXPOSE 8080
 

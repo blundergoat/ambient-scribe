@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-Generate license-clean synthetic consultation WAV fixtures.
+Generate license-clean consultation WAV fixtures.
 
 The script uses FFmpeg's local `flite` source to create acted-style demo audio
 without adding a TTS dependency or committing scraped recordings. Use it when
-the Demo button or `scripts/m2-verify.sh` needs realistic medical replay files.
+the Demo Audio picker or `scripts/m2-verify.sh` needs realistic medical replay files.
+It can also download CC BY 4.0 PriMock57 mock consultations on request.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,33 @@ class DemoConsultation:
     utterances: tuple[DemoUtterance, ...]
 
 
+@dataclass(frozen=True)
+class Primock57Consultation:
+    """
+    One downloadable mock consultation from the PriMock57 corpus.
+
+    PriMock57 stores doctor and patient audio as separate synchronized channels.
+    The generator downloads both sides and mixes them into one mono replay WAV.
+
+    Attributes:
+        case_id: PriMock57 case identifier used to group doctor and patient WAVs.
+        filename: Local WAV name shown in the Demo Audio picker.
+        complaint: Presenting complaint from the PriMock57 clinician note.
+        doctor_url: Remote doctor-channel WAV URL; empty would make download fail.
+        patient_url: Remote patient-channel WAV URL; empty would make download fail.
+        source_paths: Original corpus paths shown in attribution metadata.
+        note_path: Original note JSON path shown in attribution metadata.
+    """
+
+    case_id: str
+    filename: str
+    complaint: str
+    doctor_url: str
+    patient_url: str
+    source_paths: tuple[str, str]
+    note_path: str
+
+
 VOICE_BY_ROLE = {
     "DOCTOR": "awb",
     "PATIENT": "slt",
@@ -62,6 +93,23 @@ VOICE_BY_ROLE = {
     "FAMILY_MEMBER": "rms",
 }
 
+PRIMOCK57_AUDIO_API_URL = (
+    "https://api.github.com/repos/babylonhealth/primock57/contents/audio?ref=main"
+)
+PRIMOCK57_AUDIO_MEDIA_BASE_URL = (
+    "https://media.githubusercontent.com/media/babylonhealth/primock57/main/audio"
+)
+PRIMOCK57_NOTES_RAW_BASE_URL = (
+    "https://raw.githubusercontent.com/babylonhealth/primock57/main/notes"
+)
+PRIMOCK57_CASE_FILE = re.compile(r"^(day\d+_consultation\d+)_(doctor|patient)\.wav$")
+PRIMOCK57_EXCLUDED_CASE_IDS = frozenset(
+    {
+        "day1_consultation01",
+        "day1_consultation09",
+        "day1_consultation10",
+    }
+)
 DEMO_CONSULTATIONS = (
     DemoConsultation(
         filename="osce-chest-pain-short.wav",
@@ -208,6 +256,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite existing generated WAVs.",
     )
+    parser.add_argument(
+        "--include-primock57",
+        action="store_true",
+        help=(
+            "Download and mix PriMock57 CC BY 4.0 doctor/patient WAV pairs "
+            "in addition to the synthetic fixtures."
+        ),
+    )
+    parser.add_argument(
+        "--primock57-limit",
+        type=int,
+        default=3,
+        help=(
+            "Maximum PriMock57 consultations to download when no --case filter "
+            "selects them. Use 0 to download every discovered pair."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -229,6 +294,9 @@ def main() -> int:
     if not ffmpeg_path:
         raise SystemExit("ffmpeg is required and was not found on PATH")
 
+    if args.primock57_limit < 0:
+        raise SystemExit("--primock57-limit must be 0 or greater")
+
     output_dir.mkdir(parents=True, exist_ok=True)
     generated_manifest: list[dict[str, object]] = []
 
@@ -246,6 +314,24 @@ def main() -> int:
 
         generate_consultation_wav(ffmpeg_path, consultation, output_path)
         generated_manifest.append(manifest_entry(consultation, output_path))
+
+    if args.include_primock57:
+        for consultation in discover_primock57_consultations(
+            args.primock57_limit,
+            selected_cases,
+        ):
+            output_path = output_dir / consultation.filename
+            # Downloaded fixtures are also preserved unless a refresh is requested.
+            if output_path.exists() and not args.force:
+                generated_manifest.append(
+                    primock57_manifest_entry(consultation, output_path)
+                )
+                continue
+
+            generate_primock57_wav(ffmpeg_path, consultation, output_path)
+            generated_manifest.append(
+                primock57_manifest_entry(consultation, output_path)
+            )
 
     manifest_path = output_dir / "generated-manifest.json"
     manifest_path.write_text(
@@ -285,6 +371,394 @@ def generate_consultation_wav(
         synthesize_silence(ffmpeg_path, silence_path)
         concat_wavs(ffmpeg_path, utterance_paths, silence_path, output_path)
         verify_canonical_wav(output_path)
+
+
+def discover_primock57_consultations(
+    limit: int,
+    selected_cases: set[str],
+) -> list[Primock57Consultation]:
+    """Fetch PriMock57 audio metadata and return doctor/patient WAV pairs.
+
+    Args:
+        limit: Maximum pairs to return when no explicit PriMock57 case is selected.
+        selected_cases: Optional `--case` filters; accepts output filenames or case ids.
+
+    Returns:
+        Downloadable consultations in deterministic repository order.
+
+    Raises:
+        RuntimeError: When the remote metadata does not look like a file list.
+    """
+    entries = read_json_url(PRIMOCK57_AUDIO_API_URL)
+    if not isinstance(entries, list):
+        raise RuntimeError("PriMock57 audio API did not return a file list")
+
+    case_files = collect_primock57_case_files(entries)
+    selected_case_files, selected_case_complaints = select_primock57_case_files(
+        case_files,
+        limit,
+        selected_cases,
+    )
+
+    return build_primock57_consultations(
+        selected_case_files,
+        selected_case_complaints,
+    )
+
+
+def collect_primock57_case_files(entries: list[object]) -> dict[str, dict[str, str]]:
+    """Group PriMock57 API rows into doctor/patient source files.
+
+    Args:
+        entries: GitHub API rows; empty means no remote audio files were found.
+
+    Returns:
+        Map of case id to role filenames; empty means no playable PriMock pairs.
+    """
+    case_files: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        # Non-file API rows cannot be downloaded as doctor/patient audio.
+        if not isinstance(entry, dict) or entry.get("type") != "file":
+            continue
+
+        name = entry.get("name")
+        # Missing names leave the user with nothing safe to download.
+        if not isinstance(name, str):
+            continue
+
+        match = PRIMOCK57_CASE_FILE.match(name)
+        # Non-consultation files in the corpus should not appear in the picker.
+        if not match:
+            continue
+
+        case_id, role = match.groups()
+        case_files.setdefault(case_id, {})[role] = name
+
+    return case_files
+
+
+def select_primock57_case_files(
+    case_files: dict[str, dict[str, str]],
+    limit: int,
+    selected_cases: set[str],
+) -> tuple[list[tuple[str, dict[str, str]]], dict[str, str]]:
+    """Select the PriMock57 pairs the user asked to generate.
+
+    Args:
+        case_files: Discovered case file map; empty means no replay rows.
+        limit: Default corpus cap when no explicit case filter is provided.
+        selected_cases: Case ids or filenames requested by the maintainer.
+
+    Returns:
+        Selected file pairs plus any complaints fetched for filename matching.
+    """
+    selected_case_files: list[tuple[str, dict[str, str]]] = []
+    selected_case_complaints: dict[str, str] = {}
+    for case_id in sorted(case_files):
+        files = case_files[case_id]
+        # Excluded or incomplete cases cannot produce the intended replay row.
+        if not is_playable_primock57_case(case_id, files):
+            continue
+
+        filename = legacy_primock57_filename(case_id)
+        # Filename filters with complaint slugs need note metadata before selection.
+        if selected_cases:
+            complaint = read_primock57_complaint(case_id)
+            selected_case_complaints[case_id] = complaint
+            filename = primock57_filename(case_id, complaint)
+
+        # User-selected cases let maintainers refresh one fixture without all audio.
+        if (
+            selected_cases
+            and case_id not in selected_cases
+            and legacy_primock57_filename(case_id) not in selected_cases
+            and filename not in selected_cases
+        ):
+            continue
+
+        selected_case_files.append((case_id, files))
+
+    # The default picker only needs a small, deterministic sample.
+    if not selected_cases and limit > 0:
+        selected_case_files = selected_case_files[:limit]
+
+    return selected_case_files, selected_case_complaints
+
+
+def is_playable_primock57_case(case_id: str, files: dict[str, str]) -> bool:
+    """Return whether a PriMock57 case can be exposed in the picker.
+
+    Args:
+        case_id: PriMock57 case id; excluded ids are hidden from users.
+        files: Role filename map; missing channels cannot be mixed into replay audio.
+
+    Returns:
+        True when both channels exist and the case is allowed for local demos.
+    """
+    # Excluded cases should not appear in the user's Demo Audio picker.
+    if case_id in PRIMOCK57_EXCLUDED_CASE_IDS:
+        return False
+
+    return "doctor" in files and "patient" in files
+
+
+def build_primock57_consultations(
+    selected_case_files: list[tuple[str, dict[str, str]]],
+    selected_case_complaints: dict[str, str],
+) -> list[Primock57Consultation]:
+    """Build downloadable PriMock57 consultation records for generation.
+
+    Args:
+        selected_case_files: Selected doctor/patient pairs; empty writes no PriMock rows.
+        selected_case_complaints: Cached complaints used when filename filters needed notes.
+
+    Returns:
+        Consultation metadata consumed by the audio generator and manifest writer.
+    """
+    consultations: list[Primock57Consultation] = []
+    for case_id, files in selected_case_files:
+        note_path = f"notes/{case_id}.json"
+        complaint = selected_case_complaints.get(case_id) or read_primock57_complaint(
+            case_id
+        )
+        filename = primock57_filename(case_id, complaint)
+        consultations.append(
+            Primock57Consultation(
+                case_id=case_id,
+                filename=filename,
+                complaint=complaint,
+                doctor_url=f"{PRIMOCK57_AUDIO_MEDIA_BASE_URL}/{files['doctor']}",
+                patient_url=f"{PRIMOCK57_AUDIO_MEDIA_BASE_URL}/{files['patient']}",
+                source_paths=(
+                    f"audio/{files['doctor']}",
+                    f"audio/{files['patient']}",
+                ),
+                note_path=note_path,
+            )
+        )
+
+    return consultations
+
+
+def legacy_primock57_filename(case_id: str) -> str:
+    """Return the old case-only PriMock57 filename accepted by --case.
+
+    Args:
+        case_id: PriMock57 case id; empty would create an unusable legacy name.
+
+    Returns:
+        Back-compatible WAV filename a user may still pass to `--case`.
+    """
+    return f"primock57-{case_id.replace('_', '-')}.wav"
+
+
+def primock57_filename(case_id: str, complaint: str) -> str:
+    """Build a self-documenting local WAV filename for one PriMock57 case.
+
+    Args:
+        case_id: PriMock57 case id used to keep filenames unique in the picker.
+        complaint: Presenting complaint; empty falls back to the case-only name.
+
+    Returns:
+        WAV filename matching the generated fixture names shown in the picker.
+    """
+    complaint_slug = slug_for_filename(complaint)
+    # Empty complaint text keeps the old case-only filename usable.
+    if not complaint_slug:
+        return legacy_primock57_filename(case_id)
+
+    return f"{legacy_primock57_filename(case_id).removesuffix('.wav')}-{complaint_slug}.wav"
+
+
+def slug_for_filename(value: str) -> str:
+    """Convert user-visible complaint text into a safe filename fragment.
+
+    Args:
+        value: Complaint text; empty or punctuation-only values produce an empty slug.
+
+    Returns:
+        Lowercase filename slug; empty means callers should use a fallback.
+    """
+    normalized_value = value.lower().replace("'", "")
+    return re.sub(r"[^a-z0-9]+", "-", normalized_value).strip("-")
+
+
+def primock57_case_label(case_id: str) -> str:
+    """Convert a PriMock57 case id into a human-readable label.
+
+    Args:
+        case_id: PriMock57 case id; empty or unknown shapes fall back to spaced text.
+
+    Returns:
+        Label used in the manifest display name for the Demo Audio picker.
+    """
+    match = re.fullmatch(r"day(\d+)_consultation(\d+)", case_id)
+    # Unknown case-id shapes still need readable text in the picker.
+    if not match:
+        return case_id.replace("_", " ")
+
+    day, consultation = match.groups()
+    return f"day {int(day)} consultation {int(consultation)}"
+
+
+def read_primock57_complaint(case_id: str) -> str:
+    """Read the presenting complaint from the PriMock57 clinician note.
+
+    Args:
+        case_id: PriMock57 case id; empty or missing notes fall back to the case label.
+
+    Returns:
+        Presenting complaint for picker filenames, or a readable case label.
+    """
+    note = read_json_url(f"{PRIMOCK57_NOTES_RAW_BASE_URL}/{case_id}.json")
+    # Missing note shape means the picker still gets a readable filename.
+    if not isinstance(note, dict):
+        return case_id.replace("_", " ")
+
+    complaint = note.get("presenting_complaint")
+    # Empty complaint text falls back to the case id instead of hiding the file.
+    if not isinstance(complaint, str) or not complaint.strip():
+        return case_id.replace("_", " ")
+
+    return complaint.strip()
+
+
+def generate_primock57_wav(
+    ffmpeg_path: str,
+    consultation: Primock57Consultation,
+    output_path: Path,
+) -> None:
+    """Download one PriMock57 pair and mix it into a canonical replay WAV.
+
+    Args:
+        ffmpeg_path: Local FFmpeg binary; empty would make mixing impossible.
+        consultation: PriMock57 metadata and download URLs.
+        output_path: Final 16 kHz mono PCM WAV selected by the user.
+    """
+    with tempfile.TemporaryDirectory(
+        prefix="ambient-scribe-primock57-"
+    ) as working_audio_dir_name:
+        working_audio_dir = Path(working_audio_dir_name)
+        doctor_path = working_audio_dir / f"{consultation.case_id}_doctor.wav"
+        patient_path = working_audio_dir / f"{consultation.case_id}_patient.wav"
+
+        download_file(consultation.doctor_url, doctor_path)
+        download_file(consultation.patient_url, patient_path)
+        mix_wavs(
+            ffmpeg_path,
+            doctor_path,
+            patient_path,
+            output_path,
+            max_duration_seconds=primock57_replay_clip_seconds(),
+        )
+        verify_canonical_wav(output_path)
+
+
+def read_json_url(url: str) -> object:
+    """Read a JSON document from a remote URL with a stable user agent.
+
+    Args:
+        url: Remote JSON URL; empty or unreachable URLs report setup failure.
+
+    Returns:
+        Parsed JSON object; empty remote JSON returns the decoded empty value.
+
+    Raises:
+        RuntimeError: When the remote URL cannot be read for fixture discovery.
+    """
+    request = Request(url, headers={"User-Agent": "ambient-scribe-demo-audio"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except URLError as exc:
+        raise RuntimeError(f"could not read {url}: {exc}") from exc
+
+
+def primock57_replay_clip_seconds() -> float:
+    """Return the replay length used for PriMock57 demo clips.
+
+    Returns:
+        Seconds of source audio mixed for the picker; zero would create no replay.
+    """
+    return 90.0
+
+
+def download_file(url: str, output_path: Path) -> None:
+    """Download one remote audio file and reject Git LFS pointer placeholders.
+
+    Args:
+        url: Remote WAV URL; empty or unreachable URLs report setup failure.
+        output_path: Local path for the downloaded WAV; parent must already exist.
+
+    Raises:
+        RuntimeError: When the download fails or returns a Git LFS pointer.
+    """
+    request = Request(url, headers={"User-Agent": "ambient-scribe-demo-audio"})
+    try:
+        with urlopen(request, timeout=120) as response:
+            with output_path.open("wb") as output_file:
+                shutil.copyfileobj(response, output_file)
+    except URLError as exc:
+        raise RuntimeError(f"could not download {url}: {exc}") from exc
+
+    if is_git_lfs_pointer(output_path):
+        raise RuntimeError(f"{url} returned a Git LFS pointer instead of audio")
+
+
+def is_git_lfs_pointer(path: Path) -> bool:
+    """Detect Git LFS pointer text where a WAV payload was expected.
+
+    Args:
+        path: Downloaded file path; empty files return false for user replay.
+
+    Returns:
+        True when the file is a pointer placeholder, false when it can be audio.
+    """
+    git_lfs_host = "git-lfs.github.com"
+    with path.open("rb") as downloaded_file:
+        return downloaded_file.read(64).startswith(
+            f"version https://{git_lfs_host}/spec/".encode()
+        )
+
+
+def mix_wavs(
+    ffmpeg_path: str,
+    doctor_path: Path,
+    patient_path: Path,
+    output_path: Path,
+    max_duration_seconds: float | None = None,
+) -> None:
+    """Mix synchronized doctor and patient WAV files into one mono replay WAV.
+
+    Args:
+        ffmpeg_path: Local FFmpeg binary; empty would make mixing impossible.
+        doctor_path: Doctor-channel WAV downloaded for the selected case.
+        patient_path: Patient-channel WAV downloaded for the selected case.
+        output_path: Final mono WAV path shown in the Demo Audio picker.
+        max_duration_seconds: Optional clip cap; null keeps the full source.
+    """
+    ffmpeg_args = [
+        "-i",
+        str(doctor_path),
+        "-i",
+        str(patient_path),
+        "-filter_complex",
+        "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0[a]",
+        "-map",
+        "[a]",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-c:a",
+        "pcm_s16le",
+    ]
+    # PriMock demo clips are bounded so replay fits local GPU memory and tester time.
+    if max_duration_seconds is not None:
+        ffmpeg_args.extend(["-t", str(max_duration_seconds)])
+
+    ffmpeg_args.append(str(output_path))
+    run_ffmpeg(ffmpeg_path, ffmpeg_args)
 
 
 def synthesize_utterance(
@@ -349,7 +823,7 @@ def concat_wavs(
     silence_path: Path,
     output_path: Path,
 ) -> None:
-    """Join spoken turns into one replay WAV for the Demo button.
+    """Join spoken turns into one replay WAV for the Demo Audio picker.
 
     Args:
         ffmpeg_path: Local FFmpeg binary; empty would prevent audio creation.
@@ -413,6 +887,26 @@ def verify_canonical_wav(output_path: Path) -> None:
         )
 
 
+def wav_duration_seconds(output_path: Path) -> float:
+    """Measure a generated WAV duration for the Demo Audio manifest.
+
+    Args:
+        output_path: Generated WAV shown in the picker; missing files fail generation.
+
+    Returns:
+        Duration in seconds; zero means the audio would be useless for replay.
+    """
+    with wave.open(str(output_path), "rb") as wav_file:
+        frame_count = wav_file.getnframes()
+        frame_rate = wav_file.getframerate()
+
+    # A broken frame rate means replay progress cannot be calculated.
+    if frame_rate <= 0:
+        return 0.0
+
+    return round(frame_count / frame_rate, 1)
+
+
 def manifest_entry(
     consultation: DemoConsultation,
     output_path: Path,
@@ -432,8 +926,54 @@ def manifest_entry(
         "speakers": sorted(set(consultation.expected_roles.values())),
         "expected_roles": consultation.expected_roles,
         "edge_case": consultation.edge_case,
+        "duration_seconds": wav_duration_seconds(output_path),
         "source": "Synthetic script generated in-repo with FFmpeg libflite voices",
         "license": "Project-owned synthetic text/audio; no real patient data",
+    }
+
+
+def primock57_manifest_entry(
+    consultation: Primock57Consultation,
+    output_path: Path,
+) -> dict[str, object]:
+    """Build manifest metadata for one downloaded PriMock57 consultation.
+
+    Args:
+        consultation: Downloaded consultation metadata and source paths.
+        output_path: Final WAV path shown in the manifest and Demo Audio picker.
+
+    Returns:
+        Manifest row; empty values would make PriMock57 attribution hard to audit.
+    """
+    case_label = primock57_case_label(consultation.case_id)
+    return {
+        "filename": output_path.name,
+        "display_name": f"PriMock57 {case_label}: {consultation.complaint}",
+        "dataset": "PriMock57",
+        "case_id": consultation.case_id,
+        "complaint": consultation.complaint,
+        "speakers": ["DOCTOR", "PATIENT"],
+        "expected_roles": {
+            "doctor_channel": "DOCTOR",
+            "patient_channel": "PATIENT",
+        },
+        "edge_case": (
+            f"First {int(primock57_replay_clip_seconds())} seconds of a PriMock57 "
+            "mock primary care consultation with separate doctor/patient "
+            "channels mixed to mono"
+        ),
+        "duration_seconds": wav_duration_seconds(output_path),
+        "clip_seconds": primock57_replay_clip_seconds(),
+        "source_audio": list(consultation.source_paths),
+        "source_note": consultation.note_path,
+        "source": (
+            "PriMock57 mock primary care consultation audio and note: "
+            + ", ".join((*consultation.source_paths, consultation.note_path))
+        ),
+        "license": (
+            "CC BY 4.0; mock consultations by Babylon clinicians and employees, "
+            "not real patient audio"
+        ),
     }
 
 

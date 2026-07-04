@@ -12,7 +12,7 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 - **Raw segment** — Pre-role-attribution transcript chunk published to `scribe/session/{id}/raw`.
 - **Roles topic** — Post-inference speaker → role mapping published to `scribe/session/{id}/roles`.
 - **Summary topic** — End-of-session summary update published to `scribe/session/{id}/summary`.
-- **Replay** — FastAPI/browser flow that processes an uploaded audio file through NeMo and republishes the resulting segments to Mercure with pacing for demo and scenario validation.
+- **Replay** — FastAPI/browser flow that processes an uploaded or generated demo WAV through NeMo, returns batch transcript segments, and reveals them from the browser audio clock so text does not outrun audible speech.
 
 ## Session / lifecycle
 

@@ -1,32 +1,30 @@
 // =========================================================================
 // Ambient Scribe dev-panel browser flow for local verification.
-// Runs only when APP_ENV=dev renders SCENARIOS beside the consultation UI.
-// Lets a developer replay medical scenarios, inspect Mercure/WebSocket state,
+// Runs only when APP_ENV=dev renders demo audio beside the consultation UI.
+// Lets a developer replay generated WAVs, inspect Mercure/WebSocket state,
 // and compare dev logs with the same transcript the clinician would see.
-// All model/scenario text is rendered as textContent, not HTML.
+// All model and replay text is rendered as textContent, not HTML.
 // =========================================================================
 
-let isScenarioModeActive = false;
-
 /**
- * Shows or hides the demo-scenario panel on small screens.
- * Use when a developer taps the scenarios icon while testing /scribe.
+ * Shows or hides the demo-audio panel on small screens.
+ * Use when a developer taps the audio icon while testing `/scribe`.
  */
-function toggleScenarioPanel() {
-    const scenarioPanel = document.getElementById('scenarioPanel');
-    const scenarioBackdrop = document.getElementById('scenarioPanelBackdrop');
+function toggleAudioFixturePanel() {
+    const audioFixturePanel = document.getElementById('audioFixturePanel');
+    const audioFixtureBackdrop = document.getElementById('audioFixturePanelBackdrop');
 
-    // Production pages and some tests do not render the scenario panel.
-    if (!scenarioPanel) {
+    // Production pages and some tests do not render the audio fixture panel.
+    if (!audioFixturePanel) {
         return;
     }
 
-    const isVisible = scenarioPanel.style.display !== 'none' && scenarioPanel.style.display !== '';
-    scenarioPanel.style.display = isVisible ? 'none' : 'flex';
+    const isVisible = audioFixturePanel.style.display !== 'none' && audioFixturePanel.style.display !== '';
+    audioFixturePanel.style.display = isVisible ? 'none' : 'flex';
 
     // The backdrop follows the panel so mobile users can close it cleanly.
-    if (scenarioBackdrop) {
-        scenarioBackdrop.style.display = isVisible ? 'none' : 'block';
+    if (audioFixtureBackdrop) {
+        audioFixtureBackdrop.style.display = isVisible ? 'none' : 'block';
     }
 }
 
@@ -73,7 +71,7 @@ class DevPanel {
     }
 
     /**
-     * Starts dev-panel state refresh and scenario list rendering.
+     * Starts dev-panel state refresh and audio fixture list rendering.
      * Use on DOMContentLoaded after the production UI is ready.
      */
     init() {
@@ -85,7 +83,7 @@ class DevPanel {
         }
 
         this._stateInterval = setInterval(() => this.refreshState(), 500);
-        this.renderScenarioList();
+        this.renderAudioFixtureList();
     }
 
     /**
@@ -109,7 +107,7 @@ class DevPanel {
 
     /**
      * Adds one visible transcript event to the dev segment log.
-     * Use when a scenario or live Mercure event reaches handleRawSegment.
+     * Use when demo audio or live Mercure events reach handleRawSegment.
      */
     logSegment(segmentEvent, role, source) {
         const segmentLog = document.getElementById('devSegmentLog');
@@ -124,9 +122,9 @@ class DevPanel {
             dataset: { speakerId: segmentEvent.speaker_id ?? '' },
         });
 
-        // Scenario rows get a short badge so developers can separate fixture text.
-        if (source === 'scenario') {
-            entry.appendChild(createElement('span', { text: '[S] ', style: 'color:#f59e0b' }));
+        // Demo audio rows get a short badge so developers can separate replay text.
+        if (source === 'fixture') {
+            entry.appendChild(createElement('span', { text: '[A] ', style: 'color:#f59e0b' }));
         }
 
         const rawText = segmentEvent.text ?? '';
@@ -157,7 +155,7 @@ class DevPanel {
         const rawEntry = { ts: new Date().toISOString(), type: eventType, payload: eventPayload };
         this._rawBuffer.push(rawEntry);
 
-        // Keep the raw log bounded so long scenario runs stay responsive.
+        // Keep the raw log bounded so long replay sessions stay responsive.
         if (this._rawBuffer.length > this._rawMax) {
             this._rawBuffer.shift();
         }
@@ -307,7 +305,7 @@ class DevPanel {
         stateElement.textContent = JSON.stringify({
             sessionId: CONFIG.sessionId,
             isRecording,
-            scenarioMode: isScenarioModeActive,
+            replayActive: isReplayActive,
             segmentIndex,
             roleMapping,
             confidence,
@@ -320,7 +318,7 @@ class DevPanel {
 
     /**
      * Clears the dev segment log.
-     * Use when starting a new scenario or when the developer clicks Clear.
+     * Use when starting replay audio or when the developer clicks Clear.
      */
     clearSegmentLog() {
         clearElement(document.getElementById('devSegmentLog'));
@@ -328,7 +326,7 @@ class DevPanel {
 
     /**
      * Clears raw event history and count.
-     * Use between scenarios so the developer sees only current-run events.
+     * Use between replay runs so the developer sees only current-run events.
      */
     clearRawLog() {
         this._rawBuffer = [];
@@ -343,7 +341,7 @@ class DevPanel {
 
     /**
      * Clears Mercure metrics and restores the waiting placeholder.
-     * Use between scenario runs or fresh local sessions.
+     * Use between replay runs or fresh local sessions.
      */
     clearMercureLog() {
         this._mercureMetrics.clear();
@@ -378,8 +376,8 @@ class DevPanel {
             const healthPayload = await response.json();
             pipelineElement.textContent = JSON.stringify(healthPayload, null, 2);
         } catch (healthError) {
-            pipelineElement.textContent = isScenarioModeActive || !isRecording
-                ? 'No backend connected (demo/scenario mode)\n\nThe Pipeline tab requires a running NeMo agent.\nStart the full stack with: docker compose up --build'
+            pipelineElement.textContent = !isRecording
+                ? 'No backend connected\n\nThe Pipeline tab requires a running NeMo agent.\nStart the full stack with: docker compose up --build'
                 : `Connection error: ${healthError.message}`;
         }
     }
@@ -396,30 +394,32 @@ class DevPanel {
     }
 
     /**
-     * Renders clickable scenario rows.
-     * Use after the dev panel loads or scenarios are refreshed.
+     * Renders clickable demo audio rows.
+     * Use after the dev panel loads or generated WAV fixtures change.
      */
-    renderScenarioList() {
-        const scenarioList = document.getElementById('scenarioList');
+    renderAudioFixtureList() {
+        const audioFixtureList = document.getElementById('audioFixtureList');
 
-        // Without scenario fixtures, there is no local demo list to render.
-        if (!scenarioList) {
+        // Without the audio list element, there is no local demo list to render.
+        if (!audioFixtureList) {
             return;
         }
 
-        clearElement(scenarioList);
+        clearElement(audioFixtureList);
 
-        // Each scenario row starts a self-contained transcript simulation.
-        for (const scenario of SCENARIOS) {
-            const scenarioItem = createScenarioItem(scenario);
-            scenarioList.appendChild(scenarioItem);
+        // Empty generated audio means the developer has no WAV choices yet.
+        if (AUDIO_FIXTURES.length === 0) {
+            audioFixtureList.appendChild(createElement('div', {
+                className: 'audio-fixture-item__meta',
+                text: 'No generated audio fixtures.',
+            }));
+            return;
         }
 
-        const progressText = document.getElementById('scenarioProgressText');
-
-        // The initial progress value tells the developer no scenario has run yet.
-        if (progressText) {
-            progressText.textContent = `0/${SCENARIOS.length}`;
+        // Each audio row starts a real NeMo replay through the visible transcript.
+        for (const audioFixture of AUDIO_FIXTURES) {
+            const audioFixtureItem = createAudioFixtureItem(audioFixture);
+            audioFixtureList.appendChild(audioFixtureItem);
         }
     }
 
@@ -464,25 +464,37 @@ class DevPanel {
 }
 
 /**
- * Creates one scenario row for the left dev panel.
- * Use when rendering the scenario chooser.
+ * Creates one audio row for the left dev panel.
+ * Use when rendering generated consultation WAV choices.
  */
-function createScenarioItem(scenario) {
-    const scenarioItem = createElement('div', {
-        className: 'scenario-item',
-        dataset: { scenarioId: scenario.id },
+function createAudioFixtureItem(audioFixture) {
+    const speakerText = Array.isArray(audioFixture.speakers)
+        ? audioFixture.speakers.join(' / ')
+        : '';
+    const metadataText = [
+        audioFixture.complaint,
+        audioFixture.edge_case,
+        speakerText,
+    ].filter(Boolean).join(' - ');
+    const audioFixtureItem = createElement('button', {
+        className: 'audio-fixture-item',
+        dataset: { audioFixtureFilename: audioFixture.filename },
+        attributes: {
+            type: 'button',
+            'aria-label': `Replay ${audioFixture.filename}`,
+        },
     }, [
-        createElement('div', { className: 'scenario-item__name', text: scenario.name }),
+        createElement('div', { className: 'audio-fixture-item__name', text: audioFixture.filename }),
         createElement('div', {
-            className: 'scenario-item__meta',
-            text: `${scenario.events.length} events - ${scenario.description}`,
+            className: 'audio-fixture-item__meta',
+            text: metadataText,
         }),
         createElement('div', {
-            className: 'scenario-item__result',
-            attributes: { id: `scenarioResult-${scenario.id}` },
+            className: 'audio-fixture-item__status',
+            attributes: { id: `audioFixtureStatus-${audioFixture.filename}` },
             style: 'display:none;',
         }),
     ]);
-    scenarioItem.addEventListener('click', () => scenarioRunner.runOne(scenario.id));
-    return scenarioItem;
+    audioFixtureItem.addEventListener('click', () => audioFixtureRunner.play(audioFixture.filename));
+    return audioFixtureItem;
 }

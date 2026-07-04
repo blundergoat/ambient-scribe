@@ -94,7 +94,7 @@ If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST
 | **Ollama** | 11434 | `ollama serve` (started automatically if not running) |
 | **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on host port 48101 |
 | **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
-| **PHP app** | 48082 | `php -S 0.0.0.0:48082 -t public` |
+| **PHP app** | 48082 | PHP built-in server with 128M upload limits for PriMock replay WAVs |
 
 Services talk via `localhost`, and `start-dev.sh` keeps the streaming path available by starting the agent and Mercure containers alongside the local PHP server.
 

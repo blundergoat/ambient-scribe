@@ -5,7 +5,7 @@
 # Usage: ./scripts/m2-verify.sh [OPTIONS]
 #
 # Options:
-#   --wav PATH       Path to WAV file for batch test (default: tests/fixtures/audio/osce-chest-pain-short.wav)
+#   --wav PATH       Path to WAV file for batch test (default: tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav)
 #   --skip-ws        Skip WebSocket lifecycle test (requires websocat)
 #   --help, -h       Show this help
 #
@@ -33,7 +33,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 
 # ── Defaults ──────────────────────────────────────────────────────
-WAV_FILE="$REPO_ROOT/tests/fixtures/audio/osce-chest-pain-short.wav"
+WAV_FILE="$REPO_ROOT/tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav"
 SKIP_WS=false
 NEMO_URL="http://localhost:8001"
 

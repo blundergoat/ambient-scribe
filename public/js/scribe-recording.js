@@ -201,8 +201,7 @@ function stopRecording() {
 
     // Only visits with transcript text need downloads and a summary request.
     if (segmentIndex > 0) {
-        setElementHidden('downloadBtn', false);
-        setElementHidden('resetBtn', false);
+        revealPostVisitActions();
         requestSummary();
     }
 }
@@ -212,6 +211,11 @@ function stopRecording() {
  * Use when the clinician clicks New Session after finishing a consultation.
  */
 function resetSession() {
+    // Demo replay owns a server task and browser audio that must stop before reset.
+    if (isReplayActive) {
+        stopReplay();
+    }
+
     // Stop live capture before clearing UI so no late audio mutates the new visit.
     if (isRecording) {
         stopRecording();
@@ -247,7 +251,7 @@ function resetSession() {
 
 /**
  * Resets shared in-memory state for the next visible visit.
- * Use after the clinician starts a new session or a demo scenario resets.
+ * Use after the clinician starts a new session or a demo replay resets.
  */
 function resetVisitState() {
     segmentIndex = 0;
@@ -262,8 +266,12 @@ function resetVisitState() {
     isReplayActive = false;
     clearInterval(replayTimerInterval);
     replayTimerInterval = null;
-    replayStartTime = null;
     replayDuration = 0;
+    replayTranscriptSegments = [];
+    replayNextSegmentIndex = 0;
+    isBrowserClockReplaySession = false;
+    hasReplayAudioPlaybackStarted = false;
+    releaseReplayAudioObjectUrl();
     clearInterval(timerInterval);
     timerInterval = null;
 }
@@ -278,6 +286,7 @@ function resetVisitUi() {
     setElementHidden('timer', true);
     setElementHidden('downloadBtn', true);
     setElementHidden('resetBtn', true);
+    setElementHidden('summaryBtn', true);
     setElementHidden('startBtn', false);
     setElementHidden('stopBtn', true);
     setElementHidden('reconnectBtn', true);
@@ -285,6 +294,7 @@ function resetVisitUi() {
     setElementHidden('emptyState', false);
     setElementHidden('replayProgress', true);
     document.getElementById('replayProgressFill').style.width = '0%';
+    resetReplayAudioPlayback();
 
     const summaryContent = document.getElementById('summaryContent');
     clearElement(summaryContent);

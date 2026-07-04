@@ -11,6 +11,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Medical-only agent behavior** - removed Python-side mode selection for role inference, summaries, replay, and WebSocket ingest so the agent lane always uses DOCTOR/PATIENT role mapping and medical SOAP summaries.
 - **Medical-only scribe UI** - removed the browser mode selector, stored mode preference, and mode query parameters from live WebSocket and replay requests.
 - **Medical-only demo scenarios** - removed meeting, interview, TV/media, and lecture scenario fixtures from the developer scenario corpus.
+- **Demo audio picker** - replaced the left-side dev scenario runner and duplicate header demo button with generated `tests/fixtures/audio/` WAV options that use a built-in-server-safe replay URL.
+- **PriMock57 demo audio set** - excluded consultations 01, 09, and 10 from local fixture generation, manifest output, and the default M2 replay smoke.
+- **PriMock57 replay clip length** - capped generated PriMock57 demo WAVs to 90 seconds so replay stays within local GPU memory and review time.
 - **Gruff TypeScript scope** - excluded the vendored Tailwind runtime from gruff-ts so analyzer findings focus on maintained frontend and workflow source.
 - **Frontend structure** - split transcript rendering, replay, summary, and download behavior out of the core recording script for easier gruff-ts verification.
 - **Gruff Python scope** - excluded one-off NeMo exploration scripts from gruff-py so Python analyzer findings focus on maintained runtime and test code.
@@ -34,6 +37,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
 - **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
 - **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.
+
+### Fixed
+
+- **Demo audio replay routing** - added same-origin Symfony proxies for replay and summary requests so the browser receives JSON from FastAPI instead of app-origin HTML errors.
+- **Audible demo audio stop flow** - made Demo Audio replay attach the selected WAV to a browser audio player, added early replay stop/cancel handling, and exposed the Summarise button after stopped replay text exists.
+- **Demo audio transcript pacing** - made replay transcript rows reveal from the browser audio clock and send the visible transcript snapshot to stop/summary routes so text cannot outrun what the user hears.
+- **Large demo WAV replay** - raised local PHP upload limits for PriMock fixtures and made replay treat malformed success responses as recoverable UI errors.
 
 ### Security
 

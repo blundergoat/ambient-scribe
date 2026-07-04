@@ -82,8 +82,10 @@ class TestReplayEndpoint:
         data = response.json()
         assert data["session_id"] == TEST_SESSION_ID
         assert data["segments"] == 2
+        assert data["transcript_segments"][0]["text"] == "Hello"
         assert data["duration_seconds"] == 4.0
         assert data["speed"] == 1.0
+        assert data["pacing"] == "browser_audio_clock"
 
     def test_replay_empty_wav_returns_zero_segments(self):
         mock_result = TranscriptionResult(segments=[])
@@ -127,8 +129,8 @@ class TestReplayEndpoint:
         assert response.status_code == 200
         assert response.json()["speed"] == 2.0
 
-    def test_replay_stores_segments(self):
-        """Replayed segments should be stored in the session store."""
+    def test_replay_returns_browser_clock_segments_and_stores_history(self):
+        """Replayed segments should be returned for audio-clock rendering and stored."""
         mock_result = TranscriptionResult(
             segments=[
                 Segment(speaker_id="spk_0", text="Stored segment", start=0.0, end=1.0),
@@ -145,14 +147,10 @@ class TestReplayEndpoint:
                 )
 
         assert response.status_code == 200
-        # Give the async replay task a moment
-        import time
-
-        time.sleep(0.5)
-
-        # Segments may or may not have been stored yet depending on timing,
-        # but the response shape should be correct
         assert response.json()["segments"] == 1
+        assert response.json()["transcript_segments"][0]["text"] == "Stored segment"
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "Stored segment"
+        assert TEST_SESSION_ID not in api_server._replay_tasks
 
     def test_replay_duration_from_max_segment_end(self):
         """Duration should be the max end time across all segments."""
@@ -212,6 +210,59 @@ class TestReplayEndpoint:
             files={"file": ("slow.wav", io.BytesIO(wav), "audio/wav")},
         )
         assert r.status_code == 422  # Validation error
+
+    @pytest.mark.asyncio
+    async def test_replay_stop_route_cancels_active_task(self):
+        """Stopping replay should cancel only the user's active demo task."""
+
+        async def parked_replay_task():
+            await asyncio.sleep(60)
+
+        replay_task = asyncio.create_task(parked_replay_task())
+        api_server._replay_tasks[TEST_SESSION_ID] = replay_task
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(f"/session/{TEST_SESSION_ID}/replay/stop")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "session_id": TEST_SESSION_ID,
+            "cancelled": True,
+            "visible_segments": 0,
+        }
+        assert TEST_SESSION_ID not in api_server._replay_tasks
+        assert replay_task.cancelling() > 0
+
+        with suppress(asyncio.CancelledError):
+            await replay_task
+
+    def test_replay_stop_route_stores_visible_segments(self):
+        """Stopping replay stores only the transcript rows revealed by audio time."""
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/replay/stop",
+            json={
+                "visible_segments": [
+                    {
+                        "speaker_id": "spk_0",
+                        "role": "DOCTOR",
+                        "text": "What can I help with?",
+                        "start": 0.0,
+                        "end": 1.5,
+                    }
+                ],
+                "audio_time_seconds": 1.5,
+                "was_completed": False,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["visible_segments"] == 1
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "What can I help with?"
 
     @pytest.mark.asyncio
     async def test_replay_task_cleanup_preserves_newer_replacement(self, monkeypatch):

@@ -222,7 +222,7 @@ test.describe("Accessibility", () => {
     );
     await expect(page.locator("#stopBtn")).toHaveAttribute(
       "aria-label",
-      /stop recording/i
+      /stop current session/i
     );
     await expect(page.locator("#downloadBtn")).toHaveAttribute(
       "aria-label",

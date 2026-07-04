@@ -1,10 +1,10 @@
 """
 Replay workflow for uploaded consultation audio.
 
-The demo UI uploads a WAV file, receives quick replay metadata, then watches
-segments arrive over Mercure with timestamp-like pacing. This module owns that
-background replay task while `server.py` keeps the FastAPI route and tests keep
-their existing task-state seam.
+The demo UI uploads a WAV file, receives transcript segments, then reveals those
+segments from the browser audio clock. This keeps what the tester hears aligned
+with what appears on screen while `server.py` keeps the FastAPI route and tests
+keep their existing task-state seam.
 """
 
 from __future__ import annotations
@@ -36,15 +36,15 @@ class ReplayServices:
     Runtime dependencies for one uploaded replay.
 
     `server.py` builds this at request time so tests and demos use the current
-    NeMo pipeline, Mercure publisher, role queue, and event counters. These
-    services make replayed audio appear like a live transcript to the browser.
+    NeMo pipeline, transcript store, role queue, and event counters. Browser
+    audio owns replay timing while these services keep labels and summaries usable.
 
     Attributes:
         pipeline: Loaded NeMo pipeline used to transcribe the uploaded WAV.
         executor: Shared NeMo executor so replay transcription does not block.
         sessions: Transcript storage read by history and summary views.
         get_running_loop: Loop getter preserved as a route-level test seam.
-        publish_to_mercure: Publisher used for raw replay segments and finalization.
+        publish_to_mercure: Publisher retained for legacy replay helpers and tests.
         enqueue_role_inference: Role queue callback for replayed text.
         mercure_event_ids: Per-session counters for browser reconnects.
     """
@@ -64,46 +64,54 @@ async def start_replay_upload(
     speed: float,
     services: ReplayServices,
 ) -> dict:
-    """Transcribe an uploaded WAV and start browser-paced replay.
+    """Transcribe an uploaded WAV and return browser-paced replay data.
 
     Args:
         session_id: Replay session UUID used by the browser.
         file: WAV file selected in the demo replay control.
-        speed: Replay multiplier; low values make transcript text arrive slowly.
+        speed: Legacy replay multiplier; browser-clock replay keeps it for compatibility.
         services: Runtime callbacks and stores used by the replay task.
 
     Returns:
-        Replay metadata; zero segments means no replay text will appear.
+        Replay metadata and segments; zero segments means no replay text will appear.
     """
     segments = await _transcribe_replay_upload(file, services)
     # Empty or failed transcription leaves the replay panel with no transcript.
     if not segments:
-        return {"session_id": session_id, "segments": 0, "duration_seconds": 0}
+        return {
+            "session_id": session_id,
+            "segments": 0,
+            "duration_seconds": 0,
+            "transcript_segments": [],
+            "pacing": "browser_audio_clock",
+        }
 
     max_end = max(float(segment.get("end", 0)) for segment in segments)
-    _cancel_existing_replay(session_id)
-
-    replay_task = asyncio.create_task(
-        replay_segments(session_id, segments, speed, services),
-        name=f"replay-{session_id}",
-    )
-    replay_tasks[session_id] = replay_task
+    _did_cancel_existing_replay(session_id)
+    services.sessions.replace_segments(session_id, segments)
+    await services.enqueue_role_inference(session_id, segments)
 
     logger.info(
-        "replay.started",
+        "replay.prepared segments=%s duration_seconds=%.1f pacing=browser_audio_clock",
+        len(segments),
+        round(max_end, 1),
         extra={
             "session_id": session_id,
             "segments": len(segments),
             "duration_seconds": round(max_end, 1),
-            "speed": speed,
+            "requested_speed": speed,
+            "pacing": "browser_audio_clock",
+            "mercure_raw_pacing": False,
         },
     )
 
     return {
         "session_id": session_id,
         "segments": len(segments),
+        "transcript_segments": segments,
         "duration_seconds": round(max_end, 1),
         "speed": speed,
+        "pacing": "browser_audio_clock",
     }
 
 
@@ -156,7 +164,8 @@ async def replay_segments(
         )
 
         logger.info(
-            "replay.completed",
+            "replay.completed segments=%s",
+            len(segments),
             extra={
                 "session_id": session_id,
                 "segments": len(segments),
@@ -197,12 +206,27 @@ async def _transcribe_replay_upload(
         replay_audio_path.unlink(missing_ok=True)
 
 
-def _cancel_existing_replay(session_id: str) -> None:
+def did_cancel_replay(session_id: str) -> bool:
+    """Stop the active browser-paced replay for one visible session.
+
+    Args:
+        session_id: Replay session UUID; empty means no browser task can match.
+
+    Returns:
+        True when a running replay was cancelled; false means there was nothing to stop.
+    """
+    return _did_cancel_existing_replay(session_id)
+
+
+def _did_cancel_existing_replay(session_id: str) -> bool:
     """Cancel any existing replay so the browser sees the latest uploaded file."""
     existing_task = replay_tasks.pop(session_id, None)
     # Starting a new replay replaces the transcript cadence for that session.
     if existing_task and not existing_task.done():
         existing_task.cancel()
+        return True
+
+    return False
 
 
 def _next_replay_event_id(session_id: str, services: ReplayServices) -> int:

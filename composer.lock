@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "5b8abfb0123ff06f11d25e84fad6cb51",
+    "content-hash": "8e648b2cf03bfdccc0b7389f30a213ad",
     "packages": [
         {
             "name": "blundergoat/strands-php-client",
@@ -3840,16 +3840,16 @@
     "packages-dev": [
         {
             "name": "blundergoat/gruff-php",
-            "version": "v0.4.1",
+            "version": "v0.5.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/blundergoat/gruff-php.git",
-                "reference": "ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d"
+                "reference": "f0d1c1a576d3e03940edcc7fcb7ff42540640cba"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/blundergoat/gruff-php/zipball/ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d",
-                "reference": "ce2a22cb32a23836e3183b4fe5df91b6e4a49f4d",
+                "url": "https://api.github.com/repos/blundergoat/gruff-php/zipball/f0d1c1a576d3e03940edcc7fcb7ff42540640cba",
+                "reference": "f0d1c1a576d3e03940edcc7fcb7ff42540640cba",
                 "shasum": ""
             },
             "require": {
@@ -3889,18 +3889,24 @@
             "description": "Opinionated PHP code-quality analyzer with SARIF output, baselines, and a local dashboard.",
             "homepage": "https://github.com/blundergoat/gruff-php",
             "keywords": [
+                "ai-generated-code",
                 "baselines",
+                "ci",
                 "cli",
                 "code-analysis",
                 "code-quality",
                 "code-review",
-                "dogfood",
+                "dashboard",
+                "github-actions",
                 "linter",
                 "php",
-                "phpstan-alternative",
                 "quality-gate",
                 "sarif",
-                "static-analysis"
+                "security",
+                "sensitive-data",
+                "static-analysis",
+                "technical-debt",
+                "test-quality"
             ],
             "support": {
                 "docs": "https://github.com/blundergoat/gruff-php/blob/main/README.md",
@@ -3908,7 +3914,7 @@
                 "security": "https://github.com/blundergoat/gruff-php/security/policy",
                 "source": "https://github.com/blundergoat/gruff-php"
             },
-            "time": "2026-06-13T22:11:56+00:00"
+            "time": "2026-07-04T06:06:55+00:00"
         },
         {
             "name": "clue/ndjson-react",

@@ -141,3 +141,12 @@ During M12, the clinical KB loader handled missing files and invalid shapes but 
 While creating the stack inventory, the root README still described Bedrock as the role-inference default, `.env.example` described Ollama as the local default, Compose passed Ollama by default, and the Python agent retained Bedrock defaults for missing env vars. Reading only one source would have produced another stale model summary.
 
 **Lesson:** For docs that name model providers or IDs, verify `.env.example`, `docker-compose.yml`, agent factory code, and any existing README before writing the final wording. Call out intentional fallback differences instead of flattening them into one default.
+
+## Lesson: Browser replay smokes need a trustworthy origin (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `public/js/scribe-recording.js` (search: "crypto.randomUUID"), `public/js/scribe-fixtures.js` (search: "startReplay(replayFile, { audioUrl").
+
+While testing the Demo Audio picker, a Playwright smoke loaded the page on `http://app.test/`. The replay flow called `resetSession()`, which uses `crypto.randomUUID()`, and Chromium denied that API on the non-trustworthy fake origin. The same smoke passed when routed through `http://localhost/`, matching local app behavior.
+
+**Lesson:** Browser smokes that exercise recording or replay session reset should run on `localhost` or HTTPS, not arbitrary fake HTTP hosts. Otherwise secure-context browser APIs can fail before the app flow is actually tested.

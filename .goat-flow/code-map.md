@@ -16,8 +16,14 @@ ambient-scribe/
 │   └── packages/ = framework, Mercure, Strands client, Twig, and test config
 ├── templates/scribe/index.html.twig = main Scribe UI shell and injected runtime config
 ├── public/js/ = browser-side app assets
-│   ├── scribe.js = production audio capture, WebSocket, Mercure, role, replay, and summary UI logic
-│   ├── scribe-dev.js = development helper script
+│   ├── scribe.js = shared browser state, role labels, safe DOM helpers, and theme controls
+│   ├── scribe-streaming.js = Mercure streams and browser PCM capture
+│   ├── scribe-recording.js = live recording lifecycle and session resets
+│   ├── scribe-transcript.js = transcript card rendering, relabeling, and downloads
+│   ├── scribe-output.js = replay upload, summaries, and clinical hints
+│   ├── scribe-actions.js = post-visit actions, JSON parsing, toggles, and shortcuts
+│   ├── scribe-dev.js = development inspector panel
+│   ├── scribe-fixtures.js = dev-only generated WAV fixture replay picker
 │   └── tailwind.js = local Tailwind browser build asset
 ├── strands_agents/ = Python FastAPI, NeMo, storage, and Strands agent lane
 │   ├── api/server.py = HTTP/WebSocket API, Mercure publishing, role queue, summaries, replay, health
@@ -34,7 +40,7 @@ ambient-scribe/
 │   ├── Unit/ = PHPUnit tests for Symfony controller/service code
 │   ├── python/ = pytest suite for API, storage, lifecycle, role inference, Mercure, replay, and NeMo seams
 │   ├── e2e/ = Playwright and contract tests
-│   └── fixtures/ = scribe scenarios and audio fixture directory
+│   └── fixtures/ = scribe scenario JSON plus generated demo audio metadata
 ├── docker/ = container support files
 │   └── nemo/Dockerfile = NeMo GPU FastAPI image
 ├── Dockerfile = PHP Symfony app image
@@ -58,7 +64,7 @@ ambient-scribe/
 |---|---|
 | Add or change a Symfony route | `src/Controller/ScribeController.php` |
 | Change Symfony DI, params, Mercure, Strands, or Twig config | `config/services.yaml`, `config/packages/` |
-| Change browser audio capture, WebSocket, EventSource, replay, or summary UI | `public/js/scribe.js`, `templates/scribe/index.html.twig` |
+| Change browser audio capture, WebSocket, EventSource, replay, or summary UI | `public/js/`, `templates/scribe/index.html.twig` |
 | Change FastAPI HTTP or WebSocket endpoints | `strands_agents/api/server.py` |
 | Change NeMo model loading or GPU inference | `strands_agents/nemo_pipeline.py` |
 | Change audio buffering or conversion | `strands_agents/nemo_session.py` |

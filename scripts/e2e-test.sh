@@ -165,6 +165,9 @@ cors_origins http://localhost:${APP_PORT}" \
         MERCURE_PUBLIC_URL="http://localhost:${MERCURE_PORT}/.well-known/mercure" \
         MERCURE_JWT_SECRET="e2e-test-secret-key-minimum-32-chars" \
         php -d variables_order=EGPCS \
+            -d upload_max_filesize=128M \
+            -d post_max_size=128M \
+            -d memory_limit=512M \
             -S "0.0.0.0:${APP_PORT}" -t "${REPO_ROOT}/public" \
             "${REPO_ROOT}/public/index.php" \
             >"${LOG_DIR}/php.log" 2>&1 &

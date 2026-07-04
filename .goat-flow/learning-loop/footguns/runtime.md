@@ -61,6 +61,63 @@ last_reviewed: 2026-07-04
 - **What breaks:** A local-looking change to ports, injected config, WebSocket URL construction, or FastAPI route handling can silently break the live path because no single schema owns the browser-to-agent contract.
 - **Evidence:** The session URL is composed from Docker/Symfony/Twig-provided config in the browser, while FastAPI separately owns route validation and session handling.
 
+## Footgun: PHP built-in server bypasses Symfony for dotted dynamic assets
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `Dockerfile` (search: "Start PHP's built-in web server")
+- **Files:** `src/Controller/ScribeController.php` (search: "public function demoAudio")
+- **Files:** `src/Controller/ScribeController.php` (search: "'url' => '/scribe/demo-audio?filename='")
+- **What breaks:** A Symfony route that puts a dotted filename such as `.wav` in the path can return the PHP built-in server's static-file 404 before Symfony sees the request. The Demo Audio picker must use a non-dotted path with the filename in the query string, or the dev server command needs an explicit router script.
+- **Evidence:** `GET /scribe/demo-audio/primock57-day1-consultation01.wav` was handled as a missing static file, while `GET /scribe/demo-audio?filename=primock57-day1-consultation01.wav` reached `ScribeController::demoAudio()` and served `audio/wav`.
+
+## Footgun: App-origin replay and summary routes must stay proxied to FastAPI
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${CONFIG.sessionId}/replay")
+- **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${CONFIG.sessionId}/summary")
+- **Files:** `public/js/scribe-actions.js` (search: "async function readJsonResponse")
+- **Files:** `src/Controller/ScribeController.php` (search: "public function replay")
+- **Files:** `src/Controller/ScribeController.php` (search: "public function summary")
+- **Files:** `strands_agents/api/server.py` (search: "async def replay_file")
+- **Files:** `strands_agents/api/server.py` (search: "async def generate_summary")
+- **What breaks:** The browser posts replay and summary requests to app-origin `/session/{id}/...` URLs, but FastAPI owns the actual work. Without Symfony proxy routes, the browser can receive Symfony/PHP HTML errors and then show JSON parser failures such as `Unexpected token '<'`.
+- **Evidence:** The browser fetch path is same-origin, FastAPI defines the replay/summary endpoints, and Symfony must translate those app-origin requests into FastAPI calls while preserving JSON error responses.
+- **Prevention:** When adding or changing browser-to-FastAPI HTTP actions, add a Symfony same-origin proxy or explicitly prove browser CORS/config. Include a route smoke that checks `Content-Type: application/json` for failure states, not just happy-path API tests.
+
+## Footgun: Replay transcription does not make demo audio audible
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `public/js/scribe-fixtures.js` (search: "new File([audioBlob], audioFixture.filename")
+- **Files:** `public/js/scribe-output.js` (search: "async function startReplayAudioPlayback")
+- **Files:** `public/js/scribe-output.js` (search: "async function syncStoppedReplayOnServer")
+- **Files:** `strands_agents/api/replay_session.py` (search: "replay_tasks: dict[str, asyncio.Task")
+- **Files:** `strands_agents/api/server.py` (search: "async def stop_replay_file")
+- **What breaks:** A replay upload can produce transcript text without any browser audio playback if the selected WAV is only posted to FastAPI. Even with audible playback, transcript text can appear faster than speech if server-side replay pacing is independent of the browser audio clock.
+- **Evidence:** The browser smoke for `primock57-day1-consultation02-i-have-sore-red-skin.wav` first showed transcript replay and a visible `#replayAudio` control after wiring the fixture blob into an `<audio>` element; the next fix moved visible transcript reveal to `revealReplaySegmentsUpToAudioTime()` and synced stopped replay rows through `/session/{id}/replay/stop`.
+- **Prevention:** Replay UI changes must verify four browser-visible states together: audio controls have a playable source, transcript rows advance only as the audio clock advances, Stop pauses local audio and sends visible rows to the replay-stop proxy, and Summarise uses that visible transcript snapshot.
+
+## Footgun: PriMock replay WAVs exceed PHP's default upload ceiling
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `Dockerfile` (search: "upload_max_filesize=128M")
+- **Files:** `scripts/e2e-test.sh` (search: "-d upload_max_filesize=128M")
+- **Files:** `tests/fixtures/audio/generated-manifest.json` (search: "primock57-day1-consultation02")
+- **Files:** `public/js/scribe-output.js` (search: "Replay service returned an unreadable response")
+- **What breaks:** PHP's built-in server defaults `post_max_size` to 8M, but generated PriMock WAVs are around 15-27M. Oversized uploads can prepend an HTML PHP warning before JSON, causing the browser to report a replay parser failure or treat a malformed 200 as success.
+- **Evidence:** Posting `primock57-day1-consultation02-i-have-sore-red-skin.wav` through the app route produced `POST Content-Length ... exceeds the limit of 8388608 bytes` before the JSON body.
+- **Prevention:** Keep Docker and local/e2e PHP launch paths at `upload_max_filesize=128M` and `post_max_size=128M`. Smoke one real fixture upload after changing demo audio size, PHP startup commands, or the replay proxy.
+
+## Footgun: Full-file PriMock replay can exceed NeMo GPU memory
+**Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/replay_session.py` (search: "segments = await _transcribe_replay_upload")
+- **Files:** `strands_agents/api/replay_session.py` (search: "services.pipeline.transcribe_file")
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "def transcribe_file")
+- **Files:** `tests/fixtures/audio/generated-manifest.json` (search: "primock57-day1-consultation02-i-have-sore-red-skin.wav")
+- **What breaks:** Replay upload currently transcribes the entire selected WAV before background pacing starts. Long PriMock fixtures can fit through PHP but still push the multitalker ASR forward pass over available GPU memory, returning a JSON 500 instead of streamed transcript text.
+- **Evidence:** After raising PHP upload limits, posting the 18 MB `primock57-day1-consultation02-i-have-sore-red-skin.wav` reached FastAPI and failed in `NemoPipeline.transcribe_file()` with `torch.OutOfMemoryError: CUDA out of memory`.
+- **Prevention:** Keep replay transcription bounded by chunking long uploads or by enforcing fixture durations proven under the GPU memory budget. Any demo-audio change should smoke one real PriMock WAV through `/session/{id}/replay`, not only check that `/scribe/demo-audio` returns `audio/wav`.
+
 ## Footgun: Defaulted mode maps can hide hard fallback keys
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
 

@@ -8,15 +8,19 @@
 
 let isReplayActive = false;
 let replayDuration = 0;
-let replayStartTime = null;
 let replayTimerInterval = null;
+let replayAudioObjectUrl = null;
+let replayTranscriptSegments = [];
+let replayNextSegmentIndex = 0;
+let isBrowserClockReplaySession = false;
+let hasReplayAudioPlaybackStarted = false;
 
 /**
  * Fetches transcript history and downloads JSON/TXT visit notes.
  * Use when the clinician clicks Download after live or demo transcription.
  */
 async function downloadTranscript() {
-    const serverSegments = await fetchServerTranscriptSegments();
+    const serverSegments = isBrowserClockReplaySession ? [] : await fetchServerTranscriptSegments();
     const visibleSegments = serverSegments.length > 0 ? serverSegments : readVisibleTranscriptSegments();
     const summary = readVisibleSummary();
     const exportedAt = new Date().toISOString();
@@ -113,7 +117,7 @@ function buildTranscriptText(segments) {
 
 /**
  * Triggers a browser download for one transcript artifact.
- * Use for JSON, TXT, and scenario-result files.
+ * Use for JSON, TXT, and dev-result files.
  */
 function triggerDownload(blob, filename) {
     const objectUrl = URL.createObjectURL(blob);
@@ -146,7 +150,7 @@ function announce(message) {
 }
 
 /**
- * Handles raw transcript events from Mercure or the dev scenario runner.
+ * Handles raw transcript events from Mercure or dev replay.
  * Use whenever the clinician should see new transcript text or final status.
  */
 function handleRawSegment(segmentEvent) {
@@ -542,7 +546,7 @@ function updateSpeakerCardAvatar(segmentBlock, newRole) {
 
 /**
  * Mirrors role changes into the dev segment log.
- * Use in local dev so scenario/debug panels match the clinician transcript.
+ * Use in local dev so replay/debug panels match the clinician transcript.
  */
 function updateDevSegmentLogRoles(changedSpeakers) {
     const devLog = document.getElementById('devSegmentLog');

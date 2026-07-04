@@ -177,7 +177,7 @@ function clearElement(element) {
 
 /**
  * Creates the pulsing red dot used beside active recording-like statuses.
- * Use when the page needs to show live capture, replay, or scenario activity.
+ * Use when the page needs to show live capture or replay activity.
  */
 function createRecordingDot() {
     return createElement('span', { className: 'recording-dot recording-pulse' });
