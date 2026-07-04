@@ -68,3 +68,6 @@ tests/fixtures/audio/*.wav
 tests/fixtures/audio/*.mp3
 tests/fixtures/audio/*.webm
 !tests/fixtures/audio/.gitkeep
+
+# code quality tools
+.gruff-cache/

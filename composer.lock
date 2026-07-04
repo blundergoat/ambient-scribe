@@ -12,22 +12,21 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/blundergoat/strands-php-client.git",
-                "reference": "244a127f8aa07448c186808085db2dd7ef6bd809"
+                "reference": "bfa4a3bf3c3e7bf9158d92f8c92bcddd19bdcc00"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/blundergoat/strands-php-client/zipball/244a127f8aa07448c186808085db2dd7ef6bd809",
-                "reference": "244a127f8aa07448c186808085db2dd7ef6bd809",
+                "url": "https://api.github.com/repos/blundergoat/strands-php-client/zipball/bfa4a3bf3c3e7bf9158d92f8c92bcddd19bdcc00",
+                "reference": "bfa4a3bf3c3e7bf9158d92f8c92bcddd19bdcc00",
                 "shasum": ""
             },
             "require": {
-                "php": ">=8.2",
+                "php": ">=8.2 <9.0",
                 "psr/http-client": "^1.0",
                 "psr/http-factory": "^1.0",
                 "psr/log": "^1.0 || ^2.0 || ^3.0"
             },
             "require-dev": {
-                "blundergoat/gruff-php": "^0.1.2",
                 "friendsofphp/php-cs-fixer": "^3.0",
                 "illuminate/support": "^10.0 || ^11.0 || ^12.0",
                 "infection/infection": "^0.32.4",
@@ -102,7 +101,7 @@
                 "issues": "https://github.com/blundergoat/strands-php-client/issues",
                 "source": "https://github.com/blundergoat/strands-php-client"
             },
-            "time": "2026-07-03T21:35:18+00:00"
+            "time": "2026-07-03T23:27:09+00:00"
         },
         {
             "name": "lcobucci/jwt",
