@@ -39,17 +39,6 @@ async function readJsonResponse(response, fallbackPayload) {
     }
 }
 
-/**
- * Opens or collapses the summary panel body.
- * Use when the clinician clicks the Session Summary header.
- */
-function toggleSummary() {
-    const summaryPanel = document.getElementById('summaryPanel');
-    const summaryToggle = summaryPanel.querySelector('.summary-panel__toggle');
-    const isOpen = summaryPanel.classList.toggle('summary-panel--open');
-    summaryToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-}
-
 document.addEventListener('keydown', (event) => {
     // Typing in a form field should not start or stop the consultation.
     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {

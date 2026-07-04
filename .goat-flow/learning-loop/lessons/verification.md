@@ -150,3 +150,12 @@ While creating the stack inventory, the root README still described Bedrock as t
 While testing the Demo Audio picker, a Playwright smoke loaded the page on `http://app.test/`. The replay flow called `resetSession()`, which uses `crypto.randomUUID()`, and Chromium denied that API on the non-trustworthy fake origin. The same smoke passed when routed through `http://localhost/`, matching local app behavior.
 
 **Lesson:** Browser smokes that exercise recording or replay session reset should run on `localhost` or HTTPS, not arbitrary fake HTTP hosts. Otherwise secure-context browser APIs can fail before the app flow is actually tested.
+
+## Lesson: Populated transcript layouts need populated browser smokes (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `templates/scribe/index.html.twig` (search: "consultation-workspace"), `public/js/scribe-transcript.js` (search: "Any visible transcript text means the start prompt is no longer useful.").
+
+During the 0.3.0 mockup refresh, an empty-state screenshot made the new workspace layout look clean, but a populated transcript/summary browser smoke exposed that direct transcript events could leave the start prompt visible above real rows.
+
+**Lesson:** For transcript, summary, or hidden-panel layout changes, capture both empty and populated browser states. Include DOM assertions for card count, empty-state visibility, overlap, and removed controls so visual verification covers the state users actually review.

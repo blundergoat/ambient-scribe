@@ -73,6 +73,16 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # the per-speaker kernel injection in the ASR model.
 RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvidia/diar_streaming_sortformer_4spk-v2.1', filename='diar_streaming_sortformer_4spk-v2.1.nemo'); hf_hub_download('nvidia/multitalker-parakeet-streaming-0.6b-v1', filename='multitalker-parakeet-streaming-0.6b-v1.nemo')"
 
+# The NeMo base image's runtime venv (/opt/venv) ships botocore 1.42.61, which
+# shadows the boto3/botocore that strands-agents installs into the system site and
+# breaks `import boto3` (pulled in by strands' Bedrock model at import time:
+# "cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'").
+# aiobotocore in the base image also pins botocore <1.42.62, so install the matched
+# boto3/botocore 1.42.61 pair INTO /opt/venv to satisfy both strands and aiobotocore.
+# Placed after the model-download layer so a rebuild does not re-fetch the models.
+# Bump this pair only alongside the pinned nemo:26.02 base image.
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "boto3==1.42.61" "botocore==1.42.61"
+
 # Copy application code (build context is ./strands_agents)
 # Dev override: docker-compose.yml mounts ./strands_agents:/app for hot reload
 COPY . /app

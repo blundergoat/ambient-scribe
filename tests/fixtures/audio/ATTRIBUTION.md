@@ -10,5 +10,13 @@ separate doctor and patient channels by `scripts/generate-demo-consultation-audi
 - Repository policy: generated `.wav` files are ignored by git; if a release
   intentionally bundles them, force-add only after reviewing this attribution.
 
+Ground-truth transcripts (`*.doctor.TextGrid`, `*.patient.TextGrid`):
+
+- Source: PriMock57 `transcripts/day1_consultationNN_{doctor,patient}.TextGrid`.
+- License: CC BY 4.0 (same corpus as the audio).
+- Purpose: per-channel Praat reference transcripts for measuring transcription quality.
+- Fetch: `scripts/download-primock57-transcripts.sh` (named after the paired WAV).
+- Repository policy: `.TextGrid` files are ignored by git like the `.wav` fixtures.
+
 Do not commit CC BY-NC, CC BY-SA, CC BY-ND, gated, scraped, or real-patient
 audio to this Apache-2.0 repository.

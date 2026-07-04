@@ -5,6 +5,10 @@
 // Users reach this code by choosing demo audio or requesting a summary.
 // =========================================================================
 
+// At most one post-visit summary request may be in flight per visible session.
+// Auto-trigger (live stop) and manual click/retry share this guard.
+let isSummaryRequestInFlight = false;
+
 /**
  * Uploads a WAV file, plays it locally, and replays it through the transcript UI.
  * Reports upload/backend errors in status and keeps audio controls usable.
@@ -445,6 +449,12 @@ async function requestSummary() {
         return;
     }
 
+    // One in-flight request per session keeps auto-trigger and retry from overlapping.
+    if (isSummaryRequestInFlight) {
+        return;
+    }
+    isSummaryRequestInFlight = true;
+
     const summaryPanel = document.getElementById('summaryPanel');
     const summaryLoading = document.getElementById('summaryLoading');
     const summaryContent = document.getElementById('summaryContent');
@@ -456,7 +466,7 @@ async function requestSummary() {
     }
 
     summaryPanel.classList.remove('hidden');
-    summaryPanel.classList.add('summary-panel--open');
+    setSummaryStatus('generating');
     summaryLoading.classList.remove('hidden');
     clearElement(summaryContent);
 
@@ -468,22 +478,13 @@ async function requestSummary() {
         });
 
         const summaryPayload = await readJsonResponse(response, { detail: 'Summary generation failed.' });
-
-        // Successful responses render sectioned summary content for review.
-        if (response.ok && !summaryPayload.isFallbackPayload) {
-            renderSummary(summaryPayload);
-            handleClinicalHintsEvent({
-                type: 'clinical_hints',
-                hints: summaryPayload.clinical_hints ?? [],
-            });
-        } else {
-            showSummaryMessage(summaryPayload.detail || 'Summary generation failed. The transcript remains available for review.');
-        }
+        renderSummaryResponse(response, summaryPayload);
     } catch (summaryError) {
         console.error('Summary request failed:', summaryError);
-        showSummaryMessage('Could not reach the summary service.');
+        showSummaryFailure('Could not reach the summary service.');
     } finally {
         summaryLoading.classList.add('hidden');
+        isSummaryRequestInFlight = false;
 
         // A completed request can be rerun if the clinician wants to regenerate the note.
         if (summaryButton) {
@@ -491,6 +492,31 @@ async function requestSummary() {
             setElementHidden('summaryBtn', false);
         }
     }
+}
+
+/**
+ * Routes a summary HTTP response to the right panel state.
+ * Success renders the note; 404 is a plain "no transcript yet"; other errors
+ * (502/503) mean the model or service failed and get an actionable fix note.
+ */
+function renderSummaryResponse(response, summaryPayload) {
+    if (response.ok && !summaryPayload.isFallbackPayload) {
+        renderSummary(summaryPayload);
+        handleClinicalHintsEvent({
+            type: 'clinical_hints',
+            hints: summaryPayload.clinical_hints ?? [],
+        });
+        return;
+    }
+
+    // No transcript yet is a normal state, not a model/service problem.
+    if (response.status === 404) {
+        setSummaryStatus('failed');
+        showSummaryMessage(summaryPayload.detail || 'No transcript to summarise yet.');
+        return;
+    }
+
+    showSummaryFailure(summaryPayload.detail || 'Summary generation failed.');
 }
 
 /**
@@ -650,13 +676,7 @@ function renderSummary(summaryPayload) {
 
     const summaryPanel = document.getElementById('summaryPanel');
     summaryPanel.classList.remove('hidden');
-    summaryPanel.classList.add('summary-panel--open');
     clearElement(summaryContent);
-
-    // A title from the backend replaces the default Session Summary label.
-    if (summaryPayload.title) {
-        document.getElementById('summaryTitle').textContent = summaryPayload.title;
-    }
 
     const renderedBlocks = [
         ...createSummarySectionBlocks(summaryPayload.sections ?? []),
@@ -665,11 +685,15 @@ function renderSummary(summaryPayload) {
 
     // Empty summary payloads should explain that no content is available.
     if (renderedBlocks.length === 0) {
+        setSummaryStatus('failed');
         showSummaryMessage('No summary content available.');
         return;
     }
 
     summaryContent.replaceChildren(...renderedBlocks);
+    setSummaryStatus('generated');
+    // A rendered summary means the model recovered, so clear any stale warning banner.
+    hideSystemBanner();
 }
 
 /**
@@ -727,4 +751,87 @@ function showSummaryMessage(message) {
         style: 'color:var(--text-subtle)',
     });
     summaryContent.replaceChildren(messageElement);
+}
+
+/**
+ * Renders a summary failure with an actionable fix note and a page-level warning.
+ * Use for provider/service errors (Ollama or Bedrock unreachable, 502/503, network) so the
+ * clinician sees the likely cause and how to recover while the transcript stays visible.
+ */
+function showSummaryFailure(detail) {
+    setSummaryStatus('failed');
+
+    const summaryContent = document.getElementById('summaryContent');
+    const failureMessage = createElement('p', {
+        className: 'text-sm',
+        text: detail,
+        style: 'color:var(--text-strong); margin:0 0 0.5rem',
+    });
+    const fixNote = createElement('p', {
+        className: 'text-xs',
+        text: 'The summary model looks unavailable. Check that Ollama (or Bedrock) is running and the agent container can reach it, then use Retry Summary. See README_STACK.md.',
+        style: 'color:var(--text-subtle); margin:0; line-height:1.5',
+    });
+    summaryContent.replaceChildren(failureMessage, fixNote);
+
+    // A page-level warning keeps the cause visible even when the summary panel is scrolled away.
+    showSystemBanner('AI model unavailable — summaries and speaker roles need Ollama or Bedrock reachable from the agent container. See README_STACK.md.');
+}
+
+/**
+ * Reflects summary progress in the panel.
+ * States: 'pending' (placeholder before the visit ends), 'generating' (loading row
+ * shows progress), 'generated' (green confirmation), 'failed' (retry offered while
+ * the transcript stays visible for review).
+ */
+function setSummaryStatus(summaryState) {
+    const summaryStatus = document.getElementById('summaryStatus');
+    const summaryStatusBadge = document.getElementById('summaryStatusBadge');
+    const summaryRetryButton = document.getElementById('summaryRetryBtn');
+    const summaryPending = document.getElementById('summaryPending');
+
+    // Older templates without the status row still render summary content safely.
+    if (!summaryStatus || !summaryStatusBadge) {
+        return;
+    }
+
+    // The pending placeholder only shows before a summary has been requested.
+    summaryPending?.classList.toggle('hidden', summaryState !== 'pending');
+    summaryStatusBadge.classList.remove('summary-status__badge--generated', 'summary-status__badge--failed');
+
+    if (summaryState === 'generated') {
+        summaryStatusBadge.textContent = '✓ Generated';
+        summaryStatusBadge.classList.add('summary-status__badge--generated');
+        summaryStatus.classList.remove('hidden');
+        summaryRetryButton?.classList.add('hidden');
+        return;
+    }
+
+    if (summaryState === 'failed') {
+        summaryStatusBadge.textContent = 'Summary unavailable';
+        summaryStatusBadge.classList.add('summary-status__badge--failed');
+        summaryStatus.classList.remove('hidden');
+        summaryRetryButton?.classList.remove('hidden');
+        return;
+    }
+
+    // Pending and generating both hide the badge; the pending row or loading row speaks instead.
+    summaryStatus.classList.add('hidden');
+    summaryRetryButton?.classList.add('hidden');
+}
+
+/**
+ * Reveals the summary panel in its pending state once transcript text exists.
+ * Use when the first segment arrives, so the panel appears only when a summary can be generated.
+ */
+function revealSummaryPending() {
+    const summaryPanel = document.getElementById('summaryPanel');
+
+    // Older templates without the panel still capture transcript safely.
+    if (!summaryPanel) {
+        return;
+    }
+
+    summaryPanel.classList.remove('hidden');
+    setSummaryStatus('pending');
 }

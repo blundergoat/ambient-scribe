@@ -21,6 +21,25 @@ The generator downloads CC BY 4.0 PriMock57 doctor/patient channels, mixes each
 pair to a 90-second 16 kHz mono 16-bit PCM WAV, and writes `generated-manifest.json`.
 Cases 01, 09, and 10 are intentionally excluded from the local demo picker.
 
+## Ground-truth transcripts
+
+To measure transcription quality against a reference, fetch the matching PriMock57
+Praat transcripts (CC BY 4.0). They pair with each WAV by name:
+
+```bash
+scripts/download-primock57-transcripts.sh
+```
+
+This writes `<wav-stem>.doctor.TextGrid` and `<wav-stem>.patient.TextGrid` for every
+consultation whose `.wav` exists locally, e.g.:
+
+- `primock57-day1-consultation02-i-have-sore-red-skin.wav`
+- `primock57-day1-consultation02-i-have-sore-red-skin.doctor.TextGrid`
+- `primock57-day1-consultation02-i-have-sore-red-skin.patient.TextGrid`
+
+The source WAV is a doctor+patient mixdown, so a full reference is both channel
+TextGrids together. Like the `.wav` fixtures, `.TextGrid` files are git-ignored.
+
 ## Included Cases
 
 | File | Complaint | Speakers | Edge case |

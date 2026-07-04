@@ -292,9 +292,11 @@ function resetVisitUi() {
 
     const summaryContent = document.getElementById('summaryContent');
     clearElement(summaryContent);
+    // Idle sessions hide the panel; it reveals in pending state when transcript text returns.
     document.getElementById('summaryPanel').classList.add('hidden');
-    document.getElementById('summaryPanel').classList.remove('summary-panel--open');
+    document.getElementById('summaryLoading').classList.add('hidden');
     document.getElementById('summaryTitle').textContent = 'Session Summary';
+    setSummaryStatus('pending');
     clearClinicalHints();
 
     const confidenceBadge = document.getElementById('confidenceBadge');
@@ -437,4 +439,20 @@ function showSystemBanner(message) {
     const systemBanner = document.getElementById('systemBanner');
     systemBanner.textContent = message;
     systemBanner.classList.remove('hidden');
+}
+
+/**
+ * Hides the system warning banner.
+ * Use when the condition that raised it (e.g. an unavailable model) has cleared.
+ */
+function hideSystemBanner() {
+    const systemBanner = document.getElementById('systemBanner');
+
+    // Isolated templates may not render the banner element.
+    if (!systemBanner) {
+        return;
+    }
+
+    systemBanner.classList.add('hidden');
+    systemBanner.textContent = '';
 }

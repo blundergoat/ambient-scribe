@@ -312,8 +312,14 @@ async def _infer_and_publish_role_update(
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
+    # A model that is unreachable should warn the browser once, even if the
+    # heuristic still produced degraded labels or produced nothing at all.
+    if result and result.get("provider_unreachable"):
+        await _publish_provider_unavailable_once(session_id, services)
+
     # A role result lets the UI replace raw speaker IDs with clinical labels.
-    if result:
+    # An empty-mapping "none" result is only a connectivity signal, so it is not applied.
+    if result and result.get("path") != "none":
         role_update = _build_role_update_payload(session_id, merged_segments, result)
         services.sessions.apply_role_mapping(session_id, role_update.mapping)
         await _publish_role_update(session_id, role_update, services)
@@ -413,6 +419,42 @@ async def _publish_role_update(
             "confidence": role_update.confidence,
             "flip_detected": role_update.flip_detected,
             "reasoning": role_update.reasoning,
+            "session_id": session_id,
+        },
+        event_id=event_id,
+    )
+
+
+_provider_unavailable_warned: set[str] = set()
+
+
+async def _publish_provider_unavailable_once(
+    session_id: str,
+    services: RoleInferenceServices,
+) -> None:
+    """Warn the browser once per session that the role/summary model is unreachable.
+
+    Publishes a `system_error` on the roles topic the browser already subscribes to,
+    so the warning banner appears during the consultation, not only at summary time.
+
+    Args:
+        session_id: Browser session UUID; empty would target the wrong topic.
+        services: Runtime services providing the Mercure publisher and event counter.
+    """
+    # One warning per session keeps the banner from flapping on every failed inference.
+    if session_id in _provider_unavailable_warned:
+        return
+    _provider_unavailable_warned.add(session_id)
+
+    event_id = _next_role_event_id(session_id, services)
+    await services.publish_to_mercure(
+        f"scribe/session/{session_id}/roles",
+        {
+            "type": "system_error",
+            "message": (
+                "AI model unavailable — speaker roles and the summary need Ollama or "
+                "Bedrock reachable from the agent. See README_STACK.md."
+            ),
             "session_id": session_id,
         },
         event_id=event_id,

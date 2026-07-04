@@ -868,6 +868,34 @@ async def roles_snapshot(session_id: str) -> dict:
     return response_payload
 
 
+def _is_provider_unreachable(exc: Exception) -> bool:
+    """Return True when an agent failure looks like the model endpoint being unreachable.
+
+    Used so the browser can surface a "model unavailable" warning with a fix hint
+    instead of silently degrading to the heuristic role classifier.
+
+    Args:
+        exc: Exception raised by the role/summary agent; type and message are inspected.
+
+    Returns:
+        True for connection/timeout style failures; False for other agent errors.
+    """
+    error_text = f"{type(exc).__name__}: {exc}".lower()
+    unreachable_markers = (
+        "connect",
+        "connection",
+        "refused",
+        "unreachable",
+        "timed out",
+        "timeout",
+        "max retries",
+        "failed to establish",
+        "name or service not known",
+        "nodename nor servname",
+    )
+    return any(marker in error_text for marker in unreachable_markers)
+
+
 def _run_role_inference(
     session_id: str,
     segments: list[dict[str, Any]],
@@ -934,12 +962,14 @@ def _run_role_inference(
         parsed.update(metric_fields)
         return parsed
     except Exception as e:
+        provider_unreachable = _is_provider_unreachable(e)
         logger.warning(
             "role_inference.agent_failed_falling_back_to_heuristic",
             extra={
                 "session_id": session_id,
                 "error_type": type(e).__name__,
                 "error": str(e)[:200],
+                "provider_unreachable": provider_unreachable,
             },
         )
 
@@ -948,6 +978,8 @@ def _run_role_inference(
         heuristic_result = _heuristic_role_inference(segments, transcript)
         if heuristic_result is not None:
             heuristic_result["path"] = "heuristic"
+            # Carry the connectivity signal so the browser can warn even on degraded labels.
+            heuristic_result["provider_unreachable"] = provider_unreachable
             logger.info(
                 "role_inference.heuristic_used",
                 extra={
@@ -966,7 +998,11 @@ def _run_role_inference(
             },
         )
 
-    # --- Tier 3: None (graceful degradation) ---
+    # --- Tier 3: graceful degradation ---
+    # A confirmed connectivity failure still needs to reach the browser as a warning,
+    # even when the heuristic could not label speakers. An empty mapping is not applied.
+    if provider_unreachable:
+        return {"path": "none", "mapping": {}, "provider_unreachable": True}
     return None
 
 

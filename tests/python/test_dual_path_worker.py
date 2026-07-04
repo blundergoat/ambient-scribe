@@ -208,6 +208,41 @@ class TestDualPathFreeText:
         role_events = [e for t, e in published if "roles" in t]
         assert len(role_events) == 0
 
+    @pytest.mark.asyncio
+    async def test_provider_unreachable_publishes_system_error_once(self, monkeypatch):
+        """A provider-unreachable signal warns the browser once, without a role update."""
+        from api import role_inference_queue
+
+        session_id = "dual-provider-down-session"
+        role_inference_queue._provider_unavailable_warned.discard(session_id)
+        published = []
+
+        await _register_session(session_id)
+        for seg in SEGMENTS:
+            api_server.sessions.append_segment(session_id, dict(seg))
+
+        async def fake_publish(topic, data, event_id=None):
+            published.append((topic, data))
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        monkeypatch.setattr(
+            api_server,
+            "_run_role_inference",
+            lambda *a, **kw: {"path": "none", "mapping": {}, "provider_unreachable": True},
+        )
+
+        await api_server.enqueue_role_inference(session_id, SEGMENTS)
+        worker = api_server._inference_workers[session_id]
+        await api_server.close_role_inference(session_id)
+        await asyncio.wait_for(worker, timeout=2.0)
+
+        role_events = [e for t, e in published if "roles" in t]
+        system_errors = [e for e in role_events if e.get("type") == "system_error"]
+        role_updates = [e for e in role_events if e.get("type") == "role_update"]
+        assert len(system_errors) == 1
+        assert "README_STACK.md" in system_errors[0]["message"]
+        assert len(role_updates) == 0
+
 
 class TestToolInvokedAttributedSegments:
     """Verify attributed_segments are correctly built in the tool-invoked path."""

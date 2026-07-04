@@ -29,21 +29,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **WebSocket server backend** - set Uvicorn to `websockets-sansio` in both Dockerfile and Compose entrypoints so local browser sessions use the same backend.
 - **PHP dependency floors** - raised Mercure, Mercure Bundle, PHPUnit, and Infection within the PHP 8.3/Symfony 6.4 lane, and tightened `symfony/dotenv` back to the Symfony 6.4 series.
 - **Clinical summary grounding** - added a CPU-only PoC clinical knowledge helper so generated SOAP summaries can include short documentation reminders without using the NeMo GPU.
+- **Scribe workspace design** - refreshed the consultation UI toward the 0.3.0 mockup with a compact left demo-audio/dev rail, softer clinical palette, pill controls, and a transcript/summary split workspace.
+- **Session summary panel states** - gave the summary panel explicit pending, generating, generated, and failed states with a status badge (`✓ Generated` / `Summary unavailable`) and a retry control, showed the pending placeholder only once transcript text exists, made the panel a fixed non-collapsible header (removed the toggle and chevron), and guarded against overlapping in-flight summary requests per session.
+- **Consultation fonts** - loaded the Libre Franklin (UI) and IBM Plex Mono (dev/log) webfonts so the rendered consultation UI matches the 0.3.0 mockup typography instead of falling back to system fonts.
+- **Demo audio dropdown** - replaced the demo-audio card list with a compact dropdown selector ("consultation-0X · complaint" plus a "90-second PriMock57 · doctor / patient" descriptor) matching the 0.3.0 mockup; picking a clip starts its replay and replay status still marks the chosen option.
 
 ### Added
 
+- **PriMock57 ground-truth transcripts** - added `scripts/download-primock57-transcripts.sh` to fetch the CC BY 4.0 Praat TextGrid transcripts paired by name with each demo consultation WAV, enabling transcription-quality measurement against a reference.
+- **Summary failure guidance** - when summary generation fails, the panel now shows an actionable fix note and a page-level warning banner ("AI model unavailable … See README_STACK.md") pointing at Ollama/Bedrock reachability, instead of a bare "Summary generation failed" message; the banner clears once a summary renders.
+- **Live model-unavailable warning** - when the role/summary model is unreachable, the agent publishes a one-time `system_error` on the session roles topic so the browser shows the warning banner during the consultation, not only at summary time; it clears once a summary renders.
+
 - **Log analysis and eval tooling** - added `scripts/analyze-logs.py` for process-quality reports and `scripts/eval-role-heuristic.py` for GPU-free scenario role-attribution evaluation.
 - **Stack inventory documentation** - added `README_STACK.md` with the current model, service, runtime, topic, and dependency inventory for the medical scribe stack.
+- **Clinical intelligence documentation** - added `README_CLINICAL_INTELLIGENCE.md` to explain the medical phrase normalisation and clinical RAG/hints layers, including toggles, safety boundaries, benefits, and pending GPU/SSE proof.
 - **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
 - **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
 - **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.
 
 ### Fixed
 
+- **Agent image boto3/botocore conflict** - the NeMo base image's runtime venv (`/opt/venv`) shipped `botocore 1.42.61`, which shadowed the boto3/botocore that `strands-agents` installed into the system site and crashed the FastAPI agent at import (`cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'`), leaving the container unhealthy and blocking `setup-initial.sh`. The `docker/nemo/Dockerfile` now installs a matched `boto3==1.42.61`/`botocore==1.42.61` pair into `/opt/venv`, which also satisfies the base image's `aiobotocore<1.42.62` pin.
+- **Ollama Compose wiring** - the agent now defaults to the bundled `ollama` service (`http://ollama:11434`), which starts with the stack; removed the `local` profile, added a `nemo-agent`→`ollama` dependency, and dropped the host port so it never clashes with a host-side Ollama. Fixes summaries returning 502 and role inference falling back to the heuristic when `host.docker.internal:11434` was unreachable (e.g. on WSL2).
 - **Demo audio replay routing** - added same-origin Symfony proxies for replay and summary requests so the browser receives JSON from FastAPI instead of app-origin HTML errors.
 - **Audible demo audio stop flow** - made Demo Audio replay attach the selected WAV to a browser audio player, added early replay stop/cancel handling, and exposed the Summarise button after stopped replay text exists.
 - **Demo audio transcript pacing** - made replay transcript rows reveal from the browser audio clock and send the visible transcript snapshot to stop/summary routes so text cannot outrun what the user hears.
 - **Large demo WAV replay** - raised local PHP upload limits for PriMock fixtures and made replay treat malformed success responses as recoverable UI errors.
+- **Transcript empty state** - hid the start prompt as soon as transcript rows render, including dev-injected replay/test events.
 
 ### Security
 

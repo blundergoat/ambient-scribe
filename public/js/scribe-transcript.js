@@ -94,6 +94,14 @@ function appendSegment(segment, role) {
     const transcriptContainer = document.getElementById('transcript');
     segmentIndex++;
 
+    // Any visible transcript text means the start prompt is no longer useful.
+    setElementHidden('emptyState', true);
+
+    // The first transcript text makes a summary available, so reveal the pending panel.
+    if (segmentIndex === 1) {
+        revealSummaryPending();
+    }
+
     // Consecutive text from the same speaker stays in one readable card.
     if (lastSpeakerId === segment.speaker_id && lastSegmentBlock) {
         appendTextToExistingSegment(segment, transcriptContainer);
@@ -272,6 +280,12 @@ function showToast(message, duration = 3000) {
  * Use when the role agent publishes Doctor/Patient confidence.
  */
 function handleRoleUpdate(roleUpdateEvent) {
+    // The roles topic also carries a one-time model-unavailable warning during the visit.
+    if (roleUpdateEvent.type === 'system_error') {
+        showSystemBanner(roleUpdateEvent.message || 'AI model unavailable.');
+        return;
+    }
+
     // Empty mapping means role inference has nothing new to show the clinician.
     if (!roleUpdateEvent.mapping) {
         return;

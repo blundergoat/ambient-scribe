@@ -67,6 +67,8 @@ crash.log
 tests/fixtures/audio/*.wav
 tests/fixtures/audio/*.mp3
 tests/fixtures/audio/*.webm
+# PriMock57 ground-truth transcripts are fetched, not bundled (see download-primock57-transcripts.sh)
+tests/fixtures/audio/*.TextGrid
 !tests/fixtures/audio/.gitkeep
 
 # code quality tools

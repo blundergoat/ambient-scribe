@@ -31,7 +31,7 @@ Role inference, summaries, clinical hints, and medical term correction do not us
 | Symfony app | `http://localhost:48082` | Serves `/scribe`, injects session config, proxies history/role endpoints | `Dockerfile`, `src/`, `templates/` |
 | FastAPI NeMo agent | `http://localhost:48101` | WebSocket audio ingest, NeMo inference, role queue, summaries, replay, Mercure publish | `strands_agents/`, `docker/nemo/Dockerfile` |
 | Mercure hub | `http://localhost:48137/.well-known/mercure` | Browser SSE fan-out for transcript, role, summary, and hint events | `docker-compose.yml` |
-| Ollama | `http://localhost:11434` | Optional CPU-only local LLM provider for role and summary agents | `docker-compose.yml` profile `local` |
+| Ollama | in-network `http://ollama:11434` | Default CPU-only local LLM provider for role and summary agents; starts with the stack, no host port published | `docker-compose.yml` service `ollama` |
 
 ## Model Inventory
 
@@ -92,13 +92,21 @@ ROLE_AGENT_MODEL_PROVIDER=ollama|bedrock
 ROLE_AGENT_OLLAMA_MODEL=qwen2.5:14b
 ROLE_AGENT_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 AWS_DEFAULT_REGION=ap-southeast-2
-OLLAMA_HOST=http://host.docker.internal:11434
+OLLAMA_HOST=http://ollama:11434
 ```
 
-Local development defaults to Ollama so role inference can run without AWS.
-The `ollama` Compose service is optional and CPU-only. If a host-installed
-Ollama is used, the `nemo-agent` container reaches it through
-`http://host.docker.internal:11434`.
+Local development defaults to Ollama so role inference and summaries run without
+AWS. The bundled `ollama` Compose service starts with the stack, and `nemo-agent`
+reaches it in-network at `http://ollama:11434`. On first run, pull the model into
+the persistent `ollama_data` volume (it is skipped on later starts):
+
+```bash
+docker compose exec ollama ollama pull qwen2.5:14b
+```
+
+To reuse a host-installed Ollama instead, override `OLLAMA_HOST` (for example
+`http://host.docker.internal:11434`), but note that route is unreliable on some
+Docker / WSL2 setups.
 
 Bedrock is opt-in. Set `ROLE_AGENT_MODEL_PROVIDER=bedrock`, provide
 `ROLE_AGENT_MODEL_ID`, and inject AWS credentials or an AWS profile outside the

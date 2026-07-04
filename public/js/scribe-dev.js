@@ -416,11 +416,8 @@ class DevPanel {
             return;
         }
 
-        // Each audio row starts a real NeMo replay through the visible transcript.
-        for (const audioFixture of AUDIO_FIXTURES) {
-            const audioFixtureItem = createAudioFixtureItem(audioFixture);
-            audioFixtureList.appendChild(audioFixtureItem);
-        }
+        // A single dropdown selects one PriMock57 clip and starts its replay.
+        audioFixtureList.appendChild(createAudioFixtureSelect());
     }
 
     /**
@@ -464,37 +461,150 @@ class DevPanel {
 }
 
 /**
- * Creates one audio row for the left dev panel.
- * Use when rendering generated consultation WAV choices.
+ * Builds the "consultation-0X · complaint" label for the demo-audio selector.
+ * Use for the selector trigger and each dropdown option.
  */
-function createAudioFixtureItem(audioFixture) {
+function audioFixtureLabel(audioFixture) {
+    const consultationMatch = /consultation(\d+)/i.exec(audioFixture.filename);
+    const consultation = consultationMatch ? `consultation-${consultationMatch[1]}` : audioFixture.filename;
+    // Drop a leading "I have" / "I've" so the label reads as a short complaint.
+    const complaint = (audioFixture.complaint || '').replace(/^\s*i(?:'ve| have)\s+/i, '').trim();
+    return complaint ? `${consultation} · ${complaint}` : consultation;
+}
+
+/**
+ * Builds the muted "90-second PriMock57 · doctor / patient" descriptor line.
+ * Empty speakers still yield a useful clip descriptor.
+ */
+function audioFixtureSubLabel(audioFixture) {
     const speakerText = Array.isArray(audioFixture.speakers)
-        ? audioFixture.speakers.join(' / ')
+        ? audioFixture.speakers.join(' / ').toLowerCase()
         : '';
-    const metadataText = [
-        audioFixture.complaint,
-        audioFixture.edge_case,
-        speakerText,
-    ].filter(Boolean).join(' - ');
-    const audioFixtureItem = createElement('button', {
-        className: 'audio-fixture-item',
+    return ['90-second PriMock57', speakerText].filter(Boolean).join(' · ');
+}
+
+/**
+ * Renders the demo-audio dropdown selector and its options.
+ * Use when the dev panel loads; selecting an option starts that clip's replay.
+ */
+function createAudioFixtureSelect() {
+    const selectedFixture = AUDIO_FIXTURES[0];
+    const triggerMain = createElement('span', { className: 'audio-select__main' }, [
+        createElement('span', {
+            className: 'audio-select__title',
+            text: audioFixtureLabel(selectedFixture),
+            attributes: { id: 'audioSelectTitle' },
+        }),
+        createElement('span', { className: 'audio-select__sub', text: audioFixtureSubLabel(selectedFixture) }),
+    ]);
+    const triggerIndicators = createElement('span', { className: 'audio-select__indicators' }, [
+        createElement('span', { className: 'audio-select__dot' }),
+        createElement('span', { className: 'audio-select__caret', text: '▾' }),
+    ]);
+    const trigger = createElement('button', {
+        className: 'audio-select__trigger',
+        attributes: {
+            type: 'button',
+            'aria-haspopup': 'listbox',
+            'aria-expanded': 'false',
+            'aria-label': 'Choose demo consultation',
+        },
+    }, [triggerMain, triggerIndicators]);
+    trigger.addEventListener('click', toggleAudioSelectMenu);
+
+    const menu = createElement('div', {
+        className: 'audio-select__menu hidden',
+        attributes: { id: 'audioSelectMenu', role: 'listbox' },
+    });
+    for (const audioFixture of AUDIO_FIXTURES) {
+        menu.appendChild(createAudioFixtureOption(audioFixture, audioFixture === selectedFixture));
+    }
+
+    return createElement('div', { className: 'audio-select', attributes: { id: 'audioSelect' } }, [trigger, menu]);
+}
+
+/**
+ * Builds one dropdown option for a demo consultation.
+ * Keeps the filename and status hooks so replay progress still marks the row.
+ */
+function createAudioFixtureOption(audioFixture, isSelected) {
+    const option = createElement('button', {
+        className: 'audio-select__option',
         dataset: { audioFixtureFilename: audioFixture.filename },
         attributes: {
             type: 'button',
+            role: 'option',
+            'aria-selected': isSelected ? 'true' : 'false',
             'aria-label': `Replay ${audioFixture.filename}`,
         },
     }, [
-        createElement('div', { className: 'audio-fixture-item__name', text: audioFixture.filename }),
-        createElement('div', {
-            className: 'audio-fixture-item__meta',
-            text: metadataText,
-        }),
-        createElement('div', {
+        createElement('span', { className: 'audio-select__option-title', text: audioFixtureLabel(audioFixture) }),
+        createElement('span', { className: 'audio-select__option-sub', text: audioFixtureSubLabel(audioFixture) }),
+        createElement('span', {
             className: 'audio-fixture-item__status',
             attributes: { id: `audioFixtureStatus-${audioFixture.filename}` },
             style: 'display:none;',
         }),
     ]);
-    audioFixtureItem.addEventListener('click', () => audioFixtureRunner.play(audioFixture.filename));
-    return audioFixtureItem;
+    option.addEventListener('click', () => selectAudioFixture(audioFixture));
+    return option;
 }
+
+/**
+ * Opens or closes the demo-audio dropdown menu.
+ * Use when the clinician clicks the selector trigger.
+ */
+function toggleAudioSelectMenu() {
+    const wrapper = document.getElementById('audioSelect');
+    const menu = document.getElementById('audioSelectMenu');
+
+    // A missing dropdown means the dev panel is not rendered on this page.
+    if (!wrapper || !menu) {
+        return;
+    }
+
+    const willOpen = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !willOpen);
+    wrapper.classList.toggle('audio-select--open', willOpen);
+    wrapper.querySelector('.audio-select__trigger')?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+}
+
+/**
+ * Closes the demo-audio dropdown menu.
+ * Use after a selection or when the clinician clicks elsewhere.
+ */
+function closeAudioSelectMenu() {
+    const wrapper = document.getElementById('audioSelect');
+    const menu = document.getElementById('audioSelectMenu');
+    menu?.classList.add('hidden');
+    wrapper?.classList.remove('audio-select--open');
+    wrapper?.querySelector('.audio-select__trigger')?.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Selects a demo consultation, updates the trigger label, and starts its replay.
+ * Use when the clinician picks an option from the dropdown.
+ */
+function selectAudioFixture(audioFixture) {
+    const selectorTitle = document.getElementById('audioSelectTitle');
+    if (selectorTitle) {
+        selectorTitle.textContent = audioFixtureLabel(audioFixture);
+    }
+
+    // Reflect the current choice for assistive tech and the selected-row highlight.
+    for (const option of document.querySelectorAll('.audio-select__option')) {
+        const isSelected = option.dataset.audioFixtureFilename === audioFixture.filename;
+        option.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+    }
+
+    closeAudioSelectMenu();
+    audioFixtureRunner.play(audioFixture.filename);
+}
+
+// Clicking outside the demo-audio dropdown closes any open menu.
+document.addEventListener('click', (clickEvent) => {
+    const wrapper = document.getElementById('audioSelect');
+    if (wrapper && !wrapper.contains(clickEvent.target)) {
+        closeAudioSelectMenu();
+    }
+});

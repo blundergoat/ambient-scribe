@@ -4,61 +4,66 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ambient Scribe — Real-time Transcription</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Libre+Franklin:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="/js/tailwind.js"></script>
     <style>
         :root {
             color-scheme: light;
-            --page-bg: #f1f5f9;
+            --page-bg: #f6f5f2;
             --surface-bg: #ffffff;
-            --surface-bg-alt: #f8fafc;
-            --surface-border: #e2e8f0;
-            --surface-hover: #f1f5f9;
-            --text-strong: #0f172a;
-            --text-muted: #475569;
-            --text-subtle: #94a3b8;
-            --accent: #3b82f6;
-            --accent-soft: #dbeafe;
-            --color-speaker-a: #2563eb;
-            --color-speaker-a-bg: #eff6ff;
-            --color-speaker-a-border: #bfdbfe;
-            --color-speaker-b: #059669;
-            --color-speaker-b-bg: #ecfdf5;
-            --color-speaker-b-border: #a7f3d0;
-            --color-unknown: #64748b;
-            --color-unknown-bg: #f8fafc;
-            --color-unknown-border: #e2e8f0;
-            --color-success: #16a34a;
-            --color-danger: #dc2626;
-            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
-            --radius: 0.625rem;
+            --surface-bg-alt: #fafbfc;
+            --surface-border: #ece9e3;
+            --surface-hover: #f1f7fd;
+            --surface-selected: #eef3f9;
+            --text-strong: #1c2b33;
+            --text-muted: #6b7a82;
+            --text-subtle: #8a97a0;
+            --accent: #2f6db0;
+            --accent-soft: #dce9f7;
+            --color-speaker-a: #2f6db0;
+            --color-speaker-a-bg: #f1f6fb;
+            --color-speaker-a-border: #dbe7f5;
+            --color-speaker-b: #2e7a64;
+            --color-speaker-b-bg: #f0f6f3;
+            --color-speaker-b-border: #d7ebe2;
+            --color-unknown: #6b7a82;
+            --color-unknown-bg: #fafbfc;
+            --color-unknown-border: #e6e8eb;
+            --color-success: #4e9e78;
+            --color-danger: #c0392b;
+            --shadow-sm: 0 1px 2px rgba(20,40,60,0.06);
+            --shadow-md: 0 14px 34px -14px rgba(20,40,60,0.35);
+            --radius: 0.5rem;
         }
 
         :root[data-theme="dark"] {
             color-scheme: dark;
-            --page-bg: #020617;
-            --surface-bg: #0f172a;
-            --surface-bg-alt: #1e293b;
-            --surface-border: #1e293b;
-            --surface-hover: #1e293b;
-            --text-strong: #f1f5f9;
-            --text-muted: #94a3b8;
-            --text-subtle: #64748b;
-            --accent: #60a5fa;
-            --accent-soft: #1e3a5f;
-            --color-speaker-a: #93c5fd;
-            --color-speaker-a-bg: #0c1d3a;
-            --color-speaker-a-border: #1e3a5f;
-            --color-speaker-b: #6ee7b7;
-            --color-speaker-b-bg: #052e16;
-            --color-speaker-b-border: #14532d;
-            --color-unknown: #94a3b8;
-            --color-unknown-bg: #1e293b;
-            --color-unknown-border: #334155;
-            --color-success: #4ade80;
+            --page-bg: #0e141b;
+            --surface-bg: #16202b;
+            --surface-bg-alt: #111a24;
+            --surface-border: #243342;
+            --surface-hover: #132434;
+            --surface-selected: #132434;
+            --text-strong: #e6edf3;
+            --text-muted: #8fa0ae;
+            --text-subtle: #7c8b99;
+            --accent: #4e96e0;
+            --accent-soft: #173049;
+            --color-speaker-a: #6bb0ff;
+            --color-speaker-a-bg: #132434;
+            --color-speaker-a-border: #1e3346;
+            --color-speaker-b: #5fd0a8;
+            --color-speaker-b-bg: #112a22;
+            --color-speaker-b-border: #1d3a30;
+            --color-unknown: #8fa0ae;
+            --color-unknown-bg: #111a24;
+            --color-unknown-border: #243342;
+            --color-success: #5fd0a8;
             --color-danger: #f87171;
             --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4);
+            --shadow-md: 0 14px 34px -14px rgba(0,0,0,0.6);
         }
 
         * { box-sizing: border-box; }
@@ -68,15 +73,120 @@
             color: var(--text-strong);
             transition: background-color 0.2s, color 0.2s;
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-family: "Libre Franklin", -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         }
 
         .app-layout {
             min-height: 100vh;
+            background: var(--page-bg);
         }
         .app-layout:not(.app-layout--dev) {
-            max-width: 56rem;
+            max-width: 64rem;
             margin: 0 auto;
+        }
+
+        .app-layout--dev {
+            display: grid;
+            grid-template-columns: 300px minmax(0, 1fr);
+            min-height: 100vh;
+            max-width: none;
+            margin: 0;
+        }
+
+        .app-layout--with-hints:not(.app-layout--dev) {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            gap: 1rem;
+            max-width: 88rem;
+        }
+
+        .app-layout--dev.app-layout--with-hints {
+            grid-template-columns: 300px minmax(0, 1fr) 320px;
+        }
+
+        .app-layout--dev > .audio-fixture-panel {
+            grid-column: 1;
+            grid-row: 1;
+            align-self: start;
+            height: 42vh;
+            border-right: 1px solid var(--surface-border);
+        }
+
+        .app-layout--dev > .dev-panel {
+            grid-column: 1;
+            grid-row: 1;
+            align-self: end;
+            height: 58vh;
+            border-right: 1px solid var(--surface-border);
+        }
+
+        .app-layout--dev > .scribe-workspace {
+            grid-column: 2;
+            grid-row: 1;
+        }
+
+        .app-layout--dev.app-layout--with-hints > .clinical-hints {
+            grid-column: 3;
+            grid-row: 1;
+        }
+
+        .scribe-workspace {
+            min-width: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem 1.875rem 1.375rem;
+        }
+
+        .scribe-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1.125rem;
+        }
+
+        .scribe-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .controls-panel {
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            flex-wrap: wrap;
+            padding: 0.9375rem 1rem;
+            margin-bottom: 0.875rem;
+        }
+
+        .status-cluster {
+            display: flex;
+            align-items: center;
+            gap: 0.6875rem;
+            flex-wrap: wrap;
+            margin-left: auto;
+            min-width: 0;
+        }
+
+        .consultation-workspace {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0.875rem;
+        }
+
+        .consultation-workspace:has(.summary-panel:not(.hidden)) {
+            grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+        }
+
+        .transcript-panel {
+            min-height: 26rem;
+            max-height: calc(100vh - 15rem);
+            overflow-y: auto;
+            padding: 0.5rem;
         }
 
         /* ---- Segment Styles ---- */
@@ -84,7 +194,7 @@
             display: flex;
             gap: 0.75rem;
             padding: 0.875rem 1rem;
-            margin-bottom: 0.375rem;
+            margin-bottom: 0.5rem;
             border-radius: var(--radius);
             border: 1px solid transparent;
             transition: background-color 0.2s, border-color 0.2s;
@@ -114,9 +224,9 @@
         }
 
         .segment__avatar {
-            width: 2rem;
-            height: 2rem;
-            border-radius: 50%;
+            width: 2.125rem;
+            height: 2.125rem;
+            border-radius: var(--radius);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -190,37 +300,31 @@
 
         /* ---- Summary Panel ---- */
         .summary-panel {
-            border: 1px solid var(--border);
+            border: 1px solid var(--surface-border);
             border-radius: var(--radius);
             background: var(--surface-bg);
-            margin-top: 0.75rem;
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            max-height: calc(100vh - 15rem);
         }
-        .summary-panel__toggle {
-            width: 100%;
+        .summary-panel.hidden { display: none; }
+        .summary-panel__header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem 1rem;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font: inherit;
+            padding: 0.875rem 1rem;
             font-weight: 600;
             font-size: 0.875rem;
             color: var(--text-strong);
         }
-        .summary-panel__toggle:hover { background: var(--surface-hover); }
-        .summary-panel__chevron {
-            transition: transform 0.2s;
-            width: 16px; height: 16px;
-        }
-        .summary-panel--open .summary-panel__chevron { transform: rotate(180deg); }
         .summary-panel__body {
             padding: 0 1rem 1rem;
-            display: none;
+            display: block;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
         }
-        .summary-panel--open .summary-panel__body { display: block; }
         .summary-panel__loading {
             display: flex;
             align-items: center;
@@ -228,6 +332,84 @@
             padding: 1rem;
             color: var(--text-subtle);
             font-size: 0.875rem;
+        }
+        .summary-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.875rem;
+        }
+        .summary-status.hidden { display: none; }
+        .summary-status__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.1875rem 0.625rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            line-height: 1.5;
+        }
+        .summary-status__badge--generated {
+            color: var(--color-success);
+            background: color-mix(in srgb, var(--color-success) 15%, transparent);
+        }
+        .summary-status__badge--failed {
+            color: var(--color-danger);
+            background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+        }
+        .summary-status__retry {
+            font: inherit;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--accent);
+            background: none;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            padding: 0.1875rem 0.625rem;
+            cursor: pointer;
+        }
+        .summary-status__retry:hover { background: var(--surface-hover); }
+        .summary-status__retry.hidden { display: none; }
+        .summary-pending {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6875rem;
+            padding: 0.8125rem 0.875rem;
+            background: var(--surface-bg-alt);
+            border: 1px solid var(--surface-border);
+            border-radius: 0.6875rem;
+        }
+        .summary-pending.hidden { display: none; }
+        .summary-pending__bars {
+            display: flex;
+            gap: 3px;
+            align-items: flex-end;
+            height: 16px;
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        .summary-pending__bar {
+            width: 3px;
+            height: 5px;
+            background: var(--color-speaker-b);
+            border-radius: 2px;
+            animation: summary-eqbar 0.9s ease-in-out infinite;
+        }
+        .summary-pending__bar:nth-child(2) { animation-delay: 0.15s; }
+        .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; }
+        .summary-pending__text {
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            color: var(--text-muted);
+        }
+        @keyframes summary-eqbar {
+            0%, 100% { height: 5px; }
+            50% { height: 15px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .summary-pending__bar { animation: none; height: 12px; }
         }
         .summary-section { margin-bottom: 1rem; }
         .summary-section:last-child { margin-bottom: 0; }
@@ -260,7 +442,7 @@
             overflow-y: auto;
             border-left: 1px solid var(--surface-border);
             background: var(--surface-bg);
-            padding: 1rem;
+            padding: 1.125rem;
         }
         .clinical-hints.hidden { display: none; }
         .clinical-hints__title {
@@ -324,22 +506,26 @@
 
         /* ---- Replay Progress ---- */
         .replay-progress {
-            height: 3px;
-            background: var(--border);
-            border-radius: 2px;
+            height: 0.375rem;
+            background: var(--surface-border);
+            border-radius: 999px;
             overflow: hidden;
-            margin-bottom: 0.5rem;
+            margin: 0 0 0.5rem;
         }
         .replay-progress__fill {
             height: 100%;
             background: var(--color-speaker-a);
             transition: width 0.5s linear;
-            border-radius: 2px;
+            border-radius: 999px;
         }
         .replay-audio {
             width: 100%;
             display: block;
-            margin-bottom: 0.75rem;
+            margin: 0 0 0.875rem;
+            border: 1px solid var(--surface-border);
+            border-radius: var(--radius);
+            background: var(--surface-bg);
+            padding: 0.25rem 0.5rem;
             accent-color: var(--accent);
         }
 
@@ -373,16 +559,20 @@
         .btn {
             display: inline-flex;
             align-items: center;
-            gap: 0.375rem;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            font-weight: 500;
-            font-size: 0.875rem;
+            gap: 0.5rem;
+            padding: 0.6875rem 1rem;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.8125rem;
             transition: all 0.15s;
             cursor: pointer;
             border: none;
         }
-        .btn--primary { background: var(--accent); color: #fff; }
+        .btn--primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 4px 12px -3px rgba(47,109,176,0.5);
+        }
         .btn--primary:hover { opacity: 0.9; }
         .btn--danger { background: #ef4444; color: #fff; }
         .btn--danger:hover { background: #dc2626; }
@@ -422,33 +612,30 @@
 
         /* ---- Demo Audio Panel (left) ---- */
         .audio-fixture-panel {
-            position: sticky;
-            top: 0;
-            height: 100vh;
-            overflow-y: auto;
-            border-right: 1px solid var(--surface-border);
+            min-height: 0;
+            max-height: 42vh;
+            overflow: hidden;
             background: var(--surface-bg);
             display: flex;
             flex-direction: column;
             font-size: 0.8125rem;
         }
         .audio-fixture-panel__header {
-            padding: 1rem;
-            border-bottom: 1px solid var(--surface-border);
+            padding: 1.25rem 1.125rem 0.5rem;
             flex-shrink: 0;
         }
         .audio-fixture-panel__title {
             font-weight: 700;
-            font-size: 0.8125rem;
+            font-size: 0.6875rem;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.13em;
             color: var(--text-subtle);
             margin-bottom: 0.75rem;
         }
         .audio-fixture-panel__body {
             flex: 1;
             overflow-y: auto;
-            padding: 0.5rem;
+            padding: 0.375rem 0.75rem 0.75rem;
         }
         .audio-fixture-item {
             display: block;
@@ -460,86 +647,164 @@
             margin-bottom: 0.375rem;
             cursor: pointer;
             transition: all 0.15s;
-            background: var(--surface-bg);
+            background: var(--surface-bg-alt);
             color: inherit;
             font: inherit;
         }
-        .audio-fixture-item:hover { background: var(--surface-hover); }
+        .audio-fixture-item:hover {
+            background: var(--surface-hover);
+            border-color: var(--accent-soft);
+        }
         .audio-fixture-item--complete { border-left: 3px solid var(--color-success); }
         .audio-fixture-item--error { border-left: 3px solid var(--color-danger); }
         .audio-fixture-item--running {
             border-left: 3px solid var(--accent);
             background: var(--surface-hover);
         }
+        /* ---- Demo Audio dropdown selector ---- */
+        .audio-select { position: relative; }
+        .audio-select__trigger {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.625rem;
+            background: var(--surface-bg-alt);
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .audio-select__trigger:hover { background: var(--surface-hover); border-color: var(--accent-soft); }
+        .audio-select__main { flex: 1; min-width: 0; }
+        .audio-select__title {
+            display: block;
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--text-strong);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .audio-select__sub {
+            display: block;
+            font-size: 0.6875rem;
+            color: var(--text-muted);
+            margin-top: 0.1875rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .audio-select__indicators { flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+        .audio-select__dot { width: 7px; height: 7px; border-radius: 999px; background: var(--color-danger); }
+        .audio-select__caret { font-size: 0.6875rem; color: var(--text-subtle); transition: transform 0.15s; }
+        .audio-select--open .audio-select__caret { transform: rotate(180deg); }
+        .audio-select__menu {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: calc(100% + 0.375rem);
+            z-index: 30;
+            background: var(--surface-bg);
+            border: 1px solid var(--surface-border);
+            border-radius: 0.625rem;
+            box-shadow: var(--shadow-md);
+            padding: 0.25rem;
+            max-height: 16rem;
+            overflow-y: auto;
+        }
+        .audio-select__menu.hidden { display: none; }
+        .audio-select__option {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 0.5rem 0.625rem;
+            border: none;
+            border-radius: 0.4375rem;
+            background: none;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+        }
+        .audio-select__option:hover { background: var(--surface-hover); }
+        .audio-select__option[aria-selected="true"] { background: var(--surface-selected); }
+        .audio-select__option-title { display: block; font-weight: 600; font-size: 0.8125rem; color: var(--text-strong); }
+        .audio-select__option-sub { display: block; font-size: 0.6875rem; color: var(--text-muted); margin-top: 0.125rem; }
         .audio-fixture-item__name {
             font-weight: 600;
-            font-size: 0.75rem;
+            font-size: 0.8125rem;
             color: var(--text-strong);
+            overflow-wrap: anywhere;
         }
         .audio-fixture-item__meta {
             font-size: 0.6875rem;
             color: var(--text-subtle);
-            margin-top: 0.125rem;
+            margin-top: 0.1875rem;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
         }
         .audio-fixture-item__status {
             font-size: 0.6875rem;
             margin-top: 0.25rem;
+            color: var(--accent);
+            font-weight: 600;
         }
         .audio-fixture-panel__footer {
-            padding: 0.5rem;
-            border-top: 1px solid var(--surface-border);
+            padding: 0 0.75rem 0.875rem;
             flex-shrink: 0;
         }
 
-        /* ---- Dev Panel (right) ---- */
+        /* ---- Dev Panel (left rail) ---- */
         .dev-panel {
-            position: sticky;
-            top: 0;
-            height: 100vh;
-            overflow-y: auto;
-            border-left: 1px solid var(--surface-border);
+            min-height: 0;
+            overflow: hidden;
+            border-top: 1px solid var(--surface-border);
             background: var(--surface-bg);
             display: flex;
             flex-direction: column;
             font-size: 0.8125rem;
+            flex: 1;
         }
         .dev-panel__header {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--surface-border);
+            padding: 1rem 1.125rem 0;
             flex-shrink: 0;
         }
         .dev-panel__title {
             font-weight: 700;
-            font-size: 0.8125rem;
+            font-size: 0.6875rem;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.13em;
             color: var(--text-subtle);
         }
         .dev-panel__tabs {
             display: flex;
-            overflow-x: auto;
-            border-bottom: 1px solid var(--surface-border);
+            flex-wrap: wrap;
+            overflow-x: visible;
             flex-shrink: 0;
-            gap: 0;
+            gap: 0.1875rem;
+            padding: 0.75rem 1rem 0;
         }
         .dev-panel__tab {
-            padding: 0.5rem 0.75rem;
+            padding: 0.3125rem 0.5rem;
             background: none;
             border: none;
-            border-bottom: 2px solid transparent;
             color: var(--text-subtle);
             cursor: pointer;
-            font-size: 0.6875rem;
-            font-weight: 500;
+            font-size: 0.625rem;
+            font-weight: 600;
             white-space: nowrap;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
-            transition: color 0.15s, border-color 0.15s;
+            letter-spacing: 0;
+            border-radius: 0.4375rem;
+            transition: color 0.15s, background 0.15s;
         }
         .dev-panel__tab:hover { color: var(--text-strong); }
         .dev-panel__tab--active {
             color: var(--accent);
-            border-bottom-color: var(--accent);
+            background: var(--surface-selected);
         }
         .dev-panel__content {
             flex: 1;
@@ -547,10 +812,10 @@
             padding: 0.75rem;
         }
         .dev-panel__log {
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
             font-size: 0.6875rem;
             line-height: 1.5;
-            max-height: calc(100vh - 140px);
+            max-height: none;
             overflow-y: auto;
         }
         .dev-panel__entry {
@@ -562,7 +827,7 @@
         }
         .dev-panel__entry:hover { background: var(--surface-hover); }
         .dev-panel__pre {
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
             font-size: 0.6875rem;
             background: var(--surface-bg-alt);
             padding: 0.75rem;
@@ -602,37 +867,34 @@
             overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
         }
 
-        @media (min-width: 1024px) {
-            .app-layout--with-hints:not(.app-layout--dev) {
-                display: grid;
-                grid-template-columns: minmax(0, 1fr) 320px;
-                gap: 1.5rem;
-                max-width: 72rem;
-            }
-        }
-
-        @media (min-width: 1280px) {
-            .app-layout--dev {
-                display: grid;
-                grid-template-columns: 280px minmax(0, 1fr) 380px;
-                max-width: none;
-                margin: 0;
-            }
-            .app-layout--dev.app-layout--with-hints {
-                grid-template-columns: 280px minmax(0, 1fr) 320px 380px;
-            }
-        }
-
         @media (max-width: 1279px) {
+            .app-layout--dev,
+            .app-layout--dev.app-layout--with-hints,
+            .app-layout--with-hints:not(.app-layout--dev) {
+                display: block;
+                max-width: none;
+            }
+
             .audio-fixture-panel, .dev-panel {
                 position: fixed;
                 top: 0;
                 height: 100vh;
+                display: none;
                 z-index: 50;
                 box-shadow: var(--shadow-md);
             }
-            .audio-fixture-panel { left: 0; width: 85vw; max-width: 320px; }
-            .dev-panel { right: 0; width: 85vw; max-width: 380px; }
+            .audio-fixture-panel {
+                left: 0;
+                width: 85vw;
+                max-width: 320px;
+                max-height: none;
+            }
+            .dev-panel {
+                right: 0;
+                width: 85vw;
+                max-width: 380px;
+                border-top: 0;
+            }
             .panel-backdrop {
                 position: fixed;
                 inset: 0;
@@ -642,6 +904,34 @@
         }
 
         @media (max-width: 1023px) {
+            .scribe-workspace {
+                padding: 1rem;
+            }
+
+            .scribe-header,
+            .status-cluster {
+                align-items: flex-start;
+            }
+
+            .controls-panel {
+                align-items: stretch;
+            }
+
+            .status-cluster {
+                width: 100%;
+                margin-left: 0;
+            }
+
+            .consultation-workspace,
+            .consultation-workspace:has(.summary-panel:not(.hidden)) {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .transcript-panel,
+            .summary-panel {
+                max-height: none;
+            }
+
             .clinical-hints {
                 position: static;
                 height: auto;
@@ -671,11 +961,11 @@
     {% endif %}
 
     {# ===== MAIN CONTENT ===== #}
-    <main class="{% if dev %}px-6 py-6{% else %}px-4 py-8{% endif %}">
+    <main class="scribe-workspace">
 
         {# Header #}
-        <div class="mb-6 flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
+        <div class="scribe-header">
+            <div class="scribe-title-row">
                 {% if dev %}
                 <button onclick="toggleAudioFixturePanel()" class="icon-btn xl:hidden" aria-label="Toggle demo audio">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -702,7 +992,7 @@
         </div>
 
         {# Controls #}
-        <div class="panel p-3 mb-4 flex items-center gap-3 flex-wrap">
+        <div class="panel controls-panel">
             <button id="startBtn" onclick="startRecording()" class="btn btn--primary" aria-label="Start recording (Space)" title="Start recording (Space)">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5"/></svg>
                 <span id="startBtnLabel">Start Consultation</span>
@@ -724,7 +1014,7 @@
             </button>
             <input id="demoFileInput" type="file" accept=".wav,audio/wav" style="display:none" onchange="startReplay(this.files[0])">
 
-            <div class="flex items-center gap-3 ml-auto">
+            <div class="status-cluster">
                 <span id="status" class="text-sm muted-text" aria-live="polite">Ready</span>
                 <span id="audioLevel" class="hidden ml-2 text-xs" aria-live="polite"></span>
                 <span id="confidenceBadge" class="confidence-badge text-xs px-2 py-0.5 rounded-full hidden" aria-label="Speaker identification confidence"></span>
@@ -742,27 +1032,40 @@
         </div>
         <audio id="replayAudio" class="replay-audio hidden" controls preload="metadata"></audio>
 
-        {# Transcript #}
-        <div id="transcript" role="log" aria-live="polite" class="panel p-4 overflow-y-auto" style="min-height:400px; max-height:calc(100vh - 220px);">
-            <p id="emptyState" class="text-center py-16">
-                <svg class="mx-auto mb-3" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="1.5" stroke-linecap="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                <span class="subtle-text block text-sm" id="emptyStateText">Click "Start Consultation" to begin transcription.</span>
-                <span class="subtle-text block text-xs mt-1">Ensure microphone access is allowed.</span>
-            </p>
-        </div>
+        {# Transcript and Summary #}
+        <div class="consultation-workspace">
+            <div id="transcript" role="log" aria-live="polite" class="panel transcript-panel">
+                <p id="emptyState" class="text-center py-16">
+                    <svg class="mx-auto mb-3" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="1.5" stroke-linecap="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    <span class="subtle-text block text-sm" id="emptyStateText">Click "Start Consultation" to begin transcription.</span>
+                    <span class="subtle-text block text-xs mt-1">Ensure microphone access is allowed.</span>
+                </p>
+            </div>
 
-        {# Summary Panel #}
-        <div id="summaryPanel" class="summary-panel hidden">
-            <button class="summary-panel__toggle" onclick="toggleSummary()" aria-expanded="false" aria-controls="summaryBody">
-                <span id="summaryTitle">Session Summary</span>
-                <svg class="summary-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div id="summaryBody" class="summary-panel__body">
-                <div id="summaryLoading" class="summary-panel__loading hidden">
-                    <span class="recording-dot recording-pulse"></span>
-                    Generating summary...
+            {# Summary Panel #}
+            <div id="summaryPanel" class="summary-panel hidden">
+                <div class="summary-panel__header">
+                    <span id="summaryTitle">Session Summary</span>
                 </div>
-                <div id="summaryContent"></div>
+                <div id="summaryBody" class="summary-panel__body">
+                    <div id="summaryPending" class="summary-pending">
+                        <span class="summary-pending__bars" aria-hidden="true">
+                            <span class="summary-pending__bar"></span>
+                            <span class="summary-pending__bar"></span>
+                            <span class="summary-pending__bar"></span>
+                        </span>
+                        <span class="summary-pending__text">Summary will be generated once the consultation ends.</span>
+                    </div>
+                    <div id="summaryLoading" class="summary-panel__loading hidden">
+                        <span class="recording-dot recording-pulse"></span>
+                        Generating summary...
+                    </div>
+                    <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
+                        <span id="summaryStatusBadge" class="summary-status__badge"></span>
+                        <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                    </div>
+                    <div id="summaryContent"></div>
+                </div>
             </div>
         </div>
 
@@ -780,7 +1083,7 @@
         <div id="clinicalHintsList" class="clinical-hints__list"></div>
     </aside>
 
-    {# ===== DEV PANEL (RIGHT) ===== #}
+    {# ===== DEV PANEL (LEFT RAIL) ===== #}
     {% if dev %}
     <aside id="devPanel" class="dev-panel">
         <div class="dev-panel__header">
