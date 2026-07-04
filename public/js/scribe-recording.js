@@ -151,11 +151,6 @@ function showRecordingUi() {
     setRecordingStatus('Recording', 'color:#ef4444;font-weight:500;');
     announce('Recording started');
     showRoleIdentificationPending();
-
-    // A resumed visit with existing transcript should still allow download.
-    if (segmentIndex > 0) {
-        setElementHidden('downloadBtn', false);
-    }
 }
 
 /**
@@ -199,7 +194,7 @@ function stopRecording() {
 
     announce('Recording stopped');
 
-    // Only visits with transcript text need downloads and a summary request.
+    // Only visits with transcript text need post-visit actions and a summary request.
     if (segmentIndex > 0) {
         revealPostVisitActions();
         requestSummary();
@@ -284,7 +279,6 @@ function resetVisitUi() {
     document.getElementById('segmentCount').textContent = '0';
     document.getElementById('timer').textContent = '00:00';
     setElementHidden('timer', true);
-    setElementHidden('downloadBtn', true);
     setElementHidden('resetBtn', true);
     setElementHidden('summaryBtn', true);
     setElementHidden('startBtn', false);
@@ -365,11 +359,6 @@ function handleUnexpectedDisconnect(closeCode) {
     setPlainStatus(message);
     announce(message);
     console.warn(`Transcription socket closed after retries with code ${closeCode}`);
-
-    // Existing transcript cards remain downloadable after reconnect fails.
-    if (segmentIndex > 0) {
-        setElementHidden('downloadBtn', false);
-    }
 }
 
 /**

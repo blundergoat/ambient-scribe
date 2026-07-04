@@ -3,7 +3,7 @@
 // Runs when the clinician opens /scribe and before any dev-only panel code.
 // Owns theme, Mercure streams, microphone PCM streaming, recording controls,
 // reconnect state, and the shared visit state used by transcript rendering.
-// Transcript cards, replay, downloads, and summaries live in scribe-transcript.js.
+// Transcript cards, replay, and summaries live in the focused scribe modules.
 // =========================================================================
 
 const THEME_STORAGE_KEY = 'ambient-scribe-theme';

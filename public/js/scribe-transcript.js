@@ -2,7 +2,7 @@
 // Ambient Scribe transcript and visit-output browser flow.
 // Runs after scribe.js once the clinician-facing page state exists.
 // Owns transcript cards, manual role relabeling, accessible announcements,
-// downloads, demo replay, generated summaries, and keyboard shortcuts.
+// demo replay, generated summaries, and keyboard-visible transcript state.
 // The file keeps model text in textContent so transcript output cannot run HTML.
 // =========================================================================
 
@@ -16,56 +16,8 @@ let isBrowserClockReplaySession = false;
 let hasReplayAudioPlaybackStarted = false;
 
 /**
- * Fetches transcript history and downloads JSON/TXT visit notes.
- * Use when the clinician clicks Download after live or demo transcription.
- */
-async function downloadTranscript() {
-    const serverSegments = isBrowserClockReplaySession ? [] : await fetchServerTranscriptSegments();
-    const visibleSegments = serverSegments.length > 0 ? serverSegments : readVisibleTranscriptSegments();
-    const summary = readVisibleSummary();
-    const exportedAt = new Date().toISOString();
-    const exportPayload = {
-        session_id: CONFIG.sessionId,
-        exported_at: exportedAt,
-        segments: visibleSegments,
-        summary,
-    };
-    const timestamp = exportedAt.replace(/[:.]/g, '-').slice(0, 19);
-
-    triggerDownload(
-        new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' }),
-        `transcript-${CONFIG.sessionId}-${timestamp}.json`
-    );
-    triggerDownload(
-        new Blob([buildTranscriptText(visibleSegments)], { type: 'text/plain' }),
-        `transcript-${CONFIG.sessionId}-${timestamp}.txt`
-    );
-}
-
-/**
- * Reads persisted transcript history from the app.
- * Network, JSON, or non-OK failures fallback to the visible transcript cards.
- */
-async function fetchServerTranscriptSegments() {
-    try {
-        const response = await fetch(`/scribe/${CONFIG.sessionId}/history`);
-
-        // Non-OK history leaves the clinician with the transcript already on screen.
-        if (!response.ok) {
-            return [];
-        }
-
-        const historyPayload = await response.json();
-        return historyPayload.segments ?? [];
-    } catch (historyError) {
-        console.warn('Could not fetch transcript history, falling back to visible transcript:', historyError);
-        return [];
-    }
-}
-
-/**
- * Builds export rows from the transcript cards visible in the browser.
- * Use when server history is unavailable but the clinician can see segments.
+ * Builds summary rows from the transcript cards visible in the browser.
+ * Use when stop or summary requests need exactly what the clinician can see.
  */
 function readVisibleTranscriptSegments() {
     const visibleSegments = [];
@@ -84,51 +36,6 @@ function readVisibleTranscriptSegments() {
     }
 
     return visibleSegments;
-}
-
-/**
- * Captures the visible generated summary for the JSON export.
- * Null means no summary has been generated for the clinician yet.
- */
-function readVisibleSummary() {
-    const summaryContent = document.getElementById('summaryContent');
-
-    // Empty summary content means the export should not invent a summary.
-    if (!summaryContent?.textContent.trim()) {
-        return null;
-    }
-
-    return {
-        title: document.getElementById('summaryTitle')?.textContent ?? '',
-        text: summaryContent.textContent.trim(),
-    };
-}
-
-/**
- * Builds the plain-text transcript file.
- * Use alongside the JSON download so clinicians can read notes quickly.
- */
-function buildTranscriptText(segments) {
-    return segments.map((segment) => {
-        const role = getRoleLabel(segment.role ?? roleMapping[segment.speaker_id] ?? 'UNKNOWN');
-        return `[${formatTime(segment.start || 0)} - ${formatTime(segment.end || 0)}] ${role}: ${segment.text ?? ''}`;
-    }).join('\n');
-}
-
-/**
- * Triggers a browser download for one transcript artifact.
- * Use for JSON, TXT, and dev-result files.
- */
-function triggerDownload(blob, filename) {
-    const objectUrl = URL.createObjectURL(blob);
-    const downloadLink = createElement('a', {
-        attributes: { href: objectUrl, download: filename },
-    });
-
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-    URL.revokeObjectURL(objectUrl);
 }
 
 /**
@@ -201,10 +108,6 @@ function appendSegment(segment, role) {
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     document.getElementById('segmentCount').textContent = segmentIndex;
 
-    // First visible text unlocks transcript download for the clinician.
-    if (segmentIndex === 1) {
-        setElementHidden('downloadBtn', false);
-    }
 }
 
 /**

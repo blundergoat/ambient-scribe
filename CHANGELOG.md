@@ -55,6 +55,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 
 - **Multi-mode support** - removed Meeting, Interview, TV/Media, Lecture, and General modes, including the `?mode=` transport parameter, `_session_modes`, mode prompt dictionaries, and the browser mode selector.
+- **Transcript download control** - removed the Download button, keyboard shortcut, and browser-side JSON/TXT export code from the scribe UI.
 
 ## [0.2.0] - 2026-03-16
 

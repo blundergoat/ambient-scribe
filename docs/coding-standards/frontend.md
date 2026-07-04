@@ -9,7 +9,7 @@ Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig templa
 | `public/js/scribe.js` | Shared browser state, role labels, safe DOM helpers, and theme controls |
 | `public/js/scribe-streaming.js` | Mercure streams and browser PCM capture |
 | `public/js/scribe-recording.js` | Live recording lifecycle and session resets |
-| `public/js/scribe-transcript.js` | Transcript card rendering, relabeling, and downloads |
+| `public/js/scribe-transcript.js` | Transcript card rendering, relabeling, and visible segment snapshots |
 | `public/js/scribe-output.js` | Replay upload, summaries, and clinical hints |
 | `public/js/scribe-actions.js` | Post-visit actions, JSON response parsing, summary toggles, and keyboard shortcuts |
 | `public/js/scribe-dev.js` | Dev inspector panel |

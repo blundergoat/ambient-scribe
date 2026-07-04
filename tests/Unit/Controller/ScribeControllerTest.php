@@ -740,14 +740,14 @@ final class ScribeControllerTest extends TestCase
     /**
      * Builds a JSON POST request like the browser sends to same-origin proxies.
      *
-     * @param string $uri Proxy URI; empty would not reach a controller route.
+     * @param string $proxyRoutePath Proxy URI; empty would not reach a controller route.
      * @param array<string, mixed> $payload Browser payload; empty means FastAPI should use stored state.
      * @return Request JSON request body for replay stop or summary generation.
      */
-    private function createJsonPostRequest(string $uri, array $payload): Request
+    private function createJsonPostRequest(string $proxyRoutePath, array $payload): Request
     {
         return Request::create(
-            uri: $uri,
+            uri: $proxyRoutePath,
             method: 'POST',
             content: json_encode($payload, JSON_THROW_ON_ERROR),
         );

@@ -53,6 +53,13 @@ from api.replay_session import (
 )
 from api.role_heuristics import heuristic_role_inference as _heuristic_role_inference
 from api.streaming_session import StreamingServices, transcribe_stream_session
+from api.summary_request import (
+    ReplayStopRequest,
+    SummaryRequest,
+    build_summary_context,
+    browser_visible_segments_from_replay_stop,
+    publish_summary_outputs,
+)
 from nemo_pipeline import NemoPipeline
 from session import SessionStore
 from session_lifecycle import SessionLifecycle
@@ -303,59 +310,12 @@ sessions: StorageBackend = create_storage_backend()
 lifecycle = SessionLifecycle()
 
 
-# =============================================================================
-# PYDANTIC MODELS
-# =============================================================================
-
-
 class TranscribeFileResponse(BaseModel):
     """Response for the /transcribe/file endpoint."""
 
     session_id: str
     segments: list[dict] = Field(default_factory=list)
     duration_seconds: float = 0.0
-
-
-class BrowserVisibleSegment(BaseModel):
-    """
-    Transcript segment sent back from the browser-visible replay view.
-
-    Use when the user stops demo audio early and the server needs the same
-    transcript subset the user can see before generating a summary.
-    Empty text means the row is ignored because it would not help the note.
-    """
-
-    speaker_id: str = "UNKNOWN"
-    text: str = ""
-    start: float = 0.0
-    end: float = 0.0
-    role: str | None = None
-
-
-class SummaryRequest(BaseModel):
-    """
-    Optional summary body containing browser-visible transcript text.
-
-    Use when the browser has replayed or stopped a WAV and the user asks for a
-    note from only the transcript currently on screen. Empty segments mean the
-    route should use the stored live-session transcript instead.
-    """
-
-    segments: list[BrowserVisibleSegment] = Field(default_factory=list)
-
-
-class ReplayStopRequest(BaseModel):
-    """
-    Optional replay-stop body containing the transcript revealed so far.
-
-    Use when the user stops or finishes demo audio and the backend needs the
-    same transcript snapshot before summary generation. Empty segments mean
-    the route only cancels any legacy replay task.
-    """
-
-    visible_segments: list[BrowserVisibleSegment] = Field(default_factory=list)
-    audio_time_seconds: float | None = None
-    was_completed: bool = False
 
 
 async def publish_to_mercure(
@@ -718,32 +678,22 @@ async def generate_summary(
     """
     _validate_session_id(session_id)
 
-    browser_visible_segments = _browser_visible_segments_from_summary(summary_request)
-    # Replay summaries use exactly the transcript the browser has revealed.
-    if browser_visible_segments:
-        sessions.replace_segments(session_id, browser_visible_segments)
-        stored_segments = browser_visible_segments
-        transcript = _transcript_text_from_segments(browser_visible_segments)
-        summary_source = "browser_visible_segments"
-    else:
-        stored_segments = sessions.get_segments(session_id)
-        transcript = sessions.get_transcript_text(session_id, max_chars=8000)
-        summary_source = "session_store"
+    summary_context = build_summary_context(session_id, summary_request, sessions)
 
     # No transcript means the user ended a session before usable text was captured.
-    if not stored_segments:
+    if not summary_context.stored_segments:
         raise HTTPException(status_code=404, detail="No transcript found for session")
 
     logger.info(
         "summary.requested source=%s segments=%s transcript_chars=%s",
-        summary_source,
-        len(stored_segments),
-        len(transcript),
+        summary_context.source,
+        len(summary_context.stored_segments),
+        len(summary_context.transcript),
         extra={
             "session_id": session_id,
-            "source": summary_source,
-            "segments": len(stored_segments),
-            "transcript_chars": len(transcript),
+            "source": summary_context.source,
+            "segments": len(summary_context.stored_segments),
+            "transcript_chars": len(summary_context.transcript),
         },
     )
 
@@ -753,7 +703,7 @@ async def generate_summary(
         None,
         _run_summary_generation,
         session_id,
-        transcript,
+        summary_context.transcript,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
@@ -761,62 +711,36 @@ async def generate_summary(
     if summary is None:
         logger.warning(
             "summary.generation_failed source=%s duration_ms=%s",
-            summary_source,
+            summary_context.source,
             duration_ms,
             extra={
                 "session_id": session_id,
                 "duration_ms": duration_ms,
-                "source": summary_source,
+                "source": summary_context.source,
             },
         )
         raise HTTPException(status_code=502, detail="Summary generation failed")
 
     summary_metric_fields = summary.pop("_agent_metrics", {})
-    clinical_hints: list[dict[str, str]] = []
-
-    # Publish to Mercure
-    _mercure_event_ids.setdefault(session_id, 0)
-    _mercure_event_ids[session_id] += 1
-    await publish_to_mercure(
-        f"scribe/session/{session_id}/summary",
-        {
-            "type": "summary",
-            "session_id": session_id,
-            **summary,
-        },
-        event_id=_mercure_event_ids[session_id],
+    clinical_hints = await publish_summary_outputs(
+        session_id,
+        summary,
+        summary_context.transcript,
+        clinical_hints_enabled=CLINICAL_HINTS_ENABLED,
+        mercure_event_ids=_mercure_event_ids,
+        publish_to_mercure=publish_to_mercure,
+        generate_clinical_hints=generate_clinical_hints,
+        logger=logger,
     )
-
-    # Clinical hints are assistive only and appear beside the generated summary.
-    if CLINICAL_HINTS_ENABLED:
-        clinical_hints = generate_clinical_hints(transcript)
-        # No hints means the clinician's sidebar stays hidden for this session.
-        if clinical_hints:
-            _mercure_event_ids[session_id] += 1
-            hints_delivered = await publish_to_mercure(
-                f"scribe/session/{session_id}/hints",
-                {
-                    "type": "clinical_hints",
-                    "session_id": session_id,
-                    "hints": clinical_hints,
-                },
-                event_id=_mercure_event_ids[session_id],
-            )
-            # A failed Mercure publish still leaves hints in the HTTP summary response.
-            if not hints_delivered:
-                logger.warning(
-                    "clinical_hints.publish_failed",
-                    extra={"session_id": session_id},
-                )
 
     logger.info(
         "summary.completed source=%s sections=%s duration_ms=%s",
-        summary_source,
+        summary_context.source,
         len(summary.get("sections", [])),
         duration_ms,
         extra={
             "session_id": session_id,
-            "source": summary_source,
+            "source": summary_context.source,
             "sections": len(summary.get("sections", [])),
             "duration_ms": duration_ms,
             **summary_metric_fields,
@@ -824,82 +748,6 @@ async def generate_summary(
     )
 
     return {"session_id": session_id, **summary, "clinical_hints": clinical_hints}
-
-
-def _browser_visible_segments_from_summary(
-    summary_request: SummaryRequest | None,
-) -> list[dict[str, Any]]:
-    """Return summary request segments that contain visible transcript text.
-
-    Args:
-        summary_request: Optional JSON body from the browser; null means use stored text.
-
-    Returns:
-        Segment dicts with non-empty text; empty means the route should use storage.
-    """
-    # Empty request body means live recordings should keep using stored session text.
-    if summary_request is None:
-        return []
-
-    return _normalise_browser_visible_segments(summary_request.segments)
-
-
-def _normalise_browser_visible_segments(
-    browser_segments: list[BrowserVisibleSegment],
-) -> list[dict[str, Any]]:
-    """Convert browser-visible segment models into storage-safe dictionaries.
-
-    Args:
-        browser_segments: Browser transcript rows; empty means no replay text is visible.
-
-    Returns:
-        Segment dictionaries; rows with blank text are skipped for summary quality.
-    """
-    normalised_segments: list[dict[str, Any]] = []
-    # Every browser-visible row becomes one role-aware summary line.
-    for browser_segment in browser_segments:
-        segment_payload = browser_segment.model_dump()
-        text = str(segment_payload.get("text", "")).strip()
-        # Blank text is not useful to the clinician's note.
-        if text == "":
-            continue
-
-        segment_payload["text"] = text
-        normalised_segments.append(segment_payload)
-
-    return normalised_segments
-
-
-def _transcript_text_from_segments(
-    transcript_segments: list[dict[str, Any]],
-    max_chars: int = 8000,
-) -> str:
-    """Build role-attributed transcript text from browser-visible segments.
-
-    Args:
-        transcript_segments: Visible rows selected by the user flow; empty returns no text.
-        max_chars: Summary context budget; zero returns an empty transcript.
-
-    Returns:
-        Plain transcript text used by the summary agent; empty means nothing can be summarized.
-    """
-    # A zero budget lets tests or callers intentionally request no summary context.
-    if max_chars <= 0:
-        return ""
-
-    transcript_lines: list[str] = []
-    # Each visible segment keeps the role label the clinician saw in the browser.
-    for segment in transcript_segments:
-        speaker = segment.get("role") or segment.get("speaker_id") or "UNKNOWN"
-        text = str(segment.get("text", "")).strip()
-        # Empty text rows were already filtered, but this keeps the helper safe.
-        if text == "":
-            continue
-
-        transcript_lines.append(f"[{speaker}] {text}")
-
-    full_transcript = "\n".join(transcript_lines)
-    return full_transcript[:max_chars]
 
 
 _replay_tasks = replay_tasks
@@ -944,7 +792,7 @@ async def stop_replay_file(
     """
     _validate_session_id(session_id)
     was_cancelled = did_cancel_replay(session_id)
-    visible_segments = _browser_visible_segments_from_replay_stop(replay_stop_request)
+    visible_segments = browser_visible_segments_from_replay_stop(replay_stop_request)
     # Early stop should make backend history match what the user actually heard.
     if visible_segments:
         sessions.replace_segments(session_id, visible_segments)
@@ -975,24 +823,6 @@ async def stop_replay_file(
         "cancelled": was_cancelled,
         "visible_segments": len(visible_segments),
     }
-
-
-def _browser_visible_segments_from_replay_stop(
-    replay_stop_request: ReplayStopRequest | None,
-) -> list[dict[str, Any]]:
-    """Return visible transcript rows from a replay stop request.
-
-    Args:
-        replay_stop_request: Optional stop JSON; null means no visible rows were sent.
-
-    Returns:
-        Segment dicts with text; empty means backend history is left unchanged.
-    """
-    # Stop can still be called by older clients that only want task cancellation.
-    if replay_stop_request is None:
-        return []
-
-    return _normalise_browser_visible_segments(replay_stop_request.visible_segments)
 
 
 async def _replay_segments(

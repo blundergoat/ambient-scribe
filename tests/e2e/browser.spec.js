@@ -1,7 +1,7 @@
 /**
  * Browser-based E2E tests for the Ambient Scribe frontend.
  *
- * Tests reconnect logic, download functionality, and accessibility
+ * Tests reconnect logic, transcript rendering, and accessibility
  * using Playwright with headless Chromium.
  *
  * Services must be running (use scripts/e2e-test.sh --no-start to skip service startup):
@@ -20,8 +20,8 @@ const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
  * Injects fake segments through the same browser function Mercure uses.
- * The loop alternates speakers because tests must cover grouping, reconnect preservation,
- * and download output without needing live Mercure or microphone services.
+ * The loop alternates speakers because tests must cover grouping and reconnect
+ * preservation without needing live Mercure or microphone services.
  */
 async function injectFakeSegments(page, count = 3) {
   await page.evaluate((n) => {
@@ -44,57 +44,19 @@ async function loadScribePage(page) {
   await page.waitForSelector("#startBtn");
 }
 
-test.describe("Download functionality", () => {
-  test("download button appears after segments and produces valid files", async ({
-    page,
-  }) => {
+test.describe("Transcript controls", () => {
+  test("download button is not rendered after segments", async ({ page }) => {
     await loadScribePage(page);
 
-    // Download button should be hidden initially
-    const downloadBtn = page.locator("#downloadBtn");
-    await expect(downloadBtn).toBeHidden();
+    // Download is intentionally removed from the post-consult controls.
+    await expect(page.locator("#downloadBtn")).toHaveCount(0);
 
     // Inject 3 fake segments
     await injectFakeSegments(page, 3);
 
-    // Download button should now be visible
-    await expect(downloadBtn).toBeVisible();
-
-    // Click download and capture all downloads
-    const downloads = [];
-    page.on("download", (d) => downloads.push(d));
-    await downloadBtn.click();
-
-    // Wait for both downloads to arrive
-    await page.waitForTimeout(2000);
-    expect(downloads.length).toBeGreaterThanOrEqual(1);
-
-    // Find JSON download
-    const jsonDownload = downloads.find((d) =>
-      d.suggestedFilename().endsWith(".json")
-    );
-    expect(jsonDownload).toBeTruthy();
-
-    // Verify JSON content
-    const jsonPath = await jsonDownload.path();
-    const fs = require("fs");
-    const jsonContent = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-    expect(jsonContent.session_id).toBeTruthy();
-    expect(jsonContent.exported_at).toBeTruthy();
-    expect(jsonContent.segments).toHaveLength(3);
-    expect(jsonContent.segments[0].text).toBe("Test segment number 1");
-
-    // Find TXT download (if present — some browsers may merge rapid downloads)
-    const txtDownload = downloads.find((d) =>
-      d.suggestedFilename().endsWith(".txt")
-    );
-    if (txtDownload) {
-      const txtPath = await txtDownload.path();
-      const txtContent = fs.readFileSync(txtPath, "utf-8");
-      expect(txtContent).toContain("Test segment number 1");
-      expect(txtContent).toContain("Test segment number 2");
-      expect(txtContent).toContain("Test segment number 3");
-    }
+    // Transcript rows still render for summary/review even without export controls.
+    await expect(page.locator(".segment")).toHaveCount(3);
+    await expect(page.locator("#downloadBtn")).toHaveCount(0);
   });
 });
 
@@ -121,8 +83,8 @@ test.describe("Reconnect functionality", () => {
     const status = page.locator("#status");
     await expect(status).toContainText("5 segments preserved");
 
-    // Download button should be visible (segments exist)
-    await expect(page.locator("#downloadBtn")).toBeVisible();
+    // Download stays removed even when preserved segments exist.
+    await expect(page.locator("#downloadBtn")).toHaveCount(0);
   });
 
   test("segments preserved in DOM after disconnect", async ({ page }) => {
@@ -223,10 +185,6 @@ test.describe("Accessibility", () => {
     await expect(page.locator("#stopBtn")).toHaveAttribute(
       "aria-label",
       /stop current session/i
-    );
-    await expect(page.locator("#downloadBtn")).toHaveAttribute(
-      "aria-label",
-      /download/i
     );
     await expect(page.locator("#reconnectBtn")).toHaveAttribute(
       "aria-label",

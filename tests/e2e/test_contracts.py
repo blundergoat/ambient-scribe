@@ -219,12 +219,12 @@ class TestPhpApp:
         assert "CONFIG" in body or "config" in body.lower()
         assert "topicRaw" in body or "topic" in body.lower()
 
-    def test_scribe_has_reconnect_and_download(self):
-        """Template includes reconnect and download UI elements."""
+    def test_scribe_has_reconnect_without_download(self):
+        """Template includes reconnect and intentionally omits download UI."""
         r = httpx.get(f"{APP_URL}/scribe", timeout=5)
         body = r.text
         assert "reconnectBtn" in body, "Missing reconnect button"
-        assert "downloadBtn" in body, "Missing download button"
+        assert "downloadBtn" not in body, "Download button should not be rendered"
         assert "scribe.js" in body, "Missing scribe.js script reference"
 
     def test_scribe_has_accessibility_attributes(self):
@@ -235,8 +235,7 @@ class TestPhpApp:
         assert 'role="log"' in body, "Missing role=log on transcript"
         assert 'role="status"' in body, "Missing role=status on segment count"
         assert 'aria-label="Start recording' in body, "Missing aria-label on start button"
-        assert 'aria-label="Stop recording' in body, "Missing aria-label on stop button"
-        assert 'aria-label="Download' in body, "Missing aria-label on download button"
+        assert 'aria-label="Stop current session' in body, "Missing aria-label on stop button"
         assert "sr-only" in body, "Missing sr-only class for screen reader announcements"
 
     def test_scribe_contains_session_uuid(self):

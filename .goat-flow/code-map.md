@@ -19,7 +19,7 @@ ambient-scribe/
 │   ├── scribe.js = shared browser state, role labels, safe DOM helpers, and theme controls
 │   ├── scribe-streaming.js = Mercure streams and browser PCM capture
 │   ├── scribe-recording.js = live recording lifecycle and session resets
-│   ├── scribe-transcript.js = transcript card rendering, relabeling, and downloads
+│   ├── scribe-transcript.js = transcript card rendering, relabeling, and visible segment snapshots
 │   ├── scribe-output.js = replay upload, summaries, and clinical hints
 │   ├── scribe-actions.js = post-visit actions, JSON parsing, toggles, and shortcuts
 │   ├── scribe-dev.js = development inspector panel

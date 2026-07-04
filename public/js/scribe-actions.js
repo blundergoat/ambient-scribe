@@ -7,13 +7,12 @@
 // =========================================================================
 
 /**
- * Reveals download/reset/summary actions once transcript text exists.
+ * Reveals reset/summary actions once transcript text exists.
  * Use after live stop, replay stop, or replay completion.
  */
 function revealPostVisitActions() {
-    // Replayed transcript text can be downloaded and summarized like live text.
+    // Replayed transcript text can be summarized like live text.
     if (segmentIndex > 0) {
-        setElementHidden('downloadBtn', false);
         setElementHidden('resetBtn', false);
         setElementHidden('summaryBtn', false);
     }
@@ -77,14 +76,6 @@ document.addEventListener('keydown', (event) => {
             } else if (isRecording) {
                 stopRecording();
             }
-            break;
-        case 'd':
-            // Ctrl/Cmd+D belongs to the browser bookmark shortcut.
-            if (event.ctrlKey || event.metaKey) {
-                return;
-            }
-
-            document.getElementById('downloadBtn')?.click();
             break;
     }
 });

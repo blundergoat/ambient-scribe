@@ -302,7 +302,7 @@ function getReplayAudioCurrentTime() {
  * Use while audio plays, pauses, or stops so visible text matches heard speech.
  */
 function revealReplaySegmentsUpToAudioTime(audioTimeSeconds) {
-    // A small grace window prevents sub-second ASR timestamps from feeling late.
+    // Tolerance threshold: 0.2s because sub-second ASR timestamps can feel late.
     const revealToleranceSeconds = 0.2;
 
     // Empty replay metadata means there are no prepared rows to reveal.
@@ -477,7 +477,7 @@ async function requestSummary() {
                 hints: summaryPayload.clinical_hints ?? [],
             });
         } else {
-            showSummaryMessage(summaryPayload.detail || 'Summary generation failed. Try downloading the transcript instead.');
+            showSummaryMessage(summaryPayload.detail || 'Summary generation failed. The transcript remains available for review.');
         }
     } catch (summaryError) {
         console.error('Summary request failed:', summaryError);
@@ -638,7 +638,7 @@ function setClinicalHintsLayoutVisible(shouldShowHintsColumn) {
 
 /**
  * Renders generated summary sections and key points.
- * Use when the clinician reviews the post-visit note before download.
+ * Use when the clinician reviews the post-visit note.
  */
 function renderSummary(summaryPayload) {
     const summaryContent = document.getElementById('summaryContent');
