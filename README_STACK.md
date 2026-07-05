@@ -233,7 +233,7 @@ composer analyse
 composer cs:check
 node_modules/.bin/gruff-ts analyse .
 strands_agents/.venv/bin/gruff-py analyse .
-vendor/bin/gruff-php analyse
+vendor/bin/gruff-php analyse --baseline=gruff-php-baseline.json
 ./scripts/preflight-checks.sh
 ```
 

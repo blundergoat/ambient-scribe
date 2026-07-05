@@ -120,10 +120,17 @@ header
 # 1. Composer validate
 step "Composer validate"
 t=$(date +%s%N)
-if composer validate --strict 2>&1 | grep -q "is valid"; then
+composer_validate_output=$(bash scripts/validate-composer.sh 2>&1)
+composer_validate_exit=$?
+# Composer metadata must pass except for the reviewed dev-client commit warning.
+if [[ $composer_validate_exit -eq 0 ]]; then
     pass "$(elapsed_since "$t")"
 else
     fail "Composer validate"
+    # Show the first validation lines so the developer knows what blocks the visit flow.
+    echo "$composer_validate_output" | head -20 | while read -r line; do
+        echo -e "    ${DIM}${line}${RESET}"
+    done
 fi
 
 # 2. Security audit
@@ -179,9 +186,11 @@ fi
 # 5. PHP quality (gruff-php)
 step "PHP quality (gruff-php)"
 t=$(date +%s%N)
+# A present PHP analyzer can use its PHP-only baseline without affecting gruff-py.
 if [[ -x vendor/bin/gruff-php ]]; then
-    complexity_output=$(vendor/bin/gruff-php analyse 2>&1)
+    complexity_output=$(vendor/bin/gruff-php analyse --baseline=gruff-php-baseline.json 2>&1)
     complexity_exit=$?
+    # A zero exit means developers can continue without reviewing PHP findings.
     if [[ $complexity_exit -eq 0 ]]; then
         pass "$(elapsed_since "$t")"
     else

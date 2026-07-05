@@ -8,9 +8,11 @@ text replacement, and the pipeline seam that feeds the browser and summaries.
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from medical_lexicon import (
     MedicalLexiconMatch,
@@ -25,6 +27,22 @@ from nemo_pipeline import NemoPipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon_review.json"
+EVALUATOR_PATH = REPO_ROOT / "scripts" / "evaluate-medical-boost.py"
+
+
+def load_medical_boost_evaluator() -> ModuleType:
+    """Load the CPU evaluator so tests can call validation helpers directly."""
+    spec = importlib.util.spec_from_file_location(
+        "ambient_scribe_medical_boost_evaluator",
+        EVALUATOR_PATH,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    return evaluator
 
 
 def test_missing_lexicon_loads_no_entries(tmp_path):
@@ -171,7 +189,7 @@ def test_review_table_classifies_every_active_lexicon_row():
 def test_medical_boost_eval_script_scores_review_table():
     """The CPU evaluator prints the before/after table used for M14 evidence."""
     completed = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "evaluate-medical-boost.py")],
+        [sys.executable, str(EVALUATOR_PATH)],
         check=True,
         capture_output=True,
         text=True,
@@ -180,6 +198,36 @@ def test_medical_boost_eval_script_scores_review_table():
     assert "metro pro lol" in completed.stdout
     assert "heart attack" in completed.stdout
     assert "thyroid function tests" in completed.stdout
+
+
+def test_medical_boost_eval_requires_metadata_and_active_coverage():
+    """Reviewer rows need provenance and must match active visible corrections."""
+    evaluator = load_medical_boost_evaluator()
+    incomplete_review = evaluator.ReviewEntry(
+        canonical="metoprolol",
+        status="active",
+        category="asr_variant",
+        raw_phrase="metro pro lol",
+        expected_visible_phrase="metoprolol",
+        false_positive_guard="The metro prologue was unrelated.",
+        provenance="",
+        safety_rationale="",
+    )
+    lexicon_phrases = (
+        MedicalPhrase(canonical="metoprolol", variants=("metro pro lol",)),
+        MedicalPhrase(canonical="naproxen", variants=("na proxen",)),
+    )
+
+    structural_issues = evaluator.validate_review_entries([incomplete_review])
+    coverage_issues = evaluator.validate_lexicon_review_coverage(
+        [incomplete_review],
+        lexicon_phrases,
+    )
+
+    assert structural_issues == ["metoprolol: missing required review field"]
+    assert coverage_issues == [
+        "active lexicon rows missing review entries: naproxen"
+    ]
 
 
 def test_empty_phrases_keep_transcript_text_unchanged():

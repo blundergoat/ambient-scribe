@@ -35,23 +35,11 @@ AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while 
 
 **Lesson:** Always read both ends of a data pipeline before diagnosing silent failures. Related footgun: `.goat-flow/learning-loop/footguns/audio.md`.
 
-## Lesson: Question misclassified as directive (2026-03-21)
-
-"How does session cleanup work?" was treated as a directive to implement changes to session cleanup. The SCOPE step should have identified this as a question and kept the agent in Explain mode.
-
-**Lesson:** Questions get explanations, not edits - do NOT migrate to Implement mode unless a Directive is issued.
-
 ## Lesson: Stale references after rename (2026-03-21)
 
 After renaming `mercure_topic_raw` to `mercure_topic_segments`, stale references remained in config and docs.
 
 **Lesson:** Always run `rg <old_symbol>` after renames and confirm zero remaining refs (DoD gate #6).
-
-## Lesson: Harness line-count failures after instruction edits (2026-07-04)
-
-Adding required hot-path headings to `CLAUDE.md` fixed structural checks but pushed the file over the harness hard limit reported by `instruction-line-count`.
-
-**Lesson:** When editing audited instruction files, include `wc -l <file>` in the verification gate before the first audit rerun and keep required section additions under the harness hard limit.
 
 ## Lesson: Browser stream state ordering needs a focused regression check (2026-07-04)
 
@@ -97,11 +85,29 @@ During M06, intuitive placeholders such as `<generate-app-secret>` and `allowlis
 ## Lesson: Gruff PHP display filters do not lower the exit threshold (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `composer.json` (search: "\"analyse:complexity\": \"vendor/bin/gruff-php analyse\""), `.goat-flow/plans/0.3.0/M07-fix-gruff-php-findings.md` (search: "rewired").
+**Evidence:** `composer.json` (search: "vendor/bin/gruff-php analyse"), `.goat-flow/plans/0.3.0/M07-fix-gruff-php-findings.md` (search: "rewired").
 
 During M07, a complexity-only gruff-php command was initially considered for the retired cyclomatic alias. The command still failed while unrelated advisory findings existed, because gruff-php's report selection changes displayed findings but the configured `minimumSeverity.analyse` threshold still controls the process exit.
 
 **Lesson:** When replacing a legacy quality gate with gruff-php, use the full `gruff-php analyse` command unless the tool documentation explicitly says a selector changes exit semantics; prove the alias with a failing and then clean run before marking the plan checkbox complete.
+
+## Lesson: Generic Gruff baseline filenames collide across tool lanes (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `gruff-php-baseline.json` (search: "gruff.baseline.v2"), `composer.json` (search: "--baseline=gruff-php-baseline.json"), `scripts/preflight-checks.sh` (search: "--baseline=gruff-php-baseline.json").
+
+During M14 review, a PHP accepted-debt baseline was written as `gruff-baseline.json`. `gruff-py` also auto-loads that filename, rejected the PHP `gruff.baseline.v2` schema, and exited with a baseline error even though the Python findings were clean.
+
+**Lesson:** When multiple Gruff implementations share a repo, do not put implementation-specific accepted debt in the generic `gruff-baseline.json`; use tool-specific baseline filenames and pass them explicitly in that tool's Composer/script gate.
+
+## Lesson: Validation wrappers must check exit codes before success text (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/preflight-checks.sh` (search: "composer_validate_exit"), `scripts/validate-composer.sh` (search: "ALLOWED_STRANDS_CLIENT_WARNING").
+
+During M14 review, direct `composer validate --strict` exited 1 for the intentionally commit-pinned Strands PHP client, but preflight had been grepping for "is valid" and therefore reported the step green despite the non-zero exit. The fix moved the exception into a wrapper that checks the exit code and allows only the reviewed warning.
+
+**Lesson:** Validation steps should key off the command exit code first; if one warning is intentionally accepted, encode that exact exception in a wrapper instead of grepping for success text in mixed success/warning output.
 
 ## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
 
@@ -199,6 +205,23 @@ therefore doubled accepted-flip counts until the eval-run summaries were compare
 count only that event. Downstream publish/completed logs can repeat the decision for context,
 but they should not increment the same summary counter unless the owning event is absent and
 the fallback is documented in code and tests.
+
+## Lesson: Original fixture metrics outrank plausible seam fixes (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/eval-fixtures.sh` (search: "scripts/transcript-quality.py"), `scripts/transcript-quality.py` (search: "best dyadic mapping accuracy"), `tests/python/test_nemo_session.py` (search: "test_window_speaker_ids_follow_the_anchor").
+
+A conservative speaker-anchor change for consultation-03 passed the focused
+`tests/python/test_nemo_session.py` suite and matched the local theory that tiny context-tail
+overlaps can trigger bad whole-visit speaker swaps. The original fixture replay rejected it:
+consultation-03 at 83 seconds fell to 45.0% non-overlap attribution, while the reverted
+runtime scored 55.0%. The unit test proved only one synthetic seam behavior, not the full
+doctor/patient transcript users see.
+
+**Lesson:** For transcription-quality work, keep the original fixture replay as the
+acceptance gate. A mechanism that passes unit tests but worsens `scripts/transcript-quality.py`
+on the reported fixture must be reverted or marked diagnostic-only, even when the hypothesis
+still sounds mechanically plausible.
 
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 

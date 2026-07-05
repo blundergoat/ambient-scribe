@@ -8,18 +8,30 @@ and negative text so the visible transcript behavior can be reviewed on CPU.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
-import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Protocol
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MEDICAL_LEXICON_MODULE_PATH = REPO_ROOT / "strands_agents" / "medical_lexicon.py"
 LEXICON_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon.txt"
 REVIEW_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon_review.json"
 ALLOWED_CATEGORIES = {"asr_variant", "abbreviation_acronym", "semantic_synonym"}
+
+
+class LexiconPhrase(Protocol):
+    """Minimal phrase shape loaded from the runtime medical lexicon.
+
+    Use this when the evaluator checks reviewer coverage without importing the
+    app package through PYTHONPATH. The clinician-facing field is the canonical
+    term that appears in the transcript.
+    """
+
+    canonical: str
 
 
 @dataclass(frozen=True)
@@ -37,6 +49,8 @@ class ReviewEntry:
         raw_phrase: ASR text to score; empty means no positive proof exists.
         expected_visible_phrase: Text the clinician should see after correction.
         false_positive_guard: Sentence that must stay unchanged for user safety.
+        provenance: Source or reviewer note; empty means the row lacks evidence.
+        safety_rationale: Why the visible correction is safe for review use.
     """
 
     canonical: str
@@ -45,10 +59,12 @@ class ReviewEntry:
     raw_phrase: str
     expected_visible_phrase: str
     false_positive_guard: str
+    provenance: str
+    safety_rationale: str
 
 
 def load_medical_lexicon_module() -> ModuleType:
-    """Load the flat medical lexicon helper without mutating process imports.
+    """Load the flat medical lexicon helper without requiring PYTHONPATH.
 
     Returns:
         Loaded module; missing loader means the evaluator cannot score corrections.
@@ -107,6 +123,8 @@ def load_review_entries(review_path: Path = REVIEW_PATH) -> list[ReviewEntry]:
                 raw_phrase=str(entry.get("raw_phrase", "")),
                 expected_visible_phrase=str(entry.get("expected_visible_phrase", "")),
                 false_positive_guard=str(entry.get("false_positive_guard", "")),
+                provenance=str(entry.get("provenance", "")),
+                safety_rationale=str(entry.get("safety_rationale", "")),
             )
         )
 
@@ -133,6 +151,8 @@ def validate_review_entries(review_entries: list[ReviewEntry]) -> list[str]:
             or entry.raw_phrase == ""
             or entry.expected_visible_phrase == ""
             or entry.false_positive_guard == ""
+            or entry.provenance == ""
+            or entry.safety_rationale == ""
         ):
             issues.append(f"{entry.canonical or '<missing>'}: missing required review field")
 
@@ -151,16 +171,57 @@ def validate_review_entries(review_entries: list[ReviewEntry]) -> list[str]:
     return issues
 
 
-def score_review_entries(review_entries: list[ReviewEntry]) -> list[str]:
+def validate_lexicon_review_coverage(
+    review_entries: list[ReviewEntry],
+    phrases: tuple[LexiconPhrase, ...],
+) -> list[str]:
+    """Confirm every active transcript correction has reviewer evidence.
+
+    Args:
+        review_entries: Reviewer rows; empty means no visible correction is accepted.
+        phrases: Runtime lexicon rows; empty means there are no active corrections.
+
+    Returns:
+        Issue messages; empty means active rows and reviewer rows match.
+    """
+    active_review_canonicals = {
+        entry.canonical for entry in review_entries if entry.status == "active"
+    }
+    active_lexicon_canonicals = {phrase.canonical for phrase in phrases}
+    issues: list[str] = []
+
+    missing_review_rows = sorted(active_lexicon_canonicals - active_review_canonicals)
+    # A missing review row means a clinician could see an unreviewed correction.
+    if missing_review_rows:
+        issues.append(
+            "active lexicon rows missing review entries: "
+            + ", ".join(missing_review_rows)
+        )
+
+    extra_review_rows = sorted(active_review_canonicals - active_lexicon_canonicals)
+    # An extra active review row means the evidence table overstates shipped behavior.
+    if extra_review_rows:
+        issues.append(
+            "active review entries missing from lexicon: "
+            + ", ".join(extra_review_rows)
+        )
+
+    return issues
+
+
+def score_review_entries(
+    review_entries: list[ReviewEntry],
+    phrases: tuple[LexiconPhrase, ...],
+) -> list[str]:
     """Score raw phrases and guard text against the active fallback.
 
     Args:
         review_entries: Reviewer rows; empty means no expected terms can be scored.
+        phrases: Runtime lexicon rows; empty means active corrections cannot pass.
 
     Returns:
         Issue messages; empty means positives and negatives matched the table.
     """
-    phrases = MEDICAL_LEXICON.load_medical_lexicon(LEXICON_PATH)
     issues: list[str] = []
     # Each row proves either an active correction or a disabled risky correction.
     for entry in review_entries:
@@ -186,13 +247,16 @@ def score_review_entries(review_entries: list[ReviewEntry]) -> list[str]:
     return issues
 
 
-def print_review_table(review_entries: list[ReviewEntry]) -> None:
+def print_review_table(
+    review_entries: list[ReviewEntry],
+    phrases: tuple[LexiconPhrase, ...],
+) -> None:
     """Print the M14 before/after table for the plan and changelog.
 
     Args:
         review_entries: Reviewer rows; empty prints only the table header.
+        phrases: Runtime lexicon rows; empty leaves active rows visibly raw.
     """
-    phrases = MEDICAL_LEXICON.load_medical_lexicon(LEXICON_PATH)
     print("status   category              raw phrase                    visible phrase")
     # The compact table is stable enough to paste into the milestone evidence.
     for entry in review_entries:
@@ -215,8 +279,13 @@ def main() -> int:
         Process exit code; zero means the checked-in lexicon matches the review table.
     """
     review_entries = load_review_entries()
-    issues = validate_review_entries(review_entries) + score_review_entries(review_entries)
-    print_review_table(review_entries)
+    phrases = MEDICAL_LEXICON.load_medical_lexicon(LEXICON_PATH)
+    issues = (
+        validate_review_entries(review_entries)
+        + validate_lexicon_review_coverage(review_entries, phrases)
+        + score_review_entries(review_entries, phrases)
+    )
+    print_review_table(review_entries, phrases)
 
     # Any issue means a lexicon edit needs review before users see it.
     if issues:

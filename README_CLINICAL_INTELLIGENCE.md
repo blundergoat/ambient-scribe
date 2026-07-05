@@ -80,7 +80,7 @@ Key files:
 | `strands_agents/medical_lexicon.py` | Loads canonical terms and exact ASR variants, then performs safe replacements. |
 | `strands_agents/data/medical_lexicon.txt` | Small project-curated clinical lexicon for synthetic demos and local review. |
 | `strands_agents/data/medical_lexicon_review.json` | Reviewer table with category, expected correction, false-positive guard, provenance, and rationale. |
-| `scripts/evaluate-medical-boost.py` | CPU-only before/after evaluator for lexicon review; does not load NeMo or use the GPU. |
+| `scripts/evaluate-medical-boost.py` | CPU-only before/after evaluator for lexicon review; validates active-row coverage without loading NeMo or using the GPU. |
 | `tests/python/test_medical_lexicon.py` | Proves missing files, exact replacements, and the pipeline seam. |
 | `docs/medical-phrase-boosting.md` | Focused operating notes for extending the lexicon. |
 

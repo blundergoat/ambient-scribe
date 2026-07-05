@@ -55,6 +55,16 @@ last_reviewed: 2026-07-05
 - **Evidence:** `scripts/eval-channel-ceiling.py --all` failed during the full-corpus run; `docker compose logs nemo-agent --since '2026-07-05T04:59:00Z'` showed `websocket.error` for separated-channel sessions and stack traces through `nemo_session.py` -> `nemo_pipeline.py` -> NeMo Sortformer/RNNT. The script now requires named fixtures by default and gates full-corpus reproduction behind `--allow-unstable-full-run`.
 - **Prevention:** Do not run separated-channel full-corpus eval as a routine quality gate. Use named fixtures only, grep server logs after every run, and restart `nemo-agent` after any NeMo internal error before trusting later metrics. Treat a channel-separated "ceiling" as unproven until it uses a model/path designed for single-speaker source channels.
 
+## Footgun: Role confidence does not prove speaker identity stayed stable
+**Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/nemo_session.py` (search: "_continue_anchor_speakers")
+- **Files:** `strands_agents/session_quality.py` (search: "speaker_anchor_remaps")
+- **Files:** `scripts/transcript-quality.py` (search: "best dyadic mapping accuracy")
+- **What breaks:** The browser badge can show high role confidence while the visible transcript is still mislabeled, because role inference maps `speaker_0`/`speaker_1` after NeMo canonicalization has already decided which voice each ID represents. If `_continue_anchor_speakers` drifts at window seams, the role agent may keep a stable high-confidence mapping for unstable speaker IDs; accepting or suppressing a role flip only relabels whole IDs and cannot split mixed segments.
+- **Evidence:** A consultation-03 replay session `aeeef2f2-0d2f-4ebc-9563-bd01471d2a29` finalized with `final_confidence=0.904`, `error_count=0`, `role_truncation_events=0`, `speaker_anchor_remaps=17`, and `phantom_speaker_merges=5`. Scoring its saved `/session/{id}/history` against `tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.{doctor,patient}.TextGrid` gave non-overlap attribution `45.5%` and best valid dyadic mapping only `54.5%`, so the failure was speaker identity drift, not a recoverable role-agent label choice.
+- **Prevention:** For any doctor/patient mix-up report, fetch the stored history promptly, run `scripts/transcript-quality.py` with the matching TextGrids, and compare visible attribution to `best dyadic mapping accuracy` before tuning role prompts or damping. Treat high `speaker_anchor_remaps` with high role confidence as a speaker-canonicalization investigation.
+
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 

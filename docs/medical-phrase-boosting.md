@@ -46,6 +46,8 @@ strands_agents/.venv/bin/pytest tests/python/test_medical_lexicon.py -q
 
 The evaluator prints the toggle-style table: raw phrase with the fallback off,
 visible phrase with the fallback on, and disabled risky phrases that remain raw.
+It also fails when an active lexicon row lacks reviewer metadata or when the
+review table claims an active correction that is not in the runtime lexicon.
 
 Decode-time transducer phrase boosting is still a human GPU gate for M11. Prove
 the exact NeMo 2.7.x API inside the pinned NeMo container before replacing the
