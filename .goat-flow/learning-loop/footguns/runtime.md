@@ -65,6 +65,15 @@ last_reviewed: 2026-07-05
 - **Evidence:** A consultation-03 replay session `aeeef2f2-0d2f-4ebc-9563-bd01471d2a29` finalized with `final_confidence=0.904`, `error_count=0`, `role_truncation_events=0`, `speaker_anchor_remaps=17`, and `phantom_speaker_merges=5`. Scoring its saved `/session/{id}/history` against `tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.{doctor,patient}.TextGrid` gave non-overlap attribution `45.5%` and best valid dyadic mapping only `54.5%`, so the failure was speaker identity drift, not a recoverable role-agent label choice.
 - **Prevention:** For any doctor/patient mix-up report, fetch the stored history promptly, run `scripts/transcript-quality.py` with the matching TextGrids, and compare visible attribution to `best dyadic mapping accuracy` before tuning role prompts or damping. Treat high `speaker_anchor_remaps` with high role confidence as a speaker-canonicalization investigation.
 
+## Footgun: Multitalker ASR timestamp mode can crash CUDA in chunked replay
+**Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "return_hypotheses=True")
+- **Files:** `scripts/eval-fixtures.sh` (search: "session.quality JSONL row")
+- **What breaks:** NeMo's installed transcribe API advertises `timestamps=True`, but enabling it for `EncDecMultiTalkerRNNTBPEModel` during live chunk replay can terminate `nemo-agent` before the session quality row is emitted. The browser/eval then sees a missing `session.quality` artifact instead of a clean transcription result.
+- **Evidence:** A consult-03 83s replay session `f14375fd-a803-46b0-a38a-1fea08688bc6` with `timestamps=True` added to `_asr_model.transcribe(...)` failed with `error: no session.quality JSONL row found`. `docker compose logs nemo-agent --tail 250` showed `terminate called after throwing an instance of 'c10::AcceleratorError'` and `CUDA error: an illegal memory access was encountered` immediately after NeMo logged `Timestamps requested`.
+- **Prevention:** Do not enable multitalker ASR timestamps as a quick word-to-speaker fix. Treat it as a GPU spike requiring an isolated process, log grep, and restart after failure; keep the proportional word splitter unless a timestamp path completes `scripts/eval-fixtures.sh --all` without CUDA errors.
+
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 

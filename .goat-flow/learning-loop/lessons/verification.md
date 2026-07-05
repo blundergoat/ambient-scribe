@@ -118,6 +118,15 @@ During M08, the plan described PHP client 1.5.x `ResponseObserver` hooks, but th
 
 **Lesson:** Before implementing SDK instrumentation from a plan, verify the installed vendor interface and lockfile version, then update the plan with the actual contract used.
 
+## Lesson: Goat-flow setup-green can still hide cross-agent drift (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `.claude/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/hooks/hooks.json` (search: "\"postToolUse\"").
+
+During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` reported `0 audit checks failed` after codex config, hooks, and skills were synced. The exact requested `goat-flow audit . --harness --agent codex` still exited non-zero because the audit drift section also compared installed `.claude/skills/`, `.github/skills/`, and `.github/hooks/hooks.json` copies against package templates.
+
+**Lesson:** When the exact audit command is the acceptance gate, trust the audit exit code and its top-level `drift.status`, not only the setup prompt's numbered checks. If drift remains, sync every named installed agent copy before declaring the audit clean.
+
 ## Lesson: Logging-only edits can still break hot role logic (2026-07-05)
 
 **Created:** 2026-07-05

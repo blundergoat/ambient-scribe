@@ -1,7 +1,7 @@
 ---
 name: goat-plan
 description: "Use when starting a non-trivial implementation that needs structured task breakdown with progress tracking."
-goat-flow-skill-version: "1.13.0"
+goat-flow-skill-version: "1.13.1"
 ---
 # /goat-plan
 
@@ -33,7 +33,7 @@ Use for milestones, replans, rescope, resume-from-plan. **NOT this skill:** test
 - If `.active` is missing or names a missing subdir, treat as normal local churn. List top-level entries in `.goat-flow/plans/` excluding archives, prefer dirs with recent `M*.md` files, ask which is current, and offer to write/update `.active`. Do NOT report a stale/missing `.active` as setup failure.
 - If milestones exist and the user hasn't given an explicit action verb: "Milestone files exist for [feature]. Resume from here, update milestones, or start fresh?"
 - If the selected plan appears stale: flag whether code moved on but milestones didn't. Note: task files are gitignored, so `git log` won't track them - check file modification dates instead.
-- Also check for legacy plan files outside `.goat-flow/plans/` (e.g. `tasks/`). Sibling-version subdirs hold deferred/completed work, NOT scanned unless `.active` is missing or points nowhere. Note any found.
+- Also check for legacy milestone files outside `.goat-flow/plans/` (e.g. `milestones/`, `tasks/`). Sibling-version subdirs hold deferred/completed work, NOT scanned unless `.active` is missing or points nowhere. Note any found.
 
 **If starting fresh:** identify what is being built, the riskiest part, kill criteria, and run the preamble's learning-loop retrieval for the target area.
 
