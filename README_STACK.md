@@ -72,6 +72,7 @@ Important env vars:
 | `NEMO_STREAM_INPUT_FORMAT` | `pcm` | Browser/server audio contract. The current browser path sends 16 kHz 16-bit PCM. |
 | `NEMO_MAX_WORKERS` | `2` | Thread pool size for GPU-bound work. Increasing this changes GPU concurrency. |
 | `NEMO_BUFFER_MAX_DURATION` | `900` | Safety cap for live audio buffer duration in seconds. |
+| `NEMO_SPEAKER_CAP` | `2` | Maximum visible speaker IDs before window-local extras merge back into stable IDs; `0` allows all detected speakers. |
 
 The Dockerfile VRAM budget reserves the GPU for Sortformer and Parakeet and
 explicitly warns not to co-locate a GPU LLM in the same runtime.
@@ -188,7 +189,7 @@ the selected session storage backend, not from Mercure.
 | --- | --- | --- |
 | PHP | `>=8.3 <8.5` | `composer.json` |
 | Symfony | `^6.4` | `composer.json` |
-| Strands PHP client | `^1.4` | `composer.json` |
+| Strands PHP client | `dev-dev#98bd6598f5754d5d7dfc68b0cc65d55b6651e6df` | `composer.json` |
 | NeMo base image | `nvcr.io/nvidia/nemo:26.02` | `docker/nemo/Dockerfile` |
 | NeMo toolkit | `nemo_toolkit[asr]==2.7.3` | `docker/nemo/Dockerfile` |
 | Strands Agents Python | `strands-agents[ollama]>=1.45.0` | `strands_agents/requirements.txt` |

@@ -27,9 +27,15 @@ from tools.assign_roles import (
 logger = logging.getLogger(__name__)
 
 ROLE_INFERENCE_IDLE_TIMEOUT_SECONDS = 60.0
+ROLE_EVIDENCE_RECENT_UTTERANCES = 3
+ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES = 2
+ROLE_EVIDENCE_MAX_TEXT_CHARS = 180
+ROLE_EVIDENCE_MAX_SPEAKERS = 6
 
 PublishToMercure = Callable[[str, dict[str, Any], int | None], Awaitable[bool]]
-RunRoleInference = Callable[[str, list[dict[str, Any]], str], dict[str, Any] | None]
+RunRoleInference = Callable[
+    [str, list[dict[str, Any]], dict[str, Any]], dict[str, Any] | None
+]
 
 role_inference_queues: dict[str, asyncio.Queue[list[dict[str, Any]] | None]] = {}
 role_inference_workers: dict[str, asyncio.Task[None]] = {}
@@ -129,7 +135,11 @@ async def enqueue_role_inference(
     try:
         queue.put_nowait([dict(segment) for segment in segments])
     except asyncio.QueueFull:
-        logger.warning("role_inference.queue_full", extra={"session_id": session_id})
+        logger.warning(
+            "role_inference.queue_full session_id=%s",
+            session_id,
+            extra={"session_id": session_id},
+        )
 
     worker = role_inference_workers.get(session_id)
     # A missing or completed worker means the next role update needs a new task.
@@ -300,7 +310,9 @@ async def _infer_and_publish_role_update(
     services: RoleInferenceServices,
 ) -> None:
     """Run role inference off-loop and publish the result to the transcript."""
-    transcript = services.sessions.get_transcript_text(session_id)
+    role_evidence = _build_bounded_role_evidence(
+        session_id, services.sessions, merged_segments
+    )
     loop = asyncio.get_running_loop()
     started_at = time.time()
     result = await loop.run_in_executor(
@@ -308,7 +320,7 @@ async def _infer_and_publish_role_update(
         services.run_role_inference,
         session_id,
         merged_segments,
-        transcript,
+        role_evidence,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
@@ -324,12 +336,13 @@ async def _infer_and_publish_role_update(
         services.sessions.apply_role_mapping(session_id, role_update.mapping)
         await _publish_role_update(session_id, role_update, services)
         path = str(
-            result.get("path", "tool" if role_update.tool_invoked else "freetext")
+            result.get("path", "tool" if role_update.tool_invoked else "mapping")
         )
         logger.info(
             "role_inference.completed",
             extra={
                 "session_id": session_id,
+                "mapping": role_update.mapping,
                 "segments": len(merged_segments),
                 "confidence": role_update.confidence,
                 "flip_detected": role_update.flip_detected,
@@ -343,13 +356,17 @@ async def _infer_and_publish_role_update(
                 "cycles": int(result.get("cycles", 0)),
                 "agent": str(result.get("agent", "role-inference")),
                 "tool_success_rate": result.get("tool_success_rate"),
+                "role_input_chars": int(result.get("role_input_chars", 0)),
                 "duration_ms": duration_ms,
             },
         )
         return
 
     logger.warning(
-        "role_inference.empty_result",
+        "role_inference.empty_result session_id=%s segments=%s duration_ms=%s",
+        session_id,
+        len(merged_segments),
+        duration_ms,
         extra={
             "session_id": session_id,
             "segments": len(merged_segments),
@@ -466,6 +483,101 @@ def _next_role_event_id(session_id: str, services: RoleInferenceServices) -> int
     services.mercure_event_ids.setdefault(session_id, 0)
     services.mercure_event_ids[session_id] += 1
     return services.mercure_event_ids[session_id]
+
+
+def _build_bounded_role_evidence(
+    session_id: str,
+    sessions: StorageBackend,
+    new_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build capped speaker evidence for the role agent prompt.
+
+    Args:
+        session_id: Browser recording UUID whose stored rows are summarized.
+        sessions: Transcript storage backing history and summaries.
+        new_segments: Latest visible rows; empty means only mapping context changed.
+
+    Returns:
+        Prompt-safe role evidence; transcript text is capped per speaker.
+    """
+    stored_segments = sessions.get_segments(session_id)
+    evidence_by_speaker: dict[str, dict[str, Any]] = {}
+
+    # Stored rows include the latest visible text, so the model does not need a full transcript.
+    for segment in stored_segments:
+        speaker_id = str(segment.get("speaker_id", "")).strip()
+        visible_text = _trim_role_evidence_text(str(segment.get("text", "")))
+
+        # Blank speaker or text cannot help the UI choose DOCTOR/PATIENT labels.
+        if speaker_id == "" or visible_text == "":
+            continue
+
+        speaker_evidence = evidence_by_speaker.setdefault(
+            speaker_id,
+            {
+                "speaker_id": speaker_id,
+                "segment_count": 0,
+                "word_count": 0,
+                "representative_utterances": [],
+                "recent_utterances": [],
+            },
+        )
+        speaker_evidence["segment_count"] += 1
+        speaker_evidence["word_count"] += len(visible_text.split())
+        utterance = {
+            "text": visible_text,
+            "start": segment.get("start"),
+            "end": segment.get("end"),
+        }
+
+        representative_utterances = speaker_evidence["representative_utterances"]
+        # Early utterances often carry role cues like greeting, complaint, or clinical question.
+        if len(representative_utterances) < ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES:
+            representative_utterances.append(utterance)
+
+        recent_utterances = speaker_evidence["recent_utterances"]
+        recent_utterances.append(utterance)
+        # Keep only the latest rows so long visits do not grow the model input.
+        if len(recent_utterances) > ROLE_EVIDENCE_RECENT_UTTERANCES:
+            del recent_utterances[0]
+
+    speaker_evidence_rows = list(evidence_by_speaker.values())
+    # Real visits can include stray diarization labels; cap prompt rows before the model sees them.
+    if len(speaker_evidence_rows) > ROLE_EVIDENCE_MAX_SPEAKERS:
+        speaker_evidence_rows = speaker_evidence_rows[:ROLE_EVIDENCE_MAX_SPEAKERS]
+
+    return {
+        "speaker_count": len(speaker_evidence_rows),
+        "total_segments_considered": len(stored_segments),
+        "new_segment_count": len(new_segments),
+        "caps": {
+            "recent_utterances_per_speaker": ROLE_EVIDENCE_RECENT_UTTERANCES,
+            "representative_utterances_per_speaker": (
+                ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES
+            ),
+            "max_text_chars": ROLE_EVIDENCE_MAX_TEXT_CHARS,
+            "max_speakers": ROLE_EVIDENCE_MAX_SPEAKERS,
+        },
+        "speakers": speaker_evidence_rows,
+    }
+
+
+def _trim_role_evidence_text(text: str) -> str:
+    """Return a short utterance snippet for role evidence.
+
+    Args:
+        text: Transcript text from a visible row; blank means no evidence.
+
+    Returns:
+        Trimmed snippet capped for model input; empty means the row is skipped.
+    """
+    normalized_text = " ".join(text.split())
+
+    # Empty transcript rows are timing artifacts, not role evidence for the UI.
+    if normalized_text == "":
+        return ""
+
+    return normalized_text[:ROLE_EVIDENCE_MAX_TEXT_CHARS]
 
 
 def _has_multiple_speakers(session_id: str, sessions: StorageBackend) -> bool:

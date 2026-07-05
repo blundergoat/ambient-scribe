@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-04
+last_reviewed: 2026-07-05
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -112,6 +112,94 @@ During M08, the plan described PHP client 1.5.x `ResponseObserver` hooks, but th
 
 **Lesson:** Before implementing SDK instrumentation from a plan, verify the installed vendor interface and lockfile version, then update the plan with the actual contract used.
 
+## Lesson: Logging-only edits can still break hot role logic (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `strands_agents/tools/assign_roles.py` (search: "previous_mapping = self.current_mapping"), `tests/python/test_role_inference.py` (search: "test_detects_full_speaker_flip").
+
+During M18 Phase 0, a plain-log message was added to `RoleMappingState.did_update_mapping_detect_flip()` using `changed_speakers`, but that variable existed only inside `_is_role_label_flip()`. The focused observability tests passed, while the full Python suite caught six role-flip failures with `NameError`.
+
+**Lesson:** Treat observability-only patches as executable code in the hot path. When a log line needs derived values, compute them locally before mutating state and rerun the domain tests for that path, not only the observability tests.
+
+## Lesson: Free-assignment oracle metrics overstate reachable accuracy - constrain the assignment (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/transcript-quality.py` (search: "def score_best_dyadic_mapping"), `.goat-flow/plans/0.3.0/M16-diarization-stability-role-confidence.md` (search: "Deep diagnosis (2026-07-05, second pass").
+
+The M16 "speaker oracle accuracy" gave each emitted speaker ID its majority reference role
+independently, so on fixtures where diarization mixed one voice across BOTH IDs the oracle
+assigned DOCTOR to both (c03/c06/c08) or PATIENT to both (c07) - mappings no real
+one-DOCTOR/one-PATIENT product can ship. The derived "role mapping gap" (+35.3pp on c07)
+was read as role-mapping headroom, when the best VALID dyadic mapping could only recover
++13.7pp; the rest was diarization purity loss wearing a role-mapping costume.
+
+**Lesson:** when an oracle/ceiling metric drives a which-layer-is-at-fault decision,
+constrain the oracle to assignments the product can actually make (here: a role
+bijection for dyads) and report both numbers. An unconstrained per-ID oracle is an upper
+bound on a different system than the one being tuned.
+
+## Lesson: Region WER buckets need word-level allocation, not whole-interval exclusion (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/transcript-quality.py` (search: "def timed_words_for_region"), `.goat-flow/plans/0.3.0/M17-transcript-accuracy-and-readability.md` (search: "Phase 0 baseline table").
+
+During M17 Phase 0, the first clean-vs-overlap WER split assigned an entire TextGrid
+interval or transcript row to the overlap bucket if it touched cross-talk at all. A full
+fixture run made c07 clean WER print as `298.3%`: long reference intervals that barely
+touched overlap were removed from the clean denominator while nearby transcript rows stayed
+clean. The metric would have made later readability/transcription changes look worse or
+better for bucket-boundary reasons instead of real word accuracy.
+
+**Lesson:** For WER or other word-count metrics split by time regions, allocate words by
+word timestamps when available, or by an explicit approximation such as token-center time.
+Do not reuse segment-level "touches overlap" exclusion unless the numerator and denominator
+are guaranteed to be bucketed the same way.
+
+## Lesson: Windowed-emission tests must clear the minimum-new-audio floor (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `strands_agents/nemo_session.py` (search: "_MIN_NEW_AUDIO_SECONDS"), `tests/python/test_nemo_session.py` (search: "test_alternating_speaker_fragments_stay_separate").
+
+During M17 fragment-policy work, a regression test intended to prove alternating-speaker
+fragments stayed separate put the first fragment's end exactly at the
+`_MIN_NEW_AUDIO_SECONDS` boundary. The existing context-replay filter correctly dropped
+that segment before the new merge policy ran, so the failure tested the old emission floor
+instead of the new fragment behavior.
+
+**Lesson:** When writing windowed-emission tests, place new segments clearly beyond
+`_MIN_NEW_AUDIO_SECONDS` unless the floor itself is under test. Boundary-equal timestamps
+exercise replay filtering, not downstream segment cleanup.
+
+## Lesson: Emission floors need inclusive boundary tests (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `strands_agents/nemo_session.py` (search: "_MIN_NEW_AUDIO_SECONDS"), `tests/python/test_nemo_session.py` (search: "test_emitted_audio_is_not_transcribed_again").
+
+During M17 seam fallback work, raising the context-replay floor from 0.3s to 0.5s used a
+strict `>` comparison. The existing emit-once regression then hid a segment with exactly
+0.5s of new post-mark audio, contradicting the intended "at least half a second" rule.
+
+**Lesson:** When changing an emission threshold, include boundary-equal coverage and make
+the comparison match the product wording. "At least N seconds of new audio" is inclusive;
+strict comparisons can silently drop short user utterances at the acceptance boundary.
+
+## Lesson: Log-derived timelines must count state changes, not echoed decisions (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/role-timeline.py` (search: "Count the state-change log only"), `tests/python/test_role_timeline.py` (search: "role_mapping.flip_detected speakers=speaker_0,speaker_1").
+
+During M16 diagnostics, the first role-timeline summary counted accepted flips whenever a
+timeline row had `decision == "accepted_flip"`. A single visible flip appears twice in the
+logs: once as the state-change row (`role_mapping.flip_detected`) and once as the downstream
+published role-call row (`role_inference.completed` with `flip_detected: true`). The artifact
+therefore doubled accepted-flip counts until the eval-run summaries were compared with
+`session.quality`.
+
+**Lesson:** For log-derived counters, identify the ownership event that mutates the state and
+count only that event. Downstream publish/completed logs can repeat the decision for context,
+but they should not increment the same summary counter unless the owning event is absent and
+the fallback is documented in code and tests.
+
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
@@ -142,7 +230,7 @@ During M11, the plan targeted NeMo decode-time phrase boosting, but the exact mu
 ## Lesson: Hidden sidebars need layout-state smoke tests (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `templates/scribe/index.html.twig` (search: "app-layout--with-hints"), `public/js/scribe-output.js` (search: "setClinicalHintsLayoutVisible").
+**Evidence:** `templates/scribe/index.html.twig` (search: "consultation-workspace:has(.clinical-hints:not(.hidden))"), `public/js/scribe-output.js` (search: "function renderClinicalHints").
 
 During M12, the first clinical-hints UI pass hid the sidebar element but left a dedicated desktop grid column in the base layout. Static analyzers and API tests stayed green, but the clinician page would have opened with blank right-side space until hints arrived.
 

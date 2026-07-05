@@ -283,6 +283,44 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
+     * Proxies manual role corrections through Symfony so the browser avoids FastAPI CORS.
+     *
+     * @return void No payload; failure means clicked speaker labels may not be protected server-side.
+     */
+    public function testRoleOverrideProxyForwardsToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000199';
+        $seenRequests = [];
+        $httpClient = new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'status' => 'ok',
+                        'mapping' => ['spk_0' => 'DOCTOR'],
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/scribe/{$sessionId}/roles/override", [
+            'speaker_id' => 'spk_0',
+            'role' => 'DOCTOR',
+        ]);
+        $response = $controller->rolesOverride($sessionId, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['spk_0' => 'DOCTOR'], $this->decodeJsonResponse($response)['mapping']);
+        self::assertCount(1, $seenRequests);
+        self::assertSame('POST', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/roles/override", $seenRequests[0]['url']);
+        self::assertStringContainsString('"speaker_id":"spk_0"', $seenRequests[0]['options']['body']);
+    }
+
+    /**
      * Converts upstream HTML errors into JSON so the browser does not show a parser exception.
      *
      * @return void No payload; failure means users could still see `Unexpected token '<'`.

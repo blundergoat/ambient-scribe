@@ -85,6 +85,40 @@ If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST
 - Host-installed Ollama (default): `http://host.docker.internal:11434`
 - Docker Compose Ollama (profile): `http://ollama:11434`
 
+### Reading nemo-agent logs
+
+The `nemo-agent` container emits JSON logs by default so a replay or live visit can be traced by
+session. Use `--no-log-prefix` so Docker does not prepend service names before the JSON line:
+
+```bash
+docker compose logs --no-log-prefix nemo-agent --since 10m \
+  | jq -r 'select(.session_id == "SESSION_ID") | [.ts, .level, .event] | @tsv'
+```
+
+Useful checks while debugging a clinician session:
+
+```bash
+# Chunk cadence and inference timing for one recording.
+docker compose logs --no-log-prefix nemo-agent --since 10m \
+  | jq -r 'select(.session_id == "SESSION_ID" and .event == "websocket.chunk_e2e")
+    | [.chunk_count, .inference_ms, .total_ms, .segments] | @tsv'
+
+# Any server-side errors, with type and message visible without extra instrumentation.
+docker compose logs --no-log-prefix nemo-agent --since 10m \
+  | jq -r 'select(.level == "error") | [.ts, .event, .session_id, .error_type, .error] | @tsv'
+
+# Mercure delivery outcomes for transcript, role, summary, and hints events.
+docker compose logs --no-log-prefix nemo-agent --since 10m \
+  | jq -r 'select(.event | startswith("mercure.publish."))
+    | [.ts, .event, .session_id, .topic, .duration_ms] | @tsv'
+```
+
+For short interactive debugging without JSON parsing, opt back into plain lines:
+
+```bash
+LOG_FORMAT=console docker compose up -d --force-recreate nemo-agent
+```
+
 ### Bare-metal mode
 
 4 local services managed by `start-dev.sh`:

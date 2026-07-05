@@ -1,26 +1,35 @@
 """
-Strands summary agent - generates structured session summaries.
+Strands summary agent for the browser's final consultation summary.
 
-Triggered when a session ends ("End Session" button). Receives the full
-role-attributed medical transcript and produces a SOAP note with Subjective,
-Objective, Assessment, and Plan sections.
-
-GPU CONSTRAINT: Same as the role agent - Bedrock or CPU-only Ollama.
+When the user ends a session, this agent reads the role-attributed transcript
+and drafts SOAP-style sections for review. It uses Bedrock or CPU-only Ollama,
+never the NeMo GPU, and each call gets a fresh Agent so one visit's transcript
+cannot remain in another visit's conversation history.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_AGENT_MODEL_PROVIDER = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
-SUMMARY_AGENT_MODEL_ID = os.environ.get(
-    "ROLE_AGENT_MODEL_ID",
-    "au.anthropic.claude-haiku-4-5-20251001-v1:0",
+SUMMARY_AGENT_MODEL_PROVIDER = os.environ.get(
+    "SUMMARY_AGENT_MODEL_PROVIDER",
+    os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock"),
 )
+SUMMARY_AGENT_MODEL_ID = os.environ.get(
+    "SUMMARY_AGENT_MODEL_ID",
+    os.environ.get(
+        "ROLE_AGENT_MODEL_ID",
+        "au.anthropic.claude-haiku-4-5-20251001-v1:0",
+    ),
+)
+SUMMARY_AGENT_OLLAMA_MODEL = os.environ.get(
+    "SUMMARY_AGENT_OLLAMA_MODEL",
+    os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b"),
+)
+SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "4096"))
 
 _SHARED_SUMMARY_RULES = """
 Rules:
@@ -28,7 +37,7 @@ Rules:
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
 - If the transcript is too short or uninformative, say so briefly rather than inventing content.
-- Respond with valid JSON only. No text outside the JSON.
+- Use the structured summary schema only. No prose outside the result.
 
 Output format:
 {
@@ -36,8 +45,7 @@ Output format:
     "sections": [
         {"heading": "Section Name", "content": "Section content with [MM:SS-MM:SS] citations."}
     ],
-    "key_points": ["Point 1", "Point 2"],
-    "duration_seconds": 0
+    "key_points": ["Point 1", "Point 2"]
 }
 """
 
@@ -57,18 +65,14 @@ and indicate that formal documentation was not captured in the transcript.
 {_SHARED_SUMMARY_RULES}"""
 
 
-@lru_cache(maxsize=1)
 def create_summary_agent():
-    """Create a Strands Agent for session summary generation.
-
-    Uses the same model provider as the role inference agent
-    (Bedrock or CPU-only Ollama - never GPU).
+    """Create a fresh Strands agent for one summary request.
 
     Returns:
-        A Strands Agent configured for summary generation.
+        Agent configured for off-GPU summary generation and isolated history.
 
     Raises:
-        RuntimeError: If the agent cannot be created.
+        RuntimeError: When the configured Bedrock or Ollama model cannot be created.
     """
     try:
         from strands import Agent
@@ -79,6 +83,7 @@ def create_summary_agent():
             model=model,
             tools=[],
             system_prompt=MEDICAL_SUMMARY_PROMPT,
+            callback_handler=None,
             name="summary",
             agent_id="ambient-scribe-summary",
             trace_attributes={"scribe.specialty": "medical"},
@@ -88,11 +93,12 @@ def create_summary_agent():
 
 
 def _create_summary_model():
-    """Create the model instance for the summary agent.
+    """Create the off-GPU model used for summary generation.
 
     Returns:
-        A Strands SDK model instance (BedrockModel or OllamaModel).
+        Bedrock or CPU-only Ollama model; never a GPU-backed local model.
     """
+    # Bedrock is the default path for clinician-ready final summaries.
     if SUMMARY_AGENT_MODEL_PROVIDER == "bedrock":
         from strands.models.bedrock import BedrockModel
 
@@ -100,18 +106,19 @@ def _create_summary_model():
             model_id=SUMMARY_AGENT_MODEL_ID,
             region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-2"),
             streaming=True,
-            max_tokens=2048,
+            max_tokens=SUMMARY_AGENT_MAX_TOKENS,
         )
+    # Ollama remains CPU-only for local development because NeMo owns the GPU.
     elif SUMMARY_AGENT_MODEL_PROVIDER == "ollama":
         from strands.models.ollama import OllamaModel
 
         return OllamaModel(
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model_id=os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b"),
-            max_tokens=2048,
+            model_id=SUMMARY_AGENT_OLLAMA_MODEL,
+            max_tokens=SUMMARY_AGENT_MAX_TOKENS,
         )
     else:
         raise ValueError(
-            f"Unknown ROLE_AGENT_MODEL_PROVIDER: {SUMMARY_AGENT_MODEL_PROVIDER}. "
+            f"Unknown SUMMARY_AGENT_MODEL_PROVIDER: {SUMMARY_AGENT_MODEL_PROVIDER}. "
             "Use 'bedrock' or 'ollama'."
         )

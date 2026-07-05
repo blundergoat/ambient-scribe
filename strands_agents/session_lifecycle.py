@@ -62,11 +62,15 @@ class SessionLifecycle:
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as error:
             logger.warning(
-                "session_lifecycle.register_lock_timeout",
+                "session_lifecycle.register_lock_timeout session_id=%s %s",
+                session_id,
+                type(error).__name__,
+                exc_info=error,
                 extra={
                     "session_id": session_id,
+                    "error_type": type(error).__name__,
                 },
             )
             return
@@ -89,11 +93,15 @@ class SessionLifecycle:
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as error:
             logger.error(
-                "session_lifecycle.destroy_lock_timeout",
+                "session_lifecycle.destroy_lock_timeout session_id=%s %s",
+                session_id,
+                type(error).__name__,
+                exc_info=error,
                 extra={
                     "session_id": session_id,
+                    "error_type": type(error).__name__,
                 },
             )
             # Best-effort cleanup without the lock
@@ -101,9 +109,20 @@ class SessionLifecycle:
             if close_role_inference_fn is not None:
                 try:
                     await close_role_inference_fn(session_id)
-                except Exception:
+                except Exception as close_error:
                     logger.exception(
-                        "session_lifecycle.destroy_close_role_inference_failed"
+                        (
+                            "session_lifecycle.destroy_close_role_inference_failed "
+                            "session_id=%s %s: %s"
+                        ),
+                        session_id,
+                        type(close_error).__name__,
+                        str(close_error)[:200],
+                        extra={
+                            "session_id": session_id,
+                            "error_type": type(close_error).__name__,
+                            "error": str(close_error)[:200],
+                        },
                     )
             cleanup_role_state(session_id)
             self._locks.pop(session_id, None)

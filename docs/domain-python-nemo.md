@@ -85,6 +85,46 @@ Test files: `tests/python/test_api.py`, `test_nemo_pipeline.py`, `test_nemo_sess
 
 Fixtures in `tests/python/conftest.py` - mock NeMo models and provide test audio files.
 
+## Transcription Quality Evals
+
+Use `scripts/eval-fixtures.sh --all` when a transcription, diarization, or role-label
+change needs user-visible evidence. It streams the PriMock57 WAV fixtures through the same
+WebSocket path as the browser, saves `history.json` plus `quality.json`, runs
+`scripts/transcript-quality.py`, and appends `var/quality/trend.jsonl`.
+
+The scorer reports word recall, 4-gram duplication, speaker-attribution accuracy overall
+and outside overlap spans, residual phantom speaker IDs, and role-flip counts. It also
+splits the diagnosis three ways: per-speaker purity and the free-role speaker oracle show
+how badly diarization mixed the voices, while `best dyadic mapping accuracy` constrains
+the oracle to one DOCTOR and one PATIENT - the ceiling any real role mapping can reach.
+`role mapping headroom` (best dyadic minus visible attribution) is the honest recoverable
+amount; the unconstrained `role mapping gap` exceeds it whenever one voice dominates both
+speaker IDs, so use headroom when deciding whether role mapping or diarization is at fault.
+
+Flip counters come from two places with different timing: `quality.json` is snapshotted at
+WebSocket disconnect while the role worker may still be draining its tail batch, so the
+`role-timeline.jsonl` built from server logs is the complete record. The eval runner passes
+the quality record to `scripts/role-timeline.py`, which appends a
+`role_timeline.quality_check` row comparing both counters and warns on mismatch.
+
+A manual single-session run uses the saved history and quality record:
+
+```bash
+python3 scripts/transcript-quality.py --quality-json var/quality/runs/<run>/<fixture>/quality.json \
+  var/quality/runs/<run>/<fixture>/history.json <cutoff_seconds> \
+  tests/fixtures/audio/<fixture>.doctor.TextGrid \
+  tests/fixtures/audio/<fixture>.patient.TextGrid
+```
+
+`NEMO_SPEAKER_CAP` defaults to `2`, so normal doctor/patient visits merge stray
+window-local speaker IDs back into stable visible identities. Set it to `0` only when
+testing or demonstrating a true multi-party consultation.
+
+The cap is a containment fallback for the transcript UI: it prevents `speaker_2+`
+phantoms from reaching role state, but it does not prove that every merged row belongs
+to the correct person. Use the non-overlap attribution metric above before accepting
+any diarization or role-stability mechanism.
+
 ## Feature Checklist
 
 After implementing any Python feature, verify:

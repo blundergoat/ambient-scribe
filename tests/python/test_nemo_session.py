@@ -156,6 +156,65 @@ class TestProcessChunk:
         assert segments == []
         assert session.accumulated_transcript == []
 
+    def test_adjacent_same_speaker_fragments_merge_before_emission(self):
+        """Same-speaker fragments become one readable transcript card."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        fragmented_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.4, text="hello"),
+                Segment(speaker_id="spk_0", start=0.4, end=1.2, text="can you help"),
+            ]
+        )
+
+        with patch.object(pipeline, "transcribe_buffer", return_value=fragmented_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [(segment.start, segment.end, segment.text) for segment in segments] == [
+            (0.0, 1.2, "hello can you help")
+        ]
+        assert session.quality_stats.emitted_segment_count == 1
+
+    def test_alternating_speaker_fragments_stay_separate(self):
+        """Ping-pong speaker fragments keep separate cards for role truth."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        ping_pong_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.35, text="hello"),
+                Segment(speaker_id="spk_1", start=0.35, end=0.65, text="can"),
+                Segment(speaker_id="spk_0", start=0.65, end=0.95, text="you"),
+            ]
+        )
+
+        with patch.object(pipeline, "transcribe_buffer", return_value=ping_pong_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [(segment.speaker_id, segment.text) for segment in segments] == [
+            ("spk_0", "hello"),
+            ("spk_1", "can"),
+            ("spk_0", "you"),
+        ]
+
+    def test_same_speaker_fragments_after_pause_stay_separate(self):
+        """A pause means the user heard two turns, not one fragment."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        separated_result = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.4, text="yes"),
+                Segment(speaker_id="spk_0", start=1.2, end=1.6, text="okay"),
+            ]
+        )
+
+        with patch.object(pipeline, "transcribe_buffer", return_value=separated_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [segment.text for segment in segments] == ["yes", "okay"]
+
     def test_window_audio_stays_sample_aligned(self):
         """Fractional marks must never hand NeMo half a 16-bit sample."""
         pipeline = NemoPipeline()
@@ -246,6 +305,139 @@ class TestProcessChunk:
         assert session.buffer.total_bytes == 0
         # chunk_count is incremented even for empty chunks
         assert session.chunk_count == 1
+
+    def test_quality_stats_track_windows_and_held_tail(self):
+        """Quality counters explain what text was visible when the user stopped."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        edge_result = TranscriptionResult(
+            segments=[Segment(speaker_id="spk_0", start=0.0, end=4.8, text="held")]
+        )
+
+        with patch.object(pipeline, "transcribe_buffer", return_value=edge_result):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            session.finalize()
+
+        assert session.quality_stats.window_seconds == [5.0, 5.0]
+        assert session.quality_stats.held_segment_count == 1
+        assert session.quality_stats.emitted_segment_count == 1
+
+    def test_quality_stats_track_speaker_anchor_remaps(self):
+        """Quality counters show when window labels were corrected for the UI."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        swapped_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.6, text="patient line"),
+                Segment(speaker_id="spk_1", start=0.6, end=2.0, text="doctor again"),
+            ]
+        )
+
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, swapped_pass]
+        ):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert session.quality_stats.speaker_anchor_remap_count == 2
+
+    def test_third_window_speaker_merges_to_nearest_known_voice(self):
+        """A stray third ID stays on the nearest visible speaker card."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        phantom_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_1", start=0.0, end=0.4, text="patient line"),
+                Segment(
+                    speaker_id="spk_2",
+                    start=0.4,
+                    end=1.6,
+                    text="patient continues",
+                ),
+            ]
+        )
+
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, phantom_pass]
+        ):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            tail = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [(segment.speaker_id, segment.text) for segment in tail] == [
+            ("spk_1", "patient continues")
+        ]
+        assert session.quality_stats.phantom_speaker_merge_count == 1
+
+    def test_low_overlap_window_keeps_known_speaker_id(self):
+        """A later clean segment keeps its known speaker when overlap gives no vote."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        low_overlap_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=1.0, end=2.0, text="doctor later")
+            ]
+        )
+
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, low_overlap_pass]
+        ):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            tail = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [(segment.speaker_id, segment.text) for segment in tail] == [
+            ("spk_0", "doctor later")
+        ]
+
+    def test_speaker_cap_disabled_allows_third_visible_speaker(self, monkeypatch):
+        """Cap-disabled mode keeps a third ID for rare multi-person visits."""
+        monkeypatch.setenv("NEMO_SPEAKER_CAP", "0")
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        third_speaker_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_2", start=1.0, end=2.0, text="carer adds")
+            ]
+        )
+
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, third_speaker_pass]
+        ):
+            session.process_chunk(b"\x00" * 32000 * 5)
+            tail = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [(segment.speaker_id, segment.text) for segment in tail] == [
+            ("spk_2", "carer adds")
+        ]
+        assert session.quality_stats.phantom_speaker_merge_count == 0
 
 
 class TestProcessChunkWebM:

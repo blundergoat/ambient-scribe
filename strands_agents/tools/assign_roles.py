@@ -1,9 +1,10 @@
 """
-Role-mapping tool used by the Strands agent.
+Role mapping state and the compact Strands tool used by the scribe UI.
 
-The agent decides which raw speaker is DOCTOR or PATIENT; this module stores
-that decision, detects diarization flips, and returns attributed segments. The
-browser uses the result to replace raw `spk_*` labels with clinical roles.
+The role agent chooses DOCTOR/PATIENT labels, while this module owns the
+server-side session memory that makes those labels stable in the transcript.
+Pending transcript rows stay here instead of being echoed through the model,
+so the browser still receives role-attributed rows without oversized tool calls.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class RoleMapping:
     """
     Role assignment result ready for browser relabeling.
 
-    The worker publishes this after the agent or tool chooses roles. Empty
+    The queue publishes this after the agent or fallback chooses roles. Empty
     mappings leave transcript lines on raw speaker labels so the UI does not
     overstate uncertain attribution.
 
@@ -58,6 +59,11 @@ class RoleMappingState:
         confidence_history: Recent confidence values used for the running score.
         confirmed_overrides: User-selected labels the agent should respect.
         last_flip_detected: Whether the latest update detected a label swap.
+        last_flip_suppressed: Whether the latest label swap was held for more evidence.
+        pending_flip_mapping: Contrary mapping waiting for one more agreeing inference.
+        pending_flip_count: Consecutive contrary mappings matching the pending flip.
+        suppressed_flip_count: Flip proposals kept out of the visible transcript.
+        truncation_events: Agent responses cut off before role labels reached the UI.
     """
 
     current_mapping: dict[str, str] = field(default_factory=dict)
@@ -65,6 +71,11 @@ class RoleMappingState:
     confidence_history: list[float] = field(default_factory=list)
     confirmed_overrides: dict[str, str] = field(default_factory=dict)
     last_flip_detected: bool = False
+    last_flip_suppressed: bool = False
+    pending_flip_mapping: dict[str, str] | None = None
+    pending_flip_count: int = 0
+    suppressed_flip_count: int = 0
+    truncation_events: int = 0
 
     @property
     def running_confidence(self) -> float:
@@ -80,19 +91,54 @@ class RoleMappingState:
         return sum(recent) / len(recent)
 
     def did_update_mapping_detect_flip(
-        self, new_mapping: dict[str, str], confidence: float
+        self,
+        new_mapping: dict[str, str],
+        confidence: float,
+        session_id: str | None = None,
     ) -> bool:
         """Update the visible mapping and report whether labels flipped.
 
         Args:
             new_mapping: New speaker-to-role mapping; empty leaves no visible roles.
             confidence: Agent confidence for the mapping shown in the UI.
+            session_id: Browser recording UUID for logs; None means direct tests or old callers.
 
         Returns:
             True when a label flip was detected, false when labels stayed stable.
         """
+        previous_mapping = self.current_mapping
+        changed_speakers = [
+            speaker
+            for speaker, new_role in new_mapping.items()
+            if previous_mapping.get(speaker) != new_role
+        ]
         flip_detected = self._is_role_label_flip(new_mapping)
+        self.last_flip_detected = False
+        self.last_flip_suppressed = False
+
+        # A sudden complete swap can be diarization churn, so hold it for confirmation.
+        if flip_detected and self._should_suppress_flip(new_mapping, confidence):
+            self.suppressed_flip_count += 1
+            self.last_flip_suppressed = True
+            logger.warning(
+                "role_mapping.flip_suppressed speakers=%s",
+                ",".join(changed_speakers),
+                extra={
+                    "previous": previous_mapping,
+                    "proposed": new_mapping,
+                    "confidence": confidence,
+                    "running_confidence": self.running_confidence,
+                    "pending_flip_count": self.pending_flip_count,
+                    "session_id": session_id,
+                },
+            )
+            return False
+
         self.last_flip_detected = flip_detected
+
+        # Accepted mappings clear any held contrary proposal from the UI.
+        self.pending_flip_mapping = None
+        self.pending_flip_count = 0
 
         self.mapping_history.append(new_mapping)
         self.confidence_history.append(confidence)
@@ -101,18 +147,55 @@ class RoleMappingState:
         # A flip warning helps the browser explain sudden role relabeling.
         if flip_detected:
             logger.warning(
-                "role_mapping.flip_detected",
+                "role_mapping.flip_detected speakers=%s",
+                ",".join(changed_speakers),
                 extra={
-                    "previous": self.mapping_history[-2]
-                    if len(self.mapping_history) > 1
-                    else {},
+                    "previous": previous_mapping,
                     "current": new_mapping,
+                    "session_id": session_id,
                 },
             )
 
         return flip_detected
 
-    update = did_update_mapping_detect_flip
+    def _should_suppress_flip(
+        self, new_mapping: dict[str, str], confidence: float
+    ) -> bool:
+        """Return whether a visible role swap should wait for more evidence.
+
+        Args:
+            new_mapping: Proposed swapped labels; empty means there is no flip to suppress.
+            confidence: Agent confidence; high confidence can override the waiting period.
+
+        Returns:
+            True when the browser should keep current labels for this update.
+        """
+        # First contrary mapping starts the confirmation window.
+        if self.pending_flip_mapping != new_mapping:
+            self.pending_flip_mapping = dict(new_mapping)
+            self.pending_flip_count = 1
+        else:
+            self.pending_flip_count += 1
+
+        confidence_margin = confidence - self.running_confidence
+
+        # Repeated contrary evidence means the user should see the corrected roles.
+        if self.pending_flip_count >= 2:
+            return False
+
+        # A strong confidence jump can correct an early wrong mapping immediately.
+        if confidence_margin >= 0.09:
+            return False
+
+        return True
+
+    def record_role_agent_truncation(self) -> None:
+        """Count a model truncation that prevented a visible role update.
+
+        The final quality row uses this so operators can see when the UI kept
+        raw speaker labels because the role agent ran out of output tokens.
+        """
+        self.truncation_events += 1
 
     def _is_role_label_flip(self, new_mapping: dict[str, str]) -> bool:
         """Detect a role permutation across the same speaker IDs.
@@ -149,24 +232,66 @@ class RoleMappingState:
         )
 
 
-# Per-session state store for role mappings
+# Per-session state store for role mappings.
 _session_states: dict[str, RoleMappingState] = {}
 _states_lock = threading.Lock()
 
+# Per-session transcript rows available to the tool without model echo.
+_pending_role_segments: dict[str, list[dict[str, Any]]] = {}
+_pending_role_segments_lock = threading.Lock()
+
 
 def get_or_create_state(session_id: str) -> RoleMappingState:
-    """Get or create the role mapping state for a session.
+    """Get or create the role mapping state for one browser session.
 
     Args:
-        session_id: The session identifier.
+        session_id: Browser recording UUID; empty creates isolated but unusable state.
 
     Returns:
-        The RoleMappingState for this session.
+        RoleMappingState used to relabel this session's transcript.
     """
     with _states_lock:
+        # First role update for a recording starts with no visible labels.
         if session_id not in _session_states:
             _session_states[session_id] = RoleMappingState()
         return _session_states[session_id]
+
+
+def store_pending_role_segments(
+    session_id: str, segments: list[dict[str, Any]]
+) -> None:
+    """Remember transcript rows the role tool may label without model echo.
+
+    Args:
+        session_id: Browser recording UUID that owns these rows.
+        segments: New visible transcript rows; empty means the tool can still update mapping only.
+    """
+    with _pending_role_segments_lock:
+        _pending_role_segments[session_id] = [dict(segment) for segment in segments]
+
+
+def pending_role_segments_for_session(session_id: str) -> list[dict[str, Any]]:
+    """Return pending transcript rows for a compact tool invocation.
+
+    Args:
+        session_id: Browser recording UUID; unknown IDs return no rows for attribution.
+
+    Returns:
+        Copies of pending rows; empty means the tool updates roles without new transcript text.
+    """
+    with _pending_role_segments_lock:
+        pending_segments = _pending_role_segments.get(session_id, [])
+        return [dict(segment) for segment in pending_segments]
+
+
+def clear_pending_role_segments(session_id: str) -> None:
+    """Forget pending rows after the role agent finishes a call.
+
+    Args:
+        session_id: Browser recording UUID; unknown IDs are already clear.
+    """
+    with _pending_role_segments_lock:
+        _pending_role_segments.pop(session_id, None)
 
 
 def apply_role_mapping_result(
@@ -190,11 +315,17 @@ def apply_role_mapping_result(
     """
     state = get_or_create_state(session_id)
     normalized_mapping = _normalize_mapping(mapping)
-    flip_detected = state.did_update_mapping_detect_flip(normalized_mapping, confidence)
+    normalized_mapping = _apply_confirmed_overrides(
+        session_id, state, normalized_mapping
+    )
+    flip_detected = state.did_update_mapping_detect_flip(
+        normalized_mapping, confidence, session_id=session_id
+    )
+    applied_mapping = state.current_mapping
 
     return RoleMapping(
-        mapping=normalized_mapping,
-        attributed_segments=_attribute_segments(segments, normalized_mapping),
+        mapping=applied_mapping,
+        attributed_segments=_attribute_segments(segments, applied_mapping),
         confidence=state.running_confidence,
         flip_detected=flip_detected,
         reasoning=reasoning,
@@ -202,19 +333,21 @@ def apply_role_mapping_result(
 
 
 def cleanup_session(session_id: str) -> None:
-    """Remove the role mapping state for a session.
+    """Remove role mapping and pending rows for a finished browser session.
 
-    Called when a WebSocket disconnects to prevent memory leaks.
+    Called after a visit can no longer reconnect, preventing one user's labels
+    from affecting a later recording.
 
     Args:
-        session_id: The session identifier to clean up.
+        session_id: Browser recording UUID to clean up.
     """
     with _states_lock:
         _session_states.pop(session_id, None)
+    clear_pending_role_segments(session_id)
 
 
 def _normalize_mapping(mapping: dict[str, str]) -> dict[str, str]:
-    """Normalize agent output into the expected speaker->role shape."""
+    """Normalize agent output into the speaker-role labels shown in the UI."""
     normalized: dict[str, str] = {}
     # Each mapping entry controls how matching transcript lines are labeled.
     for speaker_id, role in mapping.items():
@@ -223,11 +356,55 @@ def _normalize_mapping(mapping: dict[str, str]) -> dict[str, str]:
     return normalized
 
 
+def _apply_confirmed_overrides(
+    session_id: str,
+    state: RoleMappingState,
+    mapping: dict[str, str],
+) -> dict[str, str]:
+    """Apply user-confirmed roles before transcript rows are relabeled.
+
+    Args:
+        session_id: Browser recording UUID whose role map is being updated.
+        state: Role state containing manual corrections from the transcript UI.
+        mapping: Agent-proposed speaker-role labels; empty still keeps overrides.
+
+    Returns:
+        Mapping with manual corrections preserved for the user's transcript.
+    """
+    # No manual correction means the agent proposal can be used as-is.
+    if state.confirmed_overrides == {}:
+        return mapping
+
+    enforced_mapping = dict(mapping)
+    # Each override represents a user correction from the transcript UI.
+    for speaker_id, role in state.confirmed_overrides.items():
+        normalized_speaker_id = str(speaker_id)
+        normalized_role = str(role).upper()
+
+        # A differing agent proposal must not undo the user's selected role.
+        if enforced_mapping.get(normalized_speaker_id) != normalized_role:
+            logger.info(
+                "role_mapping.confirmed_override_preserved session_id=%s speaker_id=%s",
+                session_id,
+                normalized_speaker_id,
+                extra={
+                    "session_id": session_id,
+                    "speaker_id": normalized_speaker_id,
+                    "agent_role": enforced_mapping.get(normalized_speaker_id),
+                    "confirmed_role": normalized_role,
+                },
+            )
+
+        enforced_mapping[normalized_speaker_id] = normalized_role
+
+    return enforced_mapping
+
+
 def _attribute_segments(
     segments: list[dict[str, Any]],
     mapping: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Apply the current mapping to a list of raw transcript segments."""
+    """Apply visible role labels to raw transcript rows for Mercure output."""
     attributed_segments: list[dict[str, Any]] = []
     # Each raw segment becomes a role-labeled line for the browser transcript.
     for segment in segments:
@@ -246,39 +423,33 @@ def _attribute_segments(
 def assign_roles(
     session_id: str,
     mapping: str,
-    segments: str,
     confidence: float,
     reasoning: str = "",
 ) -> dict:
-    """Persist a speaker-to-role mapping and return attributed segments.
+    """Persist a speaker-role mapping and return a compact acknowledgement.
 
-    Call this tool after analysing the transcript to commit your role decisions.
-    The tool handles state persistence, flip detection, and segment attribution.
+    Call this after analysing the bounded role evidence. Transcript rows are
+    already buffered server-side for this session, so the model must not pass
+    or receive segment text through the tool.
 
     Args:
-        session_id: The session identifier.
-        mapping: JSON string of speaker-to-role mapping, e.g. '{"spk_0": "DOCTOR", "spk_1": "PATIENT"}'.
-        segments: JSON string of transcript segments to attribute, each with speaker_id, text, start, end.
-        confidence: Your confidence in this mapping (0.0 to 1.0).
-        reasoning: Brief explanation of your role assignment logic.
+        session_id: Browser recording UUID whose transcript labels should update.
+        mapping: JSON string of speaker-role labels; empty keeps raw labels visible.
+        confidence: Confidence from 0.0 to 1.0 shown in dev role state.
+        reasoning: Short explanation; empty means no explanation is shown to reviewers.
 
     Returns:
-        Mapping payload the browser uses to relabel transcript segments.
+        Compact mapping status; no transcript text is returned to the model.
     """
     # Tool callers send JSON strings; tests may pass dictionaries directly.
     if isinstance(mapping, str):
         parsed_mapping = json.loads(mapping)
     else:
         parsed_mapping = mapping
-    # Empty segment JSON means the UI receives a mapping without new attributed text.
-    if isinstance(segments, str):
-        parsed_segments = json.loads(segments)
-    else:
-        parsed_segments = segments
 
     result = apply_role_mapping_result(
         session_id=session_id,
-        segments=parsed_segments,
+        segments=pending_role_segments_for_session(session_id),
         mapping=parsed_mapping,
         confidence=confidence,
         reasoning=reasoning,
@@ -286,7 +457,6 @@ def assign_roles(
 
     return {
         "mapping": result.mapping,
-        "attributed_segments": result.attributed_segments,
         "confidence": result.confidence,
         "flip_detected": result.flip_detected,
         "reasoning": result.reasoning,

@@ -12,11 +12,15 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from nemo_session import TranscriptionSession
+from session_quality import (
+    build_session_quality_record,
+    persist_session_quality_record,
+)
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
 from tools.assign_roles import get_or_create_state
@@ -86,10 +90,16 @@ class StreamState:
     Attributes:
         chunk_count: Number of audio chunks processed for this connection.
         mercure_warning_sent: True after the browser saw one streaming warning.
+        chunk_inference_ms: Per-chunk NeMo processing time shown in quality records.
+        chunk_total_ms: Per-chunk end-to-end server time for transcript publication.
+        error_count: Terminal or recoverable stream errors for this visible session.
     """
 
     chunk_count: int = 0
     mercure_warning_sent: bool = False
+    chunk_inference_ms: list[int] = field(default_factory=list)
+    chunk_total_ms: list[int] = field(default_factory=list)
+    error_count: int = 0
 
 
 async def transcribe_stream_session(
@@ -122,7 +132,7 @@ async def transcribe_stream_session(
             websocket, session_id, session, services, loop, state
         )
     except Exception as error:
-        await _publish_transcription_error(session_id, services, error)
+        await _publish_transcription_error(session_id, services, error, state)
     finally:
         await _schedule_stream_cleanup(session_id, services)
 
@@ -184,6 +194,7 @@ async def _process_next_audio_chunk(
         audio_chunk,
     )
     duration_ms = int((time.time() - started_at) * 1000)
+    state.chunk_inference_ms.append(duration_ms)
 
     segment_payloads = await _publish_raw_segments(
         websocket, session_id, segments, services, state
@@ -193,6 +204,7 @@ async def _process_next_audio_chunk(
         await services.enqueue_role_inference(session_id, segment_payloads)
 
     total_ms = int((time.time() - started_at) * 1000)
+    state.chunk_total_ms.append(total_ms)
     logger.info(
         "websocket.chunk_e2e",
         extra={
@@ -251,7 +263,11 @@ async def _warn_live_streaming_failure(websocket: WebSocket, session_id: str) ->
         )
     except Exception as send_error:
         logger.warning(
-            "websocket.system_error_notice_failed",
+            "websocket.system_error_notice_failed session_id=%s %s: %s",
+            session_id,
+            type(send_error).__name__,
+            str(send_error)[:200],
+            exc_info=send_error,
             extra={
                 "session_id": session_id,
                 "error_type": type(send_error).__name__,
@@ -293,6 +309,8 @@ async def _finalize_after_disconnect(
     if current_state.current_mapping:
         services.sessions.apply_role_mapping(session_id, current_state.current_mapping)
 
+    await _emit_session_quality_record(session_id, session, services, state, current_state)
+
     event_id = _next_stream_event_id(session_id, services)
     await services.publish_to_mercure(
         f"scribe/session/{session_id}/raw",
@@ -305,17 +323,24 @@ async def _publish_transcription_error(
     session_id: str,
     services: StreamingServices,
     error: Exception,
+    state: StreamState | None = None,
 ) -> None:
     """Publish a generic transcript error without exposing clinical text."""
+    # Some focused tests call this helper without a live StreamState.
+    if state is not None:
+        state.error_count += 1
+
     # The error type/text goes into the message because plain log formats drop
     # `extra` fields, and exc_info records the traceback for diagnosis.
     logger.error(
-        "websocket.error %s: %s",
+        "websocket.error session_id=%s %s: %s",
+        session_id,
         type(error).__name__,
         str(error)[:300],
         exc_info=error,
         extra={
             "session_id": session_id,
+            "error_type": type(error).__name__,
             "error": str(error),
         },
     )
@@ -323,6 +348,64 @@ async def _publish_transcription_error(
     await services.publish_to_mercure(
         f"scribe/session/{session_id}/raw",
         {"type": "error", "message": "Transcription error occurred"},
+        event_id=event_id,
+    )
+
+
+async def _emit_session_quality_record(
+    session_id: str,
+    session: TranscriptionSession,
+    services: StreamingServices,
+    state: StreamState,
+    current_state: Any,
+) -> None:
+    """Log, persist, and publish one final quality record for the recording."""
+    quality_record = build_session_quality_record(
+        session_id=session_id,
+        audio_session=session,
+        stream_state=state,
+        role_state=current_state,
+    )
+    quality_record_path = None
+
+    try:
+        quality_record_path = persist_session_quality_record(quality_record)
+    except Exception as persist_error:
+        logger.error(
+            "session.quality_persist_failed session_id=%s %s: %s",
+            session_id,
+            type(persist_error).__name__,
+            str(persist_error)[:300],
+            exc_info=persist_error,
+            extra={
+                "session_id": session_id,
+                "error_type": type(persist_error).__name__,
+                "error": str(persist_error)[:300],
+            },
+        )
+
+    logger.info(
+        "session.quality session_id=%s chunks=%s emitted_segments=%s "
+        "held_segments=%s errors=%s confidence=%.3f",
+        session_id,
+        quality_record["chunks"],
+        quality_record["emitted_segments"],
+        quality_record["held_segments"],
+        quality_record["error_count"],
+        quality_record["final_confidence"],
+        extra={
+            **quality_record,
+            "session_id": session_id,
+            "quality_record_path": str(quality_record_path)
+            if quality_record_path is not None
+            else None,
+        },
+    )
+
+    event_id = _next_stream_event_id(session_id, services)
+    await services.publish_to_mercure(
+        f"scribe/session/{session_id}/raw",
+        {"type": "quality", "quality": quality_record},
         event_id=event_id,
     )
 

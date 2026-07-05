@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import logging
 import subprocess
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from logging_config import JsonLoggingFormatter
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PYTHON_SOURCE_ROOT = REPO_ROOT / "strands_agents"
 
 
 class FakeAgentMetrics:
@@ -92,9 +96,31 @@ def test_json_logging_formatter_hoists_join_keys():
     assert parsed["tokens_total"] == 18
 
 
+def test_json_logging_formatter_includes_traceback():
+    """JSON-default Docker logs keep the stack trace needed after a failed session."""
+    try:
+        raise ValueError("diagnostic boom")
+    except ValueError:
+        record = logging.LogRecord(
+            name="api.streaming_session",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="websocket.error session_id=%s %s: %s",
+            args=("session-123", "ValueError", "diagnostic boom"),
+            exc_info=sys.exc_info(),
+        )
+
+    parsed = json.loads(JsonLoggingFormatter().format(record))
+
+    assert parsed["error_type"] == "ValueError"
+    assert "Traceback (most recent call last)" in parsed["traceback"]
+    assert "diagnostic boom" in parsed["traceback"]
+
+
 def test_agent_metric_fields_extracts_sdk_summary():
     """Strands AgentResult metrics become bounded log fields without model text."""
-    from api.server import _agent_metric_fields
+    from api.agent_observability import agent_metric_fields as _agent_metric_fields
 
     fields = _agent_metric_fields(FakeAgentResult(), "role-inference")
 
@@ -184,3 +210,86 @@ def test_session_history_echoes_correlation_id(caplog):
     assert response.headers["X-Correlation-ID"] == correlation_id
     assert history_logs[-1].session_id == session_id
     assert history_logs[-1].correlation_id == correlation_id
+
+
+@pytest.mark.asyncio
+async def test_streaming_error_log_self_explains(caplog):
+    """A mid-stream exception is diagnosable from the plain log line plus traceback."""
+    from api.streaming_session import _publish_transcription_error
+
+    session_id = "session-error-shape"
+    published_events = []
+
+    async def fake_publish(topic, data, event_id=None):
+        published_events.append((topic, data, event_id))
+        return True
+
+    services = SimpleNamespace(
+        mercure_event_ids={},
+        publish_to_mercure=fake_publish,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            raise ValueError("buffer size must be a multiple of element size")
+        except ValueError as error:
+            await _publish_transcription_error(session_id, services, error)
+
+    error_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("websocket.error")
+    ]
+
+    assert error_logs
+    message = error_logs[-1].getMessage()
+    assert f"session_id={session_id}" in message
+    assert "ValueError" in message
+    assert "buffer size must be a multiple of element size" in message
+    assert error_logs[-1].exc_info is not None
+    assert error_logs[-1].exc_info[0] is ValueError
+    assert error_logs[-1].exc_info[2] is not None
+    assert published_events[-1][1] == {
+        "type": "error",
+        "message": "Transcription error occurred",
+    }
+
+
+def test_logger_error_calls_have_plain_diagnostic_fields():
+    """Guard against `logger.error("event", extra={...})` hiding failure details."""
+    failures: list[str] = []
+    for source_path in sorted(PYTHON_SOURCE_ROOT.rglob("*.py")):
+        if ".venv" in source_path.parts:
+            continue
+        tree = ast.parse(source_path.read_text(), filename=str(source_path))
+        for node in ast.walk(tree):
+            if not _is_logger_level_call(node, "error"):
+                continue
+
+            message = _literal_log_message(node)
+            has_percent_placeholder = message is not None and "%" in message
+            has_exc_info = any(keyword.arg == "exc_info" for keyword in node.keywords)
+            if not has_percent_placeholder and not has_exc_info:
+                failures.append(f"{source_path.relative_to(REPO_ROOT)}:{node.lineno}")
+
+    assert failures == []
+
+
+def _is_logger_level_call(node: ast.AST, level: str) -> bool:
+    """Return whether an AST call is `logger.<level>(...)`."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == level
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "logger"
+    )
+
+
+def _literal_log_message(node: ast.Call) -> str | None:
+    """Return the literal first log argument, when static analysis can see it."""
+    if node.args and isinstance(node.args[0], ast.Constant):
+        message = node.args[0].value
+        if isinstance(message, str):
+            return message
+    return None

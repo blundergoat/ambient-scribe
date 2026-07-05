@@ -9,6 +9,11 @@ import pytest
 
 import api.server as api_server
 import tools.assign_roles as role_tools
+from api.role_inference_queue import (
+    ROLE_EVIDENCE_MAX_TEXT_CHARS,
+    ROLE_EVIDENCE_RECENT_UTTERANCES,
+    _build_bounded_role_evidence,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +25,7 @@ def clear_inference_state():
     api_server._inference_workers.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
     yield
     api_server.sessions._sessions.clear()
     api_server.lifecycle.clear()
@@ -27,6 +33,7 @@ def clear_inference_state():
     api_server._inference_workers.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
 
 
 class TestInferenceQueue:
@@ -51,7 +58,7 @@ class TestInferenceQueue:
         monkeypatch.setattr(
             api_server,
             "_run_role_inference",
-            lambda session_id, segments, transcript: {
+            lambda session_id, segments, role_evidence: {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.88,
                 "reasoning": "Opening clinical question identifies the doctor.",
@@ -91,7 +98,7 @@ class TestInferenceQueue:
         async def fake_publish(topic, data, event_id=None):
             return None
 
-        def fake_run_role_inference(session_id, segments, transcript):
+        def fake_run_role_inference(session_id, segments, role_evidence):
             invocations.append([segment["text"] for segment in segments])
             if len(invocations) == 1:
                 started.set()
@@ -159,3 +166,40 @@ class TestInferenceQueue:
 
         assert published_events == []
         assert "role" not in api_server.sessions.get_segments(session_id)[0]
+
+
+class TestBoundedRoleEvidence:
+    """Tests for capped role-agent input built from visible transcript rows."""
+
+    def test_role_evidence_is_capped_per_speaker(self, sample_segments):
+        """Long visits keep constant-size text evidence for the role agent."""
+        session_id = "bounded-evidence-session"
+
+        for index in range(10):
+            api_server.sessions.append_segment(
+                session_id,
+                {
+                    "speaker_id": "spk_0" if index % 2 == 0 else "spk_1",
+                    "text": f"utterance {index} " + ("x" * 300),
+                    "start": float(index),
+                    "end": float(index + 1),
+                },
+            )
+
+        evidence = _build_bounded_role_evidence(
+            session_id, api_server.sessions, sample_segments
+        )
+
+        assert evidence["new_segment_count"] == len(sample_segments)
+        assert evidence["total_segments_considered"] == 10
+        assert evidence["speaker_count"] == 2
+        for speaker_evidence in evidence["speakers"]:
+            assert (
+                len(speaker_evidence["recent_utterances"])
+                <= ROLE_EVIDENCE_RECENT_UTTERANCES
+            )
+            assert len(speaker_evidence["representative_utterances"]) == 2
+            assert all(
+                len(utterance["text"]) <= ROLE_EVIDENCE_MAX_TEXT_CHARS
+                for utterance in speaker_evidence["recent_utterances"]
+            )

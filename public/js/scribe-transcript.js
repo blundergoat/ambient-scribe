@@ -88,6 +88,14 @@ function handleRawSegment(segmentEvent) {
 }
 
 /**
+ * Stores the completed-session quality record for dev inspection.
+ * Use when the backend publishes `session.quality` after final transcription.
+ */
+function handleQualityRecord(qualityEvent) {
+    latestQualityRecord = qualityEvent.quality ?? qualityEvent;
+}
+
+/**
  * Adds a transcript card or appends text to the current speaker card.
  * Use when NeMo emits a new segment for the visible consultation.
  */
@@ -240,14 +248,17 @@ function cycleRole(speakerId) {
  * Reports save failures as warnings because the visible manual label already changed.
  */
 async function sendRoleOverride(speakerId, role) {
-    const httpBaseUrl = CONFIG.wsUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-
     try {
-        await fetch(`${httpBaseUrl}/session/${CONFIG.sessionId}/roles/override`, {
+        const response = await fetch(`/scribe/${CONFIG.sessionId}/roles/override`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
             body: JSON.stringify({ speaker_id: speakerId, role }),
         });
+
+        // A rejected save leaves the local label visible but not protected server-side.
+        if (!response.ok) {
+            console.warn('Role override save failed:', response.status);
+        }
     } catch (overrideError) {
         console.warn('Role override failed:', overrideError);
     }

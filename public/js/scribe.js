@@ -34,6 +34,7 @@ let reconnectTimer = null;
 let lastSpeakerId = null;
 let lastSegmentBlock = null;
 let lowLevelCount = 0;
+let latestQualityRecord = null;
 
 const segmentsBySpeaker = new Map();
 const manualOverrides = new Set();

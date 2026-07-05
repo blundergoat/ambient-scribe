@@ -59,7 +59,6 @@ class Segment:
     segment_id: str = ""  # Server-assigned unique ID
     revision: int = 1  # Incremented when segment is updated
     supersedes: str = ""  # segment_id this replaces (for reconciliation)
-
     def dict(self) -> dict:
         """Convert the segment into the JSON shape streamed to the browser.
 
@@ -187,9 +186,12 @@ class NemoPipeline:
         except Exception as e:
             self._load_error = str(e)
             logger.exception(
-                "nemo_pipeline.models_failed",
+                "nemo_pipeline.models_failed %s: %s",
+                type(e).__name__,
+                str(e)[:300],
                 extra={
                     "provider": self._model_provider,
+                    "error_type": type(e).__name__,
                     "error": self._load_error,
                 },
             )
@@ -264,7 +266,7 @@ class NemoPipeline:
                 "diar": str(diar_output),
                 "asr_text": asr_hyps[0].text if asr_hyps else "",
             },
-        )
+            )
 
     def transcribe_buffer(self, audio_buffer: bytes) -> TranscriptionResult:
         """Process an audio buffer (PCM bytes). Returns speaker-attributed segments.
@@ -408,6 +410,7 @@ class NemoPipeline:
             # The final visible card receives any leftover words after rounding.
             if diarization_index == len(parsed_diar) - 1:
                 segment_words = words[word_cursor:]
+                word_cursor = len(words)
             else:
                 word_count = max(1, round(len(words) * duration_share))
                 segment_words = words[word_cursor : word_cursor + word_count]
@@ -434,37 +437,82 @@ class NemoPipeline:
         min_absolute_duration: float = 1.0,
         min_segment_count: int = 2,
     ) -> list[tuple[float, float, str]]:
-        """Remove brief one-off speakers with less than ``min_share`` of activity.
+        """Hide brief one-off speaker IDs before the browser sees them.
 
-        NeMo's Sortformer occasionally hallucinates a brief speaker segment
-        (e.g., <= 1 second in a 100-second recording). These ghost speakers
-        cause downstream role-inference noise. The absolute-duration and segment
-        count floors keep legitimate short speakers from being dropped solely
-        because they have less than 5% of a long recording.
+        Use after NeMo diarization when a tiny speaker blip would look like a
+        third person in a two-person consultation. Duration and repeat floors
+        keep real short turns visible for the user.
 
         Args:
-            parsed_diar: List of ``(start, end, speaker_id)`` tuples from
-                :meth:`_parse_diar_strings`.
-            min_share: Minimum fraction of total duration a speaker must
-                occupy to be kept (default 5 %).
-            min_absolute_duration: Always keep speakers above this cumulative
-                duration even if their share is small.
-            min_segment_count: Always keep speakers that appear in at least this
-                many diarization segments.
+            parsed_diar: Diarized speaker spans; empty means the transcript view
+                has no speaker rows to clean up.
+            min_share: Smallest session share to keep; zero keeps percentage from
+                hiding any detected speaker.
+            min_absolute_duration: Cumulative seconds that always keep a speaker;
+                zero means only share/repeat evidence protects short turns.
+            min_segment_count: Repeat count that always keeps a speaker; zero
+                means a one-off blip can still be kept.
 
         Returns:
-            Filtered list with the same tuple structure.
+            Filtered speaker spans; empty means no visible speaker rows remain.
         """
+        # No speaker rows reached this point, so the UI has nothing to label yet.
         if not parsed_diar:
             return parsed_diar
 
         total_duration = sum(end - start for start, end, _ in parsed_diar)
+        # Broken or zero-length timing cannot safely remove anything the user might need.
         if total_duration <= 0:
             return parsed_diar
 
-        # Accumulate per-speaker duration
+        speaker_durations, speaker_segment_counts = (
+            NemoPipeline._speaker_activity_by_id(parsed_diar)
+        )
+        suppressed = NemoPipeline._suppressed_speaker_ids(
+            speaker_durations,
+            speaker_segment_counts,
+            total_duration,
+            min_share,
+            min_absolute_duration,
+            min_segment_count,
+        )
+
+        # Hidden speaker blips are logged so support can explain why no extra role appeared.
+        if suppressed:
+            NemoPipeline._log_suppressed_speakers(
+                suppressed,
+                speaker_durations,
+                speaker_segment_counts,
+                total_duration,
+                min_share,
+                min_absolute_duration,
+                min_segment_count,
+            )
+
+        return [
+            (start, end, speaker_id)
+            for start, end, speaker_id in parsed_diar
+            if speaker_id not in suppressed
+        ]
+
+    @staticmethod
+    def _speaker_activity_by_id(
+        parsed_diar: list[tuple[float, float, str]],
+    ) -> tuple[dict[str, float], dict[str, int]]:
+        """Count each speaker's visible time and repeats.
+
+        Use while preparing transcript rows so a brief real turn is not hidden
+        just because the whole consultation is long.
+
+        Args:
+            parsed_diar: Diarized spans; empty means both returned maps are empty.
+
+        Returns:
+            Duration and count maps keyed by speaker ID; empty maps mean no speaker evidence.
+        """
         speaker_durations: dict[str, float] = {}
         speaker_segment_counts: dict[str, int] = {}
+        # Each diarization row contributes evidence for whether a speaker should stay visible.
         for start, end, speaker_id in parsed_diar:
             speaker_durations[speaker_id] = speaker_durations.get(speaker_id, 0.0) + (
                 end - start
@@ -473,38 +521,97 @@ class NemoPipeline:
                 speaker_segment_counts.get(speaker_id, 0) + 1
             )
 
-        # Suppress only tiny, one-off speakers below the proportional threshold.
-        suppressed = {
-            spk
-            for spk, dur in speaker_durations.items()
+        return speaker_durations, speaker_segment_counts
+
+    @staticmethod
+    def _suppressed_speaker_ids(
+        speaker_durations: dict[str, float],
+        speaker_segment_counts: dict[str, int],
+        total_duration: float,
+        min_share: float,
+        min_absolute_duration: float,
+        min_segment_count: int,
+    ) -> set[str]:
+        """Choose speaker IDs that would look like phantom participants.
+
+        Use after activity counts exist, before transcript cards are built, so
+        the browser does not show a third role for a tiny one-window blip.
+
+        Args:
+            speaker_durations: Seconds per speaker; empty means no one can be hidden.
+            speaker_segment_counts: Segment count per speaker; missing speakers are treated as one-off blips.
+            total_duration: Session seconds used for share checks; zero means no speaker is suppressed.
+            min_share: Smallest session share to keep; zero keeps percentage from hiding any speaker.
+            min_absolute_duration: Seconds that keep a speaker even with low share.
+            min_segment_count: Repeated appearances that keep a speaker visible.
+
+        Returns:
+            Speaker IDs to hide; empty means all detected speakers stay visible.
+        """
+        # Without a valid session duration, the UI keeps all speaker evidence.
+        if total_duration <= 0:
+            return set()
+
+        return {
+            speaker_id
+            # One activity row per speaker decides whether it looks like a phantom participant.
+            for speaker_id, speaker_duration in speaker_durations.items()
             if (
-                dur / total_duration < min_share
-                and dur <= min_absolute_duration
-                and speaker_segment_counts[spk] < min_segment_count
+                speaker_duration / total_duration < min_share
+                and speaker_duration <= min_absolute_duration
+                and speaker_segment_counts.get(speaker_id, 0) < min_segment_count
             )
         }
 
-        if suppressed:
-            for speaker_id in suppressed:
-                logger.warning(
-                    "nemo_pipeline.hallucinated_speaker_suppressed",
-                    extra={
-                        "speaker_id": speaker_id,
-                        "duration": speaker_durations[speaker_id],
-                        "total_duration": total_duration,
-                        "share": speaker_durations[speaker_id] / total_duration,
-                        "segments": speaker_segment_counts[speaker_id],
-                        "min_share": min_share,
-                        "min_absolute_duration": min_absolute_duration,
-                        "min_segment_count": min_segment_count,
-                    },
-                )
+    @staticmethod
+    def _log_suppressed_speakers(
+        suppressed_speaker_ids: set[str],
+        speaker_durations: dict[str, float],
+        speaker_segment_counts: dict[str, int],
+        total_duration: float,
+        min_share: float,
+        min_absolute_duration: float,
+        min_segment_count: int,
+    ) -> None:
+        """Log hidden speaker blips for support and quality review.
 
-        return [
-            (start, end, speaker_id)
-            for start, end, speaker_id in parsed_diar
-            if speaker_id not in suppressed
-        ]
+        Use when NeMo emitted a tiny participant that the UI will not show, so
+        a transcript-quality run can explain why roles stayed limited.
+
+        Args:
+            suppressed_speaker_ids: Speaker IDs hidden from the transcript; empty means nothing is logged.
+            speaker_durations: Seconds per speaker; missing IDs log as zero seconds.
+            speaker_segment_counts: Segment count per speaker; missing IDs log as zero repeats.
+            total_duration: Session seconds for share reporting; zero logs a zero share.
+            min_share: Share threshold that contributed to hiding the speaker.
+            min_absolute_duration: Duration threshold that would have kept the speaker.
+            min_segment_count: Repeat threshold that would have kept the speaker.
+        """
+        # Each hidden speaker gets a log row so a quality report can trace the missing role.
+        for speaker_id in suppressed_speaker_ids:
+            speaker_duration = speaker_durations.get(speaker_id, 0.0)
+            speaker_count = speaker_segment_counts.get(speaker_id, 0)
+            # Zero duration is possible only for malformed input, so report zero share safely.
+            speaker_share = speaker_duration / total_duration if total_duration > 0 else 0.0
+            logger.warning(
+                (
+                    "nemo_pipeline.hallucinated_speaker_suppressed "
+                    "speaker_id=%s duration=%.2f share=%.4f"
+                ),
+                speaker_id,
+                speaker_duration,
+                speaker_share,
+                extra={
+                    "speaker_id": speaker_id,
+                    "duration": speaker_duration,
+                    "total_duration": total_duration,
+                    "share": speaker_share,
+                    "segments": speaker_count,
+                    "min_share": min_share,
+                    "min_absolute_duration": min_absolute_duration,
+                    "min_segment_count": min_segment_count,
+                },
+            )
 
     @staticmethod
     def _parse_diar_strings(diar_output: Any) -> list[tuple[float, float, str]]:

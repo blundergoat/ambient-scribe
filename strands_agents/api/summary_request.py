@@ -234,7 +234,8 @@ async def publish_summary_outputs(
             # A failed Mercure publish still leaves hints in the HTTP summary response.
             if not hints_delivered:
                 logger.warning(
-                    "clinical_hints.publish_failed",
+                    "clinical_hints.publish_failed session_id=%s",
+                    session_id,
                     extra={"session_id": session_id},
                 )
 

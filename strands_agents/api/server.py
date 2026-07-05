@@ -10,10 +10,8 @@ focused on what the clinician sees in the transcript and summary UI.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 import subprocess
 import tempfile
 import time
@@ -39,12 +37,9 @@ from api.role_inference_queue import (
     role_inference_queues,
     role_inference_workers,
 )
-from api.agent_observability import (
-    agent_metric_fields as _agent_metric_fields,
-    configure_strands_telemetry as _configure_strands_telemetry,
-)
+from api.role_agent_runtime import run_role_inference as _run_role_inference
+from api.agent_observability import configure_strands_telemetry as _configure_strands_telemetry
 from api.mercure_publisher import did_publish_mercure_event
-from api.role_heuristics import heuristic_role_inference as _heuristic_role_inference
 from api.streaming_session import StreamingServices, transcribe_stream_session
 from api.summary_request import (
     SummaryRequest,
@@ -55,9 +50,7 @@ from nemo_pipeline import NemoPipeline
 from session import SessionStore
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
-from tools.assign_roles import (
-    get_or_create_state,
-)
+from tools.assign_roles import get_or_create_state
 from logging_config import configure_logging
 from api.summary_generation import run_summary_generation as _run_summary_generation
 from clinical_hints import generate_clinical_hints
@@ -264,8 +257,16 @@ async def _periodic_cleanup() -> None:
                         "pending_destroys": len(pending_ids),
                     },
                 )
-        except Exception:
-            logger.exception("periodic_cleanup.failed")
+        except Exception as cleanup_error:
+            logger.exception(
+                "periodic_cleanup.failed %s: %s",
+                type(cleanup_error).__name__,
+                str(cleanup_error)[:200],
+                extra={
+                    "error_type": type(cleanup_error).__name__,
+                    "error": str(cleanup_error)[:200],
+                },
+            )
 
 
 # =============================================================================
@@ -684,7 +685,8 @@ async def generate_summary(
     # A missing summary lets the browser show a retryable generation failure.
     if summary is None:
         logger.warning(
-            "summary.generation_failed source=%s duration_ms=%s",
+            "summary.generation_failed session_id=%s source=%s duration_ms=%s",
+            session_id,
             summary_context.source,
             duration_ms,
             extra={
@@ -756,144 +758,6 @@ async def roles_snapshot(session_id: str) -> dict:
         },
     )
     return response_payload
-
-
-def _is_provider_unreachable(exc: Exception) -> bool:
-    """Return True when an agent failure looks like the model endpoint being unreachable.
-
-    Used so the browser can surface a "model unavailable" warning with a fix hint
-    instead of silently degrading to the heuristic role classifier.
-
-    Args:
-        exc: Exception raised by the role/summary agent; type and message are inspected.
-
-    Returns:
-        True for connection/timeout style failures; False for other agent errors.
-    """
-    error_text = f"{type(exc).__name__}: {exc}".lower()
-    unreachable_markers = (
-        "connect",
-        "connection",
-        "refused",
-        "unreachable",
-        "timed out",
-        "timeout",
-        "max retries",
-        "failed to establish",
-        "name or service not known",
-        "nodename nor servname",
-    )
-    return any(marker in error_text for marker in unreachable_markers)
-
-
-def _run_role_inference(
-    session_id: str,
-    segments: list[dict[str, Any]],
-    transcript: str,
-) -> dict | None:
-    """Run the Strands role inference agent synchronously.
-
-    Called via run_in_executor() to avoid blocking the event loop.
-
-    Uses a 3-tier fallback strategy:
-      1. Configured LLM agent (Ollama or Bedrock)
-      2. Heuristic keyword-based classifier
-      3. None (graceful degradation)
-
-    Returns the role mapping result or None on failure.
-    """
-    # --- Tier 1: LLM agent ---
-    try:
-        from agents import MEDICAL_ROLE_INSTRUCTION, create_role_inference_agent
-
-        agent = create_role_inference_agent()
-        state = get_or_create_state(session_id)
-        history_len_before = len(state.mapping_history)
-        payload = {
-            "session_id": session_id,
-            "current_mapping": state.current_mapping,
-            "mapping_history": state.mapping_history[-5:],
-            "confirmed_overrides": state.confirmed_overrides,
-            "new_segments": segments,
-            "transcript_so_far": transcript,
-        }
-        agent_result = agent(f"{MEDICAL_ROLE_INSTRUCTION}\n\n{json.dumps(payload)}")
-        metric_fields = _agent_metric_fields(agent_result, "role-inference")
-
-        # Check if the assign_roles tool was invoked (it persists state directly)
-        if len(state.mapping_history) > history_len_before:
-            return {
-                "mapping": state.current_mapping,
-                "confidence": state.running_confidence,
-                "reasoning": "",
-                "_tool_invoked": True,
-                "path": "tool",
-                **metric_fields,
-            }
-
-        # Fallback: parse the agent's free-text JSON response
-        response_text = str(agent_result)
-        try:
-            parsed = json.loads(response_text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
-            else:
-                logger.warning(
-                    "role_inference.no_json_found",
-                    extra={
-                        "session_id": session_id,
-                        **metric_fields,
-                    },
-                )
-                return None
-        parsed["path"] = "freetext"
-        parsed.update(metric_fields)
-        return parsed
-    except Exception as e:
-        provider_unreachable = _is_provider_unreachable(e)
-        logger.warning(
-            "role_inference.agent_failed_falling_back_to_heuristic",
-            extra={
-                "session_id": session_id,
-                "error_type": type(e).__name__,
-                "error": str(e)[:200],
-                "provider_unreachable": provider_unreachable,
-            },
-        )
-
-    # --- Tier 2: Heuristic fallback ---
-    try:
-        heuristic_result = _heuristic_role_inference(segments, transcript)
-        if heuristic_result is not None:
-            heuristic_result["path"] = "heuristic"
-            # Carry the connectivity signal so the browser can warn even on degraded labels.
-            heuristic_result["provider_unreachable"] = provider_unreachable
-            logger.info(
-                "role_inference.heuristic_used",
-                extra={
-                    "session_id": session_id,
-                    "roles": len(heuristic_result.get("mapping", {})),
-                },
-            )
-            return heuristic_result
-    except Exception as e:
-        logger.error(
-            "role_inference.heuristic_failed",
-            extra={
-                "session_id": session_id,
-                "error_type": type(e).__name__,
-                "error": str(e)[:200],
-            },
-        )
-
-    # --- Tier 3: graceful degradation ---
-    # A confirmed connectivity failure still needs to reach the browser as a warning,
-    # even when the heuristic could not label speakers. An empty mapping is not applied.
-    if provider_unreachable:
-        return {"path": "none", "mapping": {}, "provider_unreachable": True}
-    return None
 
 
 @app.get("/health")

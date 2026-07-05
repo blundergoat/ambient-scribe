@@ -15,7 +15,6 @@
 const { test, expect } = require("@playwright/test");
 
 const APP_PORT = process.env.APP_PORT ?? "48082";
-const AGENT_PORT = process.env.AGENT_PORT ?? "48101";
 const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
@@ -57,6 +56,65 @@ test.describe("Transcript controls", () => {
     // Transcript rows still render for summary/review even without export controls.
     await expect(page.locator(".segment")).toHaveCount(3);
     await expect(page.locator("#downloadBtn")).toHaveCount(0);
+  });
+
+  test("quality event updates the dev state snapshot", async ({ page }) => {
+    await loadScribePage(page);
+
+    const savedRecord = await page.evaluate(() => {
+      const qualityRecord = {
+        session_id: "quality-browser-session",
+        chunks: 7,
+        error_count: 0,
+        final_confidence: 0.91,
+      };
+
+      // Mercure dispatches this after finalize so the dev State tab can show run health.
+      handleQualityRecord({ type: "quality", quality: qualityRecord });
+      devPanel.switchTab("state");
+      devPanel.refreshState();
+      return latestQualityRecord;
+    });
+
+    expect(savedRecord.session_id).toBe("quality-browser-session");
+    await expect(page.locator("#devStateSnapshot")).toContainText(
+      "latestQualityRecord"
+    );
+    await expect(page.locator("#devStateSnapshot")).toContainText(
+      "quality-browser-session"
+    );
+  });
+
+  test("manual role override stays visible and reaches FastAPI state", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 1);
+
+    const sessionId = await page.evaluate(() => CONFIG.sessionId);
+    const firstSpeakerLabel = page.locator(".segment__speaker").first();
+    const overrideSaved = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/scribe/${sessionId}/roles/override`) &&
+        response.request().method() === "POST" &&
+        response.ok()
+    );
+
+    // Clinician clicks an unknown speaker label once to mark it as Doctor.
+    await firstSpeakerLabel.click();
+    await overrideSaved;
+
+    await expect(firstSpeakerLabel).toContainText("Doctor");
+    await expect(firstSpeakerLabel.locator(".segment__override-icon")).toHaveCount(
+      1
+    );
+
+    const roleSnapshot = await page.evaluate(async (visibleSessionId) => {
+      const response = await fetch(`/scribe/${visibleSessionId}/roles`);
+      return response.json();
+    }, sessionId);
+
+    expect(roleSnapshot.mapping.spk_0).toBe("DOCTOR");
   });
 });
 
@@ -155,7 +213,8 @@ test.describe("Accessibility", () => {
     await expect(transcript).toHaveAttribute("aria-live", "polite");
 
     // Segment count should have role=status
-    const countContainer = page.locator("[role='status']");
+    const countContainer = page.locator("#segmentCount").locator("..");
+    await expect(countContainer).toHaveAttribute("role", "status");
     await expect(countContainer).toBeVisible();
 
     // sr-only announcement region should exist

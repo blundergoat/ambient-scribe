@@ -338,6 +338,7 @@ class DevPanel {
             segmentIndex,
             roleMapping,
             confidence,
+            latestQualityRecord,
             reconnectAttempts,
             wsState: transcriptionSocket ? SOCKET_STATE_LABELS[transcriptionSocket.readyState] : null,
             mercureConnected: streams?.isConnected ?? false,

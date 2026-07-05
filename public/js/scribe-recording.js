@@ -305,6 +305,7 @@ function resetVisitState() {
     roleMapping = {};
     previousRoleMapping = {};
     confidence = 0;
+    latestQualityRecord = null;
     startTime = null;
     manualOverrides.clear();
     segmentsBySpeaker.clear();
@@ -403,6 +404,7 @@ function subscribeToMercure() {
         segment: handleRawSegment,
         finalized: handleRawSegment,
         error: handleRawSegment,
+        quality: handleQualityRecord,
         role_update: handleRoleUpdate,
         system_error: handleRoleUpdate,
         summary: handleSummaryEvent,

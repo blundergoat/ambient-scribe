@@ -177,6 +177,17 @@ handleRoleUpdate = function handleRoleUpdateWithDevLogging(roleUpdateEvent) {
     originalHandleRoleUpdate(roleUpdateEvent);
 };
 
+const originalHandleQualityRecord = handleQualityRecord;
+/**
+ * Wraps quality events with dev logging before updating the State tab.
+ * Use so finalized-session health appears beside transcript and Mercure events.
+ */
+handleQualityRecord = function handleQualityRecordWithDevLogging(qualityEvent) {
+    devPanel.logRaw('quality', qualityEvent);
+    devPanel.logMercure(CONFIG.topicRaw, qualityEvent);
+    originalHandleQualityRecord(qualityEvent);
+};
+
 const originalEndReplay = endReplay;
 /**
  * Completes the active audio row after replay finishes.

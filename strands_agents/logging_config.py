@@ -13,6 +13,7 @@ import json
 import logging
 import logging.config
 import os
+import traceback
 from datetime import UTC, datetime
 from typing import Any
 
@@ -82,9 +83,11 @@ class JsonLoggingFormatter(logging.Formatter):
 
         event.update(extra_fields)
 
-        # Exceptions identify the failed operation without dumping stack traces into JSON logs.
-        if record.exc_info and "error_type" not in event:
-            event["error_type"] = record.exc_info[0].__name__
+        if record.exc_info:
+            # JSON is the dev default, so it must carry the same traceback a plain log would show.
+            if "error_type" not in event:
+                event["error_type"] = record.exc_info[0].__name__
+            event["traceback"] = "".join(traceback.format_exception(*record.exc_info))
 
         return json.dumps(event, ensure_ascii=False, default=_json_default)
 

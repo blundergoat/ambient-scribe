@@ -121,7 +121,10 @@ def configure_strands_telemetry() -> None:
         )
     except Exception as error:
         logger.warning(
-            "otel.configure_failed",
+            "otel.configure_failed %s: %s",
+            type(error).__name__,
+            str(error)[:200],
+            exc_info=error,
             extra={
                 "error_type": type(error).__name__,
                 "error": str(error)[:200],

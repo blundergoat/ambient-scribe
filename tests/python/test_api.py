@@ -32,6 +32,7 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
     api_server._mercure_event_ids.clear()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
@@ -42,6 +43,7 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
     api_server._mercure_event_ids.clear()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
@@ -116,6 +118,45 @@ class TestSessionHistory:
         data = response.json()
         assert data["session_id"] == TEST_SESSION_ID
         assert isinstance(data["mapping"], dict)
+
+    def test_roles_override_survives_later_agent_update(self, client, monkeypatch):
+        """Manual UI correction wins when a later role-agent update disagrees."""
+        from tools.assign_roles import apply_role_mapping_result, get_or_create_state
+
+        async def fake_publish(topic, data, event_id=None):
+            """Pretend Mercure accepted the manual override event."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "The clinician clicked this speaker label.",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        result = apply_role_mapping_result(
+            session_id=TEST_SESSION_ID,
+            segments=sessions.get_segments(TEST_SESSION_ID),
+            mapping={"spk_0": "DOCTOR"},
+            confidence=0.95,
+            reasoning="Agent disagreed after the user correction.",
+        )
+
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert result.mapping["spk_0"] == "PATIENT"
+        assert state.current_mapping["spk_0"] == "PATIENT"
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
 
 
 class TestTranscriptionEndpoints:
@@ -353,7 +394,7 @@ class TestSessionLifecycle:
         from tools.assign_roles import get_or_create_state, _session_states
 
         state = get_or_create_state("lifecycle-test")
-        state.update({"spk_0": "DOCTOR"}, 0.9)
+        state.did_update_mapping_detect_flip({"spk_0": "DOCTOR"}, 0.9)
         assert "lifecycle-test" in _session_states
 
         # Destroy
@@ -375,7 +416,9 @@ class TestSessionLifecycle:
             sid = f"cycle-{i}"
             session = TranscriptionSession(sid, pipeline)
             await lifecycle.register(sid, session)
-            get_or_create_state(sid).update({"spk_0": "DOCTOR"}, 0.8)
+            get_or_create_state(sid).did_update_mapping_detect_flip(
+                {"spk_0": "DOCTOR"}, 0.8
+            )
             await lifecycle.destroy(sid)
 
         assert lifecycle.active_count == 0
@@ -393,7 +436,9 @@ class TestSessionLifecycle:
         pipeline = NemoPipeline()
         session = TranscriptionSession("timeout-test", pipeline)
         await lifecycle.register("timeout-test", session)
-        get_or_create_state("timeout-test").update({"spk_0": "DOCTOR"}, 0.9)
+        get_or_create_state("timeout-test").did_update_mapping_detect_flip(
+            {"spk_0": "DOCTOR"}, 0.9
+        )
 
         closed_sessions: list[str] = []
 
@@ -430,7 +475,9 @@ class TestThreadSafety:
             try:
                 for _ in range(100):
                     state = get_or_create_state(session_id)
-                    state.update({"spk_0": "DOCTOR"}, 0.85)
+                    state.did_update_mapping_detect_flip(
+                        {"spk_0": "DOCTOR"}, 0.85
+                    )
             except Exception as e:
                 errors.append(e)
 

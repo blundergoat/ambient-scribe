@@ -8,9 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Transcript fragment readability** - live NeMo sessions now merge adjacent same-speaker word-sized fragments before publishing them, reducing clean-region fragment rates across PriMock57 without merging alternating-speaker ping-pong fragments or changing the browser payload shape.
+- **Transcript seam spike results** - recorded and rejected two M17 seam-residue mechanisms: NeMo word timestamps exposed the needed SDK surface but crashed the GPU path during live fixture eval, and raising the emission floor failed to reach zero seam repeats without risking short-utterance loss. The accepted runtime keeps the stable timestamp-free NeMo decode path and the previous 0.3s emission floor.
+- **Strands PHP client dev upgrade** - Composer now uses the requested `blundergoat/strands-php-client` `dev-dev` commit `98bd6598...`; Symfony Strands calls use the new response-observer hook to add body-safe response counts to `strands.client.call` logs, and the scribe client retries transient Python proxy failures (`429/502/503/504`) twice with a short backoff.
 - **Windowed transcript emission** - `TranscriptionSession` now transcribes only audio past an emission high-water mark (with a short context lead) instead of re-transcribing the whole session every chunk. Each stretch of speech reaches the browser exactly once, segments still forming at the buffer edge wait one chunk, the finalize step drains and publishes the held tail, and window speaker IDs are matched to the previous window so labels stay continuous. Fixes the duplicated/growing live transcript and removes the O(n²) GPU cost; measured on PriMock57 consultation-03 ground truth, 4-gram duplication dropped to 3%.
+- **M16 reduced quality scope** - the 0.3.0 diarization milestone now ships phantom containment, confidence observability, flip damping, and diagnostic ceilings while deferring true seam-stable speaker identity to a future milestone; the deep diagnosis showed the original ≥90% attribution target is capped by window-seam identity instability.
+- **Dyadic speaker containment** - NeMo sessions now cap visible speaker IDs to the configured consultation limit (`NEMO_SPEAKER_CAP`, default `2`) and merge stray window-local speaker IDs back into an established visible identity, with phantom-merge counts captured in session quality records.
 - **Dev workspace layout** - transcript, summary, and dev rail now split the width 5/4/3; Clinical Hints render above a collapsible Dev Panel in the right rail; the Demo Audio picker moved into the header (placeholder "Select demo audio", icon-button height, chevron icon, Upload WAV entry in its menu) and the left fixture panel was removed, as was the "Speaker labels corrected" toast.
 - **Ollama behind a compose profile** - the `ollama` service only starts under the `ollama` compose profile; `start-dev.sh` activates it when `ROLE_AGENT_MODEL_PROVIDER=ollama`, and Bedrock setups run a three-service stack. `check-ai-model.sh` gained a real Bedrock probe (inference-profile existence plus a one-token invoke) instead of echoing configuration.
+- **Agent log defaults** - the NeMo agent now defaults to JSON logs in Compose, with documented `jq` commands for tracing chunk timing, errors, and Mercure publishes by `session_id`; `LOG_FORMAT=console` remains available for plain interactive logs.
 - **Streaming demo replay** - demo audio now streams through the live transcription pipeline instead of a batch upload: the browser decodes the WAV to 16 kHz PCM, sends chunks over the same WebSocket as the microphone paced by the audible replay clock, and transcript rows arrive via Mercure exactly like a live visit. Removed the FastAPI `/session/{id}/replay` and `/session/{id}/replay/stop` endpoints, `replay_session.py`, and the Symfony replay proxy routes; this also retires the PHP upload-size and full-file NeMo GPU-memory footguns for demo audio.
 - **Medical-only agent behavior** - removed Python-side mode selection for role inference, summaries, replay, and WebSocket ingest so the agent lane always uses DOCTOR/PATIENT role mapping and medical SOAP summaries.
 - **Medical-only scribe UI** - removed the browser mode selector, stored mode preference, and mode query parameters from live WebSocket and replay requests.
@@ -40,6 +46,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Session quality records** - finalized WebSocket sessions now emit a `session.quality` log/event with chunk counts, window and inference percentiles, held/emitted segment counts, role confidence/flip counters, error count, and speaker-stability counters; the same JSON row is appended under the agent's gitignored `var/quality/sessions.jsonl`, and the dev State tab exposes the latest record.
+- **Fixture eval runner** - added `scripts/eval-fixtures.sh` to stream PriMock57 WAV fixtures through the live WebSocket path, pull history and `session.quality`, run `scripts/transcript-quality.py`, append `var/quality/trend.jsonl`, and print a compact current-vs-previous report for M16/M17/M19 verification.
+- **Transcript attribution scoring** - extended `scripts/transcript-quality.py` and the fixture trend rows with TextGrid-based speaker attribution, non-overlap attribution, residual phantom-speaker counts, and role-flip counts for diarization quality decisions.
+- **Role attribution diagnostics** - added speaker oracle accuracy, role-mapping gap metrics, and per-session role timeline artifacts so fixture runs show whether wrong transcript labels come from diarization identity mixing, role mapping, fallback, or suppressed flips.
+- **Honest role-mapping ceiling and flip-counter cross-check** - `scripts/transcript-quality.py` now reports the best valid one-DOCTOR/one-PATIENT mapping accuracy and the real `role mapping headroom` (the free-role oracle overstates recoverable accuracy when diarization mixes one voice across both speaker IDs), and `scripts/role-timeline.py --quality-json` appends a `role_timeline.quality_check` row because `session.quality` flip counters are snapshotted at disconnect while late role decisions land only in the logs; `scripts/eval-fixtures.sh` records both and warns on counter mismatch.
+- **Transcript word-level quality metrics** - `scripts/transcript-quality.py` now reports WER with substitution/insertion/deletion counts, clean-vs-overlap WER, segment density, fragment rates, and seam re-read counts; `scripts/eval-fixtures.sh` records those metrics in trend rows so M17 accuracy/readability changes can be accepted or reverted by corpus numbers.
 - **PriMock57 ground-truth transcripts** - added `scripts/download-primock57-transcripts.sh` to fetch the CC BY 4.0 Praat TextGrid transcripts paired by name with each demo consultation WAV, enabling transcription-quality measurement against a reference.
 - **Summary failure guidance** - when summary generation fails, the panel now shows an actionable fix note and a page-level warning banner ("AI model unavailable … See README_STACK.md") pointing at Ollama/Bedrock reachability, instead of a bare "Summary generation failed" message; the banner clears once a summary renders.
 - **Live model-unavailable warning** - when the role/summary model is unreachable, the agent publishes a one-time `system_error` on the session roles topic so the browser shows the warning banner during the consultation, not only at summary time; it clears once a summary renders.
@@ -56,6 +68,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Role-agent tool payload size** - shrank the Strands `assign_roles` contract so the
+  model passes only session ID, mapping, confidence, and terse reasoning while transcript
+  rows stay in server-side pending state; role updates still publish the same browser
+  `attributed_segments` payload, role-agent input now uses capped per-speaker evidence
+  instead of `transcript_so_far`, and `session.quality` records role truncation events.
+- **Suppressed role-flip handling** - a damped `assign_roles` flip now counts as a successful
+  tool decision, so the role-agent runtime keeps the established DOCTOR/PATIENT mapping
+  instead of falling through to the keyword fallback and applying the suppressed relabel.
+- **Agent session isolation and role overrides** - role and summary Strands agents are now
+  created per call instead of cached as singleton conversation objects, and server-side role
+  mapping now preserves a user's manual speaker correction over later agent proposals.
+- **Manual role override persistence** - speaker-label clicks now post through the same-origin
+  Symfony `/scribe/{sessionId}/roles/override` proxy instead of a browser-to-FastAPI CORS
+  request, so the visible correction is also saved in the server role state.
+- **Structured role and summary agent contracts** - role inference now accepts only the
+  compact `assign_roles` tool path and falls back to the keyword classifier when the tool is
+  not invoked; summary generation now uses a Pydantic structured-output schema, drops the
+  unused `duration_seconds` summary field, and has independent `SUMMARY_AGENT_*` model and
+  token settings.
+- **Python diagnostic log lines** - warning and error logs in the agent now put session IDs, error types, and error text into the plain message line, while exception-backed paths include tracebacks. Added an observability guard so `logger.error("event", extra={...})` regressions fail in pytest instead of hiding details in Docker logs.
+- **Strands callback noise** - role and summary agents now pass the SDK's explicit null callback handler so model reasoning, tool banners, and streamed summary prose do not print into the container log stream.
 - **Ollama host unreachable via stale `.env`** - the agent's `OLLAMA_HOST` is now pinned to the in-network `http://ollama:11434` in `docker-compose.yml` and is no longer overridable by `.env`. A stale `.env` value of `http://host.docker.internal:11434` (unreachable from the agent on WSL2) was silently making every summary 502 and forcing role inference onto the weak keyword heuristic across container recreates.
 - **Demo Audio panel gap** - the demo-audio panel is now content-height (grid `auto` row) so the Upload WAV button sits directly under the selector and the Dev Panel fills the remaining rail, instead of a fixed 42vh panel with a large empty gap.
 - **Consultation viewport layout** - the scribe page now fits the viewport height with the transcript and summary panels scrolling internally, instead of growing past the viewport and producing a page-level vertical scrollbar.

@@ -24,5 +24,9 @@ strands:
             endpoint: '%env(AGENT_ENDPOINT)%'
             timeout: 120
             connect_timeout: 30
+            # Transient Python proxy failures retry before the browser sees a history/role outage.
+            max_retries: 2
+            retry_delay_ms: 250
+            retryable_status_codes: [429, 502, 503, 504]
             auth:
                 driver: 'null'

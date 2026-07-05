@@ -51,7 +51,9 @@ class TestCleanupRace:
             sid = f"clean-{i}"
             session = TranscriptionSession(sid, pipeline)
             await lifecycle.register(sid, session)
-            get_or_create_state(sid).update({"spk_0": "PATIENT"}, 0.8)
+            get_or_create_state(sid).did_update_mapping_detect_flip(
+                {"spk_0": "PATIENT"}, 0.8
+            )
 
             await lifecycle.destroy(sid)
 

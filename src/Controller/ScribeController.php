@@ -429,6 +429,46 @@ class ScribeController extends AbstractController
     }
 
     /**
+     * Proxies a manual speaker role correction to FastAPI from the browser origin.
+     *
+     * Use when a clinician clicks a transcript speaker label. The visible label changes immediately,
+     * and this route persists the correction so later role-agent updates cannot overwrite it.
+     *
+     * @param string $sessionId Browser session UUID; invalid values mean no role state can be corrected.
+     * @param Request $request JSON body with speaker_id and role; empty body lets FastAPI return validation JSON.
+     * @return JsonResponse Persisted role mapping; 503 means the page keeps only the local visible correction.
+     */
+    #[Route('/scribe/{sessionId}/roles/override', name: 'scribe_roles_override_proxy', methods: ['POST'])]
+    public function rolesOverride(string $sessionId, Request $request): JsonResponse
+    {
+        // Invalid sessions cannot map to the role state FastAPI protects for the user.
+        if (!Uuid::isValid($sessionId)) {
+            return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
+        }
+
+        try {
+            $agentResponse = $this->httpClient->request(
+                'POST',
+                $this->agentUrl("/session/{$sessionId}/roles/override"),
+                [
+                    'headers' => [
+                        'Accept' => 'application/json',
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => $request->getContent(),
+                    'timeout' => 8,
+                ],
+            );
+
+            return $this->jsonAgentResponse($agentResponse, 'Role override failed');
+        } catch (TransportExceptionInterface $e) {
+            return $this->json([
+                'detail' => 'Role override service unavailable: ' . $e->getMessage(),
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+    }
+
+    /**
      * Sends users from the bare app URL into the clinician scribe workspace.
      *
      * @return Response Redirect response that lands the browser on `/scribe`.

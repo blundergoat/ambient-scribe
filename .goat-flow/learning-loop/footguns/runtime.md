@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-04
+last_reviewed: 2026-07-05
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -116,7 +116,7 @@ last_reviewed: 2026-07-04
 
 - **Files:** `strands_agents/agents/transcription_agent.py` (search: "MEDICAL_ROLE_PROMPT")
 - **Files:** `strands_agents/agents/summary_agent.py` (search: "MEDICAL_SUMMARY_PROMPT")
-- **Files:** `strands_agents/api/server.py` (search: "MEDICAL_ROLE_INSTRUCTION")
+- **Files:** `strands_agents/agents/transcription_agent.py` (search: "MEDICAL_ROLE_INSTRUCTION")
 - **What breaks:** A one-value migration that keeps `PROMPTS.get(mode, PROMPTS["general"])` can still crash when the fallback key is deleted. The default argument is evaluated before `.get()` returns, so deleting `["general"]` without flattening the map reintroduces a `KeyError`.
 - **Evidence:** Before 0.3.0 the role and summary factories used mode prompt dictionaries with a hard-indexed `"general"` fallback. 0.3.0 removed the trap by replacing those dictionaries with medical constants and argless factories.
 - **Prevention:** When a user-facing selector collapses to one supported behavior, collapse the data structure to a named constant and remove the selector parameter at every call site.

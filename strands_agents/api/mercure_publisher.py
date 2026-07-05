@@ -91,7 +91,10 @@ async def did_publish_mercure_event(
     # Without a publisher token, the browser cannot receive transcript or role events.
     if token == "":
         logger.error(
-            "mercure.publish.skipped",
+            "mercure.publish.skipped session_id=%s reason=%s topic=%s",
+            session_id,
+            "no JWT configured",
+            topic,
             extra={
                 "session_id": session_id,
                 "topic": topic,
@@ -134,25 +137,39 @@ async def did_publish_mercure_event(
             if attempt < MERCURE_PUBLISH_MAX_RETRIES - 1:
                 backoff = MERCURE_PUBLISH_BACKOFF_SECONDS * (2**attempt)
                 logger.warning(
-                    "mercure.publish.retrying",
+                    "mercure.publish.retrying session_id=%s attempt=%s %s: %s",
+                    session_id,
+                    attempt + 1,
+                    type(error).__name__,
+                    str(error)[:200],
+                    exc_info=error,
                     extra={
                         "session_id": session_id,
                         "topic": topic,
                         "attempt": attempt + 1,
                         "backoff_seconds": backoff,
-                        "error": str(error),
+                        "error_type": type(error).__name__,
+                        "error": str(error)[:200],
                     },
                 )
                 await asyncio.sleep(backoff)
 
+    last_error_type = type(last_error).__name__ if last_error is not None else "None"
+    last_error_text = str(last_error)[:200] if last_error is not None else "no error"
     logger.error(
-        "mercure.publish.failed",
+        "mercure.publish.failed session_id=%s attempts=%s %s: %s",
+        session_id,
+        MERCURE_PUBLISH_MAX_RETRIES,
+        last_error_type,
+        last_error_text,
+        exc_info=last_error,
         extra={
             "session_id": session_id,
             "topic": topic,
             "attempts": MERCURE_PUBLISH_MAX_RETRIES,
             "duration_ms": int((time.time() - publish_started_at) * 1000),
-            "error": str(last_error),
+            "error_type": last_error_type,
+            "error": last_error_text,
         },
     )
     return False

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import api.server as api_server
 from agents import MEDICAL_SUMMARY_PROMPT
 from api.server import app, sessions
-from api.summary_generation import summary_generation_prompt
+from api.summary_generation import SessionSummaryOutput, summary_generation_prompt
 
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000099"
 
@@ -29,8 +29,9 @@ class TestSummaryPrompts:
         assert "Assessment" in MEDICAL_SUMMARY_PROMPT
         assert "Plan" in MEDICAL_SUMMARY_PROMPT
 
-    def test_medical_prompt_requires_json(self):
-        assert "valid JSON" in MEDICAL_SUMMARY_PROMPT
+    def test_medical_prompt_requires_structured_schema(self):
+        """Summary prompt asks for the schema the browser can render."""
+        assert "structured summary schema" in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_requires_citations(self):
         assert "[" in MEDICAL_SUMMARY_PROMPT and "MM:SS" in MEDICAL_SUMMARY_PROMPT
@@ -76,7 +77,6 @@ class TestSummaryEndpoint:
                 {"heading": "Subjective", "content": "Patient reports chest pain."},
             ],
             "key_points": ["Chest pain reported"],
-            "duration_seconds": 4.0,
         }
 
         with patch("api.server._run_summary_generation", return_value=mock_summary):
@@ -250,30 +250,33 @@ class TestRunSummaryGeneration:
             result = api_server._run_summary_generation("sid", "transcript")
         assert result is None
 
-    def test_parses_json_from_agent_response(self):
+    def test_uses_structured_output_from_agent_response(self):
+        """Validated summary output becomes the browser payload."""
         mock_agent = MagicMock()
-        mock_agent.return_value = '{"title": "Test", "sections": [], "key_points": []}'
-
-        with patch("agents.create_summary_agent", return_value=mock_agent):
-            result = api_server._run_summary_generation("sid", "transcript")
-
-        assert result["title"] == "Test"
-
-    def test_extracts_json_from_preamble(self):
-        """Agent may include text before JSON - regex fallback should work."""
-        mock_agent = MagicMock()
-        mock_agent.return_value = (
-            'Here is the summary:\n{"title": "Extracted", "sections": []}'
+        mock_agent.return_value.structured_output = SessionSummaryOutput(
+            title="Test", sections=[], key_points=[]
         )
 
         with patch("agents.create_summary_agent", return_value=mock_agent):
             result = api_server._run_summary_generation("sid", "transcript")
 
-        assert result["title"] == "Extracted"
+        assert result["title"] == "Test"
+        assert mock_agent.call_args.kwargs["structured_output_model"] is SessionSummaryOutput
 
-    def test_returns_none_on_no_json(self):
+    def test_returns_none_without_structured_output(self):
+        """Unstructured model text should make the browser show a retryable failure."""
         mock_agent = MagicMock()
-        mock_agent.return_value = "I cannot generate a summary for this transcript."
+        mock_agent.return_value.structured_output = None
+
+        with patch("agents.create_summary_agent", return_value=mock_agent):
+            result = api_server._run_summary_generation("sid", "transcript")
+
+        assert result is None
+
+    def test_returns_none_on_plain_text_output(self):
+        """Legacy plain text output is rejected now that the schema is enforced."""
+        mock_agent = MagicMock()
+        mock_agent.return_value.structured_output = "I cannot generate a summary."
 
         with patch("agents.create_summary_agent", return_value=mock_agent):
             result = api_server._run_summary_generation("sid", "transcript")
