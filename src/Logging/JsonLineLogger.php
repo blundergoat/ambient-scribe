@@ -1,13 +1,5 @@
 <?php
 
-/**
- * JSON-line PSR logger for Ambient Scribe process events.
- *
- * Symfony and the Strands PHP client use this logger when a clinician opens `/scribe`
- * and the app proxies history or role requests to Python. It writes one canonical
- * JSON object per line so `scripts/analyze-logs.py` can join PHP and FastAPI events.
- */
-
 declare(strict_types=1);
 
 namespace App\Logging;
@@ -25,13 +17,13 @@ final class JsonLineLogger extends AbstractLogger
 {
     /** PSR level order used to hide debug SDK chatter unless the operator opts in. */
     private const LEVEL_PRIORITY = [
-        LogLevel::DEBUG => 10,
-        LogLevel::INFO => 20,
-        LogLevel::NOTICE => 25,
-        LogLevel::WARNING => 30,
-        LogLevel::ERROR => 40,
-        LogLevel::CRITICAL => 50,
-        LogLevel::ALERT => 60,
+        LogLevel::DEBUG     => 10,
+        LogLevel::INFO      => 20,
+        LogLevel::NOTICE    => 25,
+        LogLevel::WARNING   => 30,
+        LogLevel::ERROR     => 40,
+        LogLevel::CRITICAL  => 50,
+        LogLevel::ALERT     => 60,
         LogLevel::EMERGENCY => 70,
     ];
 
@@ -41,23 +33,24 @@ final class JsonLineLogger extends AbstractLogger
     /**
      * Creates a logger that writes JSON lines to stderr or a test stream.
      *
-     * @param string $streamUri Destination URI; empty would make browser-proxy logs disappear.
+     * @param string      $streamUri    Destination URI; empty would make browser-proxy logs disappear.
      * @param string|null $minimumLevel Lowest PSR level to emit; null reads LOG_LEVEL and defaults to info.
      */
     public function __construct(
         private readonly string $streamUri = 'php://stderr',
-        ?string $minimumLevel = null,
+        ?string                 $minimumLevel = null,
     ) {
-        $envLevel = getenv('LOG_LEVEL');
+        $envLevel           = getenv('LOG_LEVEL');
         $this->minimumLevel = strtolower($minimumLevel ?? ($envLevel !== false ? $envLevel : LogLevel::INFO));
     }
 
     /**
      * Writes one canonical JSON event if the level passes the configured threshold.
      *
-     * @param string $level PSR level; unknown values are treated as info so app logs still appear.
-     * @param string|\Stringable $message Stable event slug, for example `strands.client.call`.
+     * @param string               $level   PSR level; unknown values are treated as info so app logs still appear.
+     * @param string|\Stringable   $message Stable event slug, for example `strands.client.call`.
      * @param array<string, mixed> $context Extra fields; empty means the line is process-scoped only.
+     *
      * @return void No payload; the log line is written to stderr or the configured test stream.
      */
     public function log($level, string|\Stringable $message, array $context = []): void
@@ -69,9 +62,9 @@ final class JsonLineLogger extends AbstractLogger
         }
 
         $event = [
-            'ts' => gmdate('c'),
-            'level' => $normalizedLevel,
-            'event' => (string) $message,
+            'ts'     => gmdate('c'),
+            'level'  => $normalizedLevel,
+            'event'  => (string)$message,
             'logger' => 'php',
         ];
 
@@ -87,9 +80,9 @@ final class JsonLineLogger extends AbstractLogger
             unset($context['correlation_id']);
         }
 
-        $event += $this->sanitizeContext($context);
+        $event    += $this->sanitizeContext($context);
         $jsonLine = json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        $stream = fopen($this->streamUri, 'ab');
+        $stream   = fopen($this->streamUri, 'ab');
 
         // If stderr is unavailable, failing open keeps the clinician page from crashing.
         if ($stream === false) {
@@ -104,11 +97,12 @@ final class JsonLineLogger extends AbstractLogger
      * Checks the operator's LOG_LEVEL threshold for a single event.
      *
      * @param string $level Normalized PSR level; empty behaves like info for visibility.
+     *
      * @return bool True when the event should be visible in process logs.
      */
     private function shouldEmit(string $level): bool
     {
-        $eventPriority = self::LEVEL_PRIORITY[$level] ?? self::LEVEL_PRIORITY[LogLevel::INFO];
+        $eventPriority   = self::LEVEL_PRIORITY[$level] ?? self::LEVEL_PRIORITY[LogLevel::INFO];
         $minimumPriority = self::LEVEL_PRIORITY[$this->minimumLevel] ?? self::LEVEL_PRIORITY[LogLevel::INFO];
 
         return $eventPriority >= $minimumPriority;
@@ -118,6 +112,7 @@ final class JsonLineLogger extends AbstractLogger
      * Sanitizes log context so JSON lines stay bounded and body-free.
      *
      * @param array<string, mixed> $context Extra fields from app or SDK logs; empty means no detail fields.
+     *
      * @return array<string, mixed> JSON-ready context for one process event.
      */
     private function sanitizeContext(array $context): array
@@ -126,7 +121,7 @@ final class JsonLineLogger extends AbstractLogger
 
         // Every context key becomes a stable JSON attribute in the process report.
         foreach ($context as $key => $value) {
-            $sanitized[(string) $key] = $this->sanitizeValue($value);
+            $sanitized[(string)$key] = $this->sanitizeValue($value);
         }
 
         return $sanitized;
@@ -136,6 +131,7 @@ final class JsonLineLogger extends AbstractLogger
      * Converts arbitrary context values into safe JSON scalars or arrays.
      *
      * @param mixed $value Context value; null means the field is present but unknown.
+     *
      * @return mixed JSON-ready value; unsupported objects become class names.
      */
     private function sanitizeValue(mixed $value): mixed
@@ -149,7 +145,7 @@ final class JsonLineLogger extends AbstractLogger
         if ($value instanceof \Throwable) {
             return [
                 'error_type' => $value::class,
-                'error' => substr($value->getMessage(), 0, 200),
+                'error'      => substr($value->getMessage(), 0, 200),
             ];
         }
 
@@ -158,7 +154,7 @@ final class JsonLineLogger extends AbstractLogger
             $nested = [];
             // Nested context still becomes flat JSON-safe evidence for the same browser action.
             foreach ($value as $nestedKey => $nestedValue) {
-                $nested[(string) $nestedKey] = $this->sanitizeValue($nestedValue);
+                $nested[(string)$nestedKey] = $this->sanitizeValue($nestedValue);
             }
 
             return $nested;

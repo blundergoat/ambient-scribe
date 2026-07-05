@@ -17,6 +17,10 @@ use App\Observability\StrandsClientTelemetry;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LogLevel;
 use StrandsPhpClient\Http\ResponseObserver;
+use StrandsPhpClient\Response\AgentResponse;
+use StrandsPhpClient\Response\Usage;
+use StrandsPhpClient\Streaming\StreamResult;
+use StrandsPhpClient\Streaming\StreamSseSummary;
 
 /**
  * Verifies correlation injection and canonical call logging for Strands client requests.
@@ -94,23 +98,91 @@ final class StrandsClientTelemetryTest extends TestCase
         $telemetry->afterPostJson($url, $this->historyResponseWithHiddenText(), 12.0);
         $telemetry->afterResponse($url, 200, 12.0);
 
-        $event = $this->readFirstJsonLine($logFile);
-        self::assertSame([
+        $this->assertFirstLogLineContains($logFile, [
             'response_type' => 'post_json',
             'response_field_count' => 4,
+            'response_duration_ms' => 12,
             'segments' => 2,
             'roles' => 1,
             'confidence' => 0.876,
             'has_error' => false,
-            'has_text' => false,
-        ], [
-            'response_type' => $event['response_type'],
-            'response_field_count' => $event['response_field_count'],
-            'segments' => $event['segments'],
-            'roles' => $event['roles'],
-            'confidence' => $event['confidence'],
-            'has_error' => $event['has_error'],
-            'has_text' => str_contains((string) json_encode($event, JSON_THROW_ON_ERROR), 'hidden transcript text'),
+        ], 'hidden transcript text');
+    }
+
+    /**
+     * Adds safe invoke metadata to the proxy log without agent answer text.
+     *
+     * @return void - No payload; failure means sync agent support logs may expose answer text.
+     */
+    public function testInvokeObserverAddsSafeResponseSummary(): void
+    {
+        $logFile = $this->temporaryLogFile();
+        $telemetry = new StrandsClientTelemetry(new JsonLineLogger($logFile, LogLevel::DEBUG));
+        $url = 'http://agent/session/session-abc/invoke';
+
+        $telemetry->beforeRequest($url, ['X-Correlation-ID' => 'corr-invoke'], '{}');
+        $telemetry->afterInvoke($url, $this->hiddenInvokeResponse(), 6.789);
+        $telemetry->afterResponse($url, 200, 6.789);
+
+        $this->assertFirstLogLineContains($logFile, [
+            'response_type' => 'invoke',
+            'response_duration_ms' => 6.79,
+            'tokens_total' => 5,
+            'tools_used' => 1,
+            'interrupted' => false,
+        ], 'hidden invoke text');
+    }
+
+    /**
+     * Adds safe typed-stream metadata to the proxy log without streamed text.
+     *
+     * @return void - No payload; failure means stream support logs may expose answer text.
+     */
+    public function testStreamObserverAddsSafeResponseSummary(): void
+    {
+        $logFile = $this->temporaryLogFile();
+        $telemetry = new StrandsClientTelemetry(new JsonLineLogger($logFile, LogLevel::DEBUG));
+        $url = 'http://agent/session/session-abc/stream';
+
+        $telemetry->beforeRequest($url, ['X-Correlation-ID' => 'corr-stream'], '{}');
+        $telemetry->afterStream($url, $this->hiddenStreamResult(), 8.123);
+        $telemetry->afterResponse($url, 200, 8.123);
+
+        $this->assertFirstLogLineContains($logFile, [
+            'response_type' => 'stream',
+            'response_duration_ms' => 8.12,
+            'tokens_total' => 11,
+            'stream_events' => 5,
+            'stream_text_events' => 2,
+            'stream_cancelled' => true,
+            'interrupted' => false,
+        ], 'hidden stream text');
+    }
+
+    /**
+     * Adds safe raw-SSE stream metadata to the proxy log.
+     *
+     * @return void - No payload; failure means role stream support loses terminal status.
+     */
+    public function testStreamSseObserverAddsSafeResponseSummary(): void
+    {
+        $logFile = $this->temporaryLogFile();
+        $telemetry = new StrandsClientTelemetry(new JsonLineLogger($logFile, LogLevel::DEBUG));
+        $url = 'http://agent/session/session-abc/roles/stream';
+
+        $telemetry->beforeRequest($url, ['X-Correlation-ID' => 'corr-sse'], '{}');
+        $telemetry->afterStreamSse($url, $this->roleStreamSummary(), 9.555);
+        $telemetry->afterResponse($url, 200, 9.555);
+
+        $this->assertFirstLogLineContains($logFile, [
+            'response_type' => 'stream_sse',
+            'response_duration_ms' => 9.56,
+            'tokens_total' => 3,
+            'stream_events' => 4,
+            'stream_text_events' => 2,
+            'stream_cancelled' => false,
+            'stream_terminal_type' => 'complete',
+            'stop_reason' => 'end_turn',
         ]);
     }
 
@@ -142,6 +214,84 @@ final class StrandsClientTelemetryTest extends TestCase
             'mapping' => ['spk_0' => 'DOCTOR'],
             'confidence' => 0.8764,
         ];
+    }
+
+    /**
+     * Builds a hidden invoke response like a future summary call may return.
+     *
+     * @return AgentResponse - Response with hidden answer text; empty would not prove redaction.
+     */
+    private function hiddenInvokeResponse(): AgentResponse
+    {
+        return new AgentResponse(
+            text: 'hidden invoke text',
+            usage: new Usage(inputTokens: 2, outputTokens: 3),
+            toolsUsed: [['name' => 'lookup_clinical_context']],
+        );
+    }
+
+    /**
+     * Builds a hidden typed stream response like a future stream call may return.
+     *
+     * @return StreamResult - Stream with hidden text; empty would not prove redaction.
+     */
+    private function hiddenStreamResult(): StreamResult
+    {
+        return new StreamResult(
+            text: 'hidden stream text',
+            usage: new Usage(totalTokens: 11),
+            textEvents: 2,
+            totalEvents: 5,
+            cancelled: true,
+        );
+    }
+
+    /**
+     * Builds a role-SSE summary like the browser receives during speaker labeling.
+     *
+     * @return StreamSseSummary - Sanitized stream counts; zero events would not prove logging.
+     */
+    private function roleStreamSummary(): StreamSseSummary
+    {
+        return new StreamSseSummary(
+            totalEvents: 4,
+            textEvents: 2,
+            terminalType: 'complete',
+            usage: new Usage(inputTokens: 1, outputTokens: 2),
+            stopReason: 'end_turn',
+        );
+    }
+
+    /**
+     * Checks selected support-log fields and optional hidden text redaction.
+     *
+     * @param string $logFile - JSON log file; empty means no support event was written.
+     * @param array<string, mixed> $expectedFields - Fields the UI support flow needs; empty is not useful.
+     * @param string|null $hiddenText - Text that must not appear; null means no redaction sample applies.
+     * @return void - No payload; failure means support logs lost safe fields or exposed hidden text.
+     */
+    private function assertFirstLogLineContains(
+        string $logFile,
+        array $expectedFields,
+        ?string $hiddenText = null,
+    ): void {
+        $event = $this->readFirstJsonLine($logFile);
+        $actualFields = [];
+
+        // Each expected field is copied by name so missing support fields fail clearly.
+        foreach ($expectedFields as $fieldName => $expectedValue) {
+            self::assertArrayHasKey($fieldName, $event);
+            $actualFields[$fieldName] = $event[$fieldName];
+        }
+
+        self::assertSame($expectedFields, $actualFields);
+
+        // Null hidden text means this scenario has no PHI-style redaction sample.
+        if ($hiddenText === null) {
+            return;
+        }
+
+        self::assertFalse(str_contains((string) json_encode($event, JSON_THROW_ON_ERROR), $hiddenText));
     }
 
     /**

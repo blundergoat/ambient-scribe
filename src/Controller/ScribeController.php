@@ -1,14 +1,5 @@
 <?php
 
-/**
- * Symfony entry point for the clinician-facing scribe page.
- *
- * The browser reaches this file when a user opens `/scribe`, requests saved transcript history,
- * asks for the latest role labels, or selects a dev-only demo audio fixture.
- * Microphone and demo replay audio both stream on the browser-to-Python WebSocket path.
- * Keep this file focused on page setup and lightweight UI helper responses.
- */
-
 declare(strict_types=1);
 
 namespace App\Controller;
@@ -45,20 +36,20 @@ class ScribeController extends AbstractController
     /**
      * Wires the page controller to the Python client, role snapshot service, and UI warning logger.
      *
-     * @param StrandsClient $strandsClient Sends history requests to Python; no live audio is routed here.
+     * @param StrandsClient        $strandsClient        Sends history requests to Python; no live audio is routed here.
      * @param RoleInferenceService $roleInferenceService Reads the role snapshot the UI can poll after recording.
-     * @param LoggerInterface $logger Records fixture issues that only affect the developer audio picker.
-     * @param HttpClientInterface $httpClient Proxies browser summary and model-health actions to FastAPI.
-     * @param string $agentEndpoint FastAPI base URL; empty means summaries cannot be proxied.
+     * @param LoggerInterface      $logger               Records fixture issues that only affect the developer audio picker.
+     * @param HttpClientInterface  $httpClient           Proxies browser summary and model-health actions to FastAPI.
+     * @param string               $agentEndpoint        FastAPI base URL; empty means summaries cannot be proxied.
      */
     public function __construct(
         #[Autowire(service: 'strands.client.scribe')]
-        private readonly StrandsClient $strandsClient,
+        private readonly StrandsClient        $strandsClient,
         private readonly RoleInferenceService $roleInferenceService,
-        private readonly LoggerInterface $logger,
-        private readonly HttpClientInterface $httpClient,
+        private readonly LoggerInterface      $logger,
+        private readonly HttpClientInterface  $httpClient,
         #[Autowire(env: 'AGENT_ENDPOINT')]
-        private readonly string $agentEndpoint,
+        private readonly string               $agentEndpoint,
     ) {
     }
 
@@ -70,30 +61,30 @@ class ScribeController extends AbstractController
     #[Route('/scribe', name: 'scribe_index', methods: ['GET'])]
     public function index(): Response
     {
-        $sessionId = Uuid::v4()->toRfc4122();
-        $wsUrl = $this->getParameter('nemo_websocket_url');
+        $sessionId  = Uuid::v4()->toRfc4122();
+        $wsUrl      = $this->getParameter('nemo_websocket_url');
         $mercureUrl = $this->getParameter('mercure_url');
 
         $devPanelEnabled = $this->getParameter('kernel.environment') === 'dev';
-        $audioFixtures = [];
+        $audioFixtures   = [];
         // Hit when a developer opens `/scribe` locally and needs generated WAV replay choices.
         if ($devPanelEnabled) {
             /** @var string $projectDir Project root lets the dev panel find audio fixtures; absent means no picker data. */
-            $projectDir = $this->getParameter('kernel.project_dir');
+            $projectDir    = $this->getParameter('kernel.project_dir');
             $audioFixtures = $this->loadDemoAudioFixtures($projectDir);
         }
 
         return $this->render('scribe/index.html.twig', [
-            'session_id' => $sessionId,
-            'ws_url' => $wsUrl,
-            'mercure_url' => $mercureUrl,
-            'mercure_topic_raw' => "scribe/session/{$sessionId}/raw",
-            'mercure_topic_roles' => "scribe/session/{$sessionId}/roles",
+            'session_id'            => $sessionId,
+            'ws_url'                => $wsUrl,
+            'mercure_url'           => $mercureUrl,
+            'mercure_topic_raw'     => "scribe/session/{$sessionId}/raw",
+            'mercure_topic_roles'   => "scribe/session/{$sessionId}/roles",
             'mercure_topic_summary' => "scribe/session/{$sessionId}/summary",
-            'mercure_topic_hints' => "scribe/session/{$sessionId}/hints",
-            'enable_role_updates' => true,
-            'dev_panel_enabled' => $devPanelEnabled,
-            'audio_fixtures' => $audioFixtures,
+            'mercure_topic_hints'   => "scribe/session/{$sessionId}/hints",
+            'enable_role_updates'   => true,
+            'dev_panel_enabled'     => $devPanelEnabled,
+            'audio_fixtures'        => $audioFixtures,
         ]);
     }
 
@@ -104,6 +95,7 @@ class ScribeController extends AbstractController
      * before Symfony sees them. The browser calls it after a user clicks a Demo Audio row.
      *
      * @param Request $request Browser request; missing filename means no row can be replayed.
+     *
      * @return Response WAV response; 404 means the picker cannot replay that file.
      */
     #[Route('/scribe/demo-audio', name: 'scribe_demo_audio', methods: ['GET'])]
@@ -126,6 +118,7 @@ class ScribeController extends AbstractController
      * Empty, unsafe, unknown, or missing files all return 404 from the user's perspective.
      *
      * @param string $filename Fixture filename selected in the UI; empty or unsafe names return 404.
+     *
      * @return Response WAV response; 404 means the selected audio cannot be replayed.
      */
     private function serveDemoAudioFixture(string $filename): Response
@@ -141,8 +134,8 @@ class ScribeController extends AbstractController
         }
 
         /** @var string $projectDir Project root used to resolve checked-in fixture metadata. */
-        $projectDir = $this->getParameter('kernel.project_dir');
-        $audioFixtures = $this->loadDemoAudioFixtures($projectDir);
+        $projectDir       = $this->getParameter('kernel.project_dir');
+        $audioFixtures    = $this->loadDemoAudioFixtures($projectDir);
         $allowedFilenames = array_column($audioFixtures, 'filename');
 
         // Unknown files should not let the browser read arbitrary project paths.
@@ -167,11 +160,12 @@ class ScribeController extends AbstractController
      * Loads generated demo WAV metadata for the left-side dev audio picker.
      *
      * @param string $projectDir Project root; empty or missing fixtures produce no picker rows.
+     *
      * @return list<array<string, mixed>> Audio rows; empty means the panel shows no generated files.
      */
     private function loadDemoAudioFixtures(string $projectDir): array
     {
-        $manifestPath = $projectDir . '/tests/fixtures/audio/generated-manifest.json';
+        $manifestPath   = $projectDir . '/tests/fixtures/audio/generated-manifest.json';
         $audioDirectory = $projectDir . '/tests/fixtures/audio';
         // Missing manifest means the generated WAV corpus has not been created yet.
         if (!is_file($manifestPath)) {
@@ -187,14 +181,14 @@ class ScribeController extends AbstractController
         try {
             /** @var mixed $manifestEntries Parsed manifest; non-list data is ignored below. */
             $manifestEntries = json_decode(
-                json: $manifestContents,
+                json:        $manifestContents,
                 associative: true,
-                depth: 512,
-                flags: JSON_THROW_ON_ERROR,
+                depth:       512,
+                flags:       JSON_THROW_ON_ERROR,
             );
         } catch (\JsonException $e) {
             $this->logger->warning('Scribe audio fixture manifest is invalid JSON', [
-                'path' => $manifestPath,
+                'path'  => $manifestPath,
                 'error' => $e->getMessage(),
             ]);
 
@@ -226,15 +220,15 @@ class ScribeController extends AbstractController
                 continue;
             }
 
-            $complaint = $manifestEntry['complaint'] ?? '';
-            $edgeCase = $manifestEntry['edge_case'] ?? '';
-            $speakers = $manifestEntry['speakers'] ?? [];
+            $complaint       = $manifestEntry['complaint'] ?? '';
+            $edgeCase        = $manifestEntry['edge_case'] ?? '';
+            $speakers        = $manifestEntry['speakers'] ?? [];
             $audioFixtures[] = [
-                'filename' => $filename,
+                'filename'  => $filename,
                 'complaint' => \is_string($complaint) ? $complaint : '',
                 'edge_case' => \is_string($edgeCase) ? $edgeCase : '',
-                'speakers' => \is_array($speakers) ? array_values($speakers) : [],
-                'url' => '/scribe/demo-audio?filename=' . rawurlencode($filename),
+                'speakers'  => \is_array($speakers) ? array_values($speakers) : [],
+                'url'       => '/scribe/demo-audio?filename=' . rawurlencode($filename),
             ];
         }
 
@@ -247,8 +241,9 @@ class ScribeController extends AbstractController
      * Use after a live stop or replay completion when transcript text exists. The response stays JSON
      * even when FastAPI is down, so the summary panel can show a plain retryable message.
      *
-     * @param string $sessionId Browser session UUID; invalid values mean no transcript can be summarized.
-     * @param Request $request Browser request; empty body means FastAPI should use stored transcript text.
+     * @param string  $sessionId Browser session UUID; invalid values mean no transcript can be summarized.
+     * @param Request $request   Browser request; empty body means FastAPI should use stored transcript text.
+     *
      * @return JsonResponse Summary payload; 404/502/503 are shown as recoverable panel states.
      */
     #[Route('/session/{sessionId}/summary', name: 'scribe_summary_proxy', methods: ['POST'])]
@@ -259,7 +254,7 @@ class ScribeController extends AbstractController
             return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
         }
 
-        $summaryRequestBody = $request->getContent();
+        $summaryRequestBody  = $request->getContent();
         $agentRequestOptions = [
             'headers' => ['Accept' => 'application/json'],
             'timeout' => self::AGENT_WORKFLOW_TIMEOUT_SECONDS,
@@ -268,7 +263,7 @@ class ScribeController extends AbstractController
         // The browser sends its visible transcript subset so the note matches the screen.
         if ($summaryRequestBody !== '') {
             $agentRequestOptions['headers']['Content-Type'] = 'application/json';
-            $agentRequestOptions['body'] = $summaryRequestBody;
+            $agentRequestOptions['body']                    = $summaryRequestBody;
         }
 
         try {
@@ -281,8 +276,8 @@ class ScribeController extends AbstractController
             return $this->jsonAgentResponse($agentResponse, 'Summary generation failed');
         } catch (TransportExceptionInterface $e) {
             return $this->json([
-                'detail' => 'Summary service unavailable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
+                                   'detail' => 'Summary service unavailable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
 
@@ -310,30 +305,31 @@ class ScribeController extends AbstractController
             return $this->jsonAgentResponse($agentResponse, 'Model health check failed');
         } catch (TransportExceptionInterface $e) {
             return $this->json([
-                'available' => false,
-                'detail' => 'agent unreachable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
+                                   'available' => false,
+                                   'detail'    => 'agent unreachable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
 
     /**
      * Converts a FastAPI JSON response into the browser-facing Symfony JSON shape.
      *
-     * @param ResponseInterface $agentResponse FastAPI response; empty or non-JSON bodies become a safe detail.
-     * @param string $fallbackDetail User-facing detail when FastAPI returns HTML or malformed JSON.
+     * @param ResponseInterface $agentResponse  FastAPI response; empty or non-JSON bodies become a safe detail.
+     * @param string            $fallbackDetail User-facing detail when FastAPI returns HTML or malformed JSON.
+     *
      * @return JsonResponse Browser-safe JSON response with the upstream status preserved where possible.
      */
     private function jsonAgentResponse(ResponseInterface $agentResponse, string $fallbackDetail): JsonResponse
     {
-        $statusCode = $this->browserSafeStatusCode($agentResponse->getStatusCode());
+        $statusCode   = $this->browserSafeStatusCode($agentResponse->getStatusCode());
         $responseBody = $agentResponse->getContent(false);
 
         try {
             $payload = json_decode(
-                json: $responseBody,
+                json:        $responseBody,
                 associative: true,
-                depth: 512,
-                flags: JSON_THROW_ON_ERROR,
+                depth:       512,
+                flags:       JSON_THROW_ON_ERROR,
             );
         } catch (\JsonException) {
             $payload = ['detail' => $fallbackDetail];
@@ -351,6 +347,7 @@ class ScribeController extends AbstractController
      * Builds an absolute FastAPI URL for same-origin browser proxy routes.
      *
      * @param string $path FastAPI path beginning with `/`; empty would point at the agent root.
+     *
      * @return string Full FastAPI URL used by Symfony's HTTP client.
      */
     private function agentUrl(string $path): string
@@ -362,6 +359,7 @@ class ScribeController extends AbstractController
      * Keeps proxy responses inside the HTTP status range browsers and Symfony accept.
      *
      * @param int $statusCode FastAPI status code; invalid values mean transport/proxy state is unknown.
+     *
      * @return int Browser-safe HTTP status; 502 means the upstream status was unusable.
      */
     private function browserSafeStatusCode(int $statusCode): int
@@ -378,6 +376,7 @@ class ScribeController extends AbstractController
      * Fetches a stored transcript when the browser asks to review a finished session.
      *
      * @param string $sessionId Session shown in the UI; empty should not occur because routes provide it.
+     *
      * @return JsonResponse Transcript payload; empty segments mean Python had no saved words for that session.
      */
     #[Route('/scribe/{sessionId}/history', name: 'scribe_history', methods: ['GET'])]
@@ -393,16 +392,16 @@ class ScribeController extends AbstractController
             return $this->json($result);
         } catch (AgentErrorException $e) {
             return $this->json([
-                'session_id' => $sessionId,
-                'segments' => [],
-                'error' => $e->getMessage(),
-            ], $e->statusCode >= 500 ? Response::HTTP_BAD_GATEWAY : Response::HTTP_NOT_FOUND);
+                                   'session_id' => $sessionId,
+                                   'segments'   => [],
+                                   'error'      => $e->getMessage(),
+                               ], $e->statusCode >= 500 ? Response::HTTP_BAD_GATEWAY : Response::HTTP_NOT_FOUND);
         } catch (StrandsException $e) {
             return $this->json([
-                'session_id' => $sessionId,
-                'segments' => [],
-                'error' => 'Agent unavailable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
+                                   'session_id' => $sessionId,
+                                   'segments'   => [],
+                                   'error'      => 'Agent unavailable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
 
@@ -410,6 +409,7 @@ class ScribeController extends AbstractController
      * Returns the latest speaker-to-role labels for the current browser session.
      *
      * @param string $sessionId Session currently visible in the page; empty should not occur from the route.
+     *
      * @return JsonResponse Role snapshot; an empty mapping tells the UI to keep speakers as unknown.
      */
     #[Route('/scribe/{sessionId}/roles', name: 'scribe_roles', methods: ['GET'])]
@@ -423,9 +423,9 @@ class ScribeController extends AbstractController
         }
 
         return $this->json([
-            'session_id' => $sessionId,
-            ...$mapping,
-        ]);
+                               'session_id' => $sessionId,
+                               ...$mapping,
+                           ]);
     }
 
     /**
@@ -434,8 +434,9 @@ class ScribeController extends AbstractController
      * Use when a clinician clicks a transcript speaker label. The visible label changes immediately,
      * and this route persists the correction so later role-agent updates cannot overwrite it.
      *
-     * @param string $sessionId Browser session UUID; invalid values mean no role state can be corrected.
-     * @param Request $request JSON body with speaker_id and role; empty body lets FastAPI return validation JSON.
+     * @param string  $sessionId Browser session UUID; invalid values mean no role state can be corrected.
+     * @param Request $request   JSON body with speaker_id and role; empty body lets FastAPI return validation JSON.
+     *
      * @return JsonResponse Persisted role mapping; 503 means the page keeps only the local visible correction.
      */
     #[Route('/scribe/{sessionId}/roles/override', name: 'scribe_roles_override_proxy', methods: ['POST'])]
@@ -452,10 +453,10 @@ class ScribeController extends AbstractController
                 $this->agentUrl("/session/{$sessionId}/roles/override"),
                 [
                     'headers' => [
-                        'Accept' => 'application/json',
+                        'Accept'       => 'application/json',
                         'Content-Type' => 'application/json',
                     ],
-                    'body' => $request->getContent(),
+                    'body'    => $request->getContent(),
                     'timeout' => 8,
                 ],
             );
@@ -463,8 +464,8 @@ class ScribeController extends AbstractController
             return $this->jsonAgentResponse($agentResponse, 'Role override failed');
         } catch (TransportExceptionInterface $e) {
             return $this->json([
-                'detail' => 'Role override service unavailable: ' . $e->getMessage(),
-            ], Response::HTTP_SERVICE_UNAVAILABLE);
+                                   'detail' => 'Role override service unavailable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
 

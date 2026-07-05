@@ -176,6 +176,30 @@ class TestProcessChunk:
         ]
         assert session.quality_stats.emitted_segment_count == 1
 
+    def test_punctuation_joins_gain_spaces_before_emission(self):
+        """Missing sentence spaces are fixed before the user sees the card."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        joined_text_result = TranscriptionResult(
+            segments=[
+                Segment(
+                    speaker_id="spk_0",
+                    start=0.0,
+                    end=1.2,
+                    text="headache started.My U.S.A. trip ended.Patient agreed",
+                )
+            ]
+        )
+
+        # The clinician has just recorded one row where ASR glued two sentence starts.
+        with patch.object(pipeline, "transcribe_buffer", return_value=joined_text_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 5)
+
+        assert [segment.text for segment in segments] == [
+            "headache started. My U.S.A. trip ended. Patient agreed"
+        ]
+
     def test_alternating_speaker_fragments_stay_separate(self):
         """Ping-pong speaker fragments keep separate cards for role truth."""
         pipeline = NemoPipeline()

@@ -1,13 +1,5 @@
 <?php
 
-/**
- * PHP service for role labels the browser can poll after a scribe session starts.
- *
- * The live stream still comes from Python through Mercure, but the Symfony page can request a snapshot
- * when it needs to refresh visible DOCTOR/PATIENT labels. Transport failures become an empty mapping so
- * the UI can keep rendering the transcript without pretending roles are known.
- */
-
 declare(strict_types=1);
 
 namespace App\Service;
@@ -40,6 +32,7 @@ class RoleInferenceService
      * Fetches the role snapshot the browser can use to relabel visible transcript speakers.
      *
      * @param string $sessionId Session visible in the UI; empty means Python returns no useful role state.
+     *
      * @return array<string, mixed> Mapping payload; empty mapping means the UI should leave speakers unknown.
      */
     public function getCurrentMapping(string $sessionId): array

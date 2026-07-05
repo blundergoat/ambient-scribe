@@ -125,6 +125,20 @@ phantoms from reaching role state, but it does not prove that every merged row b
 to the correct person. Use the non-overlap attribution metric above before accepting
 any diarization or role-stability mechanism.
 
+### Separated-channel ceiling caveat
+
+`scripts/eval-channel-ceiling.py` exists only for targeted M17 diagnosis. It downloads
+PriMock57 doctor/patient source channels, normalizes them to browser PCM, streams named
+fixtures through the live WebSocket path, combines role-fixed histories, and scores them
+with `scripts/transcript-quality.py`.
+
+Do not run it as a routine full-corpus gate. During M17, `/transcribe/file` exceeded the
+16 GB GPU budget on full-length separated channels, while WebSocket streaming of every
+channel destabilized the shared NeMo singleton with Sortformer `KeyError` and ASR
+`unfreeze()` errors. Use named fixtures only, grep `nemo-agent` logs after each run, and
+restart `nemo-agent` before trusting later quality numbers if any NeMo internal error
+appears. The current separated-channel result is not an accepted overlap ceiling.
+
 ## Feature Checklist
 
 After implementing any Python feature, verify:

@@ -45,6 +45,16 @@ last_reviewed: 2026-07-05
 - **What breaks:** GPU exhaustion, model-load failure, or degraded model state requires a process restart. The executor is capped by `NEMO_MAX_WORKERS` and the service reserves exactly one GPU regardless of host capacity.
 - **Evidence:** FastAPI creates one `NemoPipeline()` during lifespan startup, one shared `ThreadPoolExecutor`, and the Compose service reserves a single NVIDIA device.
 
+## Footgun: Separated-channel full-corpus eval can destabilize NeMo
+**Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `scripts/eval-channel-ceiling.py` (search: "allow-unstable-full-run")
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "def transcribe_file")
+- **Files:** `strands_agents/api/streaming_session.py` (search: "websocket.error")
+- **What breaks:** M17 tried to quantify an overlap ceiling by transcribing PriMock57 doctor/patient source channels independently. Full-file batch transcription hit `torch.OutOfMemoryError` on c04, and browser-like WebSocket streaming of all separated channels later produced `websocket.error` rows from NeMo internals (`KeyError` in Sortformer diarization, then ASR `Cannot unfreeze partially without first freezing the module with freeze()`). After those errors, the shared singleton model needed a `docker compose restart nemo-agent` before normal eval could be trusted.
+- **Evidence:** `scripts/eval-channel-ceiling.py --all` failed during the full-corpus run; `docker compose logs nemo-agent --since '2026-07-05T04:59:00Z'` showed `websocket.error` for separated-channel sessions and stack traces through `nemo_session.py` -> `nemo_pipeline.py` -> NeMo Sortformer/RNNT. The script now requires named fixtures by default and gates full-corpus reproduction behind `--allow-unstable-full-run`.
+- **Prevention:** Do not run separated-channel full-corpus eval as a routine quality gate. Use named fixtures only, grep server logs after every run, and restart `nemo-agent` after any NeMo internal error before trusting later metrics. Treat a channel-separated "ceiling" as unproven until it uses a model/path designed for single-speaker source channels.
+
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
 
@@ -76,7 +86,7 @@ last_reviewed: 2026-07-05
 
 - **Files:** `Dockerfile` (search: "Start PHP's built-in web server")
 - **Files:** `src/Controller/ScribeController.php` (search: "public function demoAudio")
-- **Files:** `src/Controller/ScribeController.php` (search: "'url' => '/scribe/demo-audio?filename='")
+- **Files:** `src/Controller/ScribeController.php` (search: "rawurlencode($filename)")
 - **What breaks:** A Symfony route that puts a dotted filename such as `.wav` in the path can return the PHP built-in server's static-file 404 before Symfony sees the request. The Demo Audio picker must use a non-dotted path with the filename in the query string, or the dev server command needs an explicit router script.
 - **Evidence:** `GET /scribe/demo-audio/primock57-day1-consultation01.wav` was handled as a missing static file, while `GET /scribe/demo-audio?filename=primock57-day1-consultation01.wav` reached `ScribeController::demoAudio()` and served `audio/wav`.
 

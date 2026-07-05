@@ -8,9 +8,14 @@ unchanged: they only adjust server-side `Segment` objects before publishing.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from nemo_pipeline import Segment
+
+_SENTENCE_JOIN_PATTERN = re.compile(r"(?<=[a-z0-9][.!?])(?=[A-Z])")
+_SPACE_BEFORE_PUNCTUATION_PATTERN = re.compile(r"\s+([,.;:!?])")
+_REPEATED_SPACE_PATTERN = re.compile(r"[ \t]{2,}")
 
 # Rows below this word count read like fragments in the transcript UI.
 _FRAGMENT_WORD_LIMIT = 3
@@ -41,7 +46,7 @@ def shift_segment_to_session_time(
 
 
 def merge_adjacent_fragments_for_display(segments: list[Segment]) -> list[Segment]:
-    """Merge tiny same-speaker rows before they reach the transcript UI.
+    """Clean and merge tiny same-speaker rows before the transcript UI.
 
     Args:
         segments: Fresh stable rows for this browser update; empty means no visible text.
@@ -53,6 +58,8 @@ def merge_adjacent_fragments_for_display(segments: list[Segment]) -> list[Segmen
 
     # Each stable row is considered in the order the clinician will read it.
     for segment in segments:
+        segment = _segment_with_readable_text(segment)
+
         # The first row starts the visible update.
         if not merged_segments:
             merged_segments.append(segment)
@@ -67,6 +74,45 @@ def merge_adjacent_fragments_for_display(segments: list[Segment]) -> list[Segmen
         merged_segments.append(segment)
 
     return merged_segments
+
+
+def _segment_with_readable_text(segment: Segment) -> Segment:
+    """Return one transcript row with UI-readable text spacing.
+
+    Args:
+        segment: Transcript row from NeMo; empty text means no visible words to clean.
+
+    Returns:
+        Segment with display text cleaned, or the original row when no change is needed.
+    """
+    readable_text = _readable_transcript_text(segment.text)
+
+    # Unchanged text keeps the original row object for the normal clean-transcript path.
+    if readable_text == segment.text:
+        return segment
+
+    return replace(segment, text=readable_text)
+
+
+def _readable_transcript_text(text: str) -> str:
+    """Add missing sentence spacing for one visible transcript row.
+
+    Args:
+        text: ASR text for a browser row; empty/blank means no words should be shown.
+
+    Returns:
+        Plain transcript text; empty means the UI should not show readable content.
+    """
+    # Blank ASR output means there is no sentence text for the clinician to read.
+    if text.strip() == "":
+        return ""
+
+    # e.g. the doctor said "headache started" and NeMo returned "started.My".
+    readable_text = _SENTENCE_JOIN_PATTERN.sub(" ", text)
+    readable_text = _SPACE_BEFORE_PUNCTUATION_PATTERN.sub(r"\1", readable_text)
+    readable_text = _REPEATED_SPACE_PATTERN.sub(" ", readable_text)
+
+    return readable_text.strip()
 
 
 def _should_merge_visible_fragment(
@@ -128,7 +174,7 @@ def _combine_visible_segments(
     Returns:
         One row covering both spans; text stays in the order the user heard it.
     """
-    merged_text = (
+    merged_text = _readable_transcript_text(
         f"{previous_segment.text.strip()} {current_segment.text.strip()}".strip()
     )
     return replace(

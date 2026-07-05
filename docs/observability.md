@@ -55,8 +55,9 @@ Python reads `AgentResult.metrics.get_summary()` after each role and summary age
 
 The PHP client uses one telemetry service as both `RequestMiddleware` and `ResponseObserver`.
 `beforeRequest()` injects `X-Correlation-ID`; response-observer hooks cache safe result counts
-such as `segments`, `roles`, and `stream_events`; `afterResponse()` logs one
-`strands.client.call` line with status, duration, correlation ID, and those body-safe counts.
+such as `segments`, `roles`, `stream_events`, and `response_duration_ms`; `afterResponse()`
+logs one `strands.client.call` line with status, duration, correlation ID, and those
+body-safe counts.
 
 ## Reports
 

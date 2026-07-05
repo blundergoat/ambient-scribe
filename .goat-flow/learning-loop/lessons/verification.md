@@ -271,3 +271,12 @@ While testing the Demo Audio picker, a Playwright smoke loaded the page on `http
 During the 0.3.0 mockup refresh, an empty-state screenshot made the new workspace layout look clean, but a populated transcript/summary browser smoke exposed that direct transcript events could leave the start prompt visible above real rows.
 
 **Lesson:** For transcript, summary, or hidden-panel layout changes, capture both empty and populated browser states. Include DOM assertions for card count, empty-state visibility, overlap, and removed controls so visual verification covers the state users actually review.
+
+## Lesson: Eval-generated session IDs must use route-valid UUIDs and avoid retry collisions (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/eval-channel-ceiling.py` (search: "def channel_session_id"), `strands_agents/api/server.py` (search: "_validate_session_id").
+
+During M17 channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
+
+**Lesson:** Eval tooling that creates server sessions must either omit session IDs and capture the generated one, or generate valid UUIDs with a run-specific salt. After changing session identity behavior, run the server path that validates the ID rather than only testing local helper formatting.

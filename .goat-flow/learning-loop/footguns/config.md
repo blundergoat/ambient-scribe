@@ -12,7 +12,7 @@ last_reviewed: 2026-07-04
 - **Files:** `.env.example` (search: "MERCURE_PUBLIC_URL=http://localhost:48137/.well-known/mercure")
 - **Files:** `docker-compose.yml` (search: "NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-48101}")
 - **Files:** `src/Controller/ScribeController.php` (search: "$mercureUrl = $this->getParameter('mercure_url')")
-- **Files:** `src/Controller/ScribeController.php` (search: "'ws_url' => $wsUrl")
+- **Files:** `src/Controller/ScribeController.php` (search: "$wsUrl      = $this->getParameter('nemo_websocket_url')")
 - **Files:** `templates/scribe/index.html.twig` (search: "const CONFIG =")
 - **Files:** `public/js/scribe-recording.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
 - **Files:** `public/js/scribe-recording.js` (search: "streams = new StreamOrchestrator(CONFIG.mercureUrl)")
