@@ -137,10 +137,12 @@ for row in rows:
     latest_by_fixture[row["fixture"]] = row
 
 print(
-    "fixture                                      cutoff  recall  dRecall  dup    dDup   "
-    "ratio  dRatio  wer   dWer  frag  seam attr  dAttr  oracl   gap  phant flips  conf  err"
+    "fixture                                      cutoff  recall   dup   wer   frag  seam "
+    "strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err"
 )
-# Each report row is one fixture's latest saved visit.
+# Each report row is one fixture's latest saved visit. Strict attribution is
+# the M20 headline (uncertain rows count as incorrect); the free oracle stays
+# diagnostic only.
 for fixture, row in sorted(latest_by_fixture.items()):
     metrics = row["metrics"]
     quality = row["quality"]
@@ -149,19 +151,18 @@ for fixture, row in sorted(latest_by_fixture.items()):
         f"{fixture[:44]:44} "
         f"{row['cutoff_seconds']:6.1f} "
         f"{metrics['recall_percent']:6.1f} "
-        f"{_fmt_delta(deltas.get('recall_percent')):>7} "
         f"{metrics['duplication_percent']:5.1f} "
-        f"{_fmt_delta(deltas.get('duplication_percent')):>6} "
-        f"{metrics['length_ratio']:6.2f} "
-        f"{_fmt_delta(deltas.get('length_ratio')):>7} "
         f"{_fmt_optional(metrics.get('word_error_rate_percent')):>5} "
-        f"{_fmt_delta(deltas.get('word_error_rate_percent')):>6} "
         f"{_fmt_optional(metrics.get('fragment_rate_non_overlap_percent')):>5} "
         f"{_fmt_int_optional(metrics.get('seam_reread_count')):>5} "
+        f"{_fmt_optional(metrics.get('strict_attribution_non_overlap_percent')):>6} "
+        f"{_fmt_delta(deltas.get('strict_attribution_non_overlap_percent')):>7} "
+        f"{_fmt_optional(metrics.get('uncertainty_coverage_non_overlap_percent')):>5} "
+        f"{_fmt_optional(metrics.get('incorrect_confident_rate_non_overlap_percent')):>5} "
+        f"{_fmt_optional(metrics.get('best_dyadic_mapping_accuracy_non_overlap_percent')):>5} "
+        f"{_fmt_optional(metrics.get('speaker_oracle_accuracy_non_overlap_percent')):>6} "
         f"{_fmt_optional(metrics.get('attribution_accuracy_non_overlap_percent')):>5} "
         f"{_fmt_delta(deltas.get('attribution_accuracy_non_overlap_percent')):>6} "
-        f"{_fmt_optional(metrics.get('speaker_oracle_accuracy_non_overlap_percent')):>6} "
-        f"{_fmt_delta(metrics.get('role_mapping_gap_non_overlap_points')):>5} "
         f"{_fmt_int_optional(metrics.get('phantom_speaker_count')):>5} "
         f"{quality.get('role_flips_accepted', 0):5} "
         f"{quality.get('final_confidence', 0.0):5.2f} "
@@ -412,6 +413,21 @@ write_role_timeline() {
   fi
 }
 
+write_window_continuity() {
+  local session_id="$1"
+  local window_path="$2"
+
+  # Per-window speaker maps let row diagnostics flag seam-crossing rows.
+  docker compose logs nemo-agent --since "$RUN_STARTED_AT" 2>/dev/null \
+    | "$PYTHON_BIN" scripts/window-continuity.py "$session_id" \
+    > "$window_path"
+
+  # Zero windows means the agent is not logging JSON continuity rows (LOG_FORMAT).
+  if grep -q '"window_count": 0' "$window_path"; then
+    echo "warn: no window-continuity rows captured for $session_id - is nemo-agent running with LOG_FORMAT=json?" >&2
+  fi
+}
+
 append_trend_and_print_row() {
   local fixture_name="$1"
   local session_id="$2"
@@ -420,6 +436,8 @@ append_trend_and_print_row() {
   local quality_path="$5"
   local score_path="$6"
   local timeline_path="$7"
+  local window_path="$8"
+  local row_diagnostics_path="$9"
 
   "$PYTHON_BIN" - \
     "$TREND_FILE" \
@@ -429,7 +447,9 @@ append_trend_and_print_row() {
     "$history_path" \
     "$quality_path" \
     "$score_path" \
-    "$timeline_path" <<'PY'
+    "$timeline_path" \
+    "$window_path" \
+    "$row_diagnostics_path" <<'PY'
 import json
 import re
 import sys
@@ -444,6 +464,8 @@ history_path = sys.argv[5]
 quality_path = Path(sys.argv[6])
 score_path = Path(sys.argv[7])
 timeline_path = Path(sys.argv[8])
+window_path = Path(sys.argv[9])
+row_diagnostics_path = Path(sys.argv[10])
 score_text = score_path.read_text(encoding="utf-8")
 quality = json.loads(quality_path.read_text(encoding="utf-8"))
 
@@ -518,6 +540,18 @@ gap_match = required(r"role mapping gap \(non-overlap\):\s+(n/a|[-+]?[\d.]+pp)")
 gap_raw = gap_match.group(1)
 role_mapping_gap = None if gap_raw == "n/a" else float(gap_raw.removesuffix("pp"))
 
+strict_attribution_percent, strict_attribution_correct, strict_attribution_total = (
+    optional_percent_with_counts("strict attribution (non-overlap)")
+)
+labeled_row_percent, labeled_row_correct, labeled_row_total = optional_percent_with_counts(
+    "labeled-row accuracy (non-overlap)"
+)
+uncertainty_percent, uncertainty_rows, uncertainty_total = optional_percent_with_counts(
+    "uncertainty coverage (non-overlap)"
+)
+incorrect_confident_percent, incorrect_confident_rows, incorrect_confident_total = (
+    optional_percent_with_counts("incorrect-confident rate (non-overlap)")
+)
 best_dyadic_percent, best_dyadic_correct, best_dyadic_total = optional_percent_with_counts(
     "best dyadic mapping accuracy (non-overlap)"
 )
@@ -580,6 +614,16 @@ metrics = {
     "attribution_accuracy_non_overlap_percent": clean_attribution_percent,
     "attribution_non_overlap_correct_segments": clean_attribution_correct,
     "attribution_non_overlap_scored_segments": clean_attribution_total,
+    "strict_attribution_non_overlap_percent": strict_attribution_percent,
+    "strict_attribution_correct_rows": strict_attribution_correct,
+    "strict_attribution_clean_rows": strict_attribution_total,
+    "labeled_row_accuracy_non_overlap_percent": labeled_row_percent,
+    "labeled_row_correct_rows": labeled_row_correct,
+    "labeled_rows": labeled_row_total,
+    "uncertainty_coverage_non_overlap_percent": uncertainty_percent,
+    "uncertain_rows": uncertainty_rows,
+    "incorrect_confident_rate_non_overlap_percent": incorrect_confident_percent,
+    "incorrect_confident_rows": incorrect_confident_rows,
     "speaker_oracle_accuracy_percent": speaker_oracle_percent,
     "speaker_oracle_correct_segments": speaker_oracle_correct,
     "speaker_oracle_scored_segments": speaker_oracle_total,
@@ -622,6 +666,9 @@ if previous is not None:
         "fragment_rate_non_overlap_percent",
         "seam_reread_count",
         "attribution_accuracy_non_overlap_percent",
+        "strict_attribution_non_overlap_percent",
+        "incorrect_confident_rate_non_overlap_percent",
+        "uncertainty_coverage_non_overlap_percent",
         "speaker_oracle_accuracy_non_overlap_percent",
         "role_mapping_gap_non_overlap_points",
         "phantom_speaker_count",
@@ -658,6 +705,8 @@ row = {
         "quality": str(quality_path),
         "score": str(score_path),
         "role_timeline": str(timeline_path),
+        "window_continuity": str(window_path),
+        "row_diagnostics": str(row_diagnostics_path),
     },
 }
 
@@ -672,35 +721,31 @@ def fmt_delta(value):
     return f"{value:+.1f}" if abs(value) >= 1 else f"{value:+.2f}"
 
 
+def fmt_optional(value):
+    """Format optional percentages so older schema rows stay readable."""
+    if value is None:
+        return "n/a"
+    return f"{value:.1f}"
+
+
 print(
     "\t".join(
         [
             fixture[:44],
             f"{cutoff_seconds:.1f}",
             f"{metrics['recall_percent']:.1f}",
-            fmt_delta(deltas.get("recall_percent")),
             f"{metrics['duplication_percent']:.1f}",
-            fmt_delta(deltas.get("duplication_percent")),
-            f"{metrics['length_ratio']:.2f}",
-            fmt_delta(deltas.get("length_ratio")),
-            "n/a"
-            if metrics["word_error_rate_percent"] is None
-            else f"{metrics['word_error_rate_percent']:.1f}",
-            fmt_delta(deltas.get("word_error_rate_percent")),
-            "n/a"
-            if metrics["fragment_rate_non_overlap_percent"] is None
-            else f"{metrics['fragment_rate_non_overlap_percent']:.1f}",
+            fmt_optional(metrics["word_error_rate_percent"]),
+            fmt_optional(metrics["fragment_rate_non_overlap_percent"]),
             str(metrics["seam_reread_count"]),
-            "n/a"
-            if metrics["attribution_accuracy_non_overlap_percent"] is None
-            else f"{metrics['attribution_accuracy_non_overlap_percent']:.1f}",
+            fmt_optional(metrics["strict_attribution_non_overlap_percent"]),
+            fmt_delta(deltas.get("strict_attribution_non_overlap_percent")),
+            fmt_optional(metrics["uncertainty_coverage_non_overlap_percent"]),
+            fmt_optional(metrics["incorrect_confident_rate_non_overlap_percent"]),
+            fmt_optional(metrics["best_dyadic_mapping_accuracy_non_overlap_percent"]),
+            fmt_optional(metrics["speaker_oracle_accuracy_non_overlap_percent"]),
+            fmt_optional(metrics["attribution_accuracy_non_overlap_percent"]),
             fmt_delta(deltas.get("attribution_accuracy_non_overlap_percent")),
-            "n/a"
-            if metrics["speaker_oracle_accuracy_non_overlap_percent"] is None
-            else f"{metrics['speaker_oracle_accuracy_non_overlap_percent']:.1f}",
-            "n/a"
-            if metrics["role_mapping_gap_non_overlap_points"] is None
-            else f"{metrics['role_mapping_gap_non_overlap_points']:+.1f}",
             str(metrics["phantom_speaker_count"]),
             str(row["quality"]["role_flips_accepted"]),
             f"{row['quality']['final_confidence']:.2f}",
@@ -732,18 +777,27 @@ PY
   local quality_path="$fixture_run_dir/quality.json"
   local score_path="$fixture_run_dir/transcript-quality.txt"
   local timeline_path="$fixture_run_dir/role-timeline.jsonl"
+  local window_path="$fixture_run_dir/window-continuity.jsonl"
+  local row_diagnostics_path="$fixture_run_dir/row-diagnostics.json"
 
   printf 'eval fixture=%s session_id=%s\n' "$fixture_name" "$session_id" >&2
   stream_fixture_to_websocket "$wav_path" "$session_id"
   wait_for_quality_record "$session_id" "$quality_path"
+  # The role queue keeps applying tail-batch flips for several seconds after
+  # disconnect; the timeline step sleeps for that settle window, so history is
+  # fetched AFTER it to score the final labels the clinician actually sees.
+  # Fetching earlier made attribution depend on a fetch-vs-flip race (M20).
+  write_role_timeline "$session_id" "$timeline_path" "$quality_path"
   fetch_history "$session_id" "$history_path"
   assert_no_websocket_errors "$session_id"
-  write_role_timeline "$session_id" "$timeline_path" "$quality_path"
+  write_window_continuity "$session_id" "$window_path"
 
   local cutoff_seconds
   cutoff_seconds="$(cutoff_seconds_for_history "$history_path" "$wav_path")"
   "$PYTHON_BIN" scripts/transcript-quality.py \
     --quality-json "$quality_path" \
+    --window-artifact "$window_path" \
+    --row-diagnostics-json "$row_diagnostics_path" \
     "$history_path" \
     "$cutoff_seconds" \
     "$doctor_grid" \
@@ -759,7 +813,9 @@ PY
         "$history_path" \
         "$quality_path" \
         "$score_path" \
-        "$timeline_path"
+        "$timeline_path" \
+        "$window_path" \
+        "$row_diagnostics_path"
     )"
   )
 }
@@ -779,18 +835,18 @@ done
 
 printf '\nAmbient Scribe fixture eval\n'
 printf '%s%s\n' \
-  'fixture                                      cutoff  recall  dRecall  dup    dDup   ratio  dRatio  ' \
-  'wer   dWer  frag  seam attr  dAttr  oracl   gap  phant flips  conf  err'
+  'fixture                                      cutoff  recall   dup   wer   frag  seam ' \
+  'strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err'
 for row in "${REPORT_ROWS[@]}"; do
   IFS=$'\t' read -r \
-    fixture cutoff recall delta_recall duplication delta_dup ratio delta_ratio \
-    wer delta_wer fragment seam attribution delta_attribution oracle gap phantoms \
-    flips confidence errors \
+    fixture cutoff recall duplication wer fragment seam \
+    strict delta_strict coverage incorrect_confident ceiling oracle \
+    attribution delta_attribution phantoms flips confidence errors \
     <<<"$row"
-  printf '%-44s %6s %6s %7s %5s %6s %6s %7s %5s %6s %5s %5s %5s %6s %6s %5s %5s %5s %5s %3s\n' \
-    "$fixture" "$cutoff" "$recall" "$delta_recall" "$duplication" "$delta_dup" \
-    "$ratio" "$delta_ratio" "$wer" "$delta_wer" "$fragment" "$seam" \
-    "$attribution" "$delta_attribution" "$oracle" "$gap" "$phantoms" "$flips" \
+  printf '%-44s %6s %6s %5s %5s %5s %5s %6s %7s %5s %5s %5s %6s %5s %6s %5s %5s %5s %3s\n' \
+    "$fixture" "$cutoff" "$recall" "$duplication" "$wer" "$fragment" "$seam" \
+    "$strict" "$delta_strict" "$coverage" "$incorrect_confident" "$ceiling" \
+    "$oracle" "$attribution" "$delta_attribution" "$phantoms" "$flips" \
     "$confidence" "$errors"
 done
 printf '\ntrend: %s\nrun artifacts: %s\n' "$TREND_FILE" "$RUN_DIR"

@@ -109,6 +109,14 @@ async def test_finalize_emits_logs_and_persists_quality_record(monkeypatch, capl
             """Record visible role labels applied to stored transcript rows."""
             self.applied_mapping = mapping
 
+        def get_segments(self, session_id):
+            """Return captured rows for the finalize row-exception re-judgment."""
+            return list(self.segments)
+
+        def set_auto_row_roles(self, session_id, row_roles):
+            """Accept automatic row exceptions; this test has none to apply."""
+            self.auto_row_roles = row_roles
+
     class FakeAudioSession:
         """Minimal finalized audio session with quality counters."""
 

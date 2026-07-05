@@ -158,6 +158,86 @@ class TestSessionHistory:
         assert state.current_mapping["spk_0"] == "PATIENT"
         assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
 
+    def test_row_override_pins_one_row_without_touching_the_speaker(
+        self, client, monkeypatch
+    ):
+        """Correcting one row must not relabel the speaker's other rows."""
+        from tools.assign_roles import get_or_create_state
+
+        published_events = []
+
+        async def fake_publish(topic, data, event_id=None):
+            """Capture the roles-topic event the correction broadcasts."""
+            published_events.append((topic, data))
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        # Two rows from the same speaker; the clinician says row 2 is the patient.
+        for index in (1, 2):
+            sessions.append_segment(
+                TEST_SESSION_ID,
+                {
+                    "speaker_id": "spk_0",
+                    "text": f"row {index}",
+                    "start": float(index),
+                    "end": float(index) + 0.9,
+                    "segment_id": f"seg-{index:04d}",
+                },
+            )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0002", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ok",
+            "segment_id": "seg-0002",
+            "role": "PATIENT",
+        }
+
+        # A later agent-style speaker mapping cannot undo the row correction.
+        sessions.apply_role_mapping(TEST_SESSION_ID, {"spk_0": "DOCTOR"})
+        stored_rows = sessions.get_segments(TEST_SESSION_ID)
+        assert stored_rows[0]["role"] == "DOCTOR"
+        assert stored_rows[1]["role"] == "PATIENT"
+        assert stored_rows[1]["role_source"] == "user_row"
+
+        # The speaker-scoped stores stay untouched by a row correction.
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert "spk_0" not in state.confirmed_overrides
+        assert "spk_0" not in state.current_mapping
+
+        # Other tabs learn about the row via the additive row_overrides field.
+        roles_topic, role_event = published_events[-1]
+        assert roles_topic.endswith("/roles")
+        assert role_event["row_overrides"] == {"seg-0002": "PATIENT"}
+        assert role_event["manual_override"] is True
+
+    def test_row_override_rejects_ambiguous_or_unknown_targets(self, client):
+        """The UI gets clear validation errors instead of silent no-ops."""
+        # Neither scope: the server cannot know what the user corrected.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"role": "DOCTOR"},
+        )
+        assert response.status_code == 400
+
+        # Both scopes at once is ambiguous and likely a client bug.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "segment_id": "seg-0001", "role": "DOCTOR"},
+        )
+        assert response.status_code == 400
+
+        # A row correction for a session with no stored transcript cannot stick.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "DOCTOR"},
+        )
+        assert response.status_code == 404
+
 
 class TestTranscriptionEndpoints:
     """Tests for batch and streaming transcription routes."""
@@ -293,6 +373,10 @@ class TestTranscriptionEndpoints:
                         "start": 0.0,
                         "end": 2.4,
                         "is_interim": False,
+                        # Every emitted row carries the stable ID clinicians can
+                        # target with a per-row role correction (M20 Phase 2).
+                        "segment_id": "seg-0001",
+                        "revision": 1,
                     }
                 ],
             )

@@ -136,6 +136,29 @@ During M18 Phase 0, a plain-log message was added to `RoleMappingState.did_updat
 
 **Lesson:** Treat observability-only patches as executable code in the hot path. When a log line needs derived values, compute them locally before mutating state and rerun the domain tests for that path, not only the observability tests.
 
+## Lesson: Eval history fetch must wait out post-disconnect role churn (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/eval-fixtures.sh` (search: "Fetching earlier made attribution depend on a fetch-vs-flip race"), `.goat-flow/plans/0.3.0/M20-improve-doctor-patient-detection.md` (search: "fetch-vs-flip race").
+
+During M20 Phase 1, three c03 @83s runs after a publish-only payload change all scored
+45.0% strict attribution against a 55.0% Phase 0 median, which looked like the kill
+criterion firing on the new code. The run-invariant diagnostics (dyadic ceiling, window
+counts, remaps) were identical, and two runs with byte-identical role-decision timelines
+had scored 45% vs 55% across phases - one Phase 0 history even contradicted its own
+timeline's final mapping. The real cause: the role queue keeps accepting tail-batch
+flips for seconds after WebSocket disconnect, and `fetch_history` ran before the settle
+sleep, so the scored labels depended on a fetch-vs-flip race, not on the change under
+test. Reordering the eval to fetch history after the role-timeline settle made the gate
+deterministic (55.0/55.0/55.0). Churn can still straddle any fixed settle window, so
+median-of-3 remains mandatory.
+
+**Lesson:** when a gate metric moves right after a change that cannot mechanically
+affect it, first check the gate's own sampling timing against asynchronous state
+updates before blaming the change. Compare run-invariant diagnostics and look for
+artifacts that contradict each other within one run (here: history role labels vs the
+role timeline's final mapping) - a self-contradicting run proves a measurement race.
+
 ## Lesson: Free-assignment oracle metrics overstate reachable accuracy - constrain the assignment (2026-07-05)
 
 **Created:** 2026-07-05
@@ -152,6 +175,22 @@ was read as role-mapping headroom, when the best VALID dyadic mapping could only
 constrain the oracle to assignments the product can actually make (here: a role
 bijection for dyads) and report both numbers. An unconstrained per-ID oracle is an upper
 bound on a different system than the one being tuned.
+
+## Lesson: Prompt-only role establishment hints need median replay proof (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `strands_agents/api/role_agent_runtime.py` (search: "establishment_hint_guard"), `strands_agents/api/role_inference_queue.py` (search: "establishment_hint").
+
+During M20 Phase 4, removing the role agent's `current_mapping` echo and adding cue-rich
+representative rows looked mechanically correct, but c03 @83s immediately scored 45/45
+strict on two runs. Adding opener cue counts and a prompt-level `establishment_hint` still
+scored 50/50 on two of three runs because the model accepted the exact inverse mapping
+from later seam-mixed rows.
+
+**Lesson:** For sampled role-establishment work, do not accept prompt/evidence wording from
+static tests or one replay. Use median-of-3 on the contested fixture, inspect the role
+timeline when a run regresses, and make high-precision establishment evidence enforceable
+when it is meant to prevent an exact dyadic inversion.
 
 ## Lesson: Region WER buckets need word-level allocation, not whole-interval exclusion (2026-07-05)
 
@@ -232,6 +271,26 @@ acceptance gate. A mechanism that passes unit tests but worsens `scripts/transcr
 on the reported fixture must be reverted or marked diagnostic-only, even when the hypothesis
 still sounds mechanically plausible.
 
+## Lesson: Held-tail speaker anchors need replay proof before adoption (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `strands_agents/nemo_session.py` (search: "_overlap_speaker_map"), `.goat-flow/plans/0.3.0/M20-improve-doctor-patient-detection.md` (search: "held-tail anchor voting").
+
+During M20 Phase 5, the per-window artifacts made held-tail speaker anchoring look like the
+small seam mechanism M16 had left open: c03 @83s had 18 held rows and wrong rows clustered at
+window starts, so using the prior window's canonicalized held rows as extra overlap-vote
+references seemed safer than widening the NeMo/ASR window. The focused unit test passed and
+the mechanism changed no audio slicing, no GPU model, and no timestamp mode. Runtime replay
+rejected it anyway: c03 @83s strict attribution fell from the accepted 70.0 median to
+65.0/65.0/65.0, with the same 18 windows, 18 remaps, 6 merges, 5 confidently wrong rows, and
+2 uncertain rows each run. The patch was reverted and the restore smoke returned to 70.0.
+
+**Lesson:** Treat held-tail or un-emitted transcript rows as an unproven speaker-identity
+source, not a free continuity improvement. Even when a seam mechanism does not widen GPU
+audio and passes a synthetic anchor test, run the reported fixture median before keeping it;
+if it lowers strict attribution, revert rather than tuning a second seam rule in the same
+phase.
+
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
@@ -280,7 +339,7 @@ During M12, the clinical KB loader handled missing files and invalid shapes but 
 ## Lesson: Model stack docs need env, Compose, and code defaults checked together (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `README_STACK.md` (search: "Compose has an older no-`.env` fallback"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=ollama"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
+**Evidence:** `README_STACK.md` (search: "Compose still has a no-"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=ollama"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
 
 While creating the stack inventory, the root README still described Bedrock as the role-inference default, `.env.example` described Ollama as the local default, Compose passed Ollama by default, and the Python agent retained Bedrock defaults for missing env vars. Reading only one source would have produced another stale model summary.
 

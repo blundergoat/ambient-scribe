@@ -116,6 +116,72 @@ python3 scripts/transcript-quality.py --quality-json var/quality/runs/<run>/<fix
   tests/fixtures/audio/<fixture>.patient.TextGrid
 ```
 
+### Tracing one wrong Doctor/Patient row (M20)
+
+Use this when someone reports a specific mislabeled transcript card, e.g. "the
+doctor's question at 01:00 shows as Patient". Each step narrows which layer
+produced the wrong label. `scripts/eval-fixtures.sh` writes every artifact
+below automatically; the manual commands are for a browser session you drove
+yourself. The agent container must run with `LOG_FORMAT=json` for steps 4-5.
+
+1. **Timecode -> history row.** The card's timestamp is the row's `start` in
+   seconds (01:00 -> ~60s). Fetch the stored history promptly (it is in-memory
+   unless SQLite storage is enabled) and find rows near that time:
+
+   ```bash
+   # Session ID: dev panel State tab, or the WebSocket line in the agent log.
+   curl -s "http://localhost:48082/scribe/<session-id>/history" -o /tmp/history.json
+   python3 -c "import json;[print(s['start'],s['end'],s['speaker_id'],s.get('role')) \
+     for s in json.load(open('/tmp/history.json'))['segments'] if 55<=s['start']<=85]"
+   ```
+
+2. **History row -> expected role.** Score the history against the fixture's
+   TextGrids with the row artifact enabled; `expected_role` is the reference
+   truth for each row, and `confidently_wrong` marks the rows that misled the
+   clinician. `mapping_correctable` says whether the best valid global mapping
+   would have fixed the row - if it is `false`, no speaker-level relabel can
+   fix it and the row needs row-level attribution or uncertainty:
+
+   ```bash
+   python3 scripts/transcript-quality.py \
+     --window-artifact /tmp/window-continuity.jsonl \
+     --row-diagnostics-json /tmp/row-diagnostics.json \
+     /tmp/history.json <cutoff_seconds> \
+     tests/fixtures/audio/<fixture>.doctor.TextGrid \
+     tests/fixtures/audio/<fixture>.patient.TextGrid
+   python3 -c "import json;[print(r) for r in \
+     json.load(open('/tmp/row-diagnostics.json'))['rows'] if 55<=r['start']<=85]"
+   ```
+
+3. **Row -> role decision.** The role timeline shows which mapping decision
+   (accepted update, accepted/suppressed flip, fallback) was live when the row
+   rendered, so you can see whether the label came from the agent's better or
+   worse valid mapping:
+
+   ```bash
+   docker compose logs nemo-agent --since <window> \
+     | python3 scripts/role-timeline.py <session-id> | head
+   ```
+
+4. **Row -> emission window.** The window artifact says which emission window
+   published the row (`window_index` in the row diagnostics joins against it),
+   what raw speaker IDs NeMo produced, how they were remapped to the visible
+   IDs, and on what overlap-vote evidence. A row with `crosses_window_seam:
+   true` or a window whose `mapping_reasons` show a swap/merge is speaker
+   identity drift, not a role-agent mistake:
+
+   ```bash
+   docker compose logs nemo-agent --since <window> \
+     | python3 scripts/window-continuity.py <session-id> > /tmp/window-continuity.jsonl
+   ```
+
+5. **Health check before trusting any of it.** Errors invalidate the run:
+
+   ```bash
+   docker compose logs nemo-agent --since <window> \
+     | rg -n "websocket\.error|Traceback|CUDA error|AcceleratorError|max_tokens truncation"
+   ```
+
 `NEMO_SPEAKER_CAP` defaults to `2`, so normal doctor/patient visits merge stray
 window-local speaker IDs back into stable visible identities. Set it to `0` only when
 testing or demonstrating a true multi-party consultation.

@@ -4,7 +4,8 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 
 ## System Overview
 
-- Browser UI (`templates/scribe/index.html.twig`, `public/js/scribe.js`, `public/js/scribe-fixtures.js`) creates a session, captures microphone audio with `PcmStreamer`, streams generated demo WAVs with `WavPcmStreamer`, sends PCM chunks to the FastAPI WebSocket, and subscribes to Mercure topics through `StreamOrchestrator`.
+- Browser UI shell (`templates/scribe/index.html.twig`, `public/js/scribe.js`, `public/js/scribe-fixtures.js`) creates a session and shared page state.
+- Browser streaming modules (`public/js/scribe-streaming.js`, `public/js/scribe-recording.js`) capture microphone audio with `PcmStreamer`, stream generated demo WAVs with `WavPcmStreamer`, send PCM chunks to the FastAPI WebSocket, and subscribe to Mercure topics through `StreamOrchestrator`.
 - Symfony app (`src/Controller/ScribeController.php`, `src/Service/RoleInferenceService.php`) renders `/scribe`, redirects `/`, proxies transcript history from Python, and exposes current role mappings.
 - FastAPI agent (`strands_agents/api/server.py`) exposes batch transcription (test-only), live WebSocket transcription, history, role override/snapshot, summary, and health endpoints.
 - NeMo pipeline (`strands_agents/nemo_pipeline.py`, `strands_agents/nemo_session.py`) owns the single GPU and performs diarization/ASR; role inference never uses that GPU.
@@ -16,7 +17,7 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 ## Request Flow
 
 1. Browser requests `GET /scribe`; `ScribeController::index` generates a UUID and injects WebSocket URL, Mercure URL, raw/roles/summary/hints topics, and dev audio fixture options into Twig.
-2. `public/js/scribe.js` captures audio, downsamples to 16 kHz 16-bit PCM, and opens `ws://.../ws/transcribe/{session_id}`.
+2. `public/js/scribe-streaming.js` captures and downsamples audio to 16 kHz 16-bit PCM, while `public/js/scribe-recording.js` opens `ws://.../ws/transcribe/{session_id}`.
 3. `strands_agents/api/server.py::transcribe_stream` validates the UUID, registers the session in `SessionLifecycle`, buffers chunks in `TranscriptionSession`, and runs NeMo through `ThreadPoolExecutor`.
 4. FastAPI stores raw segments, publishes `segment` events to `scribe/session/{id}/raw`, queues role inference, then publishes `role_update` events to `scribe/session/{id}/roles`.
 5. Browser EventSource handlers merge live raw and role events into the transcript timeline; demo replay decodes the WAV locally and streams PCM over the same WebSocket, paced by the browser audio clock, so its segments arrive through the identical Mercure path.

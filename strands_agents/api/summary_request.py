@@ -28,6 +28,8 @@ class BrowserVisibleSegment(BaseModel):
     Use when the server needs the same transcript subset the user can see
     before generating a summary.
     Empty text means the row is ignored because it would not help the note.
+    An empty `segment_id` means an older page without row identity; those rows
+    cannot retain per-row corrections across the summary's history replacement.
     """
 
     speaker_id: str = "UNKNOWN"
@@ -35,6 +37,7 @@ class BrowserVisibleSegment(BaseModel):
     start: float = 0.0
     end: float = 0.0
     role: str | None = None
+    segment_id: str = ""
 
 
 class SummaryRequest(BaseModel):
@@ -88,9 +91,12 @@ def build_summary_context(
     # Browser-provided rows summarize exactly the transcript the user can see.
     if browser_visible_segments:
         sessions.replace_segments(session_id, browser_visible_segments)
+        # Reading the rows back applies server-side row corrections, so the
+        # note never uses a stale role for a row the clinician already fixed.
+        corrected_rows = sessions.get_segments(session_id)
         return SummaryContext(
-            stored_segments=browser_visible_segments,
-            transcript=transcript_text_from_segments(browser_visible_segments),
+            stored_segments=corrected_rows,
+            transcript=transcript_text_from_segments(corrected_rows),
             source="browser_visible_segments",
         )
 

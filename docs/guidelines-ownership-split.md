@@ -12,7 +12,7 @@ This document records the migration of domain knowledge and agent instructions t
 ## Ownership Split
 
 ### Gemini CLI (`GEMINI.md`)
-- **Owns:** Workflow loop (READ → CLASSIFY → SCOPE → ACT → VERIFY → LOG), autonomy tiers, definition of done, and the router table.
+- **Owns:** Workflow loop (READ → SCOPE → ACT → VERIFY), autonomy tiers, definition of done, and the router table.
 - **Rules:** No domain knowledge here. If you need to know *how* something works, consult the Router.
 
 ### Domain Reference (`docs/domain-reference.md`)

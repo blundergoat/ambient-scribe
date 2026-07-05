@@ -7,7 +7,16 @@ the speaker who owns most of each segment's timestamp span.
 
 Usage:
   python3 scripts/transcript-quality.py [--quality-json quality.json] \
+      [--window-artifact window-continuity.jsonl] \
+      [--row-diagnostics-json row-diagnostics.json] \
       <history.json> <cutoff_seconds> <doctor.TextGrid> <patient.TextGrid>
+
+Attribution is reported two ways. Visible/labeled metrics score only rows that
+carry a confident DOCTOR/PATIENT label; strict metrics keep uncertain or
+UNKNOWN clean rows in the denominator as incorrect, so hiding hard rows behind
+uncertainty can never raise the headline number. The speaker oracle is a free
+per-ID assignment (both IDs may take one role) and stays diagnostic only; the
+best valid dyadic mapping is the shippable ceiling.
 
 Reference numbers from 2026-07-05 (windowed emission, pre-M16):
 consultation-02 @31s -> dup 0.0%, recall 83.9%, ratio 0.83;
@@ -96,6 +105,87 @@ class AttributionScore:
         if self.clean_scored_segments == 0:
             return None
         return self.clean_correct_segments / self.clean_scored_segments * 100
+
+
+@dataclass(frozen=True)
+class StrictAttributionScore:
+    """Uncertainty-honest attribution counts for clean (non-overlap) rows.
+
+    The denominator is every clean row whose reference speaker is knowable,
+    whether or not the UI labeled it. Rows without a confident DOCTOR/PATIENT
+    label count as incorrect in strict accuracy, so marking hard rows
+    uncertain lowers coverage instead of inflating the headline metric.
+    """
+
+    clean_reference_rows: int
+    strict_correct_rows: int
+    labeled_rows: int
+    labeled_correct_rows: int
+    uncertain_rows: int
+    incorrect_confident_rows: int
+
+    @property
+    def strict_accuracy_percent(self) -> float | None:
+        """Return clean-row accuracy where uncertain/UNKNOWN counts as incorrect.
+
+        Returns:
+            Percent correct over all clean reference rows; None means no clean rows exist.
+        """
+        # No clean reference rows means strict attribution cannot be judged.
+        if self.clean_reference_rows == 0:
+            return None
+        return self.strict_correct_rows / self.clean_reference_rows * 100
+
+    @property
+    def labeled_accuracy_percent(self) -> float | None:
+        """Return accuracy among rows the UI labeled confidently.
+
+        Returns:
+            Percent correct over labeled rows; None means no row carried a confident label.
+        """
+        # No labeled rows means every clean row rendered as uncertain or raw.
+        if self.labeled_rows == 0:
+            return None
+        return self.labeled_correct_rows / self.labeled_rows * 100
+
+    @property
+    def uncertainty_coverage_percent(self) -> float | None:
+        """Return the share of clean rows shown without a confident role.
+
+        Returns:
+            Percent uncertain over clean reference rows; None means no clean rows exist.
+        """
+        # No clean reference rows means coverage has no denominator.
+        if self.clean_reference_rows == 0:
+            return None
+        return self.uncertain_rows / self.clean_reference_rows * 100
+
+    @property
+    def incorrect_confident_rate_percent(self) -> float | None:
+        """Return the share of clean rows that were confidently wrong.
+
+        Returns:
+            Percent confidently-wrong rows; None means no clean rows exist.
+        """
+        # No clean reference rows means the misleading-label rate has no denominator.
+        if self.clean_reference_rows == 0:
+            return None
+        return self.incorrect_confident_rows / self.clean_reference_rows * 100
+
+
+@dataclass(frozen=True)
+class EmissionWindowSpan:
+    """One emission window's owned slice of the session timeline.
+
+    Parsed from the per-window continuity artifact so row diagnostics can say
+    whether a transcript row crossed a window seam, where speaker identity is
+    known to drift. A window owns the span between the emission mark before
+    and after it ran; zero-width spans emitted no rows.
+    """
+
+    window_index: int
+    emitted_from_seconds: float
+    emitted_until_seconds: float
 
 
 @dataclass(frozen=True)
@@ -859,6 +949,258 @@ def score_attribution(
     )
 
 
+def score_strict_attribution(
+    segments: list[HypothesisSegment],
+    reference_intervals: list[ReferenceInterval],
+) -> StrictAttributionScore:
+    """Score clean rows with uncertain/UNKNOWN counted as incorrect.
+
+    Args:
+        segments: Visible transcript rows; empty means nothing can be judged.
+        reference_intervals: Doctor/patient intervals; empty means no oracle exists.
+
+    Returns:
+        Strict counts whose denominator keeps unlabeled clean rows, so
+        uncertainty lowers coverage instead of hiding wrong labels.
+    """
+    spans = overlap_spans(reference_intervals)
+    clean_reference_rows = 0
+    strict_correct_rows = 0
+    labeled_rows = 0
+    labeled_correct_rows = 0
+    uncertain_rows = 0
+    incorrect_confident_rows = 0
+
+    # Every clean row with a knowable reference speaker stays in the denominator.
+    for segment in segments:
+        expected_role = reference_role_for_segment(segment, reference_intervals)
+
+        # Rows without a clear reference speaker cannot prove a label right or wrong.
+        if expected_role is None:
+            continue
+
+        # Cross-talk rows are excluded so overlap ambiguity does not dominate strictness.
+        if touches_any_span(segment, spans):
+            continue
+
+        clean_reference_rows += 1
+
+        # Unlabeled/UNKNOWN rows are the uncertainty the clinician sees; they count as incorrect.
+        if segment.role not in SUPPORTED_REFERENCE_ROLES:
+            uncertain_rows += 1
+            continue
+
+        labeled_rows += 1
+        # A confident label is either correct or actively misleading.
+        if segment.role == expected_role:
+            labeled_correct_rows += 1
+            strict_correct_rows += 1
+        else:
+            incorrect_confident_rows += 1
+
+    return StrictAttributionScore(
+        clean_reference_rows=clean_reference_rows,
+        strict_correct_rows=strict_correct_rows,
+        labeled_rows=labeled_rows,
+        labeled_correct_rows=labeled_correct_rows,
+        uncertain_rows=uncertain_rows,
+        incorrect_confident_rows=incorrect_confident_rows,
+    )
+
+
+def emission_window_spans(window_artifact_path: Path) -> list[EmissionWindowSpan]:
+    """Parse emission-window spans from a window-continuity JSONL artifact.
+
+    Args:
+        window_artifact_path: Per-window artifact written by the eval runner;
+            missing or empty files mean seam flags stay unknown.
+
+    Returns:
+        Windows that emitted at least one row, sorted by their emission span.
+    """
+    # A missing artifact means the run predates window diagnostics.
+    if not window_artifact_path.exists():
+        return []
+
+    spans: list[EmissionWindowSpan] = []
+    # Each JSONL row may be one emission window's continuity record.
+    for line in window_artifact_path.read_text(encoding="utf-8").splitlines():
+        # Blank lines keep hand-edited artifacts readable without breaking joins.
+        if not line.strip():
+            continue
+
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        # Only window-continuity rows describe emission spans; summaries are skipped.
+        if record.get("event") != "nemo_session.window_continuity":
+            continue
+
+        emitted_from = float(record.get("emitted_from_seconds", 0.0) or 0.0)
+        emitted_until = float(record.get("emitted_until_seconds", 0.0) or 0.0)
+
+        # Zero-width spans emitted no rows and cannot own a transcript row.
+        if emitted_until <= emitted_from:
+            continue
+
+        spans.append(
+            EmissionWindowSpan(
+                window_index=int(record.get("window_index", 0) or 0),
+                emitted_from_seconds=emitted_from,
+                emitted_until_seconds=emitted_until,
+            )
+        )
+
+    spans.sort(key=lambda span: (span.emitted_from_seconds, span.window_index))
+    return spans
+
+
+def window_span_for_row(
+    segment: HypothesisSegment,
+    window_spans: list[EmissionWindowSpan],
+) -> EmissionWindowSpan | None:
+    """Find the emission window that published one transcript row.
+
+    Args:
+        segment: Visible transcript row with session timing.
+        window_spans: Emission spans from the window artifact; empty means unknown.
+
+    Returns:
+        Owning window, or None when the row cannot be joined by time span.
+    """
+    # Rows are emitted once, so the row's end time falls inside exactly one span.
+    for span in window_spans:
+        # A row ending inside this window's emission span was published by it.
+        if span.emitted_from_seconds < segment.end <= span.emitted_until_seconds + 1e-6:
+            return span
+    return None
+
+
+def build_row_diagnostics(
+    segments: list[HypothesisSegment],
+    reference_intervals: list[ReferenceInterval],
+    dyadic_ceiling: DyadicMappingCeiling,
+    window_spans: list[EmissionWindowSpan],
+) -> list[dict[str, Any]]:
+    """Build per-row doctor/patient diagnostics for one scored session.
+
+    Args:
+        segments: Visible transcript rows in history order.
+        reference_intervals: Doctor/patient intervals; empty means rows are unscoreable.
+        dyadic_ceiling: Best valid mapping used for the correctable flag.
+        window_spans: Emission windows for seam flags; empty leaves seams unknown.
+
+    Returns:
+        One record per visible row explaining what the clinician saw versus the
+        reference truth, whether it was confidently wrong, whether a better
+        global mapping could have fixed it, and how it relates to window seams.
+    """
+    # Typical trigger: a clinician reports "the doctor's question at 01:00
+    # shows as Patient" - these records answer why, row by row.
+    spans = overlap_spans(reference_intervals)
+    rows: list[dict[str, Any]] = []
+    first_row_seen_by_window: set[int] = set()
+
+    # History order matches the order rows became visible to the clinician.
+    for row_index, segment in enumerate(segments):
+        expected_role = reference_role_for_segment(segment, reference_intervals)
+        is_labeled = segment.role in SUPPORTED_REFERENCE_ROLES
+        is_correct: bool | None = None
+        # Correctness exists only when both a confident label and a reference role exist.
+        if expected_role is not None and is_labeled:
+            is_correct = segment.role == expected_role
+
+        mapping_correctable: bool | None = None
+        # The correctable flag asks whether the best valid global mapping fixes this row.
+        if expected_role is not None and dyadic_ceiling.best_mapping:
+            mapping_correctable = (
+                dyadic_ceiling.best_mapping.get(segment.speaker_id) == expected_role
+            )
+
+        owning_window = window_span_for_row(segment, window_spans)
+        crosses_window_seam: bool | None = None
+        first_in_window: bool | None = None
+        # Seam flags require the per-window artifact; without it they stay unknown.
+        if window_spans:
+            # A seam-crossing row started in audio an earlier window already
+            # emitted - exactly where speaker identity is known to drift.
+            crosses_window_seam = (
+                owning_window is not None
+                and segment.start < owning_window.emitted_from_seconds - 1e-3
+            )
+            # The first row of a window is where a whole-window identity swap
+            # would first become visible to the clinician.
+            if owning_window is not None:
+                first_in_window = owning_window.window_index not in first_row_seen_by_window
+                first_row_seen_by_window.add(owning_window.window_index)
+
+        rows.append(
+            {
+                "row_index": row_index,
+                "start": segment.start,
+                "end": segment.end,
+                "speaker_id": segment.speaker_id,
+                "visible_role": segment.role if segment.role else "UNKNOWN",
+                "expected_role": expected_role,
+                "in_overlap": touches_any_span(segment, spans),
+                "labeled": is_labeled,
+                "correct": is_correct,
+                "confidently_wrong": bool(is_labeled and is_correct is False),
+                "mapping_correctable": mapping_correctable,
+                "window_index": (
+                    owning_window.window_index if owning_window is not None else None
+                ),
+                "crosses_window_seam": crosses_window_seam,
+                "first_in_window": first_in_window,
+            }
+        )
+
+    return rows
+
+
+def write_row_diagnostics_json(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+    strict: StrictAttributionScore,
+    history_path: Path,
+    cutoff_seconds: float,
+    window_artifact_path: Path | None,
+) -> None:
+    """Write the compact per-row diagnostics artifact next to the text report.
+
+    Args:
+        output_path: Destination JSON path chosen by the eval runner or developer.
+        rows: Per-row diagnostic records from `build_row_diagnostics`.
+        strict: Strict attribution counts summarized alongside the rows.
+        history_path: Scored history file recorded for later joins.
+        cutoff_seconds: Session cutoff recorded for later joins.
+        window_artifact_path: Window artifact used for seam flags; None means seams unknown.
+    """
+    artifact = {
+        "schema_version": 1,
+        "history_path": str(history_path),
+        "cutoff_seconds": cutoff_seconds,
+        "window_artifact_path": (
+            str(window_artifact_path) if window_artifact_path is not None else None
+        ),
+        "summary": {
+            "clean_reference_rows": strict.clean_reference_rows,
+            "strict_correct_rows": strict.strict_correct_rows,
+            "labeled_rows": strict.labeled_rows,
+            "labeled_correct_rows": strict.labeled_correct_rows,
+            "uncertain_rows": strict.uncertain_rows,
+            "incorrect_confident_rows": strict.incorrect_confident_rows,
+        },
+        "rows": rows,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(artifact, sort_keys=True, indent=None) + "\n", encoding="utf-8"
+    )
+
+
 def score_speaker_purity(
     segments: list[HypothesisSegment],
     reference_intervals: list[ReferenceInterval],
@@ -1135,6 +1477,8 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quality-json", type=Path, default=None)
+    parser.add_argument("--window-artifact", type=Path, default=None)
+    parser.add_argument("--row-diagnostics-json", type=Path, default=None)
     parser.add_argument("history_json", type=Path)
     parser.add_argument("cutoff_seconds", type=float)
     parser.add_argument("textgrids", nargs="+", type=Path)
@@ -1204,6 +1548,13 @@ def main() -> int:
             dyadic_ceiling.accuracy_percent - attribution.clean_accuracy_percent
         )
 
+    strict_attribution = score_strict_attribution(segments, reference_intervals)
+    window_spans = (
+        emission_window_spans(args.window_artifact)
+        if args.window_artifact is not None
+        else []
+    )
+
     print(f"hypothesis words: {len(hyp_words)}  (unique {len(hyp_set)})")
     print(
         f"reference words (to {args.cutoff_seconds:.0f}s): "
@@ -1258,15 +1609,40 @@ def main() -> int:
         f"({attribution.clean_correct_segments}/{attribution.clean_scored_segments})"
     )
     print(
+        "strict attribution (non-overlap): "
+        f"{percent_or_na(strict_attribution.strict_accuracy_percent)} "
+        f"({strict_attribution.strict_correct_rows}/"
+        f"{strict_attribution.clean_reference_rows})"
+    )
+    print(
+        "labeled-row accuracy (non-overlap): "
+        f"{percent_or_na(strict_attribution.labeled_accuracy_percent)} "
+        f"({strict_attribution.labeled_correct_rows}/{strict_attribution.labeled_rows})"
+    )
+    print(
+        "uncertainty coverage (non-overlap): "
+        f"{percent_or_na(strict_attribution.uncertainty_coverage_percent)} "
+        f"({strict_attribution.uncertain_rows}/"
+        f"{strict_attribution.clean_reference_rows})"
+    )
+    print(
+        "incorrect-confident rate (non-overlap): "
+        f"{percent_or_na(strict_attribution.incorrect_confident_rate_percent)} "
+        f"({strict_attribution.incorrect_confident_rows}/"
+        f"{strict_attribution.clean_reference_rows})"
+    )
+    print(
         "speaker oracle accuracy: "
         f"{percent_or_na(speaker_purity.accuracy_percent)} "
-        f"({speaker_purity.oracle_correct_segments}/{speaker_purity.scored_segments})"
+        f"({speaker_purity.oracle_correct_segments}/{speaker_purity.scored_segments}) "
+        "[free oracle; diagnostic only]"
     )
     print(
         "speaker oracle accuracy (non-overlap): "
         f"{percent_or_na(clean_speaker_purity.accuracy_percent)} "
         f"({clean_speaker_purity.oracle_correct_segments}/"
-        f"{clean_speaker_purity.scored_segments})"
+        f"{clean_speaker_purity.scored_segments}) "
+        "[free oracle; diagnostic only]"
     )
     print(f"role mapping gap (non-overlap): {points_or_na(role_mapping_gap)}")
     print(
@@ -1287,6 +1663,26 @@ def main() -> int:
     print(f"phantom speaker count: {phantom_speaker_count(segments)}")
     print(f"role flips accepted: {count_or_na(accepted_flips)}")
     print(f"role flips suppressed: {count_or_na(suppressed_flips)}")
+
+    # The row artifact lets a developer trace one wrong UI row without rescoring.
+    if args.row_diagnostics_json is not None:
+        diagnostic_rows = build_row_diagnostics(
+            segments, reference_intervals, dyadic_ceiling, window_spans
+        )
+        write_row_diagnostics_json(
+            args.row_diagnostics_json,
+            diagnostic_rows,
+            strict_attribution,
+            args.history_json,
+            args.cutoff_seconds,
+            args.window_artifact,
+        )
+        seam_source = "window artifact" if window_spans else "no window artifact"
+        print(
+            f"row diagnostics: {len(diagnostic_rows)} rows -> "
+            f"{args.row_diagnostics_json} ({seam_source})"
+        )
+
     return 0
 
 

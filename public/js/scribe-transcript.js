@@ -17,26 +17,46 @@ let replayDrainReason = null;
 let replayDrainTimeout = null;
 
 /**
- * Builds summary rows from the transcript cards visible in the browser.
+ * Builds summary rows from the transcript rows visible in the browser.
  * Use when stop or summary requests need exactly what the clinician can see.
+ * One record per row span (not per coalesced card) keeps server history
+ * row-preserving, so per-row corrections survive the summary round-trip.
  */
 function readVisibleTranscriptSegments() {
     const visibleSegments = [];
 
-    // Each transcript card can contain several same-speaker text spans.
+    // Each transcript card can contain several same-speaker row spans.
     for (const segmentElement of document.querySelectorAll('.segment')) {
-        visibleSegments.push({
-            speaker_id: segmentElement.dataset.speakerId,
-            role: roleMapping[segmentElement.dataset.speakerId] ?? 'UNKNOWN',
-            text: [...segmentElement.querySelectorAll('.segment__text')]
-                .map((textElement) => textElement.textContent.trim())
-                .join(' '),
-            start: Number.parseFloat(segmentElement.dataset.start) || 0,
-            end: Number.parseFloat(segmentElement.dataset.end) || 0,
-        });
+        const cardSpeakerId = segmentElement.dataset.speakerId;
+
+        // Every row reports its own identity and row-resolved role:
+        // clinician correction > automatic row exception > speaker mapping.
+        for (const rowSpan of segmentElement.querySelectorAll('.segment__text')) {
+            const segmentId = rowSpan.dataset.segmentId ?? '';
+            visibleSegments.push({
+                segment_id: segmentId,
+                speaker_id: cardSpeakerId,
+                role: rowRoleOverrides.get(segmentId)
+                    ?? autoRowRoles.get(segmentId)
+                    ?? roleMapping[cardSpeakerId]
+                    ?? 'UNKNOWN',
+                text: rowTextFromSpan(rowSpan),
+                start: Number.parseFloat(rowSpan.dataset.start) || 0,
+                end: Number.parseFloat(rowSpan.dataset.end) || 0,
+            });
+        }
     }
 
     return visibleSegments;
+}
+
+/**
+ * Returns one row's spoken text without its correction chip.
+ * The chip ("Dr ✓") is a UI marker and must not leak into summary text.
+ */
+function rowTextFromSpan(rowSpan) {
+    // The row's text node is always first; the optional chip follows it.
+    return (rowSpan.childNodes[0]?.textContent ?? '').trim();
 }
 
 /**
@@ -133,11 +153,7 @@ function appendSegment(segment, role) {
  */
 function appendTextToExistingSegment(segment, transcriptContainer) {
     const textContainer = lastSegmentBlock.querySelector('.segment__texts');
-    const textSpan = createElement('span', {
-        className: 'segment__text',
-        text: segment.text,
-        dataset: { start: segment.start, end: segment.end },
-    });
+    const textSpan = createRowTextSpan(segment);
 
     textContainer.appendChild(textSpan);
     lastSegmentBlock.dataset.end = segment.end;
@@ -176,15 +192,119 @@ function createSegmentBlock(segment, role) {
         createElement('span', { className: 'segment__time', text: formatTime(segment.start) }),
     ]);
     const textContainer = createElement('div', { className: 'segment__texts' }, [
-        createElement('span', {
-            className: 'segment__text',
-            text: segment.text,
-            dataset: { start: segment.start, end: segment.end },
-        }),
+        createRowTextSpan(segment),
     ]);
     const body = createElement('div', { className: 'segment__body' }, [header, textContainer]);
     segmentBlock.append(avatar, body);
     return segmentBlock;
+}
+
+/**
+ * Builds one correctable transcript row span for a card.
+ * Cards coalesce same-speaker rows, so this is where each row keeps its own
+ * server row ID - letting the clinician fix exactly the line that is wrong
+ * (e.g. one doctor question rendered inside a Patient card) without
+ * relabeling the whole speaker.
+ */
+function createRowTextSpan(segment) {
+    const rowSpan = createElement('span', {
+        className: 'segment__text',
+        text: segment.text,
+        dataset: { start: segment.start, end: segment.end },
+    });
+
+    // Rows without a server row ID (older histories) cannot be corrected individually.
+    if (!segment.segment_id) {
+        return rowSpan;
+    }
+
+    rowSpan.dataset.segmentId = segment.segment_id;
+    rowSpan.title = 'Click to correct who said this line';
+    rowSpan.addEventListener('click', (clickEvent) => {
+        // The card's speaker label has its own click behavior; keep them separate.
+        clickEvent.stopPropagation();
+        cycleRowRole(rowSpan);
+    });
+
+    // A correction may already exist when history rows re-render after replay.
+    const existingRowRole = rowRoleOverrides.get(segment.segment_id);
+    if (existingRowRole !== undefined) {
+        renderRowRoleMarker(rowSpan, existingRowRole);
+    } else if (autoRowRoles.has(segment.segment_id)) {
+        // A known automatic exception restyles the row as soon as it renders.
+        renderAutoRowMarker(rowSpan, autoRowRoles.get(segment.segment_id));
+    }
+
+    return rowSpan;
+}
+
+/**
+ * Cycles one transcript row through Doctor, Patient, and Unknown labels.
+ * Use when the clinician clicks a row whose speaker is wrong; Unknown marks
+ * the row explicitly uncertain instead of guessing.
+ */
+function cycleRowRole(rowSpan) {
+    const segmentId = rowSpan.dataset.segmentId;
+    const cardSpeakerId = rowSpan.closest('.segment')?.dataset.speakerId ?? '';
+    const currentRowRole = rowRoleOverrides.get(segmentId)
+        ?? autoRowRoles.get(segmentId)
+        ?? roleMapping[cardSpeakerId]
+        ?? 'UNKNOWN';
+    const currentRoleIndex = MEDICAL_ROLE_CYCLE.indexOf(currentRowRole);
+    let nextRole;
+
+    // Unknown or unexpected labels move to the first medical role.
+    if (currentRoleIndex === -1) {
+        nextRole = MEDICAL_ROLE_CYCLE[0];
+    } else if (currentRoleIndex === MEDICAL_ROLE_CYCLE.length - 1) {
+        // The last medical role wraps to Unknown so users can mark a row uncertain.
+        nextRole = 'UNKNOWN';
+    } else {
+        nextRole = MEDICAL_ROLE_CYCLE[currentRoleIndex + 1];
+    }
+
+    rowRoleOverrides.set(segmentId, nextRole);
+    renderRowRoleMarker(rowSpan, nextRole);
+    announce(`Row corrected to ${nextRole === 'UNKNOWN' ? 'unknown speaker' : getRoleLabel(nextRole)}`);
+    sendRowRoleOverride(segmentId, nextRole);
+}
+
+/**
+ * Shows the corrected-row chip ("Dr ✓") on one transcript row.
+ * The chip survives later speaker-level relabeling, so the clinician can see
+ * which rows they personally pinned.
+ */
+function renderRowRoleMarker(rowSpan, role) {
+    rowSpan.classList.add('segment__text--corrected');
+    rowSpan.querySelector('.segment__row-role')?.remove();
+
+    const chipLabel = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
+    rowSpan.appendChild(createElement('span', {
+        className: 'segment__row-role',
+        text: `${chipLabel} ✓`,
+        attributes: { title: 'Corrected by you' },
+    }));
+}
+
+/**
+ * Sends a per-row role correction to the Python row-correction store.
+ * Reports save failures as warnings because the visible row label already changed.
+ */
+async function sendRowRoleOverride(segmentId, role) {
+    try {
+        const response = await fetch(`/scribe/${CONFIG.sessionId}/roles/override`, {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ segment_id: segmentId, role }),
+        });
+
+        // A rejected save leaves the local row label visible but not protected server-side.
+        if (!response.ok) {
+            console.warn('Row role override save failed:', response.status);
+        }
+    } catch (overrideError) {
+        console.warn('Row role override failed:', overrideError);
+    }
 }
 
 /**
@@ -290,13 +410,129 @@ function handleRoleUpdate(roleUpdateEvent) {
     }
 
     confidence = roleUpdateEvent.confidence ?? 0;
+    // A missing stability field means no new identity evidence (older server
+    // or post-disconnect drain), so the badge keeps the last known state.
+    roleStability = roleUpdateEvent.role_stability ?? roleStability;
+
+    // Row-scoped corrections (from this tab's save or another tab) pin exactly
+    // one row; they never relabel the rest of the speaker's rows.
+    for (const [segmentId, rowRole] of Object.entries(roleUpdateEvent.row_overrides ?? {})) {
+        rowRoleOverrides.set(segmentId, rowRole);
+        const rowSpan = document.querySelector(
+            `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
+        );
+
+        // The row may not be rendered yet on a freshly reconnected tab.
+        if (rowSpan) {
+            renderRowRoleMarker(rowSpan, rowRole);
+        }
+    }
+
+    // Automatic row exceptions arrive as the full current set for this
+    // mapping, so stale markers from the previous mapping are cleared.
+    if (roleUpdateEvent.row_exceptions !== undefined) {
+        applyAutoRowExceptions(roleUpdateEvent.row_exceptions);
+    }
+
     updateConfidenceBadge();
     relabelSegments();
 }
 
 /**
+ * Replaces the automatic row-exception markers with the server's latest set.
+ * These flag rows whose wording contradicts their card's role (e.g. a doctor
+ * question inside a Patient card) - relabeled or shown uncertain per row,
+ * without touching rows the clinician corrected personally.
+ */
+function applyAutoRowExceptions(rowExceptions) {
+    // Markers for rows the new mapping now explains are removed first.
+    for (const staleSegmentId of autoRowRoles.keys()) {
+        if (rowExceptions[staleSegmentId] === undefined) {
+            removeRowRoleMarker(staleSegmentId);
+        }
+    }
+
+    autoRowRoles.clear();
+
+    // Each exception restyles exactly one visible row.
+    for (const [segmentId, rowRole] of Object.entries(rowExceptions)) {
+        autoRowRoles.set(segmentId, rowRole);
+
+        // The clinician's own correction chip stays authoritative on screen.
+        if (rowRoleOverrides.has(segmentId)) {
+            continue;
+        }
+
+        const rowSpan = document.querySelector(
+            `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
+        );
+        // The row may not be rendered yet on a freshly reconnected tab.
+        if (rowSpan) {
+            renderAutoRowMarker(rowSpan, rowRole);
+        }
+    }
+}
+
+/**
+ * Removes any row marker (auto or corrected) from one transcript row.
+ * Use when a new mapping explains a row the previous mapping contradicted.
+ */
+function removeRowRoleMarker(segmentId) {
+    const rowSpan = document.querySelector(
+        `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
+    );
+
+    // Rows corrected by the clinician keep their own chip.
+    if (!rowSpan || rowRoleOverrides.has(segmentId)) {
+        return;
+    }
+
+    rowSpan.classList.remove('segment__text--corrected');
+    rowSpan.querySelector('.segment__row-role')?.remove();
+}
+
+/**
+ * Shows the automatic row-exception chip ("Dr auto" / "?") on one row.
+ * Unlike the clinician's "✓" chip, this marks a machine judgment the
+ * clinician can still override by clicking the row.
+ */
+function renderAutoRowMarker(rowSpan, rowRole) {
+    rowSpan.querySelector('.segment__row-role')?.remove();
+    rowSpan.classList.remove('segment__text--corrected');
+
+    const isUncertain = rowRole === 'UNKNOWN';
+    rowSpan.appendChild(createElement('span', {
+        className: 'segment__row-role segment__row-role--auto',
+        text: isUncertain ? '?' : `${getAvatarLabel(rowRole)} auto`,
+        attributes: {
+            title: isUncertain
+                ? 'This line\'s speaker is uncertain - click to correct'
+                : 'Relabeled from this line\'s wording - click to correct',
+        },
+    }));
+}
+
+/**
+ * Reports whether the speaker-identity layer is quiet enough to trust labels.
+ * A confident role mapping over churning speaker IDs can still label rows
+ * wrongly (the M20 consult-03 failure), so the green badge requires this too.
+ */
+function isSpeakerIdentityStable() {
+    // No stability report yet (older server or none received) keeps the
+    // pre-M20 behavior where confidence alone drives the badge.
+    if (roleStability === null) {
+        return true;
+    }
+
+    return roleStability.level !== 'unstable';
+}
+
+/**
  * Updates the role-confidence badge beside the recording status.
- * Use when inference confidence changes during a consultation.
+ * Use when inference confidence changes during a consultation. Green now
+ * requires BOTH high mapping confidence and stable speaker identity; a
+ * confident mapping over unstable identities renders as an amber warning so
+ * the clinician verifies labels instead of trusting them.
  */
 function updateConfidenceBadge() {
     const badge = document.getElementById('confidenceBadge');
@@ -308,10 +544,20 @@ function updateConfidenceBadge() {
 
     badge.classList.remove('hidden');
 
-    // High confidence tells the clinician labels are likely stable.
-    if (confidence >= 0.8) {
+    // High confidence AND quiet speaker identity: labels are likely stable.
+    if (confidence >= 0.8 && isSpeakerIdentityStable()) {
         badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
         badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800';
+        badge.title = '';
+        return;
+    }
+
+    // Confident mapping over unstable speaker IDs: the consult-03 trap.
+    // Some rows may show the wrong person even though the mapping looks sure.
+    if (confidence >= 0.8) {
+        badge.textContent = `Roles assigned - verify labels (${Math.round(confidence * 100)}%)`;
+        badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800';
+        badge.title = 'Speaker identities changed during this visit; some rows may be mislabeled. Click a speaker label to correct it.';
         return;
     }
 
@@ -319,6 +565,7 @@ function updateConfidenceBadge() {
     if (confidence >= 0.5) {
         badge.textContent = `Low confidence (${Math.round(confidence * 100)}%)`;
         badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800';
+        badge.title = '';
         return;
     }
 
@@ -326,6 +573,7 @@ function updateConfidenceBadge() {
     // not the pulsing "identifying" placeholder (which implies work still in progress).
     badge.textContent = `Speakers unclear (${Math.round(confidence * 100)}%)`;
     badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600';
+    badge.title = '';
 }
 
 /**

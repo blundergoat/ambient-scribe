@@ -16,6 +16,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from api.role_heuristics import (
+    compute_row_role_exceptions,
+    summarize_role_establishment_cues,
+)
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
 from tools.assign_roles import (
@@ -29,8 +33,16 @@ logger = logging.getLogger(__name__)
 ROLE_INFERENCE_IDLE_TIMEOUT_SECONDS = 60.0
 ROLE_EVIDENCE_RECENT_UTTERANCES = 3
 ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES = 2
-ROLE_EVIDENCE_MAX_TEXT_CHARS = 180
+ROLE_EVIDENCE_OPENING_UTTERANCES = 3
+ROLE_EVIDENCE_MAX_TEXT_CHARS = 120
 ROLE_EVIDENCE_MAX_SPEAKERS = 6
+
+# Speaker-identity stability gate for the browser confidence badge. M20 Phase 0
+# measured 0.87-1.13 anchor remaps per window on every misleading PriMock
+# session, so any threshold well below that band behaves identically on the
+# corpus; 0.2 leaves headroom for genuinely clean close-mic audio to earn a
+# confident badge while mixed audio stays qualified.
+STABLE_MAX_ANCHOR_REMAP_RATE = 0.2
 
 PublishToMercure = Callable[[str, dict[str, Any], int | None], Awaitable[bool]]
 RunRoleInference = Callable[
@@ -334,7 +346,14 @@ async def _infer_and_publish_role_update(
     if result and result.get("path") != "none":
         role_update = _build_role_update_payload(session_id, merged_segments, result)
         services.sessions.apply_role_mapping(session_id, role_update.mapping)
-        await _publish_role_update(session_id, role_update, services)
+        # After every mapping, the row-cue lane re-judges rows whose text
+        # contradicts their speaker's role (e.g. a doctor question rendered
+        # inside a Patient card) and relabels or un-labels just those rows.
+        row_exceptions = compute_row_role_exceptions(
+            services.sessions.get_segments(session_id), role_update.mapping
+        )
+        services.sessions.set_auto_row_roles(session_id, row_exceptions)
+        await _publish_role_update(session_id, role_update, services, row_exceptions)
         path = str(
             result.get("path", "tool" if role_update.tool_invoked else "mapping")
         )
@@ -349,6 +368,7 @@ async def _infer_and_publish_role_update(
                 "tool_invoked": role_update.tool_invoked,
                 "path": path,
                 "fallback": path in {"heuristic", "none"},
+                "row_exceptions": len(row_exceptions),
                 "tokens_in": int(result.get("tokens_in", 0)),
                 "tokens_out": int(result.get("tokens_out", 0)),
                 "tokens_total": int(result.get("tokens_total", 0)),
@@ -420,24 +440,104 @@ def _build_role_update_payload(
     )
 
 
+def _build_role_stability(
+    session_id: str,
+    services: RoleInferenceServices,
+) -> dict[str, Any] | None:
+    """Summarize live speaker-identity stability for the confidence badge.
+
+    Role confidence only says how sure the agent is about the global
+    DOCTOR/PATIENT mapping; it says nothing about whether the underlying
+    speaker IDs stayed one voice each. This reads the live audio session's
+    identity counters so the browser can refuse to show a confident
+    "Roles identified" badge while speaker identity is churning.
+
+    Args:
+        session_id: Browser recording UUID whose stability is being judged.
+        services: Runtime services; the lifecycle holds the live audio session.
+
+    Returns:
+        Stability payload for the roles topic, or None when the audio session
+        is gone (e.g. the tail batch drains after disconnect) - the browser
+        then keeps the last stability it saw instead of resetting.
+    """
+    audio_session = services.lifecycle.get(session_id)
+
+    # A drained/ended session has no live counters; None keeps the last badge state.
+    if audio_session is None:
+        return None
+
+    quality_stats = audio_session.quality_stats
+    window_count = len(quality_stats.window_seconds)
+    anchor_remap_rate = (
+        quality_stats.speaker_anchor_remap_count / window_count if window_count else 0.0
+    )
+
+    role_state = get_or_create_state(session_id)
+    # Mapping churn is informational only: Phase 0 showed accepted flips
+    # correlate with healthy sessions (they are corrections), so churn must
+    # not gate the badge - identity-layer evidence does.
+    mapping_changes = sum(
+        1
+        for previous_mapping, current_mapping in zip(
+            role_state.mapping_history, role_state.mapping_history[1:]
+        )
+        if previous_mapping != current_mapping
+    )
+    pending_contrary_mapping = role_state.pending_flip_mapping is not None
+
+    # Any of these means the visible speaker identities cannot be trusted yet,
+    # so a green "Roles identified" badge would overstate row-level truth.
+    is_unstable = (
+        anchor_remap_rate > STABLE_MAX_ANCHOR_REMAP_RATE
+        or quality_stats.phantom_speaker_merge_count > 0
+        or pending_contrary_mapping
+    )
+
+    return {
+        "level": "unstable" if is_unstable else "stable",
+        "anchor_remap_rate": round(anchor_remap_rate, 3),
+        "anchor_remaps": quality_stats.speaker_anchor_remap_count,
+        "phantom_merges": quality_stats.phantom_speaker_merge_count,
+        "windows": window_count,
+        "mapping_changes": mapping_changes,
+        "pending_contrary_mapping": pending_contrary_mapping,
+    }
+
+
 async def _publish_role_update(
     session_id: str,
     role_update: RoleUpdatePayload,
     services: RoleInferenceServices,
+    row_exceptions: dict[str, str] | None = None,
 ) -> None:
     """Publish a role update so the browser can relabel visible transcript text."""
     event_id = _next_role_event_id(session_id, services)
+    role_update_event: dict[str, Any] = {
+        "type": "role_update",
+        "mapping": role_update.mapping,
+        "attributed_segments": role_update.attributed_segments,
+        "confidence": role_update.confidence,
+        "flip_detected": role_update.flip_detected,
+        "reasoning": role_update.reasoning,
+        "session_id": session_id,
+    }
+
+    # Row exceptions ship as the full current set (replace semantics) so the
+    # browser can also clear markers for rows a new mapping now explains.
+    # None means the caller did not recompute; the field is omitted entirely.
+    if row_exceptions is not None:
+        role_update_event["row_exceptions"] = row_exceptions
+
+    role_stability = _build_role_stability(session_id, services)
+    # Stability is additive so older payload consumers keep working; a missing
+    # field means "no new identity evidence" and the browser keeps its last value.
+    if role_stability is not None:
+        role_update_event["role_stability"] = role_stability
+
     await services.publish_to_mercure(
         f"scribe/session/{session_id}/roles",
-        {
-            "type": "role_update",
-            "mapping": role_update.mapping,
-            "attributed_segments": role_update.attributed_segments,
-            "confidence": role_update.confidence,
-            "flip_detected": role_update.flip_detected,
-            "reasoning": role_update.reasoning,
-            "session_id": session_id,
-        },
+        role_update_event,
         event_id=event_id,
     )
 
@@ -504,7 +604,7 @@ def _build_bounded_role_evidence(
     evidence_by_speaker: dict[str, dict[str, Any]] = {}
 
     # Stored rows include the latest visible text, so the model does not need a full transcript.
-    for segment in stored_segments:
+    for segment_index, segment in enumerate(stored_segments):
         speaker_id = str(segment.get("speaker_id", "")).strip()
         visible_text = _trim_role_evidence_text(str(segment.get("text", "")))
 
@@ -512,34 +612,69 @@ def _build_bounded_role_evidence(
         if speaker_id == "" or visible_text == "":
             continue
 
+        cue_counts = summarize_role_establishment_cues(visible_text)
+
         speaker_evidence = evidence_by_speaker.setdefault(
             speaker_id,
             {
                 "speaker_id": speaker_id,
+                "first_seen_index": segment_index,
                 "segment_count": 0,
                 "word_count": 0,
+                "opening_role_cue_counts": {
+                    "doctor": 0,
+                    "patient": 0,
+                    "questions": 0,
+                },
+                "role_cue_counts": {"doctor": 0, "patient": 0, "questions": 0},
                 "representative_utterances": [],
                 "recent_utterances": [],
+                "_opening_utterances_seen": 0,
+                "_representative_candidates": [],
             },
         )
         speaker_evidence["segment_count"] += 1
         speaker_evidence["word_count"] += len(visible_text.split())
+        # Cue counts summarize what the user said without expanding prompt text.
+        for cue_name, cue_count in cue_counts.items():
+            speaker_evidence["role_cue_counts"][cue_name] += cue_count
+
+        # Opening cues establish the visit baseline before later seam swaps confuse identity.
+        if speaker_evidence["_opening_utterances_seen"] < ROLE_EVIDENCE_OPENING_UTTERANCES:
+            for cue_name, cue_count in cue_counts.items():
+                speaker_evidence["opening_role_cue_counts"][cue_name] += cue_count
+            speaker_evidence["_opening_utterances_seen"] += 1
+
         utterance = {
             "text": visible_text,
             "start": segment.get("start"),
             "end": segment.get("end"),
         }
 
-        representative_utterances = speaker_evidence["representative_utterances"]
-        # Early utterances often carry role cues like greeting, complaint, or clinical question.
-        if len(representative_utterances) < ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES:
-            representative_utterances.append(utterance)
+        # Later clean questions or symptom reports should replace garbled opening cross-talk.
+        speaker_evidence["_representative_candidates"].append(
+            {
+                **utterance,
+                "_role_cue_strength": (
+                    cue_counts["doctor"] + cue_counts["patient"] + cue_counts["questions"]
+                ),
+            }
+        )
 
         recent_utterances = speaker_evidence["recent_utterances"]
         recent_utterances.append(utterance)
         # Keep only the latest rows so long visits do not grow the model input.
         if len(recent_utterances) > ROLE_EVIDENCE_RECENT_UTTERANCES:
             del recent_utterances[0]
+
+    # Each speaker gets cue-rich examples, not just the first rows the user happened to say.
+    for speaker_evidence in evidence_by_speaker.values():
+        speaker_evidence["representative_utterances"] = (
+            _select_representative_role_utterances(
+                speaker_evidence.pop("_representative_candidates", [])
+            )
+        )
+        speaker_evidence.pop("_opening_utterances_seen", None)
 
     speaker_evidence_rows = list(evidence_by_speaker.values())
     # Real visits can include stray diarization labels; cap prompt rows before the model sees them.
@@ -550,11 +685,13 @@ def _build_bounded_role_evidence(
         "speaker_count": len(speaker_evidence_rows),
         "total_segments_considered": len(stored_segments),
         "new_segment_count": len(new_segments),
+        "establishment_hint": _build_role_establishment_hint(speaker_evidence_rows),
         "caps": {
             "recent_utterances_per_speaker": ROLE_EVIDENCE_RECENT_UTTERANCES,
             "representative_utterances_per_speaker": (
                 ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES
             ),
+            "opening_utterances_per_speaker": ROLE_EVIDENCE_OPENING_UTTERANCES,
             "max_text_chars": ROLE_EVIDENCE_MAX_TEXT_CHARS,
             "max_speakers": ROLE_EVIDENCE_MAX_SPEAKERS,
         },
@@ -578,6 +715,124 @@ def _trim_role_evidence_text(text: str) -> str:
         return ""
 
     return normalized_text[:ROLE_EVIDENCE_MAX_TEXT_CHARS]
+
+
+def _build_role_establishment_hint(
+    speaker_evidence_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Suggest a dyadic mapping from clean opening cues.
+
+    Args:
+        speaker_evidence_rows: Bounded speaker summaries; empty means no role evidence.
+
+    Returns:
+        Hint payload for the role agent; empty means cues were weak or ambiguous.
+    """
+    # More or fewer than two visible speakers makes a dyadic hint unsafe.
+    if len(speaker_evidence_rows) != 2:
+        return {}
+
+    scored_speakers: list[dict[str, Any]] = []
+    # Each speaker's opening cue balance is one establishment vote.
+    for speaker_evidence in speaker_evidence_rows:
+        opening_counts = speaker_evidence.get("opening_role_cue_counts", {})
+        doctor_score = int(opening_counts.get("doctor", 0))
+        patient_score = int(opening_counts.get("patient", 0))
+        scored_speakers.append(
+            {
+                "speaker_id": speaker_evidence["speaker_id"],
+                "doctor_margin": doctor_score - patient_score,
+                "patient_margin": patient_score - doctor_score,
+            }
+        )
+
+    doctor_candidate = max(
+        scored_speakers,
+        key=lambda scored_speaker: scored_speaker["doctor_margin"],
+    )
+    patient_candidate = max(
+        scored_speakers,
+        key=lambda scored_speaker: scored_speaker["patient_margin"],
+    )
+
+    # Weak or same-speaker cues are reported as no hint, not a guessed label.
+    if (
+        doctor_candidate["doctor_margin"] <= 0
+        or patient_candidate["patient_margin"] <= 0
+        or doctor_candidate["speaker_id"] == patient_candidate["speaker_id"]
+    ):
+        return {}
+
+    return {
+        "mapping": {
+            doctor_candidate["speaker_id"]: "DOCTOR",
+            patient_candidate["speaker_id"]: "PATIENT",
+        },
+        "source": "opening_role_cue_counts",
+    }
+
+
+def _select_representative_role_utterances(
+    candidate_utterances: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pick bounded cue-rich rows that help establish speaker roles.
+
+    Args:
+        candidate_utterances: Visible rows for one speaker; empty means no UI text.
+
+    Returns:
+        Chronological rows selected for the role agent; empty means no evidence.
+    """
+    # No visible rows means the agent has no safe text to use for this speaker.
+    if candidate_utterances == []:
+        return []
+
+    ranked_utterances = sorted(
+        candidate_utterances,
+        key=lambda utterance: (
+            int(utterance.get("_role_cue_strength", 0)),
+            _role_evidence_start_seconds(utterance),
+        ),
+        reverse=True,
+    )
+    selected_utterances = ranked_utterances[:ROLE_EVIDENCE_REPRESENTATIVE_UTTERANCES]
+    chronological_utterances = sorted(
+        selected_utterances,
+        key=_role_evidence_start_seconds,
+    )
+
+    cleaned_utterances: list[dict[str, Any]] = []
+    # Internal scoring fields help selection only; they should not reach the model.
+    for utterance in chronological_utterances:
+        cleaned_utterances.append(
+            {
+                key: value
+                for key, value in utterance.items()
+                if not str(key).startswith("_")
+            }
+        )
+
+    return cleaned_utterances
+
+
+def _role_evidence_start_seconds(utterance: dict[str, Any]) -> float:
+    """Return one row's start time for ordering role evidence.
+
+    Args:
+        utterance: Candidate transcript row; missing start means untimed UI text.
+
+    Returns:
+        Start seconds, or `-1.0` when the row cannot be ordered precisely.
+    """
+    raw_start = utterance.get("start")
+    # Missing start times should sort before normal timed rows.
+    if raw_start is None:
+        return -1.0
+
+    try:
+        return float(raw_start)
+    except (TypeError, ValueError):
+        return -1.0
 
 
 def _has_multiple_speakers(session_id: str, sessions: StorageBackend) -> bool:

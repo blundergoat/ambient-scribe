@@ -1,4 +1,4 @@
-# Ambient Scribe AGENTS - goat-flow v1.13.0 (2026-07-04)
+# Ambient Scribe AGENTS - goat-flow v1.13.1 (2026-07-05)
 
 Ambient Scribe is a Symfony + FastAPI + NeMo + Mercure medical transcription app. Core invariant: NeMo owns the single GPU; role inference never uses it.
 Workspace boundary: this checkout is the controlling goat-flow workspace; when a selected target differs, use target-scoped commands such as `git -C <target> status` and keep writes inside the declared target.

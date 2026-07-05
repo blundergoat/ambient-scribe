@@ -305,9 +305,13 @@ function resetVisitState() {
     roleMapping = {};
     previousRoleMapping = {};
     confidence = 0;
+    // Stability evidence belongs to the previous visit's speaker identities.
+    roleStability = null;
     latestQualityRecord = null;
     startTime = null;
     manualOverrides.clear();
+    rowRoleOverrides.clear();
+    autoRowRoles.clear();
     segmentsBySpeaker.clear();
     lastSpeakerId = null;
     lastSegmentBlock = null;

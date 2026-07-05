@@ -38,6 +38,7 @@ from api.role_inference_queue import (
     role_inference_workers,
 )
 from api.role_agent_runtime import run_role_inference as _run_role_inference
+from api.role_heuristics import compute_row_role_exceptions
 from api.agent_observability import configure_strands_telemetry as _configure_strands_telemetry
 from api.mercure_publisher import did_publish_mercure_event
 from api.streaming_session import StreamingServices, transcribe_stream_session
@@ -567,29 +568,43 @@ async def session_history(session_id: str) -> dict:
 
 @app.post("/session/{session_id}/roles/override")
 async def roles_override(session_id: str, request: Request) -> dict:
-    """Apply a manual speaker role override from the frontend.
+    """Apply a manual role correction from the frontend.
 
-    Updates the role mapping state and publishes the change to Mercure
-    so all connected clients see the correction immediately.
+    Two scopes share this route. A `speaker_id` body relabels every row of
+    that speaker and becomes a confirmed override the agent must respect. A
+    `segment_id` body corrects exactly one transcript row; it is stored in the
+    row-scoped correction store and never touches the speaker mapping, so a
+    later agent update cannot undo it. Both publish to Mercure so all
+    connected clients see the correction immediately.
 
     Args:
         session_id: UUID for the transcript the user corrected.
-        request: JSON body with speaker_id and role selected in the transcript UI.
+        request: JSON body with `role` plus exactly one of `speaker_id` or
+            `segment_id` selected in the transcript UI.
 
     Returns:
-        Updated role mapping shown by the browser.
+        Updated role mapping (speaker scope) or the corrected row (row scope).
 
     Raises:
-        HTTPException: When speaker or role is empty, so the UI can show a validation error.
+        HTTPException: When the scope/role is missing or ambiguous, or when a
+            row correction targets a session with no stored transcript.
     """
     _validate_session_id(session_id)
     body = await request.json()
     speaker_id = str(body.get("speaker_id", ""))
+    segment_id = str(body.get("segment_id", ""))
     role = str(body.get("role", "")).upper()
 
     # Empty role selections cannot update the visible transcript labels.
-    if not speaker_id or not role:
-        raise HTTPException(status_code=400, detail="speaker_id and role required")
+    if not role or bool(speaker_id) == bool(segment_id):
+        raise HTTPException(
+            status_code=400,
+            detail="role plus exactly one of speaker_id or segment_id required",
+        )
+
+    # Row scope: correct one visible transcript row without relabeling the speaker.
+    if segment_id:
+        return await _apply_row_role_override(session_id, segment_id, role)
 
     # Update the role state
     state = get_or_create_state(session_id)
@@ -600,6 +615,12 @@ async def roles_override(session_id: str, request: Request) -> dict:
 
     # Apply to stored segments
     sessions.apply_role_mapping(session_id, state.current_mapping)
+    # Re-judge rows against the corrected mapping so automatic row exceptions
+    # stay consistent with the labels the clinician now sees.
+    row_exceptions = compute_row_role_exceptions(
+        sessions.get_segments(session_id), state.current_mapping
+    )
+    sessions.set_auto_row_roles(session_id, row_exceptions)
 
     # Publish the override to Mercure so other clients see it
     _mercure_event_ids.setdefault(session_id, 0)
@@ -609,6 +630,7 @@ async def roles_override(session_id: str, request: Request) -> dict:
         {
             "type": "role_update",
             "mapping": state.current_mapping,
+            "row_exceptions": row_exceptions,
             "confidence": state.running_confidence,
             "flip_detected": False,
             "manual_override": True,
@@ -628,6 +650,66 @@ async def roles_override(session_id: str, request: Request) -> dict:
     )
 
     return {"status": "ok", "mapping": state.current_mapping}
+
+
+async def _apply_row_role_override(session_id: str, segment_id: str, role: str) -> dict:
+    """Persist and broadcast a single-row role correction.
+
+    The clinician clicked one transcript row whose label was wrong (e.g. a
+    doctor question shown as Patient). The correction is stored row-scoped so
+    speaker-level mappings and finalize rebuilds cannot undo it, then published
+    on the roles topic so other tabs show the same corrected row.
+
+    Args:
+        session_id: Recording UUID the clinician is correcting.
+        segment_id: Stable row ID from the clicked transcript row.
+        role: Corrected role label for exactly that row.
+
+    Returns:
+        Confirmation payload with the corrected row for the browser.
+
+    Raises:
+        HTTPException: When no stored transcript exists for the session, so the
+            UI can tell the user the correction could not be saved.
+    """
+    applied = sessions.set_row_role(session_id, segment_id, role)
+
+    # A missing session means there is no stored row this correction could stick to.
+    if not applied:
+        raise HTTPException(
+            status_code=404,
+            detail="No stored transcript for this session; row correction not saved",
+        )
+
+    state = get_or_create_state(session_id)
+    _mercure_event_ids.setdefault(session_id, 0)
+    _mercure_event_ids[session_id] += 1
+    # The speaker mapping is included unchanged so existing consumers keep
+    # working; `row_overrides` is the additive row-scoped signal.
+    await publish_to_mercure(
+        f"scribe/session/{session_id}/roles",
+        {
+            "type": "role_update",
+            "mapping": state.current_mapping,
+            "row_overrides": {segment_id: role},
+            "confidence": state.running_confidence,
+            "flip_detected": False,
+            "manual_override": True,
+            "session_id": session_id,
+        },
+        event_id=_mercure_event_ids[session_id],
+    )
+
+    logger.info(
+        "roles_override.row_applied",
+        extra={
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "role": role,
+        },
+    )
+
+    return {"status": "ok", "segment_id": segment_id, "role": role}
 
 
 @app.post("/session/{session_id}/summary")

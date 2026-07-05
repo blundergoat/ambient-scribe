@@ -26,6 +26,9 @@ let segmentIndex = 0;
 let roleMapping = {};
 let previousRoleMapping = {};
 let confidence = 0;
+// Latest speaker-identity stability from the roles topic; null until the
+// server reports it, so older servers keep the pre-M20 badge behavior.
+let roleStability = null;
 let streams = null;
 let isRecording = false;
 let didUserStopRecording = false;
@@ -38,6 +41,13 @@ let latestQualityRecord = null;
 
 const segmentsBySpeaker = new Map();
 const manualOverrides = new Set();
+// Per-row role corrections keyed by the server row ID (`segment_id`). Row
+// corrections outrank speaker-level labels for exactly that transcript row.
+const rowRoleOverrides = new Map();
+// Automatic row exceptions from the server's cue lane (rows whose wording
+// contradicts their speaker's mapped role). Replaced wholesale on each role
+// update; the clinician's own row corrections always outrank these.
+const autoRowRoles = new Map();
 
 /**
  * Converts backend role codes into labels the clinician sees on cards.

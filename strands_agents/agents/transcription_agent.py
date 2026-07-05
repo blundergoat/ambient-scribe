@@ -25,16 +25,19 @@ ROLE_AGENT_MAX_TOKENS = int(os.environ.get("ROLE_AGENT_MAX_TOKENS", "2048"))
 
 _SHARED_EDGE_CASES = """
 Edge cases:
-- If only one speaker is present for an extended period, maintain the existing
-  mapping. Do NOT reassign roles based on a monologue.
+- If only one speaker is present for an extended period, keep confidence low.
+  Do NOT infer both roles from one person's monologue.
 - If diarization labels flip (a known Sortformer issue), detect the flip by
-  comparing recent speech content against established DOCTOR/PATIENT patterns.
-  Change an established mapping only when both speakers' roles clearly swap.
-- During silence or minimal speech, return the existing mapping unchanged
-  with the same confidence level.
+  comparing recent speech content against DOCTOR/PATIENT patterns.
+- During silence or minimal speech, make the lowest-confidence mapping that the
+  bounded speaker evidence supports.
 
-Maintain your speaker-to-role mapping across the session. If you become more
-confident over time, update the mapping.
+Previous automatic mappings are intentionally not supplied because early guesses
+can be wrong. Do not infer prior labels from role_state; use the bounded speaker
+evidence, cue counts, recent utterances, representative utterances, and any
+establishment_hint. establishment_hint comes from early high-precision opener
+cues in this same visit; prefer it unless both speakers' recent content clearly
+swapped roles. confirmed_overrides are clinician corrections and must be preserved.
 
 You MUST call the assign_roles tool with your decision. Pass:
 - session_id: from the input payload
@@ -56,7 +59,8 @@ Your job is to determine which speaker is the DOCTOR and which is the PATIENT.
 Reasoning signals:
 - Doctors ask clinical questions, use medical terminology, give instructions
 - Patients describe symptoms, ask about treatment, express concerns
-- Doctors typically speak first in a consultation (greeting, opening)
+- First speaker alone is weak evidence; clinician self-introduction and
+  consultation-opener wording are stronger signals
 - Medical jargon density is higher for the doctor
 {_SHARED_EDGE_CASES}"""
 

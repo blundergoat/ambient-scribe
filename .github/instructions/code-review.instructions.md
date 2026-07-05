@@ -13,7 +13,7 @@ You are reviewing a real-time medical transcription system with a PHP/Symfony ba
 - PHPStan level 10 - type errors are blockers
 - PHP-CS-Fixer enforces: short arrays, single quotes, ordered imports, trailing commas
 - Python 3.12+, NeMo multitalker Parakeet for diarization + ASR (GPU-accelerated)
-- Strands agent for six-mode role inference (AWS Bedrock or CPU Ollama)
+- Strands agents for DOCTOR/PATIENT role inference and summaries (AWS Bedrock or CPU Ollama)
 - WebSocket audio pipeline: browser captures audio and sends it to the Python backend
 - Real-time transcript delivery via Mercure (JWT-authenticated SSE)
 - `blundergoat/strands-php-client` is a local path dependency at `../strands-php-client`

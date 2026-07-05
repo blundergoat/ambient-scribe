@@ -324,6 +324,38 @@
         .segment__text + .segment__text::before {
             content: ' ';
         }
+        /* Rows with a stable ID are individually correctable by clicking. */
+        .segment__text[data-segment-id] {
+            cursor: pointer;
+        }
+        .segment__text[data-segment-id]:hover {
+            background: color-mix(in srgb, currentColor 8%, transparent);
+            border-radius: 3px;
+        }
+        /* A row the clinician corrected keeps a subtle marker even after
+           later automatic role updates restyle the surrounding card. */
+        .segment__text--corrected {
+            text-decoration: underline dotted;
+            text-underline-offset: 3px;
+        }
+        .segment__row-role {
+            display: inline-block;
+            font-size: 0.625rem;
+            font-weight: 600;
+            margin-left: 0.25rem;
+            padding: 0 0.3rem;
+            border-radius: 9999px;
+            background: color-mix(in srgb, currentColor 12%, transparent);
+            vertical-align: super;
+            user-select: none;
+        }
+        /* Automatic row exceptions look tentative (outline, no fill) so the
+           clinician can tell a machine judgment from their own "✓" correction. */
+        .segment__row-role--auto {
+            background: transparent;
+            border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+            opacity: 0.85;
+        }
 
         @media (prefers-reduced-motion: reduce) {
             .segment {

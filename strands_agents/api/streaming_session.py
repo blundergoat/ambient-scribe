@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from api.role_heuristics import compute_row_role_exceptions
 from fastapi import WebSocket, WebSocketDisconnect
 from nemo_session import TranscriptionSession
 from session_quality import (
@@ -308,6 +309,15 @@ async def _finalize_after_disconnect(
     # Confirmed role mappings keep final transcript labels aligned with the live view.
     if current_state.current_mapping:
         services.sessions.apply_role_mapping(session_id, current_state.current_mapping)
+        # Re-judge rows after the final mapping so automatic row exceptions
+        # survive the history rebuild exactly as the clinician last saw them.
+        services.sessions.set_auto_row_roles(
+            session_id,
+            compute_row_role_exceptions(
+                services.sessions.get_segments(session_id),
+                current_state.current_mapping,
+            ),
+        )
 
     await _emit_session_quality_record(session_id, session, services, state, current_state)
 

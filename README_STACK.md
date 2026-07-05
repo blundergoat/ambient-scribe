@@ -31,7 +31,7 @@ Role inference, summaries, clinical hints, and medical term correction do not us
 | Symfony app | `http://localhost:48082` | Serves `/scribe`, injects session config, proxies history/role endpoints | `Dockerfile`, `src/`, `templates/` |
 | FastAPI NeMo agent | `http://localhost:48101` | WebSocket audio ingest, NeMo inference, role queue, summaries, replay, Mercure publish | `strands_agents/`, `docker/nemo/Dockerfile` |
 | Mercure hub | `http://localhost:48137/.well-known/mercure` | Browser SSE fan-out for transcript, role, summary, and hint events | `docker-compose.yml` |
-| Ollama | in-network `http://ollama:11434` | Default CPU-only local LLM provider for role and summary agents; starts with the stack, no host port published | `docker-compose.yml` service `ollama` |
+| Ollama | in-network `http://ollama:11434` | CPU-only local LLM provider for role and summary agents when `ROLE_AGENT_MODEL_PROVIDER=ollama`; starts through the `ollama` Compose profile, no host port published | `docker-compose.yml` service `ollama` |
 
 ## Model Inventory
 
@@ -39,9 +39,9 @@ Role inference, summaries, clinical hints, and medical term correction do not us
 | --- | --- | --- | --- | --- |
 | Speaker diarization | `nvidia/diar_streaming_sortformer_4spk-v2.1` via `SortformerEncLabelModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Streaming Sortformer v2.1. The Dockerfile pre-downloads `diar_streaming_sortformer_4spk-v2.1.nemo`. |
 | Automatic speech recognition | `nvidia/multitalker-parakeet-streaming-0.6b-v1` via `EncDecMultiTalkerRNNTBPEModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Multitalker Parakeet 0.6B. The Dockerfile pre-downloads `multitalker-parakeet-streaming-0.6b-v1.nemo`. |
-| Role inference | Strands Agent with `assign_roles` tool | AWS Bedrock or CPU-only Ollama | `ROLE_AGENT_MODEL_PROVIDER=ollama` in local env/Compose | Maps raw `spk_0`/`spk_1` labels to DOCTOR/PATIENT. Raw transcript still appears if this fails. |
+| Role inference | Strands Agent with `assign_roles` tool | AWS Bedrock or CPU-only Ollama | `.env.example` and agent code default to `ROLE_AGENT_MODEL_PROVIDER=bedrock`; bare Compose falls back to `ollama` only when no env overrides it | Maps raw `spk_0`/`spk_1` labels to DOCTOR/PATIENT. Raw transcript still appears if this fails. |
 | Local role/summary model | `qwen3.5:9b` through Ollama | CPU and system RAM | `ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b` | Recommended local model in `.env.example`; `qwen2.5:7b` is documented as faster but lower quality. |
-| Bedrock role/summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` in `.env.example` and agent code defaults | AWS Bedrock | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | Used when cloud credentials are provided. Compose has an older no-`.env` fallback of `us.anthropic.claude-sonnet-4-20250514-v1:0`; normal local setup copies `.env.example`. |
+| Bedrock role/summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` in `.env.example` and agent code defaults | AWS Bedrock | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | Used when cloud credentials are provided. Compose still has a no-`.env` fallback of `us.anthropic.claude-sonnet-4-20250514-v1:0`; normal local setup copies `.env.example`. |
 | Summary generation | Same Strands provider/model as role inference | AWS Bedrock or CPU-only Ollama | Same `ROLE_AGENT_*` env vars | Generates JSON SOAP-style sections and key points after the visit. Max tokens are 2048 in the summary agent. |
 | Clinical summary grounding | Project-authored `strands_agents/data/clinical_knowledge.json` | CPU keyword retrieval | Always available to summary prompt when snippets match | Not an LLM or external RAG service. It adds short documentation reminders to the summary prompt. |
 | Clinical hints sidebar | Rule-based hints in `strands_agents/clinical_hints.py` | CPU | `CLINICAL_HINTS_ENABLED=1` | Publishes non-blocking review suggestions to `scribe/session/{id}/hints`. |
@@ -96,10 +96,12 @@ AWS_DEFAULT_REGION=ap-southeast-2
 OLLAMA_HOST=http://ollama:11434
 ```
 
-Local development defaults to Ollama so role inference and summaries run without
-AWS. The bundled `ollama` Compose service starts with the stack, and `nemo-agent`
-reaches it in-network at `http://ollama:11434`. On first run, pull the model into
-the persistent `ollama_data` volume (it is skipped on later starts):
+The checked-in `.env.example` defaults to Bedrock, matching the Python agent's
+no-env fallback. Offline local development uses Ollama by setting
+`ROLE_AGENT_MODEL_PROVIDER=ollama`; `scripts/start-dev.sh` then enables the
+`ollama` Compose profile, and `nemo-agent` reaches it in-network at
+`http://ollama:11434`. On first run, pull the model into the persistent
+`ollama_data` volume:
 
 ```bash
 docker compose exec ollama ollama pull qwen3.5:9b
@@ -109,7 +111,7 @@ To reuse a host-installed Ollama instead, override `OLLAMA_HOST` (for example
 `http://host.docker.internal:11434`), but note that route is unreliable on some
 Docker / WSL2 setups.
 
-Bedrock is opt-in. Set `ROLE_AGENT_MODEL_PROVIDER=bedrock`, provide
+Bedrock requires credentials. Keep `ROLE_AGENT_MODEL_PROVIDER=bedrock`, provide
 `ROLE_AGENT_MODEL_ID`, and inject AWS credentials or an AWS profile outside the
 repo. Do not commit credentials into `.env`.
 

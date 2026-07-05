@@ -32,9 +32,34 @@ async function injectFakeSegments(page, count = 3) {
         text: `Test segment number ${i + 1}`,
         start: i * 2.0,
         end: i * 2.0 + 1.5,
+        // Live segments carry the stable row ID minted at emission (M20).
+        segment_id: `seg-000${i + 1}`,
       });
     }
   }, count);
+}
+
+/**
+ * Injects rows shaped like the consult-03 failure: two consecutive rows from
+ * one speaker (coalesced into one card) followed by the other speaker, so
+ * row-level correction inside a multi-row card is testable.
+ */
+async function injectCoalescedCardSegments(page) {
+  await page.evaluate(() => {
+    const rows = [
+      { speaker_id: "spk_0", text: "How long have the headaches lasted?", segment_id: "seg-0001" },
+      { speaker_id: "spk_0", text: "About two weeks now, mostly mornings.", segment_id: "seg-0002" },
+      { speaker_id: "spk_1", text: "Any visual changes with them?", segment_id: "seg-0003" },
+    ];
+    rows.forEach((row, index) => {
+      handleRawSegment({
+        type: "segment",
+        start: index * 2.0,
+        end: index * 2.0 + 1.5,
+        ...row,
+      });
+    });
+  });
 }
 
 // Helper: wait for the page to be fully loaded with CONFIG available
@@ -115,6 +140,284 @@ test.describe("Transcript controls", () => {
     }, sessionId);
 
     expect(roleSnapshot.mapping.spk_0).toBe("DOCTOR");
+  });
+});
+
+test.describe("Role confidence badge stability gating", () => {
+  /**
+   * Sends one role update through the same browser function Mercure uses.
+   * Tests drive it directly so badge policy is verifiable without live NeMo.
+   */
+  async function injectRoleUpdate(page, roleUpdateEvent) {
+    await page.evaluate((event) => {
+      handleRoleUpdate(event);
+    }, roleUpdateEvent);
+  }
+
+  test("confident mapping over unstable speakers is not shown as identified", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 2);
+
+    // The consult-03 failure mode: the role agent is 90% sure of the global
+    // mapping while speaker identities churned all session (17 remaps).
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      confidence: 0.9,
+      flip_detected: false,
+      role_stability: {
+        level: "unstable",
+        anchor_remap_rate: 0.944,
+        anchor_remaps: 17,
+        phantom_merges: 6,
+        windows: 18,
+        mapping_changes: 1,
+        pending_contrary_mapping: false,
+      },
+    });
+
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles assigned - verify labels (90%)");
+    await expect(badge).not.toContainText("Roles identified");
+    await expect(badge).toHaveClass(/bg-amber-100/);
+  });
+
+  test("confident mapping with stable speakers earns the identified badge", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 2);
+
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      confidence: 0.9,
+      flip_detected: false,
+      role_stability: {
+        level: "stable",
+        anchor_remap_rate: 0.05,
+        anchor_remaps: 1,
+        phantom_merges: 0,
+        windows: 20,
+        mapping_changes: 0,
+        pending_contrary_mapping: false,
+      },
+    });
+
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles identified (90%)");
+    await expect(badge).toHaveClass(/bg-green-100/);
+  });
+
+  test("updates without a stability field keep the last known instability", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 2);
+
+    // Live update carries the instability evidence...
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      confidence: 0.7,
+      role_stability: { level: "unstable", anchor_remaps: 17 },
+    });
+    // ...then the post-disconnect drain publishes without the field.
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      confidence: 0.9,
+    });
+
+    // The badge must not upgrade to green on a drain update with no evidence.
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles assigned - verify labels (90%)");
+    await expect(badge).toHaveClass(/bg-amber-100/);
+  });
+
+  test("servers without stability reporting keep the pre-M20 badge behavior", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 2);
+
+    // An older server never sends role_stability on any update.
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      confidence: 0.9,
+    });
+
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles identified (90%)");
+    await expect(badge).toHaveClass(/bg-green-100/);
+  });
+
+  test("manual override survives a conflicting unstable role update", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 1);
+
+    const firstSpeakerLabel = page.locator(".segment__speaker").first();
+    // Clinician corrects the first speaker to Doctor by clicking the label.
+    await firstSpeakerLabel.click();
+    await expect(firstSpeakerLabel).toContainText("Doctor");
+
+    // A later unstable agent update proposes the opposite label for spk_0.
+    await injectRoleUpdate(page, {
+      type: "role_update",
+      mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+      confidence: 0.9,
+      role_stability: { level: "unstable", anchor_remaps: 12 },
+    });
+
+    // The clinician's correction stays visible with its confirmation mark.
+    await expect(firstSpeakerLabel).toContainText("Doctor");
+    await expect(
+      firstSpeakerLabel.locator(".segment__override-icon")
+    ).toHaveCount(1);
+  });
+});
+
+test.describe("Row-level role correction", () => {
+  test("row correction survives a conflicting role update and reaches the summary body", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    // The consult-03 shape: one card coalesces two same-speaker rows.
+    await expect(page.locator(".segment")).toHaveCount(2);
+    const secondRow = page.locator('.segment__text[data-segment-id="seg-0002"]');
+    const overridePosted = page.waitForRequest(
+      (request) =>
+        request.url().includes("/roles/override") &&
+        request.method() === "POST" &&
+        request.postDataJSON()?.segment_id === "seg-0002"
+    );
+
+    // Clinician clicks the one wrong line inside the card (Unknown -> Doctor).
+    await secondRow.click();
+    await overridePosted;
+    await expect(secondRow.locator(".segment__row-role")).toContainText("Dr ✓");
+
+    // A later conflicting unstable agent update relabels both speakers.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.9,
+        role_stability: { level: "unstable", anchor_remaps: 12 },
+      });
+    });
+
+    // The corrected row keeps its pinned label chip inside the relabeled card.
+    await expect(secondRow.locator(".segment__row-role")).toContainText("Dr ✓");
+
+    // The summary body stays row-preserving: three records, the corrected row
+    // keeps DOCTOR while its card's speaker mapping says PATIENT, and the
+    // chip text never leaks into the spoken text.
+    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    expect(summaryRows).toHaveLength(3);
+    expect(summaryRows[0].segment_id).toBe("seg-0001");
+    expect(summaryRows[0].role).toBe("PATIENT");
+    expect(summaryRows[1].segment_id).toBe("seg-0002");
+    expect(summaryRows[1].role).toBe("DOCTOR");
+    expect(summaryRows[1].text).toBe("About two weeks now, mostly mornings.");
+    expect(summaryRows[2].role).toBe("DOCTOR");
+  });
+
+  test("automatic row exceptions render tentatively and yield to the clinician", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    // The server's cue lane flags row 2 as a doctor line inside a Patient card.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.7,
+        row_exceptions: { "seg-0002": "DOCTOR" },
+      });
+    });
+
+    const flaggedRow = page.locator('.segment__text[data-segment-id="seg-0002"]');
+    await expect(flaggedRow.locator(".segment__row-role--auto")).toContainText(
+      "Dr auto"
+    );
+
+    // The summary body uses the row-level judgment, not the card's mapping.
+    let summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    expect(summaryRows[1].role).toBe("DOCTOR");
+    expect(summaryRows[0].role).toBe("PATIENT");
+
+    // A new mapping that explains the row clears the tentative marker.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+        confidence: 0.7,
+        row_exceptions: {},
+      });
+    });
+    await expect(flaggedRow.locator(".segment__row-role")).toHaveCount(0);
+
+    // When the exception returns, the clinician's click still outranks it.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.7,
+        row_exceptions: { "seg-0002": "UNKNOWN" },
+      });
+    });
+    await flaggedRow.click();
+    await expect(flaggedRow.locator(".segment__row-role")).toContainText("✓");
+
+    // Later automatic judgments cannot displace the clinician's chip.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.7,
+        row_exceptions: { "seg-0002": "DOCTOR" },
+      });
+    });
+    await expect(flaggedRow.locator(".segment__row-role")).toContainText("✓");
+
+    summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    // The clicked correction (Unknown -> Doctor cycle landed on DOCTOR after
+    // the auto UNKNOWN) stays the row's reported role.
+    expect(summaryRows[1].role).toBe("DOCTOR");
+  });
+
+  test("row corrections from another tab render through the roles topic", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    // Another tab corrected row 1; this tab receives it via Mercure.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: {},
+        row_overrides: { "seg-0001": "PATIENT" },
+        confidence: 0.5,
+        manual_override: true,
+      });
+    });
+
+    const firstRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
+    await expect(firstRow.locator(".segment__row-role")).toContainText("Pt ✓");
+
+    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    expect(summaryRows[0].role).toBe("PATIENT");
   });
 });
 

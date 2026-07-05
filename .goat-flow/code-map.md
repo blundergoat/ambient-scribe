@@ -7,7 +7,7 @@ Current repository map for fast orientation. Dependency caches and generated out
 ```
 ambient-scribe/
 ├── src/ = PHP Symfony application code (PSR-4: App\)
-│   ├── Controller/ScribeController.php = `/`, `/scribe`, history, and role snapshot routes
+│   ├── Controller/ScribeController.php = `/`, `/scribe`, demo audio, summary/model-health proxies, history, role snapshot, and role override routes
 │   ├── Service/RoleInferenceService.php = PHP wrapper for Python role mapping calls
 │   └── Kernel.php = Symfony kernel
 ├── config/ = Symfony config

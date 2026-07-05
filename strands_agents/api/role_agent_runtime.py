@@ -87,11 +87,16 @@ def _run_role_agent(
         agent = create_role_inference_agent()
         history_len_before = len(state.mapping_history)
         suppressed_flips_before = getattr(state, "suppressed_flip_count", 0)
+        # Prior automatic labels are withheld so a wrong early UI guess cannot anchor the agent.
         payload = {
             "session_id": session_id,
-            "current_mapping": state.current_mapping,
-            "mapping_history": state.mapping_history[-5:],
             "confirmed_overrides": state.confirmed_overrides,
+            "role_state": {
+                "mapping_decision_count": len(state.mapping_history),
+                "running_confidence": round(state.running_confidence, 3),
+                "has_pending_contrary_mapping": state.pending_flip_mapping is not None,
+                "suppressed_flip_count": state.suppressed_flip_count,
+            },
             "role_evidence": role_evidence,
         }
         payload_json = json.dumps(payload, separators=(",", ":"))
@@ -101,6 +106,7 @@ def _run_role_agent(
         finally:
             clear_pending_role_segments(session_id)
 
+        _apply_establishment_hint_guard(session_id, state, role_evidence)
         _record_role_agent_truncation_if_needed(session_id, state, agent_result)
         metric_fields = _agent_metric_fields(agent_result, "role-inference")
         metric_fields["role_input_chars"] = len(payload_json)
@@ -200,6 +206,101 @@ def _run_role_heuristic_fallback(
             },
         )
     return None
+
+
+def _apply_establishment_hint_guard(
+    session_id: str,
+    state: Any,
+    role_evidence: dict[str, Any],
+) -> bool:
+    """Keep opener-derived roles when the agent returns their exact inverse.
+
+    Args:
+        session_id: Browser recording UUID used for audit logs.
+        state: RoleMappingState updated by the Strands tool.
+        role_evidence: Bounded prompt evidence; empty means no establishment hint.
+
+    Returns:
+        True when the visible mapping was corrected; false means no guard applied.
+    """
+    hint_mapping = (
+        role_evidence.get("establishment_hint", {}).get("mapping", {})
+        if role_evidence
+        else {}
+    )
+    # No complete hint means the agent should own the mapping decision.
+    if not isinstance(hint_mapping, dict) or hint_mapping == {}:
+        return False
+
+    # Clinician overrides are user corrections and outrank automatic opener hints.
+    if state.confirmed_overrides:
+        return False
+
+    current_mapping = state.current_mapping
+    # Matching mappings need no correction.
+    if current_mapping == hint_mapping:
+        return False
+
+    # Different speaker sets mean the hint cannot safely correct the agent output.
+    if set(current_mapping) != set(hint_mapping):
+        return False
+
+    # Only the exact two-speaker inverse is guarded; partial disagreements remain agent-owned.
+    if not _is_exact_role_inverse(current_mapping, hint_mapping):
+        return False
+
+    previous_mapping = dict(current_mapping)
+    corrected_mapping = {
+        str(speaker_id): str(role) for speaker_id, role in hint_mapping.items()
+    }
+    had_prior_mapping_before_tool_call = len(state.mapping_history) > 1
+    state.current_mapping = corrected_mapping
+    # The latest tool decision is what would reach the UI, so replace only that entry.
+    if state.mapping_history:
+        state.mapping_history[-1] = corrected_mapping
+    else:
+        state.mapping_history.append(corrected_mapping)
+    state.last_flip_detected = had_prior_mapping_before_tool_call
+    state.last_flip_suppressed = False
+    state.pending_flip_mapping = None
+    state.pending_flip_count = 0
+
+    logger.warning(
+        "role_inference.establishment_hint_guard session_id=%s",
+        session_id,
+        extra={
+            "session_id": session_id,
+            "agent_mapping": previous_mapping,
+            "hint_mapping": corrected_mapping,
+        },
+    )
+    return True
+
+
+def _is_exact_role_inverse(
+    current_mapping: dict[str, str],
+    hint_mapping: dict[str, str],
+) -> bool:
+    """Return whether two dyadic mappings are complete role opposites.
+
+    Args:
+        current_mapping: Agent-selected speaker roles.
+        hint_mapping: Opener-derived speaker roles.
+
+    Returns:
+        True when every speaker has DOCTOR/PATIENT swapped; false otherwise.
+    """
+    # More or fewer than two speakers are not safe for an automatic inverse guard.
+    if len(current_mapping) != 2:
+        return False
+
+    opposite_role = {"DOCTOR": "PATIENT", "PATIENT": "DOCTOR"}
+    # Every speaker must be a supported role and exactly opposite the hint.
+    for speaker_id, current_role in current_mapping.items():
+        if opposite_role.get(current_role) != hint_mapping.get(speaker_id):
+            return False
+
+    return True
 
 
 def _is_provider_unreachable(exc: Exception) -> bool:

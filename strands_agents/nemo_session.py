@@ -236,6 +236,13 @@ class TranscriptionSession:
         self._emitted_until_seconds: float = 0.0
         self._format_validated: bool = False
         self._speaker_cap: int | None = _speaker_cap_from_env()
+        # Per-window continuity evidence for the M20 diagnostics log; holds
+        # only speaker IDs, timings, and counts - never transcript text.
+        self._last_window_continuity: dict = {}
+        self._window_overlap_votes: list[dict] = []
+        # Emitted-row counter behind the stable `segment_id` each visible row
+        # gets, so clinician corrections can target exactly one transcript row.
+        self._emitted_row_count: int = 0
 
         # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
@@ -351,6 +358,8 @@ class TranscriptionSession:
         window_start_seconds = max(
             0.0, self._emitted_until_seconds - _WINDOW_CONTEXT_SECONDS
         )
+        emitted_from_seconds = self._emitted_until_seconds
+        self._last_window_continuity = {}
         # Whole samples only: an odd byte offset would split a 16-bit sample and
         # NeMo rejects buffers that are not a multiple of the element size.
         window_start_byte = int(window_start_seconds * 16000) * 2
@@ -388,6 +397,8 @@ class TranscriptionSession:
 
         # A user may have just started a replay and received word-sized same-speaker cards.
         fresh_segments = merge_adjacent_fragments_for_display(fresh_segments)
+        # Rows are identified after merging so one visible row carries one ID.
+        fresh_segments = self._assign_row_identity(fresh_segments)
 
         self.quality_stats.record_segment_flow(
             emitted_segments=len(fresh_segments),
@@ -399,6 +410,14 @@ class TranscriptionSession:
             self._emitted_until_seconds = max(
                 self._emitted_until_seconds, fresh_segments[-1].end
             )
+
+        self._log_window_continuity(
+            window_start_seconds=window_start_seconds,
+            emitted_from_seconds=emitted_from_seconds,
+            emitted_rows=len(fresh_segments),
+            held_rows=held_segment_count,
+            is_finalize=not hold_unstable_tail,
+        )
 
         return fresh_segments
 
@@ -422,11 +441,13 @@ class TranscriptionSession:
         known_speaker_ids = self._known_speaker_ids()
         window_speaker_ids = self._window_speaker_ids(segments)
         speaker_id_map = self._overlap_speaker_map(segments, known_speaker_ids)
+        overlap_mapped_ids = set(speaker_id_map)
         speaker_id_map = self._complete_two_speaker_swap(
             window_speaker_ids,
             known_speaker_ids,
             speaker_id_map,
         )
+        swap_completed_ids = set(speaker_id_map) - overlap_mapped_ids
         speaker_id_map, phantom_merge_count = self._complete_speaker_cap_map(
             segments,
             window_speaker_ids,
@@ -447,6 +468,16 @@ class TranscriptionSession:
         if phantom_merge_count > 0:
             self.quality_stats.record_phantom_speaker_merges(phantom_merge_count)
 
+        self._last_window_continuity = self._window_continuity_evidence(
+            window_speaker_ids=window_speaker_ids,
+            known_speaker_ids=known_speaker_ids,
+            speaker_id_map=speaker_id_map,
+            overlap_mapped_ids=overlap_mapped_ids,
+            swap_completed_ids=swap_completed_ids,
+            remap_count=remap_count,
+            phantom_merge_count=phantom_merge_count,
+        )
+
         return [
             replace(
                 segment,
@@ -454,6 +485,129 @@ class TranscriptionSession:
             )
             for segment in segments
         ]
+
+    def _assign_row_identity(self, segments: list[Segment]) -> list[Segment]:
+        """Mint a stable per-session row ID for each about-to-emit segment.
+
+        Every transcript row the clinician sees gets `seg-<n>` exactly once,
+        at emission. The ID travels through Mercure, storage, finalize
+        replacement, and summary round-trips, so a per-row role correction can
+        follow one visible line for the whole visit.
+
+        Args:
+            segments: Post-merge fresh segments; empty windows pass through.
+
+        Returns:
+            The same rows with `segment_id` set; held rows are identified later,
+            when they actually emit.
+        """
+        identified_segments: list[Segment] = []
+        # Emission order is unique within a session, making IDs collision-free.
+        for segment in segments:
+            self._emitted_row_count += 1
+            identified_segments.append(
+                replace(segment, segment_id=f"seg-{self._emitted_row_count:04d}")
+            )
+
+        return identified_segments
+
+    def _window_continuity_evidence(
+        self,
+        *,
+        window_speaker_ids: list[str],
+        known_speaker_ids: list[str],
+        speaker_id_map: dict[str, str],
+        overlap_mapped_ids: set[str],
+        swap_completed_ids: set[str],
+        remap_count: int,
+        phantom_merge_count: int,
+    ) -> dict:
+        """Build the speaker-continuity evidence for one emission window.
+
+        The record explains why each raw window speaker ID became the visible
+        canonical ID, so seam-level identity drift can be diagnosed offline.
+        It carries only IDs, votes, and counts - no transcript text.
+
+        Returns:
+            Continuity evidence consumed by the per-window diagnostics log.
+        """
+        mapping_reasons: dict[str, str] = {}
+        # Each raw window ID gets the mechanism that chose its visible identity:
+        # overlap_vote = anchored by shared audio; two_speaker_swap = paired by
+        # elimination; phantom_merge = extra ID folded into a visible voice;
+        # kept_known = no evidence, same label kept; new_visible = new speaker.
+        for window_speaker_id, canonical_speaker_id in speaker_id_map.items():
+            if window_speaker_id in overlap_mapped_ids:
+                mapping_reasons[window_speaker_id] = "overlap_vote"
+            elif window_speaker_id in swap_completed_ids:
+                mapping_reasons[window_speaker_id] = "two_speaker_swap"
+            elif window_speaker_id != canonical_speaker_id:
+                mapping_reasons[window_speaker_id] = "phantom_merge"
+            elif window_speaker_id in known_speaker_ids:
+                mapping_reasons[window_speaker_id] = "kept_known"
+            else:
+                mapping_reasons[window_speaker_id] = "new_visible"
+
+        return {
+            "raw_speaker_ids": list(window_speaker_ids),
+            "known_speaker_ids": list(known_speaker_ids),
+            "speaker_id_map": dict(speaker_id_map),
+            "canonical_speaker_ids": list(dict.fromkeys(speaker_id_map.values())),
+            "overlap_votes": list(self._window_overlap_votes),
+            "mapping_reasons": mapping_reasons,
+            "window_remaps": remap_count,
+            "window_phantom_merges": phantom_merge_count,
+        }
+
+    def _log_window_continuity(
+        self,
+        *,
+        window_start_seconds: float,
+        emitted_from_seconds: float,
+        emitted_rows: int,
+        held_rows: int,
+        is_finalize: bool,
+    ) -> None:
+        """Log one per-window speaker-continuity record for eval diagnostics.
+
+        Eval runs turn these rows into `window-continuity.jsonl` so a wrong
+        Doctor/Patient row can be traced to the emission window and mapping
+        decision that produced it. The payload never includes transcript text.
+        """
+        # One row lands here for every ~5s chunk the clinician's browser sent,
+        # plus one final row when they pressed Stop and the tail drained.
+        continuity = self._last_window_continuity
+        logger.info(
+            "nemo_session.window_continuity session_id=%s window_index=%s emitted_rows=%s",
+            self.session_id,
+            self.chunk_count,
+            emitted_rows,
+            extra={
+                "session_id": self.session_id,
+                "window_index": self.chunk_count,
+                "phase": "finalize" if is_finalize else "chunk",
+                "window_start_seconds": round(window_start_seconds, 3),
+                "buffer_end_seconds": round(self.buffer.end_seconds, 3),
+                "emitted_from_seconds": round(emitted_from_seconds, 3),
+                "emitted_until_seconds": round(self._emitted_until_seconds, 3),
+                "raw_speaker_ids": continuity.get("raw_speaker_ids", []),
+                "known_speaker_ids": continuity.get("known_speaker_ids", []),
+                "canonical_speaker_ids": continuity.get("canonical_speaker_ids", []),
+                "speaker_id_map": continuity.get("speaker_id_map", {}),
+                "overlap_votes": continuity.get("overlap_votes", []),
+                "mapping_reasons": continuity.get("mapping_reasons", {}),
+                "window_remaps": continuity.get("window_remaps", 0),
+                "window_phantom_merges": continuity.get("window_phantom_merges", 0),
+                "cumulative_anchor_remaps": (
+                    self.quality_stats.speaker_anchor_remap_count
+                ),
+                "cumulative_phantom_merges": (
+                    self.quality_stats.phantom_speaker_merge_count
+                ),
+                "emitted_rows": emitted_rows,
+                "held_rows": held_rows,
+            },
+        )
 
     def _known_speaker_ids(self) -> list[str]:
         """Return speaker IDs already visible in this browser session.
@@ -506,6 +660,18 @@ class TranscriptionSession:
                 overlap_votes.append(
                     (total_overlap, window_speaker_id, known_speaker_id)
                 )
+
+        # Vote evidence feeds the per-window continuity log for seam diagnostics.
+        self._window_overlap_votes = [
+            {
+                "window_speaker_id": window_speaker_id,
+                "known_speaker_id": known_speaker_id,
+                "overlap_seconds": round(seconds, 3),
+            }
+            for seconds, window_speaker_id, known_speaker_id in sorted(
+                overlap_votes, reverse=True
+            )
+        ]
 
         speaker_id_map: dict[str, str] = {}
         used_window_ids: set[str] = set()

@@ -4,6 +4,7 @@ Tests for the transcription session - AudioBuffer accumulation and audio decodin
 NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock).
 """
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -462,6 +463,203 @@ class TestProcessChunk:
             ("spk_2", "carer adds")
         ]
         assert session.quality_stats.phantom_speaker_merge_count == 0
+
+
+class TestRowIdentityAtEmission:
+    """Every row the clinician sees carries a stable, unique `segment_id`.
+
+    Row IDs are what per-row role corrections attach to, so they must be
+    minted exactly once per visible row and stay identical between the live
+    Mercure payloads and the finalize history rebuild.
+    """
+
+    def test_emitted_rows_get_sequential_ids_across_chunks_and_finalize(self) -> None:
+        """IDs continue across chunk and Stop boundaries without reuse."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        tail_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=2.0, end=4.9, text="closing line"),
+            ]
+        )
+
+        with patch.object(
+            pipeline, "transcribe_buffer", side_effect=[first_pass, tail_pass]
+        ):
+            live_rows = session.process_chunk(b"\x00" * 32000 * 5)
+            tail_rows = session.finalize()
+
+        assert [row.segment_id for row in live_rows] == ["seg-0001", "seg-0002"]
+        assert [row.segment_id for row in tail_rows] == ["seg-0003"]
+        # The finalize history rebuild reuses the same objects, so the IDs the
+        # browser saw live are the IDs stored history keeps.
+        assert [row.segment_id for row in session.accumulated_transcript] == [
+            "seg-0001",
+            "seg-0002",
+            "seg-0003",
+        ]
+
+    def test_merged_fragments_share_one_row_id(self) -> None:
+        """Fragments merged into one visible row must be one correctable row."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        fragment_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.4, text="Hello,"),
+                Segment(speaker_id="spk_0", start=0.5, end=1.2, text="can you hear me"),
+            ]
+        )
+
+        with patch.object(pipeline, "transcribe_buffer", return_value=fragment_pass):
+            emitted_rows = session.process_chunk(b"\x00" * 32000 * 5)
+
+        # One merged visible row means exactly one row ID to correct.
+        assert len(emitted_rows) == 1
+        assert emitted_rows[0].segment_id == "seg-0001"
+
+
+class TestWindowContinuityLog:
+    """Per-window continuity logs explain seam identity drift to eval runs.
+
+    A clinician replaying a consult sends ~5s chunks; each chunk lands one
+    window row that eval tooling turns into `window-continuity.jsonl`. These
+    tests pin the log's mapping evidence and its no-transcript-text rule.
+    """
+
+    def test_window_log_reports_mapping_reasons_and_counts(self, caplog) -> None:
+        """A swapped second window logs the map, reasons, votes, and row counts."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        first_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+                Segment(speaker_id="spk_1", start=1.0, end=2.0, text="patient line"),
+            ]
+        )
+        # The second window re-reads the anchor tail with inverted labels, the
+        # same drift that shows a doctor question on a Patient card in the UI.
+        swapped_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=0.6, text="patient line"),
+                Segment(speaker_id="spk_1", start=0.6, end=2.0, text="doctor again"),
+            ]
+        )
+
+        with caplog.at_level(logging.INFO, logger="nemo_session"):
+            with patch.object(
+                pipeline, "transcribe_buffer", side_effect=[first_pass, swapped_pass]
+            ):
+                session.process_chunk(b"\x00" * 32000 * 5)
+                session.process_chunk(b"\x00" * 32000 * 5)
+
+        continuity_records = [
+            record
+            for record in caplog.records
+            if str(record.msg).startswith("nemo_session.window_continuity")
+        ]
+        assert len(continuity_records) == 2
+
+        first_window, second_window = continuity_records
+        # The opening window introduces both consultation voices as new.
+        assert first_window.window_index == 1
+        assert first_window.mapping_reasons == {
+            "spk_0": "new_visible",
+            "spk_1": "new_visible",
+        }
+        assert first_window.window_remaps == 0
+        assert first_window.emitted_rows == 2
+
+        # The swapped window records how both labels were corrected for the UI.
+        assert second_window.window_index == 2
+        assert second_window.phase == "chunk"
+        assert second_window.speaker_id_map == {"spk_0": "spk_1", "spk_1": "spk_0"}
+        assert second_window.mapping_reasons == {
+            "spk_0": "overlap_vote",
+            "spk_1": "two_speaker_swap",
+        }
+        assert second_window.overlap_votes == [
+            {
+                "window_speaker_id": "spk_0",
+                "known_speaker_id": "spk_1",
+                "overlap_seconds": 0.5,
+            }
+        ]
+        assert second_window.window_remaps == 2
+        assert second_window.emitted_rows == 1
+        assert second_window.emitted_from_seconds == 2.0
+        assert second_window.emitted_until_seconds == 3.5
+
+    def test_window_log_never_carries_transcript_text(self, caplog) -> None:
+        """Clinical speech stays out of process logs; only IDs and counts appear."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        sensitive_pass = TranscriptionResult(
+            segments=[
+                Segment(
+                    speaker_id="spk_0",
+                    start=0.0,
+                    end=1.0,
+                    text="patient mentions hiv status",
+                ),
+            ]
+        )
+
+        with caplog.at_level(logging.INFO, logger="nemo_session"):
+            with patch.object(
+                pipeline, "transcribe_buffer", return_value=sensitive_pass
+            ):
+                session.process_chunk(b"\x00" * 32000 * 5)
+
+        continuity_records = [
+            record
+            for record in caplog.records
+            if str(record.msg).startswith("nemo_session.window_continuity")
+        ]
+        assert continuity_records != []
+
+        # Every logged field must be free of the spoken words the user heard.
+        for record in continuity_records:
+            assert "hiv" not in str(record.__dict__).lower()
+
+    def test_finalize_window_is_logged_with_finalize_phase(self, caplog) -> None:
+        """Pressing Stop drains the tail and logs it as the finalize window."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession("test-session", pipeline, input_format="pcm")
+
+        chunk_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=0.0, end=1.0, text="doctor line"),
+            ]
+        )
+        tail_pass = TranscriptionResult(
+            segments=[
+                Segment(speaker_id="spk_0", start=1.0, end=4.9, text="tail line"),
+            ]
+        )
+
+        with caplog.at_level(logging.INFO, logger="nemo_session"):
+            with patch.object(
+                pipeline, "transcribe_buffer", side_effect=[chunk_pass, tail_pass]
+            ):
+                session.process_chunk(b"\x00" * 32000 * 5)
+                session.finalize()
+
+        phases = [
+            record.phase
+            for record in caplog.records
+            if str(record.msg).startswith("nemo_session.window_continuity")
+        ]
+        assert phases == ["chunk", "finalize"]
 
 
 class TestProcessChunkWebM:

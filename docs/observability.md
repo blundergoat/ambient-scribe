@@ -36,6 +36,8 @@ Every structured line uses these fields when relevant:
 
 - `websocket.chunk_e2e`: live audio chunk timing, segment count, and session ID.
 - `role_inference.completed`: role path (`tool`, `freetext`, `heuristic`), fallback flag, confidence, flip state, SDK token/latency metrics, and duration.
+- `nemo_session.window_continuity`: one row per emission window with raw vs canonical speaker IDs, overlap-vote evidence, per-ID mapping reasons, remap/merge counts, and emitted spans - never transcript text. Eval runs collect these into `window-continuity.jsonl` via `scripts/window-continuity.py`; requires `LOG_FORMAT=json`.
+- `role_update` Mercure payloads carry an optional `role_stability` object (`level` `stable`/`unstable`, `anchor_remap_rate`, `anchor_remaps`, `phantom_merges`, `windows`, `mapping_changes`, `pending_contrary_mapping`). The browser badge shows green "Roles identified" only when confidence is high AND `level` is `stable`; the dev panel State tab mirrors it as `roleStability`. A missing field means no live audio session existed at publish time (post-disconnect drain) and the browser keeps its last value.
 - `summary.completed`: summary section count, duration, and SDK token/latency metrics.
 - `mercure.publish.succeeded|retrying|failed|skipped`: Mercure delivery outcome, topic, attempts, duration, and session ID parsed from the topic.
 - `strands.client.call`: PHP Strands client proxy call status, path, duration, session ID, and correlation ID.

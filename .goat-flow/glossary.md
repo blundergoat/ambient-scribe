@@ -7,12 +7,12 @@ Project-specific domain terms a new contributor needs to recognise when reading 
 - **NeMo** - NVIDIA's speech framework. Runs Parakeet (multi-talker ASR) and Sortformer (diarization) on the single GPU inside `strands_agents/nemo_pipeline.py`.
 - **Parakeet** - `EncDecMultiTalkerRNNTBPEModel`, the ASR model. ~4.5 GB VRAM.
 - **Sortformer** - `SortformerEncLabelModel`, the diarization model (who-spoke-when). ~1.2 GB VRAM.
-- **PcmStreamer** - Browser-side capture/resampler in `public/js/scribe.js`. Always emits 16 kHz 16-bit PCM; the server trusts `NEMO_STREAM_INPUT_FORMAT` to match.
-- **StreamOrchestrator** - Browser-side Mercure EventSource manager in `public/js/scribe.js`. Tracks topic subscriptions, reconnect backoff, and Last-Event-ID resume state.
+- **PcmStreamer** - Browser-side capture/resampler in `public/js/scribe-streaming.js`. Always emits 16 kHz 16-bit PCM; the server trusts `NEMO_STREAM_INPUT_FORMAT` to match.
+- **StreamOrchestrator** - Browser-side Mercure EventSource manager in `public/js/scribe-streaming.js`. Tracks topic subscriptions, reconnect backoff, and Last-Event-ID resume state.
 - **Raw segment** - Pre-role-attribution transcript chunk published to `scribe/session/{id}/raw`.
 - **Roles topic** - Post-inference speaker → role mapping published to `scribe/session/{id}/roles`.
 - **Summary topic** - End-of-session summary update published to `scribe/session/{id}/summary`.
-- **Replay** - FastAPI/browser flow that processes an uploaded or generated demo WAV through NeMo, returns batch transcript segments, and reveals them from the browser audio clock so text does not outrun audible speech.
+- **Replay** - Browser/FastAPI flow that decodes a generated demo WAV locally and streams heard 16 kHz PCM over the live WebSocket so transcript text does not outrun audible speech.
 
 ## Session / lifecycle
 

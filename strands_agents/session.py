@@ -40,12 +40,15 @@ def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
 class _SessionData:
     """Internal state for a single session."""
 
-    __slots__ = ("segments", "created_at", "last_accessed_at")
+    __slots__ = ("segments", "created_at", "last_accessed_at", "row_role_overrides")
 
     def __init__(self) -> None:
         self.segments: list[dict] = []
         self.created_at: float = time.monotonic()
         self.last_accessed_at: float = self.created_at
+        # Clinician row corrections keyed by segment_id; they outrank every
+        # later speaker-level role mapping for exactly that transcript row.
+        self.row_role_overrides: dict[str, str] = {}
 
 
 class SessionStore:
@@ -75,13 +78,16 @@ class SessionStore:
         session = self._get_or_create(session_id)
         if len(session.segments) < self._max_segments:
             session.segments.append(segment)
+            # A re-appended row the clinician already corrected keeps their label.
+            self._apply_row_role_override(session, segment)
         session.last_accessed_at = time.monotonic()
 
     def replace_segments(self, session_id: str, segments: list[dict]) -> None:
         """Replace the stored transcript for a session.
 
         Useful after a final transcription pass where the caller already has
-        the full deduplicated transcript in memory.
+        the full deduplicated transcript in memory. Rows the clinician
+        corrected keep their corrected role by `segment_id` across the replace.
 
         Args:
             session_id: Recording session whose visible transcript is replaced.
@@ -89,10 +95,17 @@ class SessionStore:
         """
         session = self._get_or_create(session_id)
         session.segments = list(segments[: self._max_segments])
+        # Finalize and summary flows rebuild rows from raw transcript objects,
+        # so the user's row corrections are re-applied here by row identity.
+        for segment in session.segments:
+            self._apply_row_role_override(session, segment)
         session.last_accessed_at = time.monotonic()
 
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
         """Annotate stored segments with their inferred roles.
+
+        Rows the clinician corrected individually are skipped: a whole-speaker
+        mapping must never silently undo a per-row human correction.
 
         Args:
             session_id: The session UUID.
@@ -108,11 +121,113 @@ class SessionStore:
 
         for segment in session.segments:
             speaker_id = segment.get("speaker_id")
+            # Row-corrected segments keep the clinician's label for that row.
+            if str(segment.get("segment_id", "")) in session.row_role_overrides:
+                continue
             if isinstance(speaker_id, str) and speaker_id in mapping:
                 segment["role"] = mapping[speaker_id]
+                # A fresh mapping outdates any automatic row exception; the
+                # exception lane re-judges rows right after this call.
+                segment.pop("role_source", None)
 
         session.last_accessed_at = time.monotonic()
         self._sessions.move_to_end(session_id)
+
+    def set_auto_row_roles(self, session_id: str, row_roles: dict[str, str]) -> None:
+        """Apply automatic row-level role exceptions to stored rows.
+
+        These are the cue-lane judgments for rows whose text contradicts their
+        mapped speaker role. They are derived state: recomputed after every
+        mapping application, and they never touch a row the clinician
+        corrected personally.
+
+        Args:
+            session_id: Recording session whose rows are re-judged.
+            row_roles: `segment_id -> role` exceptions; empty changes nothing.
+        """
+        # No exceptions means every visible row agrees with its speaker role.
+        if not row_roles:
+            return
+
+        session = self._sessions.get(session_id)
+        # Unknown or expired sessions have no visible rows to re-judge.
+        if session is None or self._is_expired(session):
+            return
+
+        for segment in session.segments:
+            segment_id = str(segment.get("segment_id", ""))
+            # The clinician's own row corrections outrank automatic judgment.
+            if segment_id in session.row_role_overrides:
+                continue
+
+            auto_role = row_roles.get(segment_id)
+            # Rows without an exception keep their mapped speaker role.
+            if auto_role is None:
+                continue
+
+            segment["role"] = auto_role
+            # The source marker lets the UI show this label as automatic.
+            segment["role_source"] = "auto_row"
+
+        session.last_accessed_at = time.monotonic()
+
+    def set_row_role(self, session_id: str, segment_id: str, role: str) -> bool:
+        """Record a clinician's per-row role correction and apply it now.
+
+        The correction is keyed by the row's `segment_id`, survives later
+        speaker-level role mappings and finalize/summary row replacement, and
+        never touches the speaker-scoped mapping.
+
+        Args:
+            session_id: Recording session the clinician is correcting.
+            segment_id: Stable row ID minted at emission; empty cannot target a row.
+            role: Corrected role label shown for exactly that row.
+
+        Returns:
+            True when the session exists and the correction was recorded;
+            False means the browser targeted an unknown session or empty row ID.
+        """
+        # Empty row IDs cannot identify which visible row the user corrected.
+        if not segment_id:
+            return False
+
+        session = self._sessions.get(session_id)
+        # Unknown sessions have no transcript the user could be seeing.
+        if session is None:
+            return False
+
+        # Expired sessions are evicted instead of accepting stale corrections.
+        if self._is_expired(session):
+            self._sessions.pop(session_id, None)
+            return False
+
+        session.row_role_overrides[segment_id] = role
+        # The correction applies immediately to the stored row the user sees.
+        for segment in session.segments:
+            self._apply_row_role_override(session, segment)
+
+        session.last_accessed_at = time.monotonic()
+        self._sessions.move_to_end(session_id)
+        return True
+
+    @staticmethod
+    def _apply_row_role_override(session: _SessionData, segment: dict) -> None:
+        """Stamp a stored row with its clinician-corrected role, if one exists.
+
+        Args:
+            session: Session holding the row corrections.
+            segment: Stored row; rows without a matching correction are untouched.
+        """
+        corrected_role = session.row_role_overrides.get(
+            str(segment.get("segment_id", ""))
+        )
+        # No correction for this row means automatic labels stay in charge.
+        if corrected_role is None:
+            return
+
+        segment["role"] = corrected_role
+        # The source marker lets later automatic row labeling respect user rows.
+        segment["role_source"] = "user_row"
 
     def get_segments(self, session_id: str) -> list[dict]:
         """Return all segments for a session.

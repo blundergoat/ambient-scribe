@@ -127,6 +127,11 @@ class TestRoleAgentRuntime:
 
             def __call__(self, prompt: str):
                 payload = json.loads(prompt.rsplit("\n\n", 1)[1])
+                assert "current_mapping" not in payload
+                assert "mapping_history" not in payload
+                assert payload["role_state"]["mapping_decision_count"] == 1
+                assert payload["role_state"]["has_pending_contrary_mapping"] is False
+                assert payload["confirmed_overrides"] == {}
                 assign_roles(
                     session_id=payload["session_id"],
                     mapping=json.dumps(
@@ -159,6 +164,57 @@ class TestRoleAgentRuntime:
         assert payload["mapping"] == established_mapping
         assert state.last_flip_suppressed is True
         assert state.suppressed_flip_count == 1
+        cleanup_session(session_id)
+
+    def test_establishment_hint_guard_corrects_inverse_tool_mapping(self, monkeypatch):
+        """Clean opener evidence prevents an inverse mapping from reaching the UI."""
+        session_id = "runtime-establishment-hint"
+        hinted_mapping = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
+        inverse_mapping = {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"}
+
+        class FakeAgentResult:
+            """Minimal Strands result used after the fake tool call completes."""
+
+            stop_reason = "tool_use"
+            metrics = None
+
+        class FakeAgent:
+            """Call the real tool with the inverse of clean opener evidence."""
+
+            def __call__(self, prompt: str):
+                payload = json.loads(prompt.rsplit("\n\n", 1)[1])
+                assert payload["role_evidence"]["establishment_hint"]["mapping"] == (
+                    hinted_mapping
+                )
+                assign_roles(
+                    session_id=payload["session_id"],
+                    mapping=json.dumps(inverse_mapping),
+                    confidence=0.81,
+                    reasoning="Late mixed rows looked swapped.",
+                )
+                return FakeAgentResult()
+
+        monkeypatch.setattr("agents.create_role_inference_agent", lambda: FakeAgent())
+
+        payload, provider_unreachable = _run_role_agent(
+            session_id=session_id,
+            segments=[],
+            role_evidence={
+                "establishment_hint": {
+                    "mapping": hinted_mapping,
+                    "source": "opening_role_cue_counts",
+                }
+            },
+            state=get_or_create_state(session_id),
+        )
+
+        state = get_or_create_state(session_id)
+        assert provider_unreachable is False
+        assert payload is not None
+        assert payload["mapping"] == hinted_mapping
+        assert state.current_mapping == hinted_mapping
+        assert state.mapping_history[-1] == hinted_mapping
+        assert state.last_flip_detected is False
         cleanup_session(session_id)
 
 
@@ -418,6 +474,17 @@ class TestMedicalRolePrompt:
         assert "mapping:" in MEDICAL_ROLE_PROMPT
         assert "confidence:" in MEDICAL_ROLE_PROMPT
         assert "Do not answer in prose or JSON outside the tool call" in MEDICAL_ROLE_PROMPT
+        assert "Previous automatic mappings are intentionally not supplied" in (
+            MEDICAL_ROLE_PROMPT
+        )
+        assert "Maintain your speaker-to-role mapping across the session" not in (
+            MEDICAL_ROLE_PROMPT
+        )
+        assert "return the existing mapping unchanged" not in MEDICAL_ROLE_PROMPT
+        assert "First speaker alone is weak evidence" in MEDICAL_ROLE_PROMPT
+        assert "establishment_hint comes from early high-precision opener" in (
+            MEDICAL_ROLE_PROMPT
+        )
 
 
 class TestHeuristicRoleInference:
