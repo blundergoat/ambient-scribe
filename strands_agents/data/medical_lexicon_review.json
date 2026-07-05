@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "reviewer": "developer self-review for 0.3.0 PoC; external clinical sign-off pending",
+  "entries": [
+    {
+      "canonical": "metoprolol",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "metro pro lol",
+      "expected_visible_phrase": "metoprolol",
+      "false_positive_guard": "The metro prologue was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "sumatriptan",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "summa trip tan",
+      "expected_visible_phrase": "sumatriptan",
+      "false_positive_guard": "The summary trip was cancelled.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "empagliflozin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "empa glyph lozin",
+      "expected_visible_phrase": "empagliflozin",
+      "false_positive_guard": "The glyph loading test was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "lisinopril",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "lisin april",
+      "expected_visible_phrase": "lisinopril",
+      "false_positive_guard": "Please listen April is speaking.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "lisinopril",
+      "status": "disabled",
+      "category": "asr_variant",
+      "raw_phrase": "listen april",
+      "expected_visible_phrase": "listen april",
+      "false_positive_guard": "Please listen April is speaking.",
+      "provenance": "M14 safety audit of prior active lexicon row.",
+      "safety_rationale": "This phrase can be ordinary speech involving a person named April, so it is inactive."
+    },
+    {
+      "canonical": "troponin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "tro pony",
+      "expected_visible_phrase": "troponin",
+      "false_positive_guard": "The pony club visit was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "naproxen",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "na proxen",
+      "expected_visible_phrase": "naproxen",
+      "false_positive_guard": "The nap room was nearby.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "ibuprofen",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "eye buprofen",
+      "expected_visible_phrase": "ibuprofen",
+      "false_positive_guard": "The eye drops were not discussed.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "paracetamol",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "para seat amol",
+      "expected_visible_phrase": "paracetamol",
+      "false_positive_guard": "The seat was adjusted before the visit.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "hypertension",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "high per tension",
+      "expected_visible_phrase": "hypertension",
+      "false_positive_guard": "High tension in the cable was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "radiculopathy",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "radiculo pathy",
+      "expected_visible_phrase": "radiculopathy",
+      "false_positive_guard": "The ridiculous pathway comment was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "myocardial infarction",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "my cardial infarction",
+      "expected_visible_phrase": "myocardial infarction",
+      "false_positive_guard": "The patient said heart attack in their own words.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Only the phonetic variant remains active; the semantic synonym is disabled below."
+    },
+    {
+      "canonical": "atrial fibrillation",
+      "status": "active",
+      "category": "abbreviation_acronym",
+      "raw_phrase": "a fib",
+      "expected_visible_phrase": "atrial fibrillation",
+      "false_positive_guard": "A fibula injury was treated elsewhere.",
+      "provenance": "Project-curated common abbreviation.",
+      "safety_rationale": "Common clinical abbreviation with word boundaries; no unrelated-word replacement."
+    },
+    {
+      "canonical": "gestational diabetes",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "gestation diabetes",
+      "expected_visible_phrase": "gestational diabetes",
+      "false_positive_guard": "The gestation dates were reviewed.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic/word-form variant only; no synonym is rewritten."
+    },
+    {
+      "canonical": "myocardial infarction",
+      "status": "disabled",
+      "category": "semantic_synonym",
+      "raw_phrase": "heart attack",
+      "expected_visible_phrase": "heart attack",
+      "false_positive_guard": "The patient said heart attack in their own words.",
+      "provenance": "M14 safety audit of prior active lexicon row.",
+      "safety_rationale": "A patient's own plain-English wording should not be rewritten into a diagnostic term."
+    },
+    {
+      "canonical": "thyroid function test",
+      "status": "disabled",
+      "category": "semantic_synonym",
+      "raw_phrase": "thyroid function tests",
+      "expected_visible_phrase": "thyroid function tests",
+      "false_positive_guard": "Please repeat thyroid function tests next month.",
+      "provenance": "M14 safety audit of prior active lexicon row.",
+      "safety_rationale": "Plural investigations can be clinically different from a singular test, so no collapse is active."
+    }
+  ]
+}

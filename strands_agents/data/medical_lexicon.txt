@@ -5,14 +5,13 @@
 metoprolol|metro pro lol|meto prolol
 sumatriptan|summa trip tan|sumatryptan
 empagliflozin|empa glyph lozin|empa gliflozin
-lisinopril|listen april|lisin april
+lisinopril|lisin april
 troponin|tro pony|troponen
 naproxen|na proxen|naproxin
 ibuprofen|i buprofen|eye buprofen
 paracetamol|para seat amol|paracetemol
 hypertension|high per tension
 radiculopathy|radiculo pathy|ridiculopathy
-myocardial infarction|my cardial infarction|heart attack
+myocardial infarction|my cardial infarction
 atrial fibrillation|a trial fibrillation|a fib
 gestational diabetes|gestation diabetes
-thyroid function test|thyroid function tests

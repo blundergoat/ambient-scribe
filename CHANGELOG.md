@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Medical term correction safety** - the post-ASR fallback now has a reviewer/eval sidecar and CPU-only evaluator, preserves sentence-initial capitalization, tolerates missing/unreadable lexicon files, and disables risky prior variants (`heart attack`, `thyroid function tests`, `listen april`) unless reviewed.
+- **Gruff PHP accepted-debt baseline** - added a single baseline entry for the requested `blundergoat/strands-php-client` `dev-dev#98bd6598...` Composer constraint so preflight stays green while the project deliberately tests that unreleased client branch.
 - **Transcript fragment readability** - live NeMo sessions now merge adjacent same-speaker word-sized fragments before publishing them, reducing clean-region fragment rates across PriMock57 without merging alternating-speaker ping-pong fragments or changing the browser payload shape.
 - **Transcript punctuation readability** - server-side segment cleanup now inserts missing spaces after glued sentence punctuation before rows reach the browser, so ASR text like `started.My` renders as readable transcript text without changing payload shape.
 - **Transcript overlap-ceiling spike** - added an eval-only separated-channel runner for named PriMock57 fixtures, but stopped the full-corpus ceiling path after batch mode exceeded GPU memory and WebSocket mode destabilized NeMo on c04; the runner now blocks accidental full-corpus runs unless explicitly allowed.

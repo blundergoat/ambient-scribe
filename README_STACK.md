@@ -7,7 +7,7 @@ The focus is the user-visible transcription flow: record a consultation, see
 speaker-labelled transcript cards, review a SOAP summary, and optionally see
 assistive clinical hints.
 
-Last checked: 2026-07-04 against the local repo.
+Last checked: 2026-07-05 against the local repo.
 
 ## Short Version
 
@@ -165,6 +165,11 @@ Clinical assistance is intentionally lightweight in this version.
 It loads `strands_agents/data/medical_lexicon.txt` and replaces exact
 word-boundary variants with canonical clinical terms before text reaches the UI,
 summary, or download.
+
+`strands_agents/data/medical_lexicon_review.json` records the reviewer category,
+expected correction, false-positive guard, provenance, and safety rationale for
+each active row. `python3 scripts/evaluate-medical-boost.py` prints the CPU-only
+before/after table without loading NeMo.
 
 This is not NeMo decode-time phrase boosting. The NeMo 2.7.x multitalker
 decode-time API still needs a GPU-container proof before this fallback should be

@@ -5,7 +5,7 @@ This file explains the two 0.3.0 clinical-intelligence layers:
 - `.goat-flow/plans/0.3.0/M11-medical-phrase-boosting.md`
 - `.goat-flow/plans/0.3.0/M12-clinical-rag-hints.md`
 
-Last checked: 2026-07-04 against the local repo.
+Last checked: 2026-07-05 against the local repo.
 
 ## Short Version
 
@@ -79,6 +79,8 @@ Key files:
 | `strands_agents/nemo_pipeline.py` | Loads the optional lexicon and applies correction at the pipeline seam. |
 | `strands_agents/medical_lexicon.py` | Loads canonical terms and exact ASR variants, then performs safe replacements. |
 | `strands_agents/data/medical_lexicon.txt` | Small project-curated clinical lexicon for synthetic demos and local review. |
+| `strands_agents/data/medical_lexicon_review.json` | Reviewer table with category, expected correction, false-positive guard, provenance, and rationale. |
+| `scripts/evaluate-medical-boost.py` | CPU-only before/after evaluator for lexicon review; does not load NeMo or use the GPU. |
 | `tests/python/test_medical_lexicon.py` | Proves missing files, exact replacements, and the pipeline seam. |
 | `docs/medical-phrase-boosting.md` | Focused operating notes for extending the lexicon. |
 
@@ -91,6 +93,8 @@ MEDICAL_LEXICON_PATH=/app/data/medical_lexicon.txt
 
 `MEDICAL_BOOST_ENABLED=1` turns the fallback on. It uses exact word-boundary
 replacement only. It does not fuzzy-match random words into clinical terms.
+The active review disables risky semantic or false-positive-prone prior rows:
+`heart attack`, `thyroid function tests`, and `listen april` stay unchanged.
 
 ### Why It Makes The System Better
 
@@ -240,6 +244,7 @@ Use these focused checks after changing the lexicon, KB, hints, summary prompt,
 or browser hint rendering:
 
 ```bash
+python3 scripts/evaluate-medical-boost.py
 strands_agents/.venv/bin/pytest tests/python/test_medical_lexicon.py -q
 strands_agents/.venv/bin/pytest tests/python/test_clinical_hints.py tests/python/test_summary.py -q
 rg -n "import nemo|import torch" strands_agents/clinical_hints.py strands_agents/medical_lexicon.py
