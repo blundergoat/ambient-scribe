@@ -89,6 +89,10 @@ _DORMANT_SLOT_SECONDS = 12.0
 # The last few words stay held even on dormant slots: a waking slot revises
 # its extreme tail first, and draining those measurably cost slot purity.
 _DORMANT_HELD_WORDS = 3
+# After this long without any voiced activity a slot's held words cannot
+# revise in practice; drain them fully so they render mid-session (the UI
+# inserts them chronologically) instead of appearing only at finalize.
+_DORMANT_FULL_DRAIN_SECONDS = 25.0
 
 
 @dataclass
@@ -498,7 +502,11 @@ class StreamingSessionEngine:
             # the chronological release frontier keeps moving.
             last_update = self._slot_last_burst_end.get(slot_index, 0.0)
             if slot_tail_words and offset - last_update > _DORMANT_SLOT_SECONDS:
-                slot_tail_words = min(slot_tail_words, _DORMANT_HELD_WORDS)
+                slot_tail_words = (
+                    0
+                    if offset - last_update > _DORMANT_FULL_DRAIN_SECONDS
+                    else min(slot_tail_words, _DORMANT_HELD_WORDS)
+                )
             stable_count = max(emitted_count, len(word_log) - slot_tail_words)
             if stable_count <= emitted_count:
                 continue

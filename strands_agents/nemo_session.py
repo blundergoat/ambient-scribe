@@ -276,6 +276,11 @@ class TranscriptionSession:
         """
         return "streaming" if self._streaming_engine is not None else "windowed"
 
+    @property
+    def engine_diagnostics(self):
+        """Streaming-engine identity diagnostics, or None on the windowed path."""
+        return getattr(self._streaming_engine, "diagnostics", None)
+
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
         """Process a single audio chunk through the NeMo pipeline.
 

@@ -536,6 +536,29 @@ def _build_role_stability(
     )
     pending_contrary_mapping = role_state.pending_flip_mapping is not None
 
+    engine_name = getattr(audio_session, "engine_name", "windowed")
+
+    if engine_name == "streaming":
+        # The streaming engine's speaker cache does not drift, so windowed
+        # instability markers do not apply: anchor remaps are structurally
+        # zero and phantom merges are marginal-share folds, not identity
+        # churn. Instability here means a voice slot appearing late (a real
+        # identity anomaly) or a contrary mapping still pending.
+        diagnostics = getattr(audio_session, "engine_diagnostics", None)
+        late_slot_births = int(getattr(diagnostics, "late_slot_births", 0) or 0)
+        is_unstable = late_slot_births > 0 or pending_contrary_mapping
+        return {
+            "level": "unstable" if is_unstable else "stable",
+            "engine": "streaming",
+            "late_slot_births": late_slot_births,
+            "anchor_remap_rate": 0.0,
+            "anchor_remaps": 0,
+            "phantom_merges": quality_stats.phantom_speaker_merge_count,
+            "windows": window_count,
+            "mapping_changes": mapping_changes,
+            "pending_contrary_mapping": pending_contrary_mapping,
+        }
+
     # Any of these means the visible speaker identities cannot be trusted yet,
     # so a green "Roles identified" badge would overstate row-level truth.
     is_unstable = (
@@ -546,6 +569,7 @@ def _build_role_stability(
 
     return {
         "level": "unstable" if is_unstable else "stable",
+        "engine": "windowed",
         "anchor_remap_rate": round(anchor_remap_rate, 3),
         "anchor_remaps": quality_stats.speaker_anchor_remap_count,
         "phantom_merges": quality_stats.phantom_speaker_merge_count,

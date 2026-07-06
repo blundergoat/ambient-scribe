@@ -706,3 +706,40 @@ test.describe("Live-stop finalize drain (M21)", () => {
     expect(correctedRow.role).toBe("DOCTOR");
   });
 });
+
+test.describe("Chronological transcript insertion (M22 refinements)", () => {
+  test("a late-arriving old row inserts at its spoken position", async ({ page }) => {
+    await loadScribePage(page);
+    await page.evaluate(() => {
+      const rows = [
+        { speaker_id: "spk_0", text: "opening line", start: 2.0, end: 4.0, segment_id: "seg-0001" },
+        { speaker_id: "spk_1", text: "a reply", start: 20.0, end: 23.0, segment_id: "seg-0002" },
+        { speaker_id: "spk_0", text: "a follow up", start: 40.0, end: 43.0, segment_id: "seg-0003" },
+        // The straggler: a dormant slot's drained tail from much earlier.
+        { speaker_id: "spk_1", text: "the straggler words", start: 10.0, end: 12.0, segment_id: "seg-0004" },
+      ];
+      rows.forEach((row) => handleRawSegment({ type: "segment", ...row }));
+    });
+
+    const starts = await page.evaluate(() =>
+      [...document.querySelectorAll(".segment")].map((c) => parseFloat(c.dataset.start))
+    );
+    // Chronological on screen despite arrival order.
+    expect(starts).toEqual([2.0, 10.0, 20.0, 40.0]);
+
+    // Tail coalescing still works after an insertion: a same-speaker row
+    // adjacent to the LAST card must join it, not the straggler's card.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "and more follow up",
+        start: 44.0,
+        end: 46.0,
+        segment_id: "seg-0005",
+      });
+    });
+    const cardCount = await page.evaluate(() => document.querySelectorAll(".segment").length);
+    expect(cardCount).toBe(4);
+  });
+});

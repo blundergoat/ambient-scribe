@@ -137,6 +137,15 @@ function appendSegment(segment, role) {
         revealSummaryPending();
     }
 
+    // A straggler (a late-emitted old row, e.g. a drained dormant tail on the
+    // streaming engine) inserts at its chronological position so the visible
+    // transcript stays in spoken order; it never disturbs tail coalescing.
+    const lastBlock = transcriptContainer.querySelector('.segment:last-of-type');
+    if (lastBlock && segment.start < parseFloat(lastBlock.dataset.start)) {
+        insertSegmentChronologically(segment, role, transcriptContainer);
+        return;
+    }
+
     // Consecutive text from the same speaker stays in one readable card.
     if (lastSpeakerId === segment.speaker_id && lastSegmentBlock) {
         appendTextToExistingSegment(segment, transcriptContainer);
@@ -151,6 +160,28 @@ function appendSegment(segment, role) {
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     document.getElementById('segmentCount').textContent = segmentIndex;
 
+}
+
+/**
+ * Inserts one late-arriving row where its spoken time belongs.
+ * Use when a segment starts earlier than the newest visible card, which the
+ * streaming engine's dormant-slot drain can legitimately produce.
+ */
+function insertSegmentChronologically(segment, role, transcriptContainer) {
+    const segmentBlock = createSegmentBlock(segment, role);
+    let nextCard = null;
+
+    // The first card starting after this row marks the insertion point.
+    for (const card of transcriptContainer.querySelectorAll('.segment')) {
+        if (parseFloat(card.dataset.start) > segment.start) {
+            nextCard = card;
+            break;
+        }
+    }
+
+    transcriptContainer.insertBefore(segmentBlock, nextCard);
+    trackSpeakerSegment(segment.speaker_id, segmentBlock);
+    document.getElementById('segmentCount').textContent = segmentIndex;
 }
 
 /**

@@ -212,3 +212,46 @@ class TestEngineQualityLabel:
         # Corrupting attribution is worse than a third visible ID.
         assert {segment.speaker_id for segment in second} == {"speaker_2"}
         assert session.quality_stats.phantom_speaker_merge_count == 0
+
+
+class TestEngineAwareStability:
+    """The badge policy must judge each engine by its own failure modes."""
+
+    def test_streaming_sessions_expose_engine_diagnostics(self):
+        engine = FakeStreamingEngine(feed_batches=[])
+        session = make_session(engine)
+        assert session.engine_diagnostics is engine.diagnostics
+        assert make_session(engine=None).engine_diagnostics is None
+
+    def test_streaming_stability_ignores_phantom_folds(self):
+        """Marginal-share folds are not identity churn on the streaming engine."""
+        from api.role_inference_queue import (
+            RoleInferenceServices,
+            _build_role_stability,
+        )
+
+        engine = FakeStreamingEngine(feed_batches=[])
+        session = make_session(engine)
+        session.quality_stats.record_phantom_speaker_merges(2)
+        session.quality_stats.record_window(32000)
+
+        class FakeLifecycle:
+            def get(self, _session_id):
+                return session
+
+        services = RoleInferenceServices(
+            sessions=None,
+            lifecycle=FakeLifecycle(),
+            publish_to_mercure=None,
+            run_role_inference=None,
+            mercure_event_ids={},
+        )
+
+        stability = _build_role_stability("engine-test-session", services)
+        assert stability["engine"] == "streaming"
+        assert stability["level"] == "stable"
+
+        # A late slot birth IS an identity anomaly on this engine.
+        engine.diagnostics.late_slot_births = 1
+        stability = _build_role_stability("engine-test-session", services)
+        assert stability["level"] == "unstable"
