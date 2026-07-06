@@ -383,40 +383,6 @@ class StreamingSessionEngine:
 
         hypotheses = getattr(asr_state, "previous_hypothesis", None) or []
 
-        if True:  # container-only debug copy
-            import json as _json
-
-            debug_rows = []
-            for _idx, _hyp in enumerate(hypotheses):
-                if _hyp is None:
-                    debug_rows.append({"slot": _idx, "none": True})
-                    continue
-                _words = str(getattr(_hyp, "text", "") or "").split()
-                _ts = getattr(_hyp, "timestamp", None)
-                debug_rows.append(
-                    {
-                        "slot": _idx,
-                        "n_words": len(_words),
-                        "head": " ".join(_words[:4]),
-                        "tail": " ".join(_words[-4:]),
-                        "ts0": float(_ts[0]) if _ts is not None and len(_ts) else None,
-                        "tsN": float(_ts[-1]) if _ts is not None and len(_ts) else None,
-                    }
-                )
-            with open("/tmp/engine-debug.jsonl", "a") as _f:
-                _f.write(
-                    _json.dumps(
-                        {
-                            "step": self._step_index,
-                            "offset": float(
-                                getattr(self._streamer, "_offset_chunk_start_time", -1.0)
-                            ),
-                            "speakers": list(getattr(asr_state, "speakers", None) or []),
-                            "slots": debug_rows,
-                        }
-                    )
-                    + "\n"
-                )
         for slot_index, hypothesis in enumerate(hypotheses):
             if hypothesis is None or not getattr(hypothesis, "text", None):
                 continue

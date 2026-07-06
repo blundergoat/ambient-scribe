@@ -232,7 +232,13 @@ function stopRecording() {
     didUserStopRecording = true;
     isRecording = false;
     clearTimeout(reconnectTimer);
+    clearTimeout(liveDrainTimeout);
     stopPcmStreaming();
+
+    isLiveDraining = true;
+    setRecordingStatus('Finishing transcription...', 'color:var(--color-speaker-a);font-weight:500;');
+    liveDrainTimeout = setTimeout(endLiveStop, LIVE_FINALIZE_TIMEOUT_MS);
+
     // Closing the socket tells the backend to finalize and publish `finalized`.
     transcriptionSocket?.close();
     mediaStream?.getTracks().forEach((track) => track.stop());
@@ -251,16 +257,8 @@ function stopRecording() {
 
     announce('Recording stopped');
 
-    // Visits without transcript text have no tail to wait for and no summary.
-    if (segmentIndex === 0) {
-        setElementHidden('startBtn', false);
-        setPlainStatus('Session ended');
-        return;
-    }
-
-    isLiveDraining = true;
-    setRecordingStatus('Finishing transcription...', 'color:var(--color-speaker-a);font-weight:500;');
-    liveDrainTimeout = setTimeout(endLiveStop, LIVE_FINALIZE_TIMEOUT_MS);
+    // Even if no transcript is visible yet, finalize may flush the first rows.
+    // `requestSummary` still no-ops if the backend truly finalizes empty.
 }
 
 /**

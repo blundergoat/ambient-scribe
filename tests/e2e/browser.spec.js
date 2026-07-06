@@ -626,6 +626,39 @@ test.describe("Live-stop finalize drain (M21)", () => {
     expect(postedIds).toHaveLength(4);
   });
 
+  test("stop with no visible rows still drains finalize rows into the summary", async ({
+    page,
+  }) => {
+    const summaryCalls = [];
+    await loadScribePage(page);
+    await stubSummaryRoute(page, summaryCalls);
+    await enterLiveRecordingState(page);
+
+    await page.evaluate(() => stopRecording());
+    await expect(page.locator("#status")).toContainText("Finishing transcription");
+
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "first words only released by finalize",
+        start: 0.0,
+        end: 1.5,
+        segment_id: "seg-final-0001",
+      });
+      handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
+    });
+
+    await expect(page.locator("#status")).toContainText("Session ended");
+    await expect(page.locator("#startBtn")).toBeVisible();
+    await expect
+      .poll(() => summaryCalls.length, { timeout: 5000 })
+      .toBe(1);
+    expect(summaryCalls[0].segments.map((row) => row.segment_id)).toEqual([
+      "seg-final-0001",
+    ]);
+  });
+
   test("a dead backend cannot hold the visit open: timeout still summarizes", async ({
     page,
   }) => {
@@ -741,5 +774,26 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
     });
     const cardCount = await page.evaluate(() => document.querySelectorAll(".segment").length);
     expect(cardCount).toBe(4);
+  });
+
+  test("late rows remain chronological inside and across coalesced cards", async ({ page }) => {
+    await loadScribePage(page);
+    await page.evaluate(() => {
+      const rows = [
+        { speaker_id: "spk_0", text: "first", start: 40.0, end: 41.0, segment_id: "seg-a" },
+        { speaker_id: "spk_0", text: "third", start: 44.0, end: 45.0, segment_id: "seg-c" },
+        { speaker_id: "spk_0", text: "second late", start: 42.0, end: 43.0, segment_id: "seg-b" },
+        { speaker_id: "spk_1", text: "between speakers late", start: 43.0, end: 43.5, segment_id: "seg-x" },
+      ];
+      rows.forEach((row) => handleRawSegment({ type: "segment", ...row }));
+    });
+
+    const rowStarts = await page.evaluate(() =>
+      [...document.querySelectorAll(".segment__text")].map((row) => parseFloat(row.dataset.start))
+    );
+    expect(rowStarts).toEqual([40.0, 42.0, 43.0, 44.0]);
+
+    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    expect(summaryRows.map((row) => row.segment_id)).toEqual(["seg-a", "seg-b", "seg-x", "seg-c"]);
   });
 });

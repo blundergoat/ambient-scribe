@@ -98,6 +98,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **M21/M22 review hardening** - removed an unconditional transcript-bearing
+  streaming-engine debug dump to `/tmp/engine-debug.jsonl`; live Stop now drains
+  even when no rows are visible before finalize flushes the first rows; and late
+  same-speaker or cross-speaker rows now stay chronological inside/coalesced across
+  transcript cards before summary generation reads the DOM.
 - **Role-agent tool payload size** - shrank the Strands `assign_roles` contract so the
   model passes only session ID, mapping, confidence, and terse reasoning while transcript
   rows stay in server-side pending state; role updates still publish the same browser

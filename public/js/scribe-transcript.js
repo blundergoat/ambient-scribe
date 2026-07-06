@@ -137,18 +137,25 @@ function appendSegment(segment, role) {
         revealSummaryPending();
     }
 
-    // A straggler (a late-emitted old row, e.g. a drained dormant tail on the
-    // streaming engine) inserts at its chronological position so the visible
-    // transcript stays in spoken order; it never disturbs tail coalescing.
-    const lastBlock = transcriptContainer.querySelector('.segment:last-of-type');
-    if (lastBlock && segment.start < parseFloat(lastBlock.dataset.start)) {
-        insertSegmentChronologically(segment, role, transcriptContainer);
+    // Consecutive text from the same speaker stays in one readable card when
+    // the new row belongs at or after that card's first row. Late rows from the
+    // same speaker are inserted within the card by row start.
+    const lastCardStart = lastSegmentBlock ? parseFloat(lastSegmentBlock.dataset.start) : null;
+    if (
+        lastSpeakerId === segment.speaker_id
+        && lastSegmentBlock
+        && (lastCardStart === null || segment.start >= lastCardStart)
+    ) {
+        appendTextToExistingSegment(segment, transcriptContainer);
         return;
     }
 
-    // Consecutive text from the same speaker stays in one readable card.
-    if (lastSpeakerId === segment.speaker_id && lastSegmentBlock) {
-        appendTextToExistingSegment(segment, transcriptContainer);
+    // A straggler (a late-emitted old row, e.g. a drained dormant tail on the
+    // streaming engine) inserts at its chronological row position so the
+    // visible transcript and summary body stay in spoken order.
+    const lastRow = getLastTranscriptRow(transcriptContainer);
+    if (lastRow && segment.start < parseFloat(lastRow.dataset.start)) {
+        insertSegmentChronologically(segment, role, transcriptContainer);
         return;
     }
 
@@ -169,19 +176,98 @@ function appendSegment(segment, role) {
  */
 function insertSegmentChronologically(segment, role, transcriptContainer) {
     const segmentBlock = createSegmentBlock(segment, role);
-    let nextCard = null;
+    const nextRow = findFirstTranscriptRowAfter(transcriptContainer, segment.start);
 
-    // The first card starting after this row marks the insertion point.
-    for (const card of transcriptContainer.querySelectorAll('.segment')) {
-        if (parseFloat(card.dataset.start) > segment.start) {
-            nextCard = card;
-            break;
+    if (!nextRow) {
+        transcriptContainer.appendChild(segmentBlock);
+        trackSpeakerSegment(segment.speaker_id, segmentBlock);
+        lastSpeakerId = segment.speaker_id;
+        lastSegmentBlock = segmentBlock;
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    const nextCard = nextRow.closest('.segment');
+    const firstRowInCard = nextCard?.querySelector('.segment__text');
+
+    if (!nextCard || nextRow === firstRowInCard) {
+        transcriptContainer.insertBefore(segmentBlock, nextCard);
+        trackSpeakerSegment(segment.speaker_id, segmentBlock);
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    if (nextCard.dataset.speakerId === segment.speaker_id) {
+        insertRowIntoCard(segment, nextCard, nextRow);
+        trackSpeakerSegment(segment.speaker_id, nextCard);
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    const tailCard = splitSegmentCardAtRow(nextCard, nextRow);
+
+    transcriptContainer.insertBefore(segmentBlock, tailCard);
+    trackSpeakerSegment(segment.speaker_id, segmentBlock);
+    document.getElementById('segmentCount').textContent = segmentIndex;
+}
+
+function getLastTranscriptRow(transcriptContainer) {
+    const rows = transcriptContainer.querySelectorAll('.segment__text');
+    return rows.length > 0 ? rows[rows.length - 1] : null;
+}
+
+function findFirstTranscriptRowAfter(transcriptContainer, startSeconds) {
+    for (const row of transcriptContainer.querySelectorAll('.segment__text')) {
+        if (parseFloat(row.dataset.start) > startSeconds) {
+            return row;
         }
     }
 
-    transcriptContainer.insertBefore(segmentBlock, nextCard);
-    trackSpeakerSegment(segment.speaker_id, segmentBlock);
-    document.getElementById('segmentCount').textContent = segmentIndex;
+    return null;
+}
+
+function insertRowIntoCard(segment, segmentBlock, nextRow = null) {
+    const textContainer = segmentBlock.querySelector('.segment__texts');
+    const textSpan = createRowTextSpan(segment);
+
+    textContainer.insertBefore(textSpan, nextRow);
+    segmentBlock.dataset.end = Math.max(
+        parseFloat(segmentBlock.dataset.end) || segment.end,
+        segment.end
+    );
+}
+
+function splitSegmentCardAtRow(segmentBlock, firstTailRow) {
+    const textContainer = segmentBlock.querySelector('.segment__texts');
+    const tailRows = [];
+    let currentRow = firstTailRow;
+
+    while (currentRow) {
+        const nextRow = currentRow.nextElementSibling;
+        tailRows.push(currentRow);
+        currentRow = nextRow;
+    }
+
+    const speakerId = segmentBlock.dataset.speakerId;
+    const role = roleMapping[speakerId] ?? 'UNKNOWN';
+    const tailStart = parseFloat(tailRows[0].dataset.start) || parseFloat(segmentBlock.dataset.start) || 0;
+    const tailEnd = parseFloat(tailRows[tailRows.length - 1].dataset.end) || tailStart;
+    const tailBlock = createSegmentBlockShell(speakerId, role, tailStart, tailEnd);
+
+    tailBlock.querySelector('.segment__texts').append(...tailRows);
+    segmentBlock.after(tailBlock);
+    trackSpeakerSegment(speakerId, tailBlock);
+
+    const remainingRows = textContainer.querySelectorAll('.segment__text');
+    const lastRemainingRow = remainingRows[remainingRows.length - 1];
+    segmentBlock.dataset.end = lastRemainingRow?.dataset.end ?? segmentBlock.dataset.start;
+
+    if (lastSegmentBlock === segmentBlock) {
+        lastSpeakerId = speakerId;
+        lastSegmentBlock = tailBlock;
+    }
+
+    return tailBlock;
 }
 
 /**
@@ -189,11 +275,9 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
  * Use when diarization keeps the same speaker across adjacent segments.
  */
 function appendTextToExistingSegment(segment, transcriptContainer) {
-    const textContainer = lastSegmentBlock.querySelector('.segment__texts');
-    const textSpan = createRowTextSpan(segment);
+    const nextRow = findFirstTranscriptRowAfter(lastSegmentBlock, segment.start);
 
-    textContainer.appendChild(textSpan);
-    lastSegmentBlock.dataset.end = segment.end;
+    insertRowIntoCard(segment, lastSegmentBlock, nextRow);
     trackSpeakerSegment(segment.speaker_id, lastSegmentBlock);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     document.getElementById('segmentCount').textContent = segmentIndex;
@@ -204,33 +288,37 @@ function appendTextToExistingSegment(segment, transcriptContainer) {
  * Use when a new speaker block appears in the consultation.
  */
 function createSegmentBlock(segment, role) {
+    const segmentBlock = createSegmentBlockShell(segment.speaker_id, role, segment.start, segment.end);
+    segmentBlock.id = `segment-${segmentIndex}`;
+    segmentBlock.querySelector('.segment__texts').appendChild(createRowTextSpan(segment));
+    return segmentBlock;
+}
+
+function createSegmentBlockShell(speakerId, role, start, end) {
     const segmentBlock = createElement('div', {
         className: `segment segment--${role}`,
         dataset: {
-            speakerId: segment.speaker_id,
-            start: segment.start,
-            end: segment.end,
+            speakerId,
+            start,
+            end,
         },
-        attributes: { id: `segment-${segmentIndex}` },
     });
     const avatar = createElement('div', {
         className: 'segment__avatar',
         text: role === 'UNKNOWN' ? '?' : getAvatarLabel(role),
     });
     const speakerLabel = createElement('span', { className: 'segment__speaker' });
-    const displayLabel = role === 'UNKNOWN' ? segment.speaker_id : getRoleLabel(role);
-    setSpeakerLabelContent(speakerLabel, displayLabel, manualOverrides.has(segment.speaker_id));
+    const displayLabel = role === 'UNKNOWN' ? speakerId : getRoleLabel(role);
+    setSpeakerLabelContent(speakerLabel, displayLabel, manualOverrides.has(speakerId));
     speakerLabel.style.cursor = 'pointer';
     speakerLabel.title = 'Click to change role';
     speakerLabel.addEventListener('click', () => cycleRole(segmentBlock.dataset.speakerId));
 
     const header = createElement('div', { className: 'segment__header' }, [
         speakerLabel,
-        createElement('span', { className: 'segment__time', text: formatTime(segment.start) }),
+        createElement('span', { className: 'segment__time', text: formatTime(start) }),
     ]);
-    const textContainer = createElement('div', { className: 'segment__texts' }, [
-        createRowTextSpan(segment),
-    ]);
+    const textContainer = createElement('div', { className: 'segment__texts' });
     const body = createElement('div', { className: 'segment__body' }, [header, textContainer]);
     segmentBlock.append(avatar, body);
     return segmentBlock;
