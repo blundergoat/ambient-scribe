@@ -83,7 +83,6 @@ services:
       # agent container on some Docker/WSL2 setups, and a stale .env value silently
       # broke role inference + summaries. Use Bedrock instead via ROLE_AGENT_MODEL_PROVIDER.
       - OLLAMA_HOST=http://ollama:11434
-      - CLINICAL_HINTS_ENABLED=${CLINICAL_HINTS_ENABLED:-1}
       - MEDICAL_BOOST_ENABLED=${MEDICAL_BOOST_ENABLED:-0}
       - MEDICAL_LEXICON_PATH=${MEDICAL_LEXICON_PATH:-/app/data/medical_lexicon.txt}
 

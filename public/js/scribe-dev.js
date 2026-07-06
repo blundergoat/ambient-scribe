@@ -32,7 +32,7 @@ const DEV_PANEL_COLLAPSED_KEY = 'ambient-scribe-dev-panel-collapsed';
 
 /**
  * Collapses or expands the dev-panel body under its header.
- * Use when debugging output should get out of the way of Clinical Hints.
+ * Use when debugging output should get out of the way of the consultation workspace.
  */
 function toggleDevPanelCollapsed() {
     const devPanelElement = document.getElementById('devPanel');

@@ -215,6 +215,53 @@ class TestSessionHistory:
         assert role_event["row_overrides"] == {"seg-0002": "PATIENT"}
         assert role_event["manual_override"] is True
 
+    def test_row_override_after_role_state_cleanup_publishes_no_fabricated_mapping(
+        self, client, monkeypatch
+    ):
+        """A post-visit row fix must not broadcast empty mapping or zero confidence."""
+        published_events = []
+
+        async def fake_publish(topic, data, event_id=None):
+            """Capture the roles-topic event the late correction broadcasts."""
+            published_events.append((topic, data))
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        # The visit ended: transcript rows persist in storage, but grace-window
+        # teardown already destroyed the session's role state.
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row the clinician reviews after the visit",
+                "start": 0.0,
+                "end": 0.9,
+                "segment_id": "seg-0001",
+            },
+        )
+        role_tools.cleanup_session(TEST_SESSION_ID)
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        # The correction still sticks to the stored row.
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
+
+        # The broadcast carries only the row signal - no fabricated speaker state
+        # that would wipe another tab's earned confidence badge.
+        _, role_event = published_events[-1]
+        assert role_event["row_overrides"] == {"seg-0001": "PATIENT"}
+        assert role_event["manual_override"] is True
+        assert "mapping" not in role_event
+        assert "confidence" not in role_event
+
+        # The dead session gained no resurrected role state either.
+        assert TEST_SESSION_ID not in role_tools._session_states
+
     def test_row_override_rejects_ambiguous_or_unknown_targets(self, client):
         """The UI gets clear validation errors instead of silent no-ops."""
         # Neither scope: the server cannot know what the user corrected.

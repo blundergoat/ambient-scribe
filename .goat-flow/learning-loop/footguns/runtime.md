@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-06
+last_reviewed: 2026-07-07
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -167,6 +167,19 @@ last_reviewed: 2026-07-06
 - **Prevention:** Pin `stream_id = max(0, returned_id)` after the first append; mirror the reference CLI's per-step `drop_extra_pre_encoded` computation verbatim. When streaming quality looks wrong with clean logs, instrument per-step hypothesis facts (slot, n_words, head/tail, ts0/tsN, offset) before touching emission logic.
 - **Three more traps found at REAL-TIME pacing (2026-07-06, invisible at accelerated eval pacing):** (4) `CacheAwareStreamingAudioBuffer.__iter__` yields PARTIAL chunks near the buffer end and advances the cursor a full shift regardless - at 1x pacing a step loop drains the buffer every feed, truncating AND skipping audio four times per 5s chunk (garbled words, speaker fragmentation). Gate stepping on `frames_available >= full_chunk_frames` and consume partials only at flush. (5) Deriving word times from the decode/step clock is FICTION under decode lag: rows carry compressed times, the time-overlap scorer and the role layer both read garbage, and eval "attribution" numbers become unmeasurable. True times come from inverting the diarizer's own activity stream: per-slot (cumulative voiced frames -> wall seconds) ledger, then map each token timestamp through it. (6) An eager "pin the first N slots to establish" speaker cap folds a genuine voice into another slot when one speaker's audio spans two early cache slots (c03's doctor does) - fold only hallucination-scale marginal slots (share-based) and let substantial slots through; the role mapping labels them anyway.
 - **Verification rule this taught:** accelerated-pacing evals CANNOT stand in for real-time behavior on streaming integrations. Any cache-aware streaming change must pass a 1x browser replay (row order, live cadence, text sanity) in addition to eval gates.
+
+## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
+
+**Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/server.py` (search: "_apply_row_role_override")
+- **Files:** `strands_agents/tools/assign_roles.py` (search: "def get_or_create_state")
+- **Files:** `strands_agents/session_lifecycle.py` (search: "cleanup_role_state")
+- **Files:** `public/js/scribe-transcript.js` (search: "function handleRoleUpdate")
+- **What breaks:** Both scopes of `/session/{id}/roles/override` call `get_or_create_state(session_id)` to include the speaker mapping and confidence in their Mercure publish. After lifecycle teardown runs `cleanup_role_state`, that call silently CREATES a fresh empty `RoleMappingState` (mapping `{}`, zero confidence) for the dead session and publishes it as an authoritative `role_update`. The browser guard `if (!roleUpdateEvent.mapping)` does not catch `{}` (an empty object is truthy in JS), so `confidence = roleUpdateEvent.confidence ?? 0` wipes the header badge while `applySpeakerRoleMapping({})` leaves labels alone. The row correction itself sticks because `sessions.set_row_role` writes to transcript storage, whose TTL is independent of lifecycle role state.
+- **Evidence:** 2026-07-06 consult-03 manual test, session `fd2d7bfb-5d23-4e32-b0fa-e4f16cf0fed7`: grace expired `19:59:34Z`; a row override `seg-0002 -> PATIENT` at `20:07:34Z` published `{"type":"role_update","mapping":{},"row_overrides":{"seg-0002":"PATIENT"},...}` and the header badge dropped from `Roles identified (92%)` to `Speakers unclear (0%)` while the row chip flipped correctly.
+- **Prevention:** Post-visit request paths must peek at existing role state rather than `get_or_create_state` before including mapping/confidence in a publish, and the browser must treat an empty mapping as "no mapping news" rather than letting a `manual_override` row-scope event overwrite session-level confidence. When adding any post-Stop interaction (overrides, review queues, edits), check what lifecycle teardown has already destroyed before republishing derived state.
+- **Current state (2026-07-07):** the row-scope publish now peeks (`strands_agents/tools/assign_roles.py`, search: "def peek_state") and omits mapping/confidence for a finished visit, and `handleRoleUpdate` routes badge news through `applyMappingAndConfidenceNews` so `manual_override` events never move the earned badge (regressions: `tests/python/test_api.py`, search: "publishes_no_fabricated_mapping"; `tests/e2e/browser.spec.js`, search: "cannot wipe the badge"). Residual trap: the speaker-scope branch of `roles_override` and the `roles_snapshot` endpoint still call `get_or_create_state` and can resurrect empty state post-teardown; badge impact is guarded browser-side, but the state fabrication itself remains.
 
 ## Resolved Entries
 

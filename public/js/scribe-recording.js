@@ -217,8 +217,8 @@ function startRecordingTimerIfNeeded() {
     }
 }
 
-// A dead backend must not leave a stopped live visit waiting for `finalized`.
-// Kept equal to the replay drain's REPLAY_FINALIZE_TIMEOUT_MS by design.
+// Because final NeMo tail flushes are slow, this timeout limits live Stop without hiding late rows.
+// Because replay uses the same wait, both Stop flows return control consistently for the user.
 const LIVE_FINALIZE_TIMEOUT_MS = 15000;
 
 /**
@@ -306,7 +306,6 @@ function resetSession() {
     CONFIG.topicRaw = `scribe/session/${CONFIG.sessionId}/raw`;
     CONFIG.topicRoles = `scribe/session/${CONFIG.sessionId}/roles`;
     CONFIG.topicSummary = `scribe/session/${CONFIG.sessionId}/summary`;
-    CONFIG.topicHints = `scribe/session/${CONFIG.sessionId}/hints`;
 
     const transcript = document.getElementById('transcript');
 
@@ -339,6 +338,10 @@ function resetVisitState() {
     confidence = 0;
     // Stability evidence belongs to the previous visit's speaker identities.
     roleStability = null;
+    // Corrected transcript state belongs to the previous visit's audio.
+    if (typeof resetPostVisitCorrectionState === 'function') {
+        resetPostVisitCorrectionState();
+    }
     latestQualityRecord = null;
     startTime = null;
     manualOverrides.clear();
@@ -375,7 +378,6 @@ function resetVisitUi() {
     document.getElementById('timer').textContent = '00:00';
     setElementHidden('timer', true);
     setElementHidden('resetBtn', true);
-    setElementHidden('summaryBtn', true);
     setElementHidden('startBtn', false);
     setElementHidden('stopBtn', true);
     setElementHidden('reconnectBtn', true);
@@ -392,8 +394,7 @@ function resetVisitUi() {
     document.getElementById('summaryLoading').classList.add('hidden');
     document.getElementById('summaryTitle').textContent = 'Session Summary';
     setSummaryStatus('pending');
-    setSummaryPendingText('Recording in progress, summarise will be available once consultation ends.');
-    clearClinicalHints();
+    setSummaryPendingText('Recording in progress, the summary will generate once consultation ends.');
 
     const confidenceBadge = document.getElementById('confidenceBadge');
 
@@ -432,11 +433,6 @@ function subscribeToMercure() {
         topics.push(CONFIG.topicSummary);
     }
 
-    // Hints are assistive and should not block transcript or summary updates.
-    if (CONFIG.topicHints) {
-        topics.push(CONFIG.topicHints);
-    }
-
     // One EventSource carries every topic; events route to handlers by type.
     streams = new StreamOrchestrator(CONFIG.mercureUrl);
     streams.connect(topics, {
@@ -447,7 +443,6 @@ function subscribeToMercure() {
         role_update: handleRoleUpdate,
         system_error: handleRoleUpdate,
         summary: handleSummaryEvent,
-        clinical_hints: handleClinicalHintsEvent,
     });
 }
 

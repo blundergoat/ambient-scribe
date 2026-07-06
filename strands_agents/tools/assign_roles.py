@@ -260,6 +260,24 @@ def get_or_create_state(session_id: str) -> RoleMappingState:
         return _session_states[session_id]
 
 
+def peek_state(session_id: str) -> RoleMappingState | None:
+    """Return the session's role state only if it already exists.
+
+    Post-visit request paths (e.g. a row correction after the reconnect grace
+    window) must not resurrect empty state for a torn-down session, because
+    publishing that fabricated state wipes the browser's earned role badge.
+
+    Args:
+        session_id: Browser recording UUID; unknown or cleaned-up IDs return None.
+
+    Returns:
+        The live RoleMappingState, or None when lifecycle cleanup already ran.
+    """
+    with _states_lock:
+        # Absence is the signal: the visit's role state was already destroyed.
+        return _session_states.get(session_id)
+
+
 def store_pending_role_segments(
     session_id: str, segments: list[dict[str, Any]]
 ) -> None:

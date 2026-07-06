@@ -1,5 +1,5 @@
 {
-  "description": "Synthetic PoC snippets for Ambient Scribe clinical hints. Not exhaustive medical guidance.",
+  "description": "Synthetic PoC snippets for Ambient Scribe summary grounding. Not exhaustive medical guidance.",
   "entries": [
     {
       "id": "chest-pain-objective",

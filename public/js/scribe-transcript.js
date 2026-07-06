@@ -19,6 +19,7 @@ let replayDrainTimeout = null;
 // the backend `finalized` event delivers the held-back tail (or a timeout).
 let isLiveDraining = false;
 let liveDrainTimeout = null;
+const MIXED_ROW_ROLE_LABEL = 'Review labels';
 
 /**
  * Builds summary rows from the transcript rows visible in the browser.
@@ -40,10 +41,7 @@ function readVisibleTranscriptSegments() {
             visibleSegments.push({
                 segment_id: segmentId,
                 speaker_id: cardSpeakerId,
-                role: rowRoleOverrides.get(segmentId)
-                    ?? autoRowRoles.get(segmentId)
-                    ?? roleMapping[cardSpeakerId]
-                    ?? 'UNKNOWN',
+                role: resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId),
                 text: rowTextFromSpan(rowSpan),
                 start: Number.parseFloat(rowSpan.dataset.start) || 0,
                 end: Number.parseFloat(rowSpan.dataset.end) || 0,
@@ -61,6 +59,138 @@ function readVisibleTranscriptSegments() {
 function rowTextFromSpan(rowSpan) {
     // The row's text node is always first; the optional chip follows it.
     return (rowSpan.childNodes[0]?.textContent ?? '').trim();
+}
+
+/**
+ * Returns the role one visible transcript row should use.
+ * Use when summaries, card headers, or review states need the same row-level
+ * truth the clinician sees on screen.
+ *
+ * @param {HTMLElement} rowSpan - visible transcript row; absent segment ID means no row override exists.
+ * @param {string} cardSpeakerId - card speaker ID; empty means the row falls back to Unknown.
+ * @returns {string} row-resolved role; `UNKNOWN` means the UI should not claim Doctor or Patient.
+ */
+function resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId) {
+    const segmentId = rowSpan.dataset.segmentId ?? '';
+
+    // A clinician-pinned row is the strongest visible evidence.
+    if (rowRoleOverrides.has(segmentId)) {
+        return rowRoleOverrides.get(segmentId);
+    }
+
+    // Automatic row cues are used when the clinician has not corrected that line.
+    if (autoRowRoles.has(segmentId)) {
+        return autoRowRoles.get(segmentId);
+    }
+
+    return roleMapping[cardSpeakerId] ?? 'UNKNOWN';
+}
+
+/**
+ * Chooses the safe card header state from the roles of rows inside the card.
+ * Use when a coalesced speaker card may contain row-level corrections, so the
+ * header does not confidently say Patient while one row is Doctor.
+ *
+ * @param {HTMLElement} segmentBlock - transcript card; empty cards fall back to speaker mapping.
+ * @returns {object} header text/avatar/style; mixed means the clinician should review row labels.
+ */
+function visibleCardRoleState(segmentBlock) {
+    const speakerId = segmentBlock.dataset.speakerId ?? '';
+    const speakerRole = roleMapping[speakerId] ?? 'UNKNOWN';
+    const cardRows = segmentBlock.querySelectorAll('.segment__text');
+
+    // Empty cards are defensive; show the speaker mapping instead of inventing a mixed state.
+    if (cardRows.length === 0) {
+        return displayStateForSingleRole(speakerRole, speakerId, true);
+    }
+
+    const rowRoles = new Set();
+    // Every row contributes its visible role so mixed cards become reviewable.
+    for (const rowSpan of cardRows) {
+        rowRoles.add(resolvedRoleForTranscriptRow(rowSpan, speakerId));
+    }
+
+    // Mixed row roles mean the card header must not claim a single speaker role.
+    if (rowRoles.size > 1) {
+        return {
+            roleClass: 'UNKNOWN',
+            avatar: '?',
+            label: MIXED_ROW_ROLE_LABEL,
+            isMixed: true,
+            showManualConfirmation: false,
+        };
+    }
+
+    const visibleRole = rowRoles.values().next().value ?? 'UNKNOWN';
+    return displayStateForSingleRole(visibleRole, speakerId, visibleRole === speakerRole);
+}
+
+/**
+ * Builds a card header state for a card whose rows agree on one role.
+ * Use after row-level correction makes all rows agree, even if speaker mapping
+ * still carries a stale role.
+ *
+ * @param {string} visibleRole - resolved row role; empty means the card should appear Unknown.
+ * @param {string} speakerId - underlying speaker ID; empty gives the user an Unknown-style header.
+ * @param {boolean} followsSpeakerMapping - true when speaker-level manual checks can be shown.
+ * @returns {object} card label/avatar/style for one visible role.
+ */
+function displayStateForSingleRole(visibleRole, speakerId, followsSpeakerMapping) {
+    const roleForDisplay = visibleRole === '' ? 'UNKNOWN' : (visibleRole ?? 'UNKNOWN');
+    return {
+        roleClass: roleForDisplay,
+        avatar: roleForDisplay === 'UNKNOWN' ? '?' : getAvatarLabel(roleForDisplay),
+        label: roleForDisplay === 'UNKNOWN' ? speakerId : getRoleLabel(roleForDisplay),
+        isMixed: false,
+        showManualConfirmation: followsSpeakerMapping && manualOverrides.has(speakerId),
+    };
+}
+
+/**
+ * Refreshes a transcript card header from its current row-level roles.
+ * Use after row corrections, automatic row exceptions, speaker relabels, or
+ * late row insertion so the card header matches what the clinician can verify.
+ *
+ * @param {HTMLElement|null} segmentBlock - transcript card; null means the row is not on screen yet.
+ * @returns {void} Updates only visible card header/avatar classes.
+ */
+function refreshSpeakerCardDisplay(segmentBlock) {
+    // Rows may receive role state before their card is attached to the DOM.
+    if (!segmentBlock) {
+        return;
+    }
+
+    const displayState = visibleCardRoleState(segmentBlock);
+    segmentBlock.className = `segment segment--${displayState.roleClass}`;
+
+    // Mixed cards get an extra hook for tests and future styling.
+    if (displayState.isMixed) {
+        segmentBlock.classList.add('segment--mixed');
+    }
+
+    const labelElement = segmentBlock.querySelector('.segment__speaker');
+    // Partial test DOMs may not render card labels.
+    if (labelElement) {
+        setSpeakerLabelContent(labelElement, displayState.label, displayState.showManualConfirmation);
+    }
+
+    const avatarElement = segmentBlock.querySelector('.segment__avatar');
+    // Partial test DOMs may not render avatars.
+    if (avatarElement) {
+        avatarElement.textContent = displayState.avatar;
+    }
+}
+
+/**
+ * Refreshes the card that owns one transcript row.
+ * Use after a row marker changes so the card header stops advertising stale
+ * Doctor/Patient confidence.
+ *
+ * @param {HTMLElement} rowSpan - visible transcript row; detached rows have no card to refresh.
+ * @returns {void} Updates the owning card when it is already visible.
+ */
+function refreshCardDisplayForRow(rowSpan) {
+    refreshSpeakerCardDisplay(rowSpan.closest('.segment'));
 }
 
 /**
@@ -211,13 +341,33 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
     document.getElementById('segmentCount').textContent = segmentIndex;
 }
 
+/**
+ * Finds the newest visible transcript row in the visit.
+ * Use when late backend rows need to decide whether they append or insert
+ * earlier in the transcript the clinician is reviewing.
+ *
+ * @param {HTMLElement} transcriptContainer - transcript list; empty means no row is visible yet.
+ * @returns {HTMLElement|null} newest visible row, or null when the transcript is empty.
+ */
 function getLastTranscriptRow(transcriptContainer) {
     const rows = transcriptContainer.querySelectorAll('.segment__text');
+    // No rows means the next segment starts the clinician's transcript.
     return rows.length > 0 ? rows[rows.length - 1] : null;
 }
 
+/**
+ * Finds the first transcript row after a spoken timestamp.
+ * Use when a late row arrives and should be placed where the user heard it,
+ * not at the bottom of the transcript.
+ *
+ * @param {HTMLElement} transcriptContainer - transcript list; empty means no insertion point exists.
+ * @param {number} startSeconds - spoken start time; zero means the row belongs near the top.
+ * @returns {HTMLElement|null} next later row, or null when the new row belongs at the end.
+ */
 function findFirstTranscriptRowAfter(transcriptContainer, startSeconds) {
+    // Rows are checked in visible order to preserve the transcript the user scans.
     for (const row of transcriptContainer.querySelectorAll('.segment__text')) {
+        // The first later row becomes the insertion anchor for this late segment.
         if (parseFloat(row.dataset.start) > startSeconds) {
             return row;
         }
@@ -226,6 +376,16 @@ function findFirstTranscriptRowAfter(transcriptContainer, startSeconds) {
     return null;
 }
 
+/**
+ * Inserts one row into an existing transcript card.
+ * Use when adjacent same-speaker rows should stay grouped but still sorted by
+ * the time the user heard them.
+ *
+ * @param {object} segment - transcript event; missing row ID means the row cannot be corrected.
+ * @param {HTMLElement} segmentBlock - card receiving the row; empty cards still get a header refresh.
+ * @param {HTMLElement|null} nextRow - row to insert before; null appends at the end of the card.
+ * @returns {void} Updates the card text, end time, and safe header label.
+ */
 function insertRowIntoCard(segment, segmentBlock, nextRow = null) {
     const textContainer = segmentBlock.querySelector('.segment__texts');
     const textSpan = createRowTextSpan(segment);
@@ -235,13 +395,24 @@ function insertRowIntoCard(segment, segmentBlock, nextRow = null) {
         parseFloat(segmentBlock.dataset.end) || segment.end,
         segment.end
     );
+    refreshSpeakerCardDisplay(segmentBlock);
 }
 
+/**
+ * Splits a transcript card before a late row from another speaker is inserted.
+ * Use when a user-visible card already contains later rows that must remain in
+ * chronological order around the new row.
+ *
+ * @param {HTMLElement} segmentBlock - existing card; empty cards are not expected here.
+ * @param {HTMLElement} firstTailRow - first row moving to the new tail card.
+ * @returns {HTMLElement} tail card that should follow the inserted late card.
+ */
 function splitSegmentCardAtRow(segmentBlock, firstTailRow) {
     const textContainer = segmentBlock.querySelector('.segment__texts');
     const tailRows = [];
     let currentRow = firstTailRow;
 
+    // Move every row from the split point so the user's reading order stays intact.
     while (currentRow) {
         const nextRow = currentRow.nextElementSibling;
         tailRows.push(currentRow);
@@ -261,7 +432,10 @@ function splitSegmentCardAtRow(segmentBlock, firstTailRow) {
     const remainingRows = textContainer.querySelectorAll('.segment__text');
     const lastRemainingRow = remainingRows[remainingRows.length - 1];
     segmentBlock.dataset.end = lastRemainingRow?.dataset.end ?? segmentBlock.dataset.start;
+    refreshSpeakerCardDisplay(segmentBlock);
+    refreshSpeakerCardDisplay(tailBlock);
 
+    // Splitting the latest card changes which card future same-speaker rows should join.
     if (lastSegmentBlock === segmentBlock) {
         lastSpeakerId = speakerId;
         lastSegmentBlock = tailBlock;
@@ -291,9 +465,15 @@ function createSegmentBlock(segment, role) {
     const segmentBlock = createSegmentBlockShell(segment.speaker_id, role, segment.start, segment.end);
     segmentBlock.id = `segment-${segmentIndex}`;
     segmentBlock.querySelector('.segment__texts').appendChild(createRowTextSpan(segment));
+    refreshSpeakerCardDisplay(segmentBlock);
     return segmentBlock;
 }
 
+/**
+ * Builds the empty shell for one transcript card.
+ * Use before the first row is attached; row-level refresh later adjusts mixed
+ * or corrected-card labels.
+ */
 function createSegmentBlockShell(speakerId, role, start, end) {
     const segmentBlock = createElement('div', {
         className: `segment segment--${role}`,
@@ -409,6 +589,7 @@ function renderRowRoleMarker(rowSpan, role) {
         text: `${chipLabel} ✓`,
         attributes: { title: 'Corrected by you' },
     }));
+    refreshCardDisplayForRow(rowSpan);
 }
 
 /**
@@ -510,8 +691,11 @@ async function sendRoleOverride(speakerId, role) {
 }
 
 /**
- * Applies inferred role mapping updates to visible transcript cards.
- * Use when the role agent publishes Doctor/Patient confidence.
+ * Applies role-agent updates in the same priority the clinician sees.
+ * Use when mapping, row overrides, and automatic row exceptions arrive together:
+ * speaker labels update, then row evidence can make mixed cards reviewable.
+ * Runs for every roles-topic event, including post-visit manual corrections
+ * that arrive after role-state teardown carrying no mapping at all.
  */
 function handleRoleUpdate(roleUpdateEvent) {
     // The roles topic also carries a one-time model-unavailable warning during the visit.
@@ -520,28 +704,77 @@ function handleRoleUpdate(roleUpdateEvent) {
         return;
     }
 
-    // Empty mapping means role inference has nothing new to show the clinician.
-    if (!roleUpdateEvent.mapping) {
-        return;
+    applyMappingAndConfidenceNews(roleUpdateEvent);
+    // A missing stability field means no new identity evidence (older server
+    // or post-disconnect drain), so the badge keeps the last known state.
+    roleStability = roleUpdateEvent.role_stability ?? roleStability;
+    applyRowRoleOverrides(roleUpdateEvent.row_overrides ?? {});
+
+    // Automatic row exceptions arrive as the full current set for this
+    // mapping, so stale markers from the previous mapping are cleared.
+    if (roleUpdateEvent.row_exceptions !== undefined) {
+        applyAutoRowExceptions(roleUpdateEvent.row_exceptions);
     }
 
-    previousRoleMapping = { ...roleMapping };
+    updateConfidenceBadge();
+    relabelSegments();
+}
 
+/**
+ * Applies the speaker-mapping and confidence news one roles event carries.
+ * Split from `handleRoleUpdate` so manual corrections can relabel rows without
+ * moving the earned confidence badge: a post-visit override may arrive after
+ * server role-state teardown with an empty or missing mapping, and treating
+ * that as real model evidence wiped the badge to `Speakers unclear (0%)`.
+ *
+ * @param {object} roleUpdateEvent - roles-topic event; missing mapping/confidence fields mean no news.
+ * @returns {void} Updates `roleMapping`/`confidence` only for genuine model evidence.
+ */
+function applyMappingAndConfidenceNews(roleUpdateEvent) {
+    const mappingUpdate = roleUpdateEvent.mapping ?? {};
+    // Speaker labels change only when the event actually carries mapping entries;
+    // a post-visit row correction may arrive with no mapping at all.
+    if (Object.keys(mappingUpdate).length > 0) {
+        previousRoleMapping = { ...roleMapping };
+        applySpeakerRoleMapping(mappingUpdate);
+    }
+
+    // Manual corrections relabel rows or speakers without new model evidence,
+    // so they never move the confidence badge the visit already earned.
+    if (!roleUpdateEvent.manual_override) {
+        confidence = roleUpdateEvent.confidence ?? 0;
+    }
+}
+
+/**
+ * Applies speaker-level role mapping without overwriting clinician choices.
+ * Use when the role agent labels speaker IDs while manual speaker overrides
+ * remain the stronger visible decision.
+ *
+ * @param {object} speakerRoleMapping - speaker-to-role map; empty means no card label changes.
+ * @returns {void} Updates `roleMapping` for speakers the clinician has not confirmed.
+ */
+function applySpeakerRoleMapping(speakerRoleMapping) {
     // Preserve manual corrections while applying model-inferred labels.
-    for (const [speakerId, role] of Object.entries(roleUpdateEvent.mapping)) {
+    for (const [speakerId, role] of Object.entries(speakerRoleMapping)) {
+        // Confirmed speaker labels stay exactly as the clinician left them.
         if (!manualOverrides.has(speakerId)) {
             roleMapping[speakerId] = role;
         }
     }
+}
 
-    confidence = roleUpdateEvent.confidence ?? 0;
-    // A missing stability field means no new identity evidence (older server
-    // or post-disconnect drain), so the badge keeps the last known state.
-    roleStability = roleUpdateEvent.role_stability ?? roleStability;
-
-    // Row-scoped corrections (from this tab's save or another tab) pin exactly
-    // one row; they never relabel the rest of the speaker's rows.
-    for (const [segmentId, rowRole] of Object.entries(roleUpdateEvent.row_overrides ?? {})) {
+/**
+ * Applies row-scoped role overrides from this tab or another tab.
+ * Use when one transcript line has a stronger user correction than its
+ * surrounding speaker card.
+ *
+ * @param {object} rowOverrides - row-to-role map; empty means no row chips are changed.
+ * @returns {void} Updates visible row chips and their owning card headers.
+ */
+function applyRowRoleOverrides(rowOverrides) {
+    // Row overrides pin exactly one row; they never relabel the rest of the speaker's rows.
+    for (const [segmentId, rowRole] of Object.entries(rowOverrides)) {
         rowRoleOverrides.set(segmentId, rowRole);
         const rowSpan = document.querySelector(
             `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
@@ -552,15 +785,6 @@ function handleRoleUpdate(roleUpdateEvent) {
             renderRowRoleMarker(rowSpan, rowRole);
         }
     }
-
-    // Automatic row exceptions arrive as the full current set for this
-    // mapping, so stale markers from the previous mapping are cleared.
-    if (roleUpdateEvent.row_exceptions !== undefined) {
-        applyAutoRowExceptions(roleUpdateEvent.row_exceptions);
-    }
-
-    updateConfidenceBadge();
-    relabelSegments();
 }
 
 /**
@@ -614,6 +838,7 @@ function removeRowRoleMarker(segmentId) {
 
     rowSpan.classList.remove('segment__text--corrected');
     rowSpan.querySelector('.segment__row-role')?.remove();
+    refreshCardDisplayForRow(rowSpan);
 }
 
 /**
@@ -633,8 +858,9 @@ function renderAutoRowMarker(rowSpan, rowRole) {
             title: isUncertain
                 ? 'This line\'s speaker is uncertain - click to correct'
                 : 'Relabeled from this line\'s wording - click to correct',
-        },
+            },
     }));
+    refreshCardDisplayForRow(rowSpan);
 }
 
 /**
@@ -756,7 +982,7 @@ function relabelSpeakerBlocks(speakerId, newRole) {
     // Each visible card for this speaker gets the same role styling and avatar.
     for (const segmentBlock of segmentBlocks) {
         const previousClass = segmentBlock.className;
-        segmentBlock.className = `segment segment--${newRole}`;
+        refreshSpeakerCardDisplay(segmentBlock);
 
         // Unknown-to-known transitions draw attention to a newly identified speaker.
         if (previousClass.includes('segment--UNKNOWN') && newRole !== 'UNKNOWN') {
@@ -766,40 +992,7 @@ function relabelSpeakerBlocks(speakerId, newRole) {
             }, { once: true });
         }
 
-        updateSpeakerCardLabel(segmentBlock, speakerId, newRole);
-        updateSpeakerCardAvatar(segmentBlock, newRole);
     }
-}
-
-/**
- * Updates the role label inside one transcript card.
- * Use when inference or manual override changes what the clinician sees.
- */
-function updateSpeakerCardLabel(segmentBlock, speakerId, newRole) {
-    const labelElement = segmentBlock.querySelector('.segment__speaker');
-
-    // Missing label markup means this card has nothing visible to relabel.
-    if (!labelElement) {
-        return;
-    }
-
-    const displayLabel = newRole === 'UNKNOWN' ? speakerId : getRoleLabel(newRole);
-    setSpeakerLabelContent(labelElement, displayLabel, manualOverrides.has(speakerId));
-}
-
-/**
- * Updates the compact avatar text in one transcript card.
- * Use when a speaker changes between Unknown, Doctor, and Patient.
- */
-function updateSpeakerCardAvatar(segmentBlock, newRole) {
-    const avatarElement = segmentBlock.querySelector('.segment__avatar');
-
-    // Missing avatar markup means there is no visible initial to update.
-    if (!avatarElement) {
-        return;
-    }
-
-    avatarElement.textContent = newRole === 'UNKNOWN' ? '?' : getAvatarLabel(newRole);
 }
 
 /**

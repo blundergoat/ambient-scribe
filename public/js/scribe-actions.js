@@ -3,25 +3,24 @@
 // Runs after replay, transcript, and summary helpers are loaded.
 // Owns post-visit action visibility, safe JSON response parsing,
 // summary-panel toggling, and keyboard shortcuts for the visible visit.
-// Users reach this code by stopping a recording, summarising, or pressing keys.
+// Users reach this code by stopping a recording, retrying a summary, or pressing keys.
 // =========================================================================
 
 /**
- * Reveals reset/summary actions once transcript text exists.
+ * Reveals post-visit actions once transcript text exists.
  * Use after live stop, replay stop, or replay completion.
  */
 function revealPostVisitActions() {
     // Replayed transcript text can be summarized like live text.
     if (segmentIndex > 0) {
         setElementHidden('resetBtn', false);
-        setElementHidden('summaryBtn', false);
-        setSummaryPendingText('Consultation ended - click Summarise to generate the session summary.');
+        setSummaryPendingText('Consultation ended - generating summary now.');
     }
 }
 
 /**
  * Updates the summary panel's waiting message.
- * Use when the visit moves between recording and ready-to-summarise states.
+ * Use when the visit moves between recording and summary-generation states.
  */
 function setSummaryPendingText(message) {
     const pendingText = document.getElementById('summaryPendingText');

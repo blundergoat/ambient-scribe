@@ -81,7 +81,6 @@ class ScribeController extends AbstractController
             'mercure_topic_raw'     => "scribe/session/{$sessionId}/raw",
             'mercure_topic_roles'   => "scribe/session/{$sessionId}/roles",
             'mercure_topic_summary' => "scribe/session/{$sessionId}/summary",
-            'mercure_topic_hints'   => "scribe/session/{$sessionId}/hints",
             'enable_role_updates'   => true,
             'dev_panel_enabled'     => $devPanelEnabled,
             'audio_fixtures'        => $audioFixtures,
@@ -277,6 +276,52 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $e) {
             return $this->json([
                                    'detail' => 'Summary service unavailable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+    }
+
+    /**
+     * Proxies post-stop transcript correction to FastAPI from the same browser origin.
+     *
+     * Use before summary generation so the final note can prefer corrected transcript rows.
+     * Failures stay JSON and non-fatal from the user's perspective because live preview summary remains available.
+     *
+     * @param string  $sessionId Browser session UUID; invalid values mean no retained audio can be corrected.
+     * @param Request $request   Browser request with visible rows; empty body means FastAPI should use stored rows.
+     *
+     * @return JsonResponse Correction status; `unavailable` lets the browser continue to summary fallback.
+     */
+    #[Route('/session/{sessionId}/correction', name: 'scribe_correction_proxy', methods: ['POST'])]
+    public function correction(string $sessionId, Request $request): JsonResponse
+    {
+        // Invalid sessions cannot map to retained audio or corrected transcript storage.
+        if (!Uuid::isValid($sessionId)) {
+            return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $correctionRequestBody = $request->getContent();
+        $agentRequestOptions   = [
+            'headers' => ['Accept' => 'application/json'],
+            'timeout' => self::AGENT_WORKFLOW_TIMEOUT_SECONDS,
+        ];
+
+        // The browser sends current transcript rows so correction keeps trusted labels.
+        if ($correctionRequestBody !== '') {
+            $agentRequestOptions['headers']['Content-Type'] = 'application/json';
+            $agentRequestOptions['body']                    = $correctionRequestBody;
+        }
+
+        try {
+            $agentResponse = $this->httpClient->request(
+                'POST',
+                $this->agentUrl("/session/{$sessionId}/correction"),
+                $agentRequestOptions,
+            );
+
+            return $this->jsonAgentResponse($agentResponse, 'Transcript correction failed');
+        } catch (TransportExceptionInterface $e) {
+            return $this->json([
+                                   'detail' => 'Correction service unavailable: ' . $e->getMessage(),
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }

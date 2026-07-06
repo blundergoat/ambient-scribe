@@ -10,7 +10,7 @@ Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig templa
 | `public/js/scribe-streaming.js` | Mercure streams and browser PCM capture |
 | `public/js/scribe-recording.js` | Live recording lifecycle and session resets |
 | `public/js/scribe-transcript.js` | Transcript card rendering, relabeling, and visible segment snapshots |
-| `public/js/scribe-output.js` | Replay upload, summaries, and clinical hints |
+| `public/js/scribe-output.js` | Demo replay, correction-then-summary flow, and summary rendering |
 | `public/js/scribe-actions.js` | Post-visit actions, JSON response parsing, summary toggles, and keyboard shortcuts |
 | `public/js/scribe-dev.js` | Dev inspector panel |
 | `public/js/scribe-fixtures.js` | Dev-only generated WAV fixture replay picker |
@@ -23,17 +23,16 @@ Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig templa
 Captures microphone audio via Web Audio API, downsamples to 16kHz mono, and emits raw PCM chunks. Constructor options: `targetSampleRate`, `chunkMs`, `onChunk`, `onAudioLevel`. Buffers audio data internally and flushes when the byte threshold is reached.
 
 ### StreamOrchestrator
-Manages EventSource connections to Mercure topics. Handles automatic reconnection with exponential backoff (1s to 30s cap). Tracks `Last-Event-ID` for resuming after brief network interruptions. Subscribe to topics with `subscribe(topic, handler)`, clean up with `disconnectAll()`.
+Opens one shared EventSource for all of a visit's Mercure topics and routes each event to its handler by payload `type`. Handles automatic reconnection with exponential backoff (1s to 30s cap) and tracks `Last-Event-ID` for resuming after brief network interruptions. Open with `connect(topics, handlersByType)`, clean up with `disconnectAll()`.
 
-### SessionController
-Coordinates the full session lifecycle: microphone acquisition, WebSocket connection to Python, PcmStreamer start/stop, Mercure SSE subscriptions for raw transcripts and role updates.
+Recording lifecycle (microphone acquisition, WebSocket connect/reconnect, PcmStreamer start/stop) is plain functions in `scribe-recording.js` (`startRecording`, `connectWebSocket`, `subscribeToMercure`), not a class.
 
 ## JavaScript Conventions
 
 - Use `const` and `let` (never `var`)
 - Arrow functions for callbacks
 - Template literals for string interpolation
-- Classes for stateful components (PcmStreamer, StreamOrchestrator, SessionController)
+- Classes for stateful components (PcmStreamer, WavPcmStreamer, StreamOrchestrator)
 - Plain functions for stateless helpers (getRoleLabel, getAvatarLabel, createElement)
 - `CONFIG` global is set inline by Twig with session ID, WebSocket URL, and Mercure URL
 
@@ -59,14 +58,14 @@ getUserMedia() -> PcmStreamer (downsample to 16kHz PCM) -> WebSocket.send(binary
 ## Mercure SSE
 
 ```
-EventSource(mercureUrl?topic=scribe/session/{id}/raw)     -> handleRawSegment
-EventSource(mercureUrl?topic=scribe/session/{id}/roles)   -> handleRoleUpdate
-EventSource(mercureUrl?topic=scribe/session/{id}/summary) -> handleSummaryEvent
-EventSource(mercureUrl?topic=scribe/session/{id}/hints)   -> handleClinicalHintsEvent
+EventSource(mercureUrl?topic=raw&topic=roles&topic=summary)
+  -> route by payload type: segment/finalized -> transcript handlers
+                            role_update       -> handleRoleUpdate
+                            summary           -> handleSummaryEvent
 ```
 
-- Separate topics per session keep raw transcript, role, summary, and hint updates independent.
-- StreamOrchestrator handles these subscriptions with independent retry state
+- Separate topics per session keep raw transcript, role, and summary updates independent.
+- StreamOrchestrator opens ONE EventSource carrying all three topics and routes events by payload `type`; retry/backoff state is shared per visit.
 - Parse `event.data` as JSON; handle parse errors gracefully (log, don't crash)
 
 ## Theme and Medical Role Labels

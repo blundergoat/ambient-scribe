@@ -97,7 +97,7 @@
             margin: 0 auto;
         }
 
-        /* Dev mode: workspace 10/12 (transcript 5 + summary/hints 5), dev rail 2/12. */
+        /* Dev mode: workspace 10/12 (transcript 5 + summary 5), dev rail 2/12. */
         .app-layout--dev {
             display: grid;
             grid-template-columns: minmax(0, 10fr) minmax(200px, 2fr);
@@ -171,13 +171,11 @@
             gap: 0.875rem;
         }
 
-        /* Once the summary or hints open, transcript and that column split 5:5. */
-        .consultation-workspace:has(.summary-panel:not(.hidden)),
-        .consultation-workspace:has(.clinical-hints:not(.hidden)) {
+        /* Once the summary opens, transcript and summary split 5:5. */
+        .consultation-workspace:has(.summary-panel:not(.hidden)) {
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         }
 
-        /* Summary on top, clinical hints below it, sharing one scrollable column. */
         .summary-column {
             display: flex;
             flex-direction: column;
@@ -185,7 +183,7 @@
             min-height: 0;
         }
         /* An all-hidden column must not occupy the grid track's gap. */
-        .summary-column:not(:has(.summary-panel:not(.hidden))):not(:has(.clinical-hints:not(.hidden))) {
+        .summary-column:not(:has(.summary-panel:not(.hidden))) {
             display: none;
         }
 
@@ -337,6 +335,11 @@
         .segment__text--corrected {
             text-decoration: underline dotted;
             text-underline-offset: 3px;
+        }
+        .segment__text--cited {
+            background: color-mix(in srgb, var(--accent) 16%, transparent);
+            border-radius: 3px;
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
         }
         .segment__row-role {
             display: inline-block;
@@ -495,6 +498,46 @@
             line-height: 1.6;
             color: var(--text-strong);
         }
+        .summary-citations {
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            margin-top: 0.625rem;
+        }
+        .summary-citation {
+            display: grid;
+            grid-template-columns: auto auto minmax(0, 1fr);
+            align-items: baseline;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 0.4375rem 0.5625rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.375rem;
+            background: var(--surface-bg-alt);
+            color: var(--text-strong);
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+        .summary-citation:hover {
+            background: var(--surface-hover);
+            border-color: color-mix(in srgb, var(--accent) 35%, var(--surface-border));
+        }
+        .summary-citation__time,
+        .summary-citation__role {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            color: var(--text-subtle);
+            white-space: nowrap;
+        }
+        .summary-citation__quote {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.8125rem;
+            color: var(--text-strong);
+        }
         .summary-key-points {
             list-style: disc;
             padding-left: 1.25rem;
@@ -503,83 +546,9 @@
             color: var(--text-strong);
         }
 
-        /* ---- Clinical Hints (card below the session summary) ---- */
-        /* The column splits summary 2/3 and hints 1/3 once both are visible. */
-        .clinical-hints {
+        .summary-column > .summary-panel {
             flex: 1;
             min-height: 0;
-            overflow-y: auto;
-            border: 1px solid var(--surface-border);
-            border-radius: var(--radius);
-            background: var(--surface-bg);
-            padding: 1.125rem;
-        }
-        .clinical-hints.hidden { display: none; }
-        .clinical-hints__empty {
-            font-size: 0.8125rem;
-            color: var(--text-subtle);
-        }
-        .summary-column > .summary-panel {
-            flex: 2;
-            min-height: 0;
-        }
-        .clinical-hints__title {
-            font-size: 0.8125rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-subtle);
-            margin-bottom: 0.75rem;
-        }
-        .clinical-hints__list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-        .clinical-hint {
-            border: 1px solid var(--surface-border);
-            border-radius: 0.5rem;
-            background: var(--surface-bg-alt);
-            padding: 0.75rem;
-        }
-        .clinical-hint__header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.5rem;
-            margin-bottom: 0.375rem;
-        }
-        .clinical-hint__type {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: var(--accent);
-        }
-        .clinical-hint__dismiss {
-            width: 1.75rem;
-            height: 1.75rem;
-            border: 1px solid var(--surface-border);
-            border-radius: 0.375rem;
-            background: transparent;
-            color: var(--text-muted);
-            cursor: pointer;
-            font-size: 0.875rem;
-            line-height: 1;
-        }
-        .clinical-hint__dismiss:hover {
-            background: var(--surface-hover);
-            color: var(--text-strong);
-        }
-        .clinical-hint__text {
-            font-size: 0.875rem;
-            line-height: 1.5;
-            color: var(--text-strong);
-        }
-        .clinical-hint__evidence {
-            margin-top: 0.5rem;
-            font-size: 0.75rem;
-            color: var(--text-subtle);
         }
 
         /* ---- Replay Progress ---- */
@@ -1020,14 +989,12 @@
             }
 
             .consultation-workspace,
-            .consultation-workspace:has(.summary-panel:not(.hidden)),
-            .consultation-workspace:has(.clinical-hints:not(.hidden)) {
+            .consultation-workspace:has(.summary-panel:not(.hidden)) {
                 grid-template-columns: minmax(0, 1fr);
             }
 
             .transcript-panel,
-            .summary-panel,
-            .clinical-hints {
+            .summary-panel {
                 max-height: none;
             }
         }
@@ -1085,10 +1052,6 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
                 New Session
             </button>
-            <button id="summaryBtn" onclick="requestSummary()" class="btn btn--ghost hidden" aria-label="Summarise consultation">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11h6M9 15h4"/><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
-                Summarise
-            </button>
             <input id="demoFileInput" type="file" accept=".wav,audio/wav" style="display:none" onchange="startReplay(this.files[0])">
 
             <div class="status-cluster">
@@ -1118,7 +1081,7 @@
                 </p>
             </div>
 
-            {# Summary + Clinical Hints share the right half of the workspace #}
+            {# Summary occupies the right half of the workspace once generated #}
             <div class="summary-column">
                 <div id="summaryPanel" class="summary-panel hidden">
                     <div class="summary-panel__header">
@@ -1131,11 +1094,11 @@
                                 <span class="summary-pending__bar"></span>
                                 <span class="summary-pending__bar"></span>
                             </span>
-                            <span class="summary-pending__text" id="summaryPendingText">Recording in progress, summarise will be available once consultation ends.</span>
+                            <span class="summary-pending__text" id="summaryPendingText">Recording in progress, the summary will generate once consultation ends.</span>
                         </div>
                         <div id="summaryLoading" class="summary-panel__loading hidden">
                             <span class="recording-dot recording-pulse"></span>
-                            Generating summary...
+                            <span id="summaryLoadingText">Generating summary...</span>
                         </div>
                         <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
                             <span id="summaryStatusBadge" class="summary-status__badge"></span>
@@ -1144,11 +1107,6 @@
                         <div id="summaryContent"></div>
                     </div>
                 </div>
-
-                <aside id="clinicalHintsPanel" class="clinical-hints hidden" aria-label="Clinical hints">
-                    <div class="clinical-hints__title">Clinical Hints</div>
-                    <div id="clinicalHintsList" class="clinical-hints__list"></div>
-                </aside>
             </div>
         </div>
 
@@ -1232,7 +1190,6 @@
         topicRaw: '{{ mercure_topic_raw }}',
         topicRoles: '{{ mercure_topic_roles }}',
         topicSummary: '{{ mercure_topic_summary }}',
-        topicHints: '{{ mercure_topic_hints }}',
         enableRoleUpdates: {{ enable_role_updates ? 'true' : 'false' }},
     };
     {% if dev_panel_enabled is defined and dev_panel_enabled %}

@@ -1,18 +1,23 @@
 // =========================================================================
-// Ambient Scribe replay, summary, and clinical hint output flow.
+// Ambient Scribe replay and summary output flow.
 // Runs after transcript rendering helpers are loaded.
-// Owns WAV replay progress, generated summary display, and clinical hints.
+// Owns WAV replay progress and generated summary display.
 // Users reach this code by choosing demo audio or requesting a summary.
 // =========================================================================
 
 // At most one post-visit summary request may be in flight per visible session.
 // Auto-trigger (live stop) and manual click/retry share this guard.
 let isSummaryRequestInFlight = false;
+// Correction runs once before summary so the final note can use better rows.
+let correctionRequestPromise = null;
+let correctionSessionId = null;
+let hasCorrectionReadyForSession = false;
 
 /**
  * Decodes a WAV file, plays it locally, and streams its PCM to live transcription.
  * The WAV goes over the same WebSocket as microphone audio, paced by the audible
- * replay clock, so transcript rows arrive from Mercure exactly like a live visit.
+ * replay clock, because demo replay must preserve the same Stop/finalize behavior
+ * clinicians see in a live visit.
  * Reports decode/connection errors in status and keeps audio controls usable.
  * Returns whether streaming replay started for the visible session.
  */
@@ -46,7 +51,6 @@ async function startReplay(file, options = {}) {
     setReplayControlsBusy(true, 'Preparing...');
     setElementHidden('startBtn', true);
     setElementHidden('stopBtn', true);
-    setElementHidden('summaryBtn', true);
     setElementHidden('emptyState', true);
     setRecordingStatus('Preparing audio...', 'color:var(--color-speaker-a);font-weight:500;');
     subscribeToMercure();
@@ -118,12 +122,6 @@ async function startReplay(file, options = {}) {
  */
 function setReplayControlsBusy(isBusy, label) {
     const uploadButton = document.getElementById('audioSelectUploadBtn');
-    const summaryButton = document.getElementById('summaryBtn');
-
-    // Summary should not be requested while replay upload is still being prepared.
-    if (summaryButton) {
-        summaryButton.disabled = isBusy;
-    }
 
     // Production pages have no demo audio selector, so replay status is enough.
     if (!uploadButton) {
@@ -335,7 +333,7 @@ function stopReplay() {
     return true;
 }
 
-// A dead backend must not leave replay stuck waiting for the `finalized` event.
+// Because final NeMo tail flushes are slow, this timeout limits replay Stop without hiding late rows.
 const REPLAY_FINALIZE_TIMEOUT_MS = 15000;
 
 /**
@@ -393,6 +391,9 @@ function endReplay() {
     setPlainStatus(replayDrainReason === 'stopped' ? 'Replay stopped' : 'Replay complete');
     replayDrainReason = null;
     revealPostVisitActions();
+
+    // Replay has finalized, so start correction while retained audio is still available.
+    requestSummary();
 }
 
 /**
@@ -406,6 +407,7 @@ function clearReplayTimer() {
 
 /**
  * Requests a generated summary for the current session.
+ * Runs correction first, then creates the note for Stop, replay, and retry.
  * Reports request errors in the panel and leaves a plain failure message for the clinician.
  */
 async function requestSummary() {
@@ -423,12 +425,6 @@ async function requestSummary() {
     const summaryPanel = document.getElementById('summaryPanel');
     const summaryLoading = document.getElementById('summaryLoading');
     const summaryContent = document.getElementById('summaryContent');
-    const summaryButton = document.getElementById('summaryBtn');
-
-    // While the note is generating, the button should not start duplicate requests.
-    if (summaryButton) {
-        summaryButton.disabled = true;
-    }
 
     summaryPanel.classList.remove('hidden');
     setSummaryStatus('generating');
@@ -436,6 +432,9 @@ async function requestSummary() {
     clearElement(summaryContent);
 
     try {
+        setSummaryLoadingText('Improving transcript...');
+        await ensureCorrectedTranscriptReady();
+        setSummaryLoadingText('Generating summary...');
         const response = await fetch(`/session/${CONFIG.sessionId}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -448,15 +447,95 @@ async function requestSummary() {
         console.error('Summary request failed:', summaryError);
         showSummaryFailure('Could not reach the summary service.');
     } finally {
+        setSummaryLoadingText('Generating summary...');
         summaryLoading.classList.add('hidden');
         isSummaryRequestInFlight = false;
-
-        // A completed request can be rerun if the clinician wants to regenerate the note.
-        if (summaryButton) {
-            summaryButton.disabled = false;
-            setElementHidden('summaryBtn', false);
-        }
     }
+}
+
+/**
+ * Resets post-visit correction state for the next visible consultation.
+ * Use when New Session clears the transcript; otherwise a prior corrected
+ * artifact could make the next summary skip correction.
+ */
+function resetPostVisitCorrectionState() {
+    correctionRequestPromise = null;
+    correctionSessionId = null;
+    hasCorrectionReadyForSession = false;
+}
+
+/**
+ * Runs post-stop correction once before generating the summary.
+ * Use inside `requestSummary()` so live stop, replay, and panel retry all
+ * share the same corrected-transcript-first behavior.
+ */
+async function ensureCorrectedTranscriptReady() {
+    // A corrected artifact already exists for this browser session.
+    if (hasCorrectionReadyForSession && correctionSessionId === CONFIG.sessionId) {
+        return;
+    }
+
+    // A duplicate retry should wait for the existing correction request.
+    if (correctionRequestPromise && correctionSessionId === CONFIG.sessionId) {
+        await correctionRequestPromise;
+        return;
+    }
+
+    correctionSessionId = CONFIG.sessionId;
+    correctionRequestPromise = requestTranscriptCorrection();
+
+    try {
+        const correctionPayload = await correctionRequestPromise;
+
+        // Ready means the summary endpoint will now prefer corrected rows.
+        if (correctionPayload?.status === 'ready') {
+            hasCorrectionReadyForSession = true;
+        }
+    } finally {
+        correctionRequestPromise = null;
+    }
+}
+
+/**
+ * Calls the same-origin correction proxy with the current visible transcript.
+ * Use before summary generation; failures are logged and converted into a live
+ * transcript fallback so the user still receives a note.
+ */
+async function requestTranscriptCorrection() {
+    try {
+        const response = await fetch(`/session/${CONFIG.sessionId}/correction`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ segments: readVisibleTranscriptSegments() }),
+        });
+        const correctionPayload = await readJsonResponse(response, { status: 'unavailable' });
+
+        // Non-OK proxy responses mean the live transcript remains the summary source.
+        if (!response.ok || correctionPayload.isFallbackPayload) {
+            console.warn('Transcript correction unavailable:', correctionPayload.detail ?? response.status);
+            return { status: 'unavailable' };
+        }
+
+        return correctionPayload;
+    } catch (correctionError) {
+        console.warn('Transcript correction failed:', correctionError);
+        return { status: 'unavailable' };
+    }
+}
+
+/**
+ * Updates the summary loading copy without changing the panel layout.
+ * Use while the post-stop flow moves from correction to summary generation.
+ */
+function setSummaryLoadingText(message) {
+    const summaryLoadingText = document.getElementById('summaryLoadingText');
+
+    // Test pages without the loading text cannot show progress copy.
+    if (!summaryLoadingText) {
+        return;
+    }
+
+    summaryLoadingText.textContent = message;
 }
 
 /**
@@ -467,10 +546,6 @@ async function requestSummary() {
 function renderSummaryResponse(response, summaryPayload) {
     if (response.ok && !summaryPayload.isFallbackPayload) {
         renderSummary(summaryPayload);
-        handleClinicalHintsEvent({
-            type: 'clinical_hints',
-            hints: summaryPayload.clinical_hints ?? [],
-        });
         return;
     }
 
@@ -494,124 +569,6 @@ function handleSummaryEvent(summaryEvent) {
         document.getElementById('summaryLoading')?.classList.add('hidden');
         renderSummary(summaryEvent);
     }
-}
-
-/**
- * Handles clinical hint events from Mercure or the summary HTTP fallback.
- * Use when the completed visit has assistive suggestions for clinician review.
- */
-function handleClinicalHintsEvent(hintsEvent) {
-    // Non-hint Mercure payloads should not affect the assistive sidebar.
-    if (hintsEvent.type !== 'clinical_hints') {
-        return;
-    }
-
-    renderClinicalHints(hintsEvent.hints ?? []);
-}
-
-/**
- * Renders the non-blocking clinical hints sidebar.
- * Empty hints hide the sidebar so the transcript stays the primary workspace.
- */
-function renderClinicalHints(hints) {
-    const hintsPanel = document.getElementById('clinicalHintsPanel');
-    const hintsList = document.getElementById('clinicalHintsList');
-
-    // Missing sidebar markup means older templates still keep summary rendering safe.
-    if (!hintsPanel || !hintsList) {
-        return;
-    }
-
-    clearElement(hintsList);
-    hintsPanel.classList.remove('hidden');
-
-    // The section stays visible after a summary; an empty run says so plainly.
-    if (hints.length === 0) {
-        hintsList.appendChild(createElement('div', {
-            className: 'clinical-hints__empty',
-            text: 'No suggestions for this consultation.',
-        }));
-        return;
-    }
-
-    // Each hint becomes a dismissible item while preserving transcript focus.
-    for (const hint of hints) {
-        hintsList.appendChild(createClinicalHintElement(hint));
-    }
-
-    hintsPanel.classList.remove('hidden');
-}
-
-/**
- * Creates one dismissible hint item.
- * Use when the assistant backend flags a medication, follow-up, or note gap.
- */
-function createClinicalHintElement(hint) {
-    const hintElement = createElement('div', { className: 'clinical-hint' });
-    const dismissButton = createElement('button', {
-        className: 'clinical-hint__dismiss',
-        text: 'x',
-        attributes: {
-            type: 'button',
-            'aria-label': 'Dismiss hint',
-        },
-    });
-
-    dismissButton.addEventListener('click', () => {
-        hintElement.remove();
-        const hintsList = document.getElementById('clinicalHintsList');
-
-        // The section stays in place; dismissing the last hint says it is done.
-        if (hintsList?.children.length === 0) {
-            hintsList.appendChild(createElement('div', {
-                className: 'clinical-hints__empty',
-                text: 'All suggestions dismissed.',
-            }));
-        }
-    });
-
-    const hintHeader = createElement('div', { className: 'clinical-hint__header' }, [
-        createElement('div', { className: 'clinical-hint__type', text: formatHintType(hint.type ?? 'suggestion') }),
-        dismissButton,
-    ]);
-    const hintBody = createElement('div', { className: 'clinical-hint__text', text: hint.text ?? '' });
-    const hintChildren = [hintHeader, hintBody];
-
-    // Evidence spans are short reminders, not raw transcript dumps.
-    if (hint.evidence_span) {
-        hintChildren.push(createElement('div', {
-            className: 'clinical-hint__evidence',
-            text: `Evidence: ${hint.evidence_span}`,
-        }));
-    }
-
-    hintElement.replaceChildren(...hintChildren);
-    return hintElement;
-}
-
-/**
- * Converts backend hint codes into compact labels.
- * Use when the sidebar shows the category before the clinician reads the text.
- */
-function formatHintType(hintType) {
-    return String(hintType).replace(/_/g, ' ');
-}
-
-/**
- * Clears the hint sidebar for a fresh session.
- * Use when the clinician starts a new visit or reruns a demo file.
- */
-function clearClinicalHints() {
-    const hintsPanel = document.getElementById('clinicalHintsPanel');
-    const hintsList = document.getElementById('clinicalHintsList');
-
-    // Missing hint elements mean the older page has nothing to reset.
-    if (!hintsPanel || !hintsList) {
-        return;
-    }
-
-    clearElement(hintsList);
-    hintsPanel.classList.add('hidden');
 }
 
 /**
@@ -650,20 +607,186 @@ function renderSummary(summaryPayload) {
 
 /**
  * Creates DOM blocks for SOAP-style summary sections.
- * Empty sections mean this part of the summary is skipped for the user.
+ * Use when the summary panel renders the note after Stop/finalized.
+ *
+ * @param {Array<object>} sections - SOAP sections from the backend; empty means the panel shows no section cards.
+ * @returns {HTMLElement[]} section blocks shown in the panel; empty means the UI shows no-content copy.
  */
 function createSummarySectionBlocks(sections) {
     const sectionBlocks = [];
 
-    // Each backend section becomes one readable block in the summary panel.
+    // Each backend section becomes one readable block in the order the clinician reviews it.
     for (const section of sections) {
-        sectionBlocks.push(createElement('div', { className: 'summary-section' }, [
+        const sectionChildren = [
             createElement('div', { className: 'summary-section__heading', text: section.heading }),
             createElement('div', { className: 'summary-section__content', text: section.content }),
-        ]));
+        ];
+        // Older summaries have no citations, so the section still renders as plain text.
+        const citationBlock = createSummaryCitationBlock(section.citations ?? []);
+
+        // A valid source block is shown under the claim it supports.
+        if (citationBlock) {
+            sectionChildren.push(citationBlock);
+        }
+
+        sectionBlocks.push(createElement('div', { className: 'summary-section' }, sectionChildren));
     }
 
     return sectionBlocks;
+}
+
+/**
+ * Creates source chips for one generated summary section.
+ * Use when a cited SOAP claim should show the transcript row that supports it.
+ *
+ * @param {Array<object>} citations - validated source rows; empty means the section stays uncited.
+ * @returns {HTMLElement|null} source-chip list, or `null` when the clinician has no sources to inspect.
+ */
+function createSummaryCitationBlock(citations) {
+    // No citations were returned, so the summary section remains visible without source chips.
+    if (citations.length === 0) {
+        return null;
+    }
+
+    const citationList = createElement('div', { className: 'summary-citations' });
+
+    // Each citation becomes one source chip the clinician can click or read.
+    for (const citation of citations) {
+        const citationButton = createSummaryCitationButton(citation);
+
+        // Untraceable citations are skipped so the clinician sees only usable evidence chips.
+        if (!citationButton) {
+            continue;
+        }
+
+        citationList.appendChild(citationButton);
+    }
+
+    // If every source was unusable, the clinician sees the section without a blank citation row.
+    return citationList.childElementCount === 0 ? null : citationList;
+}
+
+/**
+ * Builds one clickable source chip for a validated summary citation.
+ * Use when the summary panel shows evidence under a generated claim.
+ *
+ * @param {object} citation - backend source row; missing ID means the chip is omitted.
+ * @returns {HTMLButtonElement|null} source chip, or `null` when there is no traceable row.
+ */
+function createSummaryCitationButton(citation) {
+    const sourceCitation = normaliseSummaryCitation(citation);
+
+    // A citation with no source row is hidden instead of shown as weak evidence.
+    if (!sourceCitation) {
+        return null;
+    }
+
+    const citationButton = createElement('button', {
+        className: 'summary-citation',
+        attributes: {
+            type: 'button',
+            title: sourceCitation.title,
+            'aria-label': `Show source ${sourceCitation.timeLabel}`,
+        },
+        dataset: { segmentId: sourceCitation.segmentId },
+    }, [
+        createElement('span', {
+            className: 'summary-citation__time',
+            text: sourceCitation.timeLabel,
+        }),
+        createElement('span', {
+            className: 'summary-citation__role',
+            text: sourceCitation.roleLabel,
+        }),
+    ]);
+
+    // When source text is available, the chip shows the excerpt without requiring a click.
+    if (sourceCitation.text !== '') {
+        citationButton.appendChild(createElement('span', {
+            className: 'summary-citation__quote',
+            text: sourceCitation.text,
+        }));
+    }
+
+    citationButton.addEventListener('click', () => focusSummaryCitation(sourceCitation.segmentId));
+    return citationButton;
+}
+
+/**
+ * Normalizes backend citation data into labels the clinician can inspect.
+ * Use before creating a source chip so missing fields have safe UI fallbacks.
+ *
+ * @param {object} citation - citation payload from FastAPI; missing text or role falls back gracefully.
+ * @returns {object|null} normalized chip data, or `null` when no source ID exists.
+ */
+function normaliseSummaryCitation(citation) {
+    // Missing source identity means the citation cannot safely jump to transcript evidence.
+    const segmentId = String(citation.segment_id ?? '').trim();
+
+    // A source without an ID cannot be traced, so the clinician should not see it as evidence.
+    if (segmentId === '') {
+        return null;
+    }
+
+    // Missing source text still allows a time/role chip, but no excerpt is shown.
+    const text = String(citation.text ?? '').trim();
+    // Missing role means the chip stays generic instead of inventing Doctor/Patient.
+    const roleLabel = citation.role ?? 'Source';
+    const timeLabel = formatCitationTime(citation);
+
+    return {
+        segmentId,
+        text,
+        roleLabel,
+        timeLabel,
+        title: text === '' ? 'Source transcript row' : text,
+    };
+}
+
+/**
+ * Highlights a transcript row when the cited row is visible in the live history.
+ * Use when the clinician clicks a source chip and wants to jump back to the row.
+ *
+ * @param {string} segmentId - transcript row ID cited by the summary; empty or missing means no row can be focused.
+ */
+function focusSummaryCitation(segmentId) {
+    const rowSpan = document.querySelector(
+        `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
+    );
+
+    // Corrected-only citations may not have a matching visible preview row yet.
+    if (!rowSpan) {
+        return;
+    }
+
+    rowSpan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    rowSpan.classList.add('segment__text--cited');
+    window.setTimeout(() => rowSpan.classList.remove('segment__text--cited'), 1600);
+}
+
+/**
+ * Formats one citation's timestamp range for a compact source chip.
+ * Use when the clinician scans source chips and needs the spoken time.
+ *
+ * @param {object} citation - source row timing from FastAPI; missing times render as "Source".
+ * @returns {string} time range shown on the chip, or "Source" when no timing is available.
+ */
+function formatCitationTime(citation) {
+    const start = Number.parseFloat(citation.start);
+    const end = Number.parseFloat(citation.end);
+
+    // Start and end are known, so the chip can show a precise source range.
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+        return `${formatTime(start)}-${formatTime(end)}`;
+    }
+
+    // Only the start is known, so the chip still points near the spoken row.
+    if (Number.isFinite(start)) {
+        return formatTime(start);
+    }
+
+    // No timing is available, so the chip falls back to source text and role.
+    return 'Source';
 }
 
 /**
@@ -733,21 +856,23 @@ function showSummaryFailure(detail) {
 /**
  * Pre-flight check that the off-GPU role/summary model is reachable.
  * Returns true when a consultation may start; otherwise warns and returns false so the
- * caller aborts, since transcribing without the model yields no roles and no summary.
+ * caller aborts. Fetch failures show a visible fallback banner instead of starting
+ * a visit that cannot produce roles or a summary.
  */
 async function ensureAiModelAvailable() {
-    let available = false;
+    let isModelAvailable = false;
     let detail = 'agent unreachable';
     try {
         const response = await fetch('/agent/model-health', { headers: { Accept: 'application/json' } });
         const payload = await readJsonResponse(response, { available: false, detail: 'model health check failed' });
-        available = payload.available === true;
+        isModelAvailable = payload.available === true;
         detail = payload.detail || detail;
     } catch (modelHealthError) {
         console.warn('Model health check failed:', modelHealthError);
     }
 
-    if (!available) {
+    // The user cannot get roles or a note, so starting a visit would create unusable output.
+    if (!isModelAvailable) {
         showSystemBanner('AI model unavailable - run  ./scripts/check-ai-model.sh  to start it (or set ROLE_AGENT_MODEL_PROVIDER=bedrock).');
         setPlainStatus('AI model unavailable - consultation not started');
         return false;

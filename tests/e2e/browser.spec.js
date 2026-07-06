@@ -68,19 +68,59 @@ async function loadScribePage(page) {
   await page.waitForSelector("#startBtn");
 }
 
+/**
+ * Stubs the correction route so summary tests can verify request order.
+ * The response can be success or failure; either way the UI should continue
+ * to the summary request unless the summary itself fails.
+ */
+async function stubCorrectionRoute(page, calls, order, responseOptions = {}) {
+  await page.route("**/session/*/correction", async (route) => {
+    calls.push(route.request().postDataJSON());
+    order.push("correction");
+    await route.fulfill({
+      status: responseOptions.status ?? 200,
+      contentType: "application/json",
+      body: JSON.stringify(responseOptions.body ?? { status: "ready", segments: 3 }),
+    });
+  });
+}
+
+/**
+ * Stubs the summary route so tests count generated note requests locally.
+ * Use when a stop, retry, or manual click should prove request order because the model
+ * response is not what this browser flow is testing.
+ */
+async function stubSummaryRoute(page, calls, order = []) {
+  await page.route("**/session/*/summary", async (route) => {
+    calls.push(route.request().postDataJSON());
+    order.push("summary");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        title: "Stub Summary",
+        sections: [{ heading: "Subjective", content: "Patient reports symptoms." }],
+        key_points: [],
+      }),
+    });
+  });
+}
+
 test.describe("Transcript controls", () => {
   test("download button is not rendered after segments", async ({ page }) => {
     await loadScribePage(page);
 
     // Download is intentionally removed from the post-consult controls.
     await expect(page.locator("#downloadBtn")).toHaveCount(0);
+    await expect(page.locator("#summaryBtn")).toHaveCount(0);
 
     // Inject 3 fake segments
     await injectFakeSegments(page, 3);
 
-    // Transcript rows still render for summary/review even without export controls.
+    // Transcript rows still render for summary/review without manual export or summary controls.
     await expect(page.locator(".segment")).toHaveCount(3);
     await expect(page.locator("#downloadBtn")).toHaveCount(0);
+    await expect(page.locator("#summaryBtn")).toHaveCount(0);
   });
 
   test("quality event updates the dev state snapshot", async ({ page }) => {
@@ -351,6 +391,14 @@ test.describe("Row-level role correction", () => {
       "Dr auto"
     );
 
+    const mixedRoleCard = page.locator(".segment").first();
+    await expect(mixedRoleCard.locator(".segment__speaker")).toContainText(
+      "Review labels"
+    );
+    await expect(mixedRoleCard.locator(".segment__speaker")).not.toContainText(
+      "Patient"
+    );
+
     // The summary body uses the row-level judgment, not the card's mapping.
     let summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
     expect(summaryRows[1].role).toBe("DOCTOR");
@@ -366,6 +414,9 @@ test.describe("Row-level role correction", () => {
       });
     });
     await expect(flaggedRow.locator(".segment__row-role")).toHaveCount(0);
+    await expect(mixedRoleCard.locator(".segment__speaker")).toContainText(
+      "Doctor"
+    );
 
     // When the exception returns, the clinician's click still outranks it.
     await page.evaluate(() => {
@@ -418,6 +469,71 @@ test.describe("Row-level role correction", () => {
 
     const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
     expect(summaryRows[0].role).toBe("PATIENT");
+  });
+
+  test("post-visit row correction without role state keeps the earned badge", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    // The live visit earned a green badge before Stop.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.9,
+      });
+    });
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles identified (90%)");
+
+    // A row fix after grace teardown broadcasts only the row signal - the
+    // server no longer includes mapping or confidence for a finished visit.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        row_overrides: { "seg-0001": "DOCTOR" },
+        flip_detected: false,
+        manual_override: true,
+      });
+    });
+
+    // The row chip applies while the badge keeps its earned confidence.
+    const firstRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
+    await expect(firstRow.locator(".segment__row-role")).toContainText("Dr ✓");
+    await expect(badge).toContainText("Roles identified (90%)");
+  });
+
+  test("a fabricated empty-mapping override cannot wipe the badge to zero", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.9,
+      });
+    });
+
+    // The consult-03 regression shape: a role_update fabricated after grace
+    // teardown carried an empty mapping and zero confidence with the row fix.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: {},
+        row_overrides: { "seg-0001": "DOCTOR" },
+        confidence: 0,
+        manual_override: true,
+      });
+    });
+
+    const badge = page.locator("#confidenceBadge");
+    await expect(badge).toContainText("Roles identified (90%)");
+    await expect(badge).not.toContainText("Speakers unclear");
   });
 });
 
@@ -559,22 +675,113 @@ test.describe("Accessibility", () => {
   });
 });
 
-test.describe("Live-stop finalize drain (M21)", () => {
-  /**
-   * Stubs the summary route so drain tests stay fast and count real
-   * requestSummary calls without invoking the model.
-   */
-  async function stubSummaryRoute(page, calls) {
-    await page.route("**/session/*/summary", async (route) => {
-      calls.push(route.request().postDataJSON());
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ sections: [], key_points: [] }),
+test.describe("Summary citations", () => {
+  test("renders citation chips and focuses the cited transcript row", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 1);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Cited summary",
+        sections: [
+          {
+            heading: "Plan",
+            content: "Doctor advised topical treatment.",
+            citations: [
+              {
+                segment_id: "seg-0001",
+                start: 0,
+                end: 1.5,
+                role: "DOCTOR",
+                text: "Test segment number 1",
+              },
+            ],
+          },
+        ],
+        key_points: [],
       });
     });
-  }
 
+    const citation = page.locator(".summary-citation").first();
+    await expect(citation).toContainText("00:00-00:01");
+    await expect(citation).toContainText("DOCTOR");
+    await expect(citation).toContainText("Test segment number 1");
+
+    const citedRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
+    await citation.click();
+    await expect(citedRow).toHaveClass(/segment__text--cited/);
+  });
+
+  test("renders uncited summary sections without source chips", async ({ page }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Legacy summary",
+        sections: [
+          {
+            heading: "Subjective",
+            content: "Patient reports headache.",
+          },
+        ],
+        key_points: ["Headache discussed"],
+      });
+    });
+
+    await expect(page.locator(".summary-section__content")).toContainText(
+      "Patient reports headache."
+    );
+    await expect(page.locator(".summary-citation")).toHaveCount(0);
+  });
+});
+
+test.describe("Post-visit correction before summary", () => {
+  test("runs correction before sending the summary request", async ({ page }) => {
+    const correctionCalls = [];
+    const summaryCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder);
+    await stubSummaryRoute(page, summaryCalls, requestOrder);
+    await injectFakeSegments(page, 2);
+
+    await page.evaluate(() => requestSummary());
+
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    expect(correctionCalls).toHaveLength(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
+    expect(correctionCalls[0].segments.map((row) => row.segment_id)).toEqual([
+      "seg-0001",
+      "seg-0002",
+    ]);
+  });
+
+  test("continues to summary when correction is unavailable", async ({ page }) => {
+    const correctionCalls = [];
+    const summaryCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder, {
+      status: 503,
+      body: { status: "unavailable", detail: "Correction service unavailable" },
+    });
+    await stubSummaryRoute(page, summaryCalls, requestOrder);
+    await injectFakeSegments(page, 1);
+
+    await page.evaluate(() => requestSummary());
+
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    expect(correctionCalls).toHaveLength(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
+    expect(summaryCalls[0].segments[0].segment_id).toBe("seg-0001");
+  });
+});
+
+test.describe("Live-stop finalize drain (M21)", () => {
   /** Puts the page into a live-recording state without a microphone. */
   async function enterLiveRecordingState(page) {
     // The real UI transition hides Start and shows Stop, so drain assertions
@@ -585,9 +792,12 @@ test.describe("Live-stop finalize drain (M21)", () => {
   test("stop waits for finalized, renders the tail, then summarizes once", async ({
     page,
   }) => {
+    const correctionCalls = [];
     const summaryCalls = [];
+    const requestOrder = [];
     await loadScribePage(page);
-    await stubSummaryRoute(page, summaryCalls);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder);
+    await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 3);
     await enterLiveRecordingState(page);
 
@@ -621,6 +831,8 @@ test.describe("Live-stop finalize drain (M21)", () => {
     await expect
       .poll(() => summaryCalls.length, { timeout: 5000 })
       .toBe(1);
+    expect(correctionCalls).toHaveLength(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
     const postedIds = summaryCalls[0].segments.map((row) => row.segment_id);
     expect(postedIds).toContain("seg-0004");
     expect(postedIds).toHaveLength(4);
@@ -740,6 +952,32 @@ test.describe("Live-stop finalize drain (M21)", () => {
   });
 });
 
+test.describe("Replay auto-summary", () => {
+  test("replay stop runs correction before generating the summary", async ({
+    page,
+  }) => {
+    const correctionCalls = [];
+    const summaryCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder);
+    await stubSummaryRoute(page, summaryCalls, requestOrder);
+    await injectFakeSegments(page, 2);
+
+    await page.evaluate(() => {
+      isReplayActive = true;
+      stopReplay();
+      handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
+    });
+
+    await expect
+      .poll(() => summaryCalls.length, { timeout: 5000 })
+      .toBe(1);
+    expect(correctionCalls).toHaveLength(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
+  });
+});
+
 test.describe("Chronological transcript insertion (M22 refinements)", () => {
   test("a late-arriving old row inserts at its spoken position", async ({ page }) => {
     await loadScribePage(page);
@@ -773,7 +1011,8 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
       });
     });
     const cardCount = await page.evaluate(() => document.querySelectorAll(".segment").length);
-    expect(cardCount).toBe(4);
+    const expectedCardsAfterTailMerge = 4;
+    expect(cardCount).toBe(expectedCardsAfterTailMerge);
   });
 
   test("late rows remain chronological inside and across coalesced cards", async ({ page }) => {

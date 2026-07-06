@@ -40,10 +40,17 @@ def _truncate_transcript_text(full_text: str, max_chars: int) -> str:
 class _SessionData:
     """Internal state for a single session."""
 
-    __slots__ = ("segments", "created_at", "last_accessed_at", "row_role_overrides")
+    __slots__ = (
+        "segments",
+        "corrected_segments",
+        "created_at",
+        "last_accessed_at",
+        "row_role_overrides",
+    )
 
     def __init__(self) -> None:
         self.segments: list[dict] = []
+        self.corrected_segments: list[dict] = []
         self.created_at: float = time.monotonic()
         self.last_accessed_at: float = self.created_at
         # Clinician row corrections keyed by segment_id; they outrank every
@@ -99,6 +106,21 @@ class SessionStore:
         # so the user's row corrections are re-applied here by row identity.
         for segment in session.segments:
             self._apply_row_role_override(session, segment)
+        session.last_accessed_at = time.monotonic()
+
+    def replace_corrected_segments(self, session_id: str, segments: list[dict]) -> None:
+        """Replace the post-visit corrected transcript for a session.
+
+        Corrected rows are stored separately from the browser-visible live
+        transcript so replay/history consumers keep seeing the preview rows
+        until a caller explicitly opts into corrected output.
+
+        Args:
+            session_id: Recording session whose corrected transcript is replaced.
+            segments: Corrected transcript rows; empty clears the corrected artifact.
+        """
+        session = self._get_or_create(session_id)
+        session.corrected_segments = list(segments[: self._max_segments])
         session.last_accessed_at = time.monotonic()
 
     def merge_browser_segments(self, session_id: str, segments: list[dict]) -> dict:
@@ -258,6 +280,49 @@ class SessionStore:
         session.last_accessed_at = time.monotonic()
         self._sessions.move_to_end(session_id)
         return True
+
+    def get_corrected_segments(self, session_id: str) -> list[dict]:
+        """Return post-visit corrected rows without changing live history.
+
+        Args:
+            session_id: Recording UUID whose corrected transcript is requested.
+
+        Returns:
+            Corrected segment rows in chronological order; empty means no
+            corrected transcript has been stored for this session.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return []
+        if self._is_expired(session):
+            self._sessions.pop(session_id, None)
+            return []
+        session.last_accessed_at = time.monotonic()
+        self._sessions.move_to_end(session_id)
+        return list(session.corrected_segments)
+
+    def get_corrected_transcript_text(
+        self, session_id: str, max_chars: int = 3500
+    ) -> str:
+        """Return corrected transcript text for high-accuracy summary input.
+
+        Args:
+            session_id: Recording UUID whose corrected transcript is requested.
+            max_chars: Maximum characters; `0` returns empty context.
+
+        Returns:
+            Role-attributed corrected transcript text, or empty when no
+            corrected transcript exists.
+        """
+        segments = self.get_corrected_segments(session_id)
+        lines = []
+        for seg in segments:
+            speaker = seg.get("role", seg.get("speaker_id", "UNKNOWN"))
+            text = seg.get("text", "")
+            lines.append(f"[{speaker}] {text}")
+
+        full_text = "\n".join(lines)
+        return _truncate_transcript_text(full_text, max_chars)
 
     @staticmethod
     def _apply_row_role_override(session: _SessionData, segment: dict) -> None:

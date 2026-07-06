@@ -42,7 +42,7 @@ python3 scripts/generate-demo-consultation-audio.py --force --include-primock57
 ```
 
 PriMock57 stores doctor and patient channels separately. The generator downloads
-both channels, mixes the first 90 seconds into one mono WAV per consultation,
+both channels, mixes the full consultation into one mono WAV per consultation,
 and adds attribution metadata to `generated-manifest.json`.
 
 Download one PriMock57 consultation:
@@ -70,7 +70,9 @@ python3 scripts/generate-demo-consultation-audio.py \
 ```
 
 The full PriMock57 download is much larger than the default sample. Do not commit
-the generated WAV files. Generated replay clips remain capped to 90 seconds.
+the generated WAV files. PriMock57 clips are generated at full consultation
+length; `NEMO_BUFFER_MAX_DURATION` (default 900 seconds) bounds replay GPU
+memory.
 
 ## Verify A Fixture
 

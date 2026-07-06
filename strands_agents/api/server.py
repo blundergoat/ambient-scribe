@@ -10,6 +10,7 @@ focused on what the clinician sees in the transcript and summary UI.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import logging
 import os
 import subprocess
@@ -43,18 +44,24 @@ from api.agent_observability import configure_strands_telemetry as _configure_st
 from api.mercure_publisher import did_publish_mercure_event
 from api.streaming_session import StreamingServices, transcribe_stream_session
 from api.summary_request import (
+    BrowserVisibleSegment,
     SummaryRequest,
     build_summary_context,
+    browser_visible_segments_from_summary,
     publish_summary_outputs,
 )
 from nemo_pipeline import NemoPipeline
+from post_visit_correction import (
+    DEFAULT_POST_VISIT_ASR_MODEL,
+    PostVisitCorrectionError,
+    run_post_visit_correction,
+)
 from session import SessionStore
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
-from tools.assign_roles import get_or_create_state
+from tools.assign_roles import get_or_create_state, peek_state
 from logging_config import configure_logging
 from api.summary_generation import run_summary_generation as _run_summary_generation
-from clinical_hints import generate_clinical_hints
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -123,16 +130,6 @@ SESSION_STORAGE = os.environ.get("SESSION_STORAGE", "memory")
 SESSION_RECONNECT_GRACE_SECONDS = float(
     os.environ.get("SESSION_RECONNECT_GRACE_SECONDS", "30")
 )
-CLINICAL_HINTS_ENABLED = os.environ.get(
-    "CLINICAL_HINTS_ENABLED", "1"
-).strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
 def _history_duration(segments: list[dict]) -> float:
     """Estimate session duration from stored segment timestamps."""
     if not segments:
@@ -311,6 +308,20 @@ class TranscribeFileResponse(BaseModel):
     duration_seconds: float = 0.0
 
 
+class CorrectionRequest(BaseModel):
+    """
+    Browser request for a post-stop transcript correction.
+
+    Use after the backend publishes `finalized` and before summary generation.
+    The browser sends the rows it can see so server-side correction can keep the
+    same reviewed timing and role scaffold. Empty segments mean the endpoint
+    uses stored transcript rows only.
+    """
+
+    segments: list[BrowserVisibleSegment] = Field(default_factory=list)
+    force: bool = False
+
+
 async def publish_to_mercure(
     topic: str,
     data: dict[str, Any],
@@ -485,6 +496,151 @@ async def transcribe_stream(websocket: WebSocket, session_id: str) -> None:
     await transcribe_stream_session(websocket, session_id, _streaming_services())
 
 
+@app.post("/session/{session_id}/correction")
+async def correct_session_transcript(
+    session_id: str,
+    correction_request: CorrectionRequest | None = None,
+) -> dict:
+    """Create a corrected transcript artifact before summary generation.
+
+    The browser calls this after Stop/finalized and before Summarise. It keeps
+    the live preview transcript intact, writes corrected rows into the separate
+    corrected storage lane, and returns a non-fatal fallback payload when the
+    correction pass is unavailable.
+
+    Args:
+        session_id: UUID for the stopped recording whose audio is still retained.
+        correction_request: Optional browser-visible rows and force flag; null uses storage.
+
+    Returns:
+        Correction status and metadata; `unavailable` means the browser should summarize live rows.
+    """
+    _validate_session_id(session_id)
+    force_requested = bool(correction_request.force) if correction_request else False
+
+    existing_corrected_segments = sessions.get_corrected_segments(session_id)
+    # Existing corrected rows can be reused for retry clicks on the summary button.
+    if existing_corrected_segments and not force_requested:
+        return {
+            "session_id": session_id,
+            "status": "ready",
+            "source": "corrected_segments",
+            "segments": len(existing_corrected_segments),
+            "model": existing_corrected_segments[0].get("source_model", ""),
+            "reused": True,
+        }
+
+    browser_visible_segments = browser_visible_segments_from_summary(correction_request)
+    # Browser rows carry the roles the clinician currently sees before correction runs.
+    if browser_visible_segments:
+        merge_result = sessions.merge_browser_segments(session_id, browser_visible_segments)
+        logger.info(
+            "correction.segments_merged session_id=%s matched=%s unknown=%s restored=%s",
+            session_id,
+            merge_result.get("matched", 0),
+            merge_result.get("unknown", 0),
+            merge_result.get("restored", False),
+            extra={"session_id": session_id, **merge_result},
+        )
+
+    live_segments = sessions.get_segments(session_id)
+    active_session = lifecycle.get(session_id)
+    # After reconnect grace expires, the audio buffer is gone and correction cannot run.
+    if active_session is None:
+        return _correction_unavailable_response(
+            session_id,
+            "Session audio is no longer available for correction.",
+            live_segments,
+        )
+
+    retained_audio = active_session.buffer.full_audio()
+    # Empty audio means the user stopped before the browser sent usable samples.
+    if retained_audio == b"":
+        return _correction_unavailable_response(
+            session_id,
+            "No retained audio is available for correction.",
+            live_segments,
+        )
+
+    loop = asyncio.get_running_loop()
+    started_at = time.time()
+    try:
+        correction_result = await loop.run_in_executor(
+            nemo_executor,
+            partial(
+                run_post_visit_correction,
+                pcm_audio=retained_audio,
+                live_segments=live_segments,
+                model_name=DEFAULT_POST_VISIT_ASR_MODEL,
+            ),
+        )
+    except PostVisitCorrectionError as correction_error:
+        duration_ms = int((time.time() - started_at) * 1000)
+        logger.warning(
+            "correction.unavailable session_id=%s duration_ms=%s detail=%s",
+            session_id,
+            duration_ms,
+            str(correction_error),
+            extra={"session_id": session_id, "duration_ms": duration_ms},
+        )
+        return _correction_unavailable_response(
+            session_id,
+            str(correction_error),
+            live_segments,
+        )
+
+    sessions.replace_corrected_segments(session_id, correction_result.segments)
+    duration_ms = int((time.time() - started_at) * 1000)
+    logger.info(
+        "correction.completed session_id=%s segments=%s words=%s duration_ms=%s",
+        session_id,
+        len(correction_result.segments),
+        correction_result.word_count,
+        duration_ms,
+        extra={
+            "session_id": session_id,
+            "segments": len(correction_result.segments),
+            "words": correction_result.word_count,
+            "duration_ms": duration_ms,
+            "model": correction_result.model_name,
+        },
+    )
+
+    return {
+        "session_id": session_id,
+        "status": "ready",
+        "source": correction_result.source,
+        "segments": len(correction_result.segments),
+        "word_count": correction_result.word_count,
+        "model": correction_result.model_name,
+        "reused": False,
+    }
+
+
+def _correction_unavailable_response(
+    session_id: str,
+    detail: str,
+    live_segments: list[dict[str, Any]],
+) -> dict:
+    """Build a non-fatal correction response for live-preview fallback.
+
+    Args:
+        session_id: Browser session UUID the user tried to correct.
+        detail: Plain-English reason shown to developers/support; empty gives no context.
+        live_segments: Stored live rows; empty means summary may still return 404.
+
+    Returns:
+        JSON payload telling the browser to continue with the live preview.
+    """
+    return {
+        "session_id": session_id,
+        "status": "unavailable",
+        "source": "live_segments",
+        "segments": len(live_segments),
+        "detail": detail,
+    }
+
+
 @app.api_route("/session/{session_id}/history", methods=["GET", "POST"])
 async def session_history(session_id: str) -> dict:
     """View the transcript history for a session.
@@ -564,6 +720,50 @@ async def session_history(session_id: str) -> dict:
         "segments": [],
         "message": "Session not found or ended",
     }
+
+
+@app.get("/session/{session_id}/corrected-transcript")
+async def corrected_session_transcript(session_id: str) -> dict:
+    """View the corrected transcript artifact for local QA scoring.
+
+    Use after the user stops a visit and runs correction, so developers can
+    score the exact rows the summary used without changing the live preview
+    history or browser restore path.
+
+    Args:
+        session_id: UUID for the stopped recording; invalid values return HTTP 400.
+
+    Returns:
+        Corrected transcript payload; empty segments means no correction exists yet.
+    """
+    request_started_at = time.time()
+    _validate_session_id(session_id)
+    corrected_segments = sessions.get_corrected_segments(session_id)
+    source = "corrected_segments"
+    response_payload: dict[str, Any] = {
+        "session_id": session_id,
+        "source": source,
+        "segments": corrected_segments,
+        "duration_seconds": round(_history_duration(corrected_segments), 1),
+    }
+
+    # No corrected artifact exists yet, so QA sees an empty scoreable shape.
+    if corrected_segments == []:
+        source = "missing"
+        response_payload["source"] = source
+        response_payload["message"] = "Corrected transcript not found"
+
+    logger.info(
+        "corrected_transcript.completed",
+        extra={
+            "session_id": session_id,
+            "correlation_id": correlation_id_var.get("-"),
+            "duration_ms": int((time.time() - request_started_at) * 1000),
+            "segments": len(corrected_segments),
+            "source": source,
+        },
+    )
+    return response_payload
 
 
 @app.post("/session/{session_id}/roles/override")
@@ -681,22 +881,27 @@ async def _apply_row_role_override(session_id: str, segment_id: str, role: str) 
             detail="No stored transcript for this session; row correction not saved",
         )
 
-    state = get_or_create_state(session_id)
+    # Peek only: after grace teardown there is no live role state, and creating
+    # one here would broadcast a fabricated empty mapping with zero confidence.
+    state = peek_state(session_id)
     _mercure_event_ids.setdefault(session_id, 0)
     _mercure_event_ids[session_id] += 1
-    # The speaker mapping is included unchanged so existing consumers keep
-    # working; `row_overrides` is the additive row-scoped signal.
+    # `row_overrides` is the additive row-scoped signal other tabs apply.
+    role_event: dict = {
+        "type": "role_update",
+        "row_overrides": {segment_id: role},
+        "flip_detected": False,
+        "manual_override": True,
+        "session_id": session_id,
+    }
+    # A still-live visit shares its unchanged speaker mapping so existing
+    # consumers keep working; a finished visit sends only the row signal.
+    if state is not None:
+        role_event["mapping"] = state.current_mapping
+        role_event["confidence"] = state.running_confidence
     await publish_to_mercure(
         f"scribe/session/{session_id}/roles",
-        {
-            "type": "role_update",
-            "mapping": state.current_mapping,
-            "row_overrides": {segment_id: role},
-            "confidence": state.running_confidence,
-            "flip_detected": False,
-            "manual_override": True,
-            "session_id": session_id,
-        },
+        role_event,
         event_id=_mercure_event_ids[session_id],
     )
 
@@ -761,6 +966,7 @@ async def generate_summary(
         _run_summary_generation,
         session_id,
         summary_context.transcript,
+        summary_context.citation_segments,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
@@ -780,14 +986,11 @@ async def generate_summary(
         raise HTTPException(status_code=502, detail="Summary generation failed")
 
     summary_metric_fields = summary.pop("_agent_metrics", {})
-    clinical_hints = await publish_summary_outputs(
+    await publish_summary_outputs(
         session_id,
         summary,
-        summary_context.transcript,
-        clinical_hints_enabled=CLINICAL_HINTS_ENABLED,
         mercure_event_ids=_mercure_event_ids,
         publish_to_mercure=publish_to_mercure,
-        generate_clinical_hints=generate_clinical_hints,
         logger=logger,
     )
 
@@ -805,7 +1008,7 @@ async def generate_summary(
         },
     )
 
-    return {"session_id": session_id, **summary, "clinical_hints": clinical_hints}
+    return {"session_id": session_id, **summary}
 
 
 @app.api_route("/session/{session_id}/roles", methods=["GET", "POST"])

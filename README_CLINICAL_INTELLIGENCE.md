@@ -1,11 +1,15 @@
 # Ambient Scribe Clinical Intelligence
 
-This file explains the two 0.3.0 clinical-intelligence layers:
+This file explains the current clinical-intelligence layers that remain after
+the clinical hints UI lane was removed:
 
-- `.goat-flow/plans/0.3.0/M11-medical-phrase-boosting.md`
-- `.goat-flow/plans/0.3.0/M12-clinical-rag-hints.md`
+- `.goat-flow/plans/0.3.0/done/M11-medical-phrase-boosting.md`
+- `.goat-flow/plans/0.3.0/done/M12-clinical-rag-hints.md` (historical origin for summary grounding)
 
-Last checked: 2026-07-05 against the local repo.
+Both plan files are gitignored local workflow state; this README carries the
+durable summary.
+
+Last checked: 2026-07-07 against the local repo.
 
 ## Short Version
 
@@ -16,9 +20,9 @@ M11 improves the words the clinician sees. It ships an opt-in post-ASR medical
 term normaliser that corrects known clinical terms after NeMo transcription and
 before the transcript reaches the UI, summary, or stored session text.
 
-M12 improves what the clinician can do with the transcript. It adds a tiny
-CPU-only clinical knowledge helper for SOAP summary grounding and a rule-based
-hints lane that surfaces non-blocking review suggestions beside the transcript.
+M12 improves what the summary agent can do with the transcript. The remaining
+current code keeps a tiny CPU-only clinical knowledge helper for SOAP summary
+grounding. The separate rule-based hints lane has been removed.
 
 The important boundary is:
 
@@ -37,17 +41,16 @@ spoken consultation
   -> optional medical term correction
   -> role-labelled transcript
   -> grounded SOAP summary
-  -> optional clinical review hints
 ```
 
 M11 makes clinical words more likely to be displayed correctly. M12 uses the
-visible transcript to make the generated summary and review sidebar more useful.
+visible transcript to make the generated summary more useful.
 Together they make the app feel less like a generic speech demo and more like a
 medical documentation workspace.
 
 ## Medical Phrase Normalisation
 
-NeMo decode-time phrase boosting for the multitalker
+M11's original goal was NeMo decode-time phrase boosting for the multitalker
 transducer model. That exact GPU-container API is still pending proof.
 
 What is shipped now is deliberately narrower: an opt-in post-ASR correction
@@ -112,22 +115,16 @@ The active review disables risky semantic or false-positive-prone prior rows:
 - Before/after clinical ASR accuracy on real GPU replay remains human-pending.
 - This feature should stay off for baseline ASR comparisons.
 
-## Clinical RAG And Hints
+## Clinical Summary Grounding
 
-Assistive layer around the completed consultation: summary
-grounding plus structured hints. It is CPU-only and rule-based for the current
-PoC.
+Assistive layer around the completed consultation: summary grounding. It is
+CPU-only and rule-based for the current PoC.
 
 ### What The User Sees
 
 After a consult is summarised, the UI can show:
 
-- a SOAP-style summary that had access to short, relevant documentation reminders;
-- a dismissible clinical hints sidebar when the transcript matches a simple review rule;
-- no sidebar at all when there are no useful hints.
-
-Hints are suggestions for clinician review. They do not diagnose, prescribe,
-edit the transcript, or block the summary.
+- a SOAP-style summary that had access to short, relevant documentation reminders.
 
 ### How Summary Grounding Works
 
@@ -145,68 +142,25 @@ Key files:
 
 | File | Responsibility |
 | --- | --- |
-| `strands_agents/clinical_hints.py` | Loads the tiny KB, retrieves matched snippets, and generates rule hints. |
+| `strands_agents/clinical_context.py` | Loads the tiny KB and retrieves matched snippets. |
 | `strands_agents/data/clinical_knowledge.json` | Project-authored PoC snippets for documentation reminders. |
 | `strands_agents/api/summary_generation.py` | Adds retrieved snippets to the summary prompt. |
 | `strands_agents/agents/summary_agent.py` | Defines the medical SOAP JSON summary agent. |
-| `tests/python/test_clinical_hints.py` | Proves retrieval, blank transcript behavior, malformed KB fallback, and GPU isolation. |
+| `tests/python/test_clinical_context.py` | Proves retrieval, blank transcript behavior, malformed KB fallback, and GPU isolation. |
 
 The current KB covers small PoC reminders for chest-pain documentation, NSAID
 plus ACE-inhibitor review, and diabetes medication review. It is not a clinical
 guideline corpus.
 
-### How Hints Work
-
-Runtime path:
-
-```text
-summary request completes
-  -> publish_summary_outputs()
-  -> generate_clinical_hints()
-  -> Mercure topic scribe/session/{id}/hints
-  -> browser hint sidebar
-```
-
-The same hints are also returned in the summary HTTP response, so the browser
-can still render them if Mercure delivery is unavailable or delayed.
-
-Key files:
-
-| File | Responsibility |
-| --- | --- |
-| `strands_agents/api/summary_request.py` | Publishes summary events and optional hints. |
-| `strands_agents/api/server.py` | Wires `CLINICAL_HINTS_ENABLED` into the summary route. |
-| `public/js/scribe-recording.js` | Subscribes the browser to `scribe/session/{id}/hints`. |
-| `public/js/scribe-output.js` | Renders and dismisses hint items without blocking transcript or summary review. |
-| `templates/scribe/index.html.twig` | Injects `topicHints` and provides the sidebar markup. |
-| `tests/python/test_summary.py` | Proves hints are published and returned via HTTP fallback. |
-
-Configuration:
-
-```text
-CLINICAL_HINTS_ENABLED=1
-```
-
 ### Why It Makes The System Better
 
 - Better summary quality: relevant context can remind the model to include
   documentation details the transcript implies.
-- Better review workflow: hints call attention to possible note gaps or
-  medication-review points while keeping the clinician in control.
-- Better resilience: the transcript and summary still work when there are no
-  hints or when hint publication fails.
-- Better architecture: the hints topic is separate from raw transcript, roles,
-  and summary events, so each concern can fail or evolve independently.
-- Better GPU hygiene: retrieval and hints do not compete with NeMo for GPU
-  memory.
+- Better GPU hygiene: retrieval does not compete with NeMo for GPU memory.
 
 ### Current Limits
 
 - The KB is synthetic/project-authored and non-exhaustive.
-- Hint rules are simple string/rule checks, not RxNorm, ICD-10, EHR, or
-  guideline-grade reasoning.
-- Live end-to-end SSE regression for `raw`, `roles`, `summary`, and `hints`
-  remains pending in the plan.
 - Real clinical data would need privacy, redaction, governance, and validation
   work before this becomes production clinical decision support.
 
@@ -219,15 +173,14 @@ They must not:
 - make autonomous diagnoses;
 - prescribe treatment;
 - replace clinician judgement;
-- hide or mutate the source transcript in response to a hint;
-- send RAG or hint work to the NeMo GPU;
+- hide or mutate the source transcript in response to retrieved context;
+- send retrieval work to the NeMo GPU;
 - treat the PoC knowledge base as authoritative clinical guidance.
 
 They should:
 
-- keep suggestions short and dismissible;
-- degrade to no correction, no context, or no hints when inputs are missing;
-- preserve transcript and summary review even when hints fail;
+- degrade to no correction or no context when inputs are missing;
+- preserve transcript and summary review when context retrieval returns no match;
 - make pending proof explicit in docs and plans.
 
 ## Operating Toggles
@@ -236,19 +189,16 @@ They should:
 | --- | --- | --- |
 | `MEDICAL_BOOST_ENABLED` | `0` | Enables post-ASR exact medical term normalisation. |
 | `MEDICAL_LEXICON_PATH` | `/app/data/medical_lexicon.txt` | Points the pipeline at the lexicon file. |
-| `CLINICAL_HINTS_ENABLED` | `1` | Enables summary-time clinical hints and the hints response payload. |
 
 ## Verification
 
-Use these focused checks after changing the lexicon, KB, hints, summary prompt,
-or browser hint rendering:
+Use these focused checks after changing the lexicon, KB, or summary prompt:
 
 ```bash
 python3 scripts/evaluate-medical-boost.py
 strands_agents/.venv/bin/pytest tests/python/test_medical_lexicon.py -q
-strands_agents/.venv/bin/pytest tests/python/test_clinical_hints.py tests/python/test_summary.py -q
-rg -n "import nemo|import torch" strands_agents/clinical_hints.py strands_agents/medical_lexicon.py
-node_modules/.bin/gruff-ts analyse public/js/scribe-output.js public/js/scribe-recording.js templates/scribe/index.html.twig
+strands_agents/.venv/bin/pytest tests/python/test_clinical_context.py tests/python/test_summary.py -q
+rg -n "import nemo|import torch" strands_agents/clinical_context.py strands_agents/medical_lexicon.py
 ```
 
 Use broader checks before shipping cross-boundary changes:
@@ -273,8 +223,7 @@ hypotheses on a clinical audio clip.
 - `README_STACK.md` lists these features in the full model and runtime
   inventory.
 - `docs/medical-phrase-boosting.md` explains how to extend the lexicon.
-- `docs/clinical-hints.md` explains the current hints lane and PoC corpus.
-- `.goat-flow/plans/0.3.0/M11-medical-phrase-boosting.md` tracks the phrase
-  boosting milestone and its pending GPU proof.
-- `.goat-flow/plans/0.3.0/M12-clinical-rag-hints.md` tracks the summary
-  grounding and hints milestone plus pending live SSE regression.
+- `.goat-flow/plans/0.3.0/done/M11-medical-phrase-boosting.md` tracks the phrase
+  boosting milestone and its pending GPU proof (gitignored local plan file).
+- `.goat-flow/plans/0.3.0/done/M12-clinical-rag-hints.md` is the historical plan
+  for summary grounding and the removed hints lane (gitignored local plan file).

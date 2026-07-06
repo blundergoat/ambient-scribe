@@ -105,10 +105,6 @@ final class ScribeControllerTest extends TestCase
             "scribe/session/{$sessionId}/summary",
             $parameters['mercure_topic_summary'],
         );
-        self::assertSame(
-            "scribe/session/{$sessionId}/hints",
-            $parameters['mercure_topic_hints'],
-        );
     }
 
     /**
@@ -283,6 +279,46 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
+     * Proxies post-stop correction requests before the summary is generated.
+     *
+     * @return void No payload; failure means the browser cannot create corrected transcript rows.
+     */
+    public function testCorrectionProxyForwardsToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000299';
+        $seenRequests = [];
+        $httpClient = new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'session_id' => $sessionId,
+                        'status' => 'ready',
+                        'segments' => 2,
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
+            'segments' => [
+                ['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT'],
+            ],
+        ]);
+        $response = $controller->correction($sessionId, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('ready', $this->decodeJsonResponse($response)['status']);
+        self::assertCount(1, $seenRequests);
+        self::assertSame('POST', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/correction", $seenRequests[0]['url']);
+        self::assertStringContainsString('Live preview text.', $seenRequests[0]['options']['body']);
+    }
+
+    /**
      * Proxies manual role corrections through Symfony so the browser avoids FastAPI CORS.
      *
      * @return void No payload; failure means clicked speaker labels may not be protected server-side.
@@ -364,6 +400,31 @@ final class ScribeControllerTest extends TestCase
         self::assertSame(503, $response->getStatusCode());
         self::assertStringContainsString(
             'Summary service unavailable',
+            $this->decodeJsonResponse($response)['detail'],
+        );
+    }
+
+    /**
+     * Converts correction transport failures into JSON so the summary can still fall back.
+     *
+     * @return void No payload; failure means agent outages could stop the summary flow.
+     * @throws TransportException When the mock client simulates an unreachable correction service.
+     */
+    public function testCorrectionProxyMapsTransportFailureToJson(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000299';
+        $httpClient = new MockHttpClient(
+            static fn (): never => throw new TransportException('Connection refused'),
+            'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+
+        $request = Request::create("/session/{$sessionId}/correction", 'POST');
+        $response = $controller->correction($sessionId, $request);
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertStringContainsString(
+            'Correction service unavailable',
             $this->decodeJsonResponse($response)['detail'],
         );
     }
@@ -579,7 +640,6 @@ final class ScribeControllerTest extends TestCase
                         'session_id' => $sessionId,
                         'title' => 'Session Summary',
                         'sections' => [],
-                        'clinical_hints' => [],
                     ], JSON_THROW_ON_ERROR),
                     info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
                 );

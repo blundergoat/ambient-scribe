@@ -1,8 +1,6 @@
 # Local Development Guide
 
-> **Note:** This guide is partially inherited from ambient-scribe and is being updated for ambient-scribe. The Docker Compose section reflects the new NeMo-based architecture. Some bare-metal instructions are still Summit-specific and will be rewritten.
-
-Two ways to run Ambient Scribe locally: **Docker Compose** (everything containerised, requires NVIDIA GPU) or **bare-metal** (PHP and Python running directly on your machine).
+Two ways to run Ambient Scribe locally: **Docker Compose** (everything containerised, requires NVIDIA GPU) or **bare-metal** (PHP running directly on your machine; the NeMo agent and Mercure still run in Docker).
 
 ## Quick Start
 
@@ -20,11 +18,12 @@ First run builds the NeMo image and warms large model layers - this can take a w
 
 ### Option B: Bare-metal (recommended for development)
 
-Runs PHP and Python directly. Faster iteration, no container rebuilds.
+Runs PHP directly on the host; `start-dev.sh` still starts the NeMo agent and
+Mercure containers. Faster PHP iteration, no app-container rebuilds.
 
 ```bash
 ./scripts/setup-initial.sh    # Install all dependencies
-./scripts/start-dev.sh        # Start PHP + Python + Ollama
+./scripts/start-dev.sh        # Start PHP + agent + Mercure (+ Ollama when selected)
 # Open http://localhost:48082
 ```
 
@@ -41,14 +40,11 @@ Runs PHP and Python directly. Faster iteration, no container rebuilds.
 - Composer
 - Python 3.12+
 - pip3
-- Ollama installed locally (https://ollama.com)
-- The `strands-php-client` repo cloned as a sibling directory:
+- Ollama installed locally (https://ollama.com) - only when `ROLE_AGENT_MODEL_PROVIDER=ollama`
 
-```
-projects/
-├── ambient-scribe/         # This repo
-└── strands-php-client/        # Required - local Composer path dependency
-```
+`blundergoat/strands-php-client` installs through Composer like any other
+dependency (`composer.lock` pins a `dev-dev` commit); no sibling checkout is
+needed.
 
 ## Architecture
 
@@ -56,16 +52,16 @@ Both modes run the same core services:
 
 ```mermaid
 graph LR
-    Browser -->|":48082"| PHP["PHP Symfony<br/>Chat UI"]
-    PHP -->|":48101"| Agent["Python FastAPI<br/>Agent"]
+    Browser -->|":48082 GET /scribe"| PHP["PHP Symfony<br/>Scribe UI"]
+    Browser -->|":48101 WebSocket audio"| Agent["Python FastAPI<br/>NeMo agent"]
+    PHP -->|"proxied HTTP"| Agent
     Agent -->|":11434"| LLM["Ollama<br/>(or Bedrock)"]
-    PHP -.->|":48137"| Mercure["Mercure<br/>SSE hub"]
+    Agent -->|"publish"| Mercure["Mercure<br/>SSE hub"]
     Mercure -.->|"EventSource"| Browser
-
-    style Mercure stroke-dasharray: 5 5
 ```
 
-Mercure is optional (Docker Compose only) - without it, the app falls back to sync mode.
+Mercure is required: live transcript, role, and summary events reach the browser
+only through it, so both run modes start the Mercure container.
 
 ### Docker Compose mode
 
@@ -76,14 +72,16 @@ Mercure is optional (Docker Compose only) - without it, the app falls back to sy
 | **nemo-agent** | Built from `docker/nemo/Dockerfile` | 48101 → 8000 | Python FastAPI agent with NeMo inference |
 | **mercure** | dunglas/mercure | 48137 → 3701 | Real-time SSE hub for streaming mode |
 | **app** | Built from `Dockerfile` | 48082 → 8080 | PHP Symfony scribe UI |
-| **ollama** *(optional)* | ollama/ollama | 11434 → 11434 | Local LLM for role inference (CPU-only) |
+| **ollama** *(optional)* | ollama/ollama | no host port (in-network only) | Local LLM for role inference + summaries (CPU-only) |
 
-Startup order: nemo-agent → mercure → app. The ollama service is opt-in via the `local` profile (`docker compose --profile local up`).
+Startup order: nemo-agent → mercure → app. The ollama service is opt-in via the `ollama` profile (`COMPOSE_PROFILES=ollama docker compose up`, or let `start-dev.sh` activate it when `ROLE_AGENT_MODEL_PROVIDER=ollama`).
 
 Containers talk via Docker networking (e.g. `http://nemo-agent:8000`, `http://mercure:3701`).
-If `ROLE_AGENT_MODEL_PROVIDER=ollama`, the agent reaches Ollama via `OLLAMA_HOST`:
-- Host-installed Ollama (default): `http://host.docker.internal:11434`
-- Docker Compose Ollama (profile): `http://ollama:11434`
+The agent container's `OLLAMA_HOST` is pinned to the bundled service at
+`http://ollama:11434` in `docker-compose.yml` and cannot be overridden from
+`.env` (`host.docker.internal` is unreachable from the agent container on some
+Docker/WSL2 setups). To use a cloud model instead, set
+`ROLE_AGENT_MODEL_PROVIDER=bedrock`.
 
 ### Reading nemo-agent logs
 
@@ -107,7 +105,7 @@ docker compose logs --no-log-prefix nemo-agent --since 10m \
 docker compose logs --no-log-prefix nemo-agent --since 10m \
   | jq -r 'select(.level == "error") | [.ts, .event, .session_id, .error_type, .error] | @tsv'
 
-# Mercure delivery outcomes for transcript, role, summary, and hints events.
+# Mercure delivery outcomes for transcript, role, and summary events.
 docker compose logs --no-log-prefix nemo-agent --since 10m \
   | jq -r 'select(.event | startswith("mercure.publish."))
     | [.ts, .event, .session_id, .topic, .duration_ms] | @tsv'
@@ -126,7 +124,7 @@ LOG_FORMAT=console docker compose up -d --force-recreate nemo-agent
 | Service | Port | What runs |
 |---------|------|-----------|
 | **Ollama** | 11434 | `ollama serve` (only when `ROLE_AGENT_MODEL_PROVIDER=ollama`; the compose service sits behind the `ollama` profile and Bedrock setups skip it) |
-| **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on host port 48101 |
+| **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on the first free port in 48101-48110 |
 | **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
 | **PHP app** | 48082 | PHP built-in server (demo replay streams WAV PCM to FastAPI directly, so no PHP upload path is involved) |
 
@@ -142,16 +140,17 @@ cp .env.example .env
 
 ### Choosing a model provider
 
-#### Ollama (default - local, free)
+#### Ollama (local, free)
 
-No credentials needed. The model runs on your machine.
+No credentials needed. The model runs on your machine. (The checked-in
+`.env.example` selects Bedrock; switch this line to go local.)
 
 ```env
 ROLE_AGENT_MODEL_PROVIDER=ollama
 ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b
 ```
 
-#### AWS Bedrock (cloud)
+#### AWS Bedrock (cloud - the `.env.example` default)
 
 Uses cloud-hosted models. Requires AWS credentials.
 
@@ -161,7 +160,7 @@ AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_SESSION_TOKEN=              # Only if using temporary credentials
 AWS_DEFAULT_REGION=ap-southeast-2
-ROLE_AGENT_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
+ROLE_AGENT_MODEL_ID=au.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 ### Ollama Setup
@@ -180,22 +179,24 @@ ollama pull qwen3.5:9b
 
 #### Option B: Use the Docker Compose profile
 
-An optional Ollama service is included in `docker-compose.yml` via the `local` profile:
+An optional Ollama service is included in `docker-compose.yml` via the `ollama` profile:
 
 ```bash
-docker compose --profile local up
+COMPOSE_PROFILES=ollama docker compose up
 ```
 
-This starts Ollama alongside the main stack. When using this, set `OLLAMA_HOST` so the nemo-agent container can reach it:
+This starts Ollama alongside the main stack; the nemo-agent container reaches it
+automatically (its `OLLAMA_HOST` is pinned to `http://ollama:11434` in Compose).
+On first run, pull the model into the persistent `ollama_data` volume:
 
-```env
-OLLAMA_HOST=http://ollama:11434
+```bash
+docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
 #### Expected CPU inference latency
 
-| Model | RAM needed | Inference time (CPU, 64GB RAM) |
-|-------|-----------|-------------------------------|
+| Model | RAM needed | Notes |
+|-------|-----------|-------|
 | `qwen3.5:9b` | ~8GB | default local demo model |
 | `qwen2.5:7b` | ~8GB | faster, lower quality fallback |
 
@@ -213,11 +214,10 @@ Good options: `qwen3.5:9b` (default), `qwen2.5:7b` (5GB), `mistral` (4GB), `llam
 
 Smaller models are faster but produce lower quality role attribution. The 9b default is a good balance for the local demo app.
 
-**For Docker Compose**: restart to pull the new model:
+**For Docker Compose**: pull the new model into the running ollama service:
 
 ```bash
-docker compose down
-docker compose up
+docker compose exec ollama ollama pull mistral
 ```
 
 **For bare-metal**: the start script pulls automatically:
@@ -240,9 +240,9 @@ These are set automatically by `start-dev.sh` and `docker-compose.yml`. You typi
 | Variable | Docker value | Bare-metal value | Purpose |
 |----------|-------------|-----------------|---------|
 | `AGENT_ENDPOINT` | `http://nemo-agent:8000` | `http://localhost:48101` | PHP → Python agent URL |
-| `OLLAMA_HOST` | `http://host.docker.internal:11434` | `http://localhost:11434` | Python agent → Ollama URL |
-| `MERCURE_URL` | `http://mercure:3701/...` | *(empty)* | PHP → Mercure publish URL |
-| `MERCURE_PUBLIC_URL` | `http://localhost:48137/...` | *(empty)* | Browser → Mercure subscribe URL |
+| `OLLAMA_HOST` | `http://ollama:11434` (pinned in Compose) | `http://localhost:11434` | Python agent → Ollama URL |
+| `MERCURE_URL` | `http://mercure:3701/...` | `http://localhost:48137/...` | Internal Mercure publish URL |
+| `MERCURE_PUBLIC_URL` | `http://localhost:48137/...` | `http://localhost:48137/...` | Browser → Mercure subscribe URL |
 | `MERCURE_JWT_SECRET` | `changemechangemechangemechangeme` | same placeholder | JWT signing for Mercure; replace outside local dev |
 | `APP_SECRET` | `changeme` | same placeholder | Symfony CSRF/session secret; replace outside local dev |
 
@@ -275,56 +275,34 @@ All scripts are in the `scripts/` directory.
 
 | Script | Purpose |
 |--------|---------|
-| `preflight-checks.sh` | All 12 quality gates: composer validate, security audit, code style, complexity, PHPMD, PHPStan, Twig lint, Python syntax, Docker config, tests, coverage, mutation testing |
-| `preflight-checks.sh --mutate` | Include Infection mutation testing (adds ~2-5s) |
+| `preflight-checks.sh` | All 12 quality gates: composer validate, security audit, danger policy (repo diff), code style (PHP-CS-Fixer), PHP quality (gruff-php), PHPMD, PHPStan L10, Twig lint, Python lint (Ruff), Docker Compose config, PHPUnit tests, coverage |
+| `preflight-checks.sh --mutate` | Add the optional 13th gate: Infection mutation testing |
 | `preflight-checks.sh --coverage-min=90` | Override minimum coverage threshold (default 80%) |
 
-## Sync vs Streaming Mode
+## Live Event Delivery
 
-The app supports two modes for receiving agent responses:
-
-```mermaid
-graph TB
-    subgraph Sync["Sync Mode"]
-        direction LR
-        S1["Browser"] -->|"POST /chat"| S2["PHP"]
-        S2 -->|"call 3 agents"| S3["Agent"]
-        S3 -->|"JSON response"| S2
-        S2 -->|"wait 30-45s"| S1
-    end
-
-    subgraph Stream["Streaming Mode"]
-        direction LR
-        T1["Browser"] -->|"POST /chat"| T2["PHP"]
-        T2 -->|"topic ID"| T1
-        T1 -->|"EventSource"| T4["Mercure"]
-        T2 -->|"call agents"| T3["Agent"]
-        T2 -->|"publish tokens"| T4
-    end
-```
-
-### Sync mode (both Docker and bare-metal)
-
-The browser sends a request to `/chat` and waits for all three agents to respond sequentially. Takes ~30-45 seconds depending on the model and hardware. Simple and reliable.
-
-### Streaming mode (Docker Compose only)
-
-Requires Mercure. The browser gets an immediate response with a Mercure topic, subscribes via EventSource (SSE), and receives tokens in real-time as each agent generates them. Word-by-word output like ChatGPT.
-
-Streaming is automatically enabled when Mercure is available (Docker Compose) and disabled when it's not (bare-metal).
+All transcript delivery is streaming: the browser sends PCM audio over the
+FastAPI WebSocket, and raw segments, role updates, and summaries come back as
+Mercure SSE events on `scribe/session/{id}/{raw|roles|summary}`. There is no
+synchronous fallback mode - both Docker Compose and bare-metal runs start the
+Mercure container. Summary and correction requests are same-origin Symfony
+POSTs (`/session/{id}/correction`, then `/session/{id}/summary`) that Symfony
+proxies to FastAPI; the summary also arrives as a Mercure event.
 
 ## Troubleshooting
 
 ### "strands-php-client not found"
 
-The PHP app depends on the `strands-php-client` package via a Composer path repository. Clone it as a sibling directory:
+The PHP app depends on `blundergoat/strands-php-client` at a pinned `dev-dev`
+commit (see `composer.json`). A plain install fetches it - no sibling checkout
+is involved:
 
 ```bash
-cd ..
-git clone https://github.com/blundergoat/strands-php-client.git
-cd ambient-scribe
 composer install
 ```
+
+If Composer refuses the `dev-dev` constraint, make sure you are installing from
+the repo root so the committed `composer.lock` is used.
 
 ### "Address already in use" on start
 
@@ -342,18 +320,10 @@ AGENT_PORT=58101 APP_PORT=58082 MERCURE_PORT=58137 ./scripts/start-dev.sh
 
 ### Ollama model is slow
 
-- Check if you have GPU acceleration: `ollama ps` shows if the model is using GPU
-- Try a smaller model: `OLLAMA_MODEL=mistral ./scripts/start-dev.sh`
-- CPU-only inference for 14B models takes 30-60 seconds per agent response
-
-### Docker build fails at "strands-php-client"
-
-The `docker-compose.yml` uses `additional_contexts` to access the sibling directory. Make sure the directory exists:
-
-```bash
-ls ../strands-php-client/composer.json    # Should exist
-docker compose up --build
-```
+- Remember the GPU is reserved for NeMo: Ollama runs CPU-only here by design
+- Try a smaller model: `ROLE_AGENT_OLLAMA_MODEL=mistral ./scripts/start-dev.sh`
+- CPU-only inference for the 9B default can take tens of seconds per call; role
+  labels arrive asynchronously so the transcript itself is not delayed
 
 ### Agent returns errors about model not found
 

@@ -34,6 +34,7 @@ SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "4096"
 _SHARED_SUMMARY_RULES = """
 Rules:
 - Cite transcript timestamps in square brackets, e.g. [02:15-02:30].
+- When the prompt includes source IDs, cite only those IDs in each section's `citations` array.
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
 - If the transcript is too short or uninformative, say so briefly rather than inventing content.
@@ -43,7 +44,11 @@ Output format:
 {
     "title": "Brief session title",
     "sections": [
-        {"heading": "Section Name", "content": "Section content with [MM:SS-MM:SS] citations."}
+        {
+            "heading": "Section Name",
+            "content": "Section content with [MM:SS-MM:SS] citations.",
+            "citations": [{"segment_id": "seg-0001"}]
+        }
     ],
     "key_points": ["Point 1", "Point 2"]
 }

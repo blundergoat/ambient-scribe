@@ -1,14 +1,14 @@
 # How Ambient Scribe Works
 
-Checked against this checkout on 2026-07-05.
+Checked against this checkout on 2026-07-07.
 
-Ambient Scribe is a Symfony + FastAPI + NeMo + Strands + Mercure medical transcription app. A clinician opens a Symfony-rendered page, the browser streams 16 kHz PCM audio directly to FastAPI over WebSocket, FastAPI runs NeMo on the single GPU, and Mercure streams transcript events back to the browser. Role labels, summaries, clinical hints, and medical text cleanup are deliberately kept off the NeMo GPU.
+Ambient Scribe is a Symfony + FastAPI + NeMo + Strands + Mercure medical transcription app. A clinician opens a Symfony-rendered page, the browser streams 16 kHz PCM audio directly to FastAPI over WebSocket, FastAPI runs NeMo on the single GPU, and Mercure streams transcript events back to the browser. Role labels, summaries, clinical context retrieval, and medical text cleanup are deliberately kept off the NeMo GPU.
 
 The core invariant:
 
 ```text
 NeMo owns the single NVIDIA GPU.
-Role inference, summaries, clinical hints, and medical term correction never use that GPU.
+Role inference, summaries, clinical context retrieval, and medical term correction never use that GPU.
 ```
 
 ## Mental Model
@@ -17,7 +17,7 @@ Think of the system as three cooperating lanes:
 
 - Browser lane: captures audio, sends PCM chunks, subscribes to Mercure, renders transcript cards, replays demo WAVs, and requests summaries.
 - Symfony lane: serves `/scribe`, generates the session UUID, injects browser-facing config, and proxies same-origin helper requests for summary, history, role snapshots, and model health.
-- FastAPI lane: owns WebSocket audio ingest, NeMo inference, transcript storage, role inference queues, summaries, hints, health, and Mercure publishing.
+- FastAPI lane: owns WebSocket audio ingest, NeMo inference, transcript storage, role inference queues, summaries, health, and Mercure publishing.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
         Page["/scribe page"]
         PCM["PcmStreamer / WavPcmStreamer"]
         Streams["StreamOrchestrator EventSource"]
-        Transcript["Transcript, summary, hints UI"]
+        Transcript["Transcript and summary UI"]
     end
 
     subgraph Symfony["Symfony app"]
@@ -40,7 +40,7 @@ flowchart LR
         Nemo["NemoPipeline + TranscriptionSession"]
         Store["SessionStore or SqliteBackend"]
         RoleQ["Role inference queue"]
-        Summary["Summary + clinical hints"]
+        Summary["Summary generation"]
     end
 
     subgraph SpeechGPU["Single GPU lane"]
@@ -74,7 +74,7 @@ flowchart LR
     Summary --> Ollama
     Summary --> Bedrock
     Summary --> Rules
-    Summary -->|"summary / hints events"| Mercure
+    Summary -->|"summary events"| Mercure
     Proxy --> Routes
     Streams -->|"subscribe topics"| Mercure
     Mercure --> Streams
@@ -131,7 +131,7 @@ sequenceDiagram
     P-->>B: HTML + CONFIG(sessionId, wsUrl, Mercure URL, topics)
     B->>A: WebSocket /ws/transcribe/{session_id}
     A->>A: Validate UUID; resume or create TranscriptionSession
-    B->>M: EventSource subscribe to raw, roles, summary, hints
+    B->>M: EventSource subscribe to raw, roles, summary
 
     loop Audio chunks
         B->>A: 16 kHz mono s16le PCM ArrayBuffer
@@ -156,14 +156,34 @@ sequenceDiagram
     A->>M: publish finalized
     M-->>B: finalized event
 
+    B->>P: POST /session/{id}/correction
+    P->>A: POST /session/{id}/correction
+    A->>N: second-pass ASR over retained audio
+    N-->>A: corrected rows (stored separately)
+
     B->>P: POST /session/{id}/summary with visible segments
     P->>A: POST /session/{id}/summary
-    A->>L: generate SOAP summary off the GPU
-    A->>A: generate optional CPU clinical hints
-    A->>M: publish summary and hints
+    A->>L: generate SOAP summary off the GPU (prefers corrected rows)
+    A->>M: publish summary
     A-->>P: summary JSON
     P-->>B: summary JSON
 ```
+
+## Transcription Engines
+
+Live transcription runs one of two engines, selected process-wide by
+`NEMO_SESSION_ENGINE`:
+
+- `windowed` (Compose and `.env.example` default): `TranscriptionSession` in
+  `nemo_session.py` re-transcribes each emission window past a high-water mark
+  and stitches speaker IDs across window seams.
+- `streaming` (M22, `scripts/start-dev.sh` default for daily dev):
+  `StreamingSessionEngine` in `nemo_streaming_engine.py` wraps NVIDIA's
+  SpeakerTaggedASR composite so one session-long Sortformer speaker cache owns
+  speaker identity for the whole visit, removing the window-seam identity swaps.
+
+Rollback is an env flip plus an agent restart. Both engines share the same
+WebSocket, storage, role inference, and Mercure paths described below.
 
 ## Audio Path
 
@@ -200,7 +220,8 @@ Important files:
 | Browser PCM and Mercure subscriptions | `public/js/scribe-streaming.js` (`PcmStreamer`, `WavPcmStreamer`, `StreamOrchestrator`) |
 | Start/stop/reconnect lifecycle | `public/js/scribe-recording.js` (`startRecording`, `connectWebSocket`, `subscribeToMercure`) |
 | Visible transcript cards and role relabeling | `public/js/scribe-transcript.js` (`handleRawSegment`, `handleRoleUpdate`) |
-| Replay, summary, and hints UI | `public/js/scribe-output.js` (`startReplay`, `requestSummary`, `handleSummaryEvent`) |
+| Replay and summary UI | `public/js/scribe-output.js` (`startReplay`, `requestSummary`, `handleSummaryEvent`) |
+| Post-visit actions and summary panel states | `public/js/scribe-actions.js` (`revealPostVisitActions`, `setSummaryPendingText`) |
 | WebSocket route | `strands_agents/api/server.py` (`transcribe_stream`) |
 | Streaming workflow | `strands_agents/api/streaming_session.py` (`transcribe_stream_session`) |
 | Per-session audio buffer | `strands_agents/nemo_session.py` (`TranscriptionSession`) |
@@ -208,28 +229,26 @@ Important files:
 
 ## Mercure Topics
 
-Every session uses sibling topics under one UUID. These topics separate latency and failure domains: raw transcript should appear quickly, role labels can arrive later, summaries happen after the visit, and hints are optional.
+Every session uses sibling topics under one UUID. These topics separate latency and failure domains: raw transcript should appear quickly, role labels can arrive later, and summaries happen after the visit.
 
 ```mermaid
 flowchart TB
     Session["session_id UUID"]
-    Raw["scribe/session/{id}/raw\nsegment, finalized, error"]
+    Raw["scribe/session/{id}/raw\nsegment, finalized, quality, error"]
     Roles["scribe/session/{id}/roles\nrole_update, system_error"]
     Summary["scribe/session/{id}/summary\nsummary"]
-    Hints["scribe/session/{id}/hints\nclinical_hints"]
     Browser["Browser EventSource handlers"]
 
     Session --> Raw --> Browser
     Session --> Roles --> Browser
     Session --> Summary --> Browser
-    Session --> Hints --> Browser
 ```
 
 Topic producers:
 
 - Raw events come from `streaming_session.py` after each NeMo pass and on finalization.
 - Role events come from `role_inference_queue.py` after the off-GPU agent or heuristic fallback updates the speaker mapping.
-- Summary and hint events come from `summary_request.py` after `/session/{id}/summary`.
+- Summary events come from `summary_request.py` after `/session/{id}/summary`.
 - Publishing is centralized in `api/mercure_publisher.py`, using `MERCURE_JWT` or an HS256 token derived from `MERCURE_JWT_SECRET`.
 
 Mercure is not durable storage. It is the browser event fan-out. Transcript history lives in the configured storage backend.
@@ -276,7 +295,7 @@ Role inference is intentionally asynchronous:
 1. `streaming_session.py` stores and publishes raw segments first.
 2. `role_inference_queue.py` batches new segment payloads per session.
 3. The worker waits for at least two speakers before trying role inference.
-4. `_run_role_inference` in `api/server.py` calls the Strands role agent off the event loop.
+4. `run_role_inference` in `api/role_agent_runtime.py` (imported by `api/server.py`) calls the Strands role agent off the event loop.
 5. The agent is expected to call `assign_roles`, which persists mapping state and detects likely diarization flips.
 6. The queue applies the mapping to storage and publishes a `role_update` event.
 
@@ -284,7 +303,7 @@ Fallback behavior:
 
 - If the configured LLM provider fails, FastAPI attempts a CPU keyword heuristic.
 - If the provider looks unreachable, the roles topic gets a one-time `system_error` so the browser can show a visible AI-model warning.
-- Manual role overrides in the UI call `/session/{id}/roles/override`; the override is stored and published back through the roles topic.
+- Manual role overrides in the UI call the same-origin Symfony proxy `/scribe/{sessionId}/roles/override`, which forwards to FastAPI `/session/{session_id}/roles/override`; the override is stored and published back through the roles topic.
 
 Important files:
 
@@ -293,9 +312,9 @@ Important files:
 | Role agent prompt and provider factory | `strands_agents/agents/transcription_agent.py` |
 | Role state, confidence, flip detection, and tool | `strands_agents/tools/assign_roles.py` |
 | Role queue and publish workflow | `strands_agents/api/role_inference_queue.py` |
-| Provider failure and heuristic fallback | `strands_agents/api/server.py` (`_run_role_inference`) |
+| Provider failure and heuristic fallback | `strands_agents/api/role_agent_runtime.py` (`run_role_inference`) |
 
-## Summary And Clinical Hints
+## Summary And Clinical Context
 
 When a session stops and transcript text exists, the browser calls Symfony:
 
@@ -309,27 +328,50 @@ Symfony proxies that to FastAPI:
 POST /session/{session_id}/summary
 ```
 
-The browser sends the transcript rows it can see, including current role labels. FastAPI normalizes those rows, stores them as the selected summary context, calls the off-GPU summary agent, publishes a summary event, and optionally publishes clinical hints.
+Before the summary request, the browser asks Symfony to proxy a post-stop correction request:
+
+```text
+POST /session/{sessionId}/correction
+```
+
+Symfony proxies that to FastAPI:
+
+```text
+POST /session/{session_id}/correction
+```
+
+FastAPI uses retained session audio and the current browser-visible transcript rows as timing/role scaffolding, then stores corrected rows separately from the live preview. If correction is unavailable because audio expired or ASR fails, the browser continues with the live-preview summary instead of blocking the note.
+
+Local QA can fetch the exact corrected artifact from FastAPI after the pass runs:
+
+```http
+GET /session/{session_id}/corrected-transcript
+```
+
+It returns the same `segments` shape as live history so `scripts/transcript-quality.py` can score the corrected rows directly. An empty `segments` array means the visit has not produced a corrected artifact yet.
+
+The browser then sends the transcript rows it can see, including current role labels. FastAPI normalizes those rows, stores them as the selected summary context, calls the off-GPU summary agent, and publishes a summary event. When a corrected post-visit transcript exists, FastAPI prefers those corrected rows for summary generation and exposes their stable `segment_id` values as citation sources. Invalid or hallucinated citation IDs are removed before the browser receives the summary; valid citations render as source chips with the corrected row excerpt and can highlight the matching visible transcript row when that row is on screen.
 
 ```mermaid
 flowchart LR
     Visible["Visible transcript rows\nrole + text + timestamps"]
+    Correction["post-stop correction\nretained audio + live row scaffold"]
     Symfony["Symfony summary proxy"]
     Context["summary_request.py\nbuild_summary_context"]
     Agent["summary_agent.py\nOllama or Bedrock"]
-    KB["clinical_hints.py\ntiny CPU KB/rules"]
+    Sources["corrected segment IDs\nvalidated citations"]
+    KB["clinical_context.py\ntiny CPU KB retrieval"]
     MercureSummary["Mercure summary topic"]
-    MercureHints["Mercure hints topic"]
     HTTP["HTTP JSON response"]
     Browser["Browser summary panel"]
 
-    Visible --> Symfony --> Context --> Agent --> HTTP --> Browser
+    Visible --> Correction --> Context
+    Visible --> Symfony --> Context --> Sources --> Agent --> HTTP --> Browser
     Agent --> MercureSummary --> Browser
-    Context --> KB --> MercureHints --> Browser
-    KB --> HTTP
+    Context --> KB --> Agent
 ```
 
-Clinical hints are assistive only. They do not diagnose, prescribe, mutate transcript text, or block summary display. If hint Mercure publish fails, the hints can still be returned in the summary HTTP response.
+Clinical context snippets are assistive only. They do not diagnose, prescribe, mutate transcript text, or block summary display.
 
 ## Configuration Precedence Worth Knowing
 
@@ -352,9 +394,9 @@ Other high-value env contracts:
 | `MERCURE_HUB_URL` | FastAPI | Internal FastAPI-to-Mercure publish URL. |
 | `MERCURE_JWT_SECRET` / `MERCURE_JWT` | FastAPI and Mercure | Publish auth for browser-visible events. |
 | `NEMO_STREAM_INPUT_FORMAT` | FastAPI | Audio contract, currently `pcm`. |
+| `NEMO_SESSION_ENGINE` | FastAPI | `windowed` (Compose default) or `streaming` (M22 engine; `start-dev.sh` default). |
 | `NEMO_MAX_WORKERS` | FastAPI | NeMo GPU worker pool size. |
 | `SESSION_STORAGE` / `SESSION_DB_PATH` | FastAPI | Memory versus SQLite transcript storage. |
-| `CLINICAL_HINTS_ENABLED` | FastAPI | Turns the optional hints lane on or off. |
 | `MEDICAL_BOOST_ENABLED` | `NemoPipeline` | Enables conservative post-ASR medical term correction, not decode-time phrase boosting. |
 
 ## What Each Layer Owns
@@ -363,8 +405,8 @@ Other high-value env contracts:
 | --- | --- | --- |
 | Browser | Audio capture, demo WAV replay, WebSocket send, Mercure subscribe, transcript UI, manual role correction requests, summary request body. | NeMo inference, durable transcript state, model provider selection. |
 | Symfony | `/scribe` page, UUID creation, Twig config, dev audio fixture route, same-origin summary/model-health/history/roles helpers. | Live audio frames, NeMo, role queue, summary generation. |
-| FastAPI | WebSocket ingest, UUID validation, NeMo executor, session lifecycle, transcript storage, role inference queue, summaries, hints, health, Mercure publishing. | Rendering the main page, browser DOM state, PHP routing. |
-| NeMo pipeline | Sortformer diarization, Parakeet ASR, optional post-ASR medical correction. | Role inference, summaries, clinical hints, persistent storage. |
+| FastAPI | WebSocket ingest, UUID validation, NeMo executor, session lifecycle, transcript storage, role inference queue, summaries, health, Mercure publishing. | Rendering the main page, browser DOM state, PHP routing. |
+| NeMo pipeline | Sortformer diarization, Parakeet ASR, optional post-ASR medical correction. | Role inference, summaries, clinical context retrieval, persistent storage. |
 | Mercure | Transient SSE fan-out to subscribed browsers. | Transcript history or replayable durable state. |
 | Ollama / Bedrock | Off-GPU language model calls for roles and summaries. | GPU speech recognition. |
 
@@ -386,12 +428,12 @@ Read in this order for the main flow:
 1. `src/Controller/ScribeController.php`: start with `index`, then `summary`, `history`, `roles`, and `modelHealth`.
 2. `templates/scribe/index.html.twig`: look for the `CONFIG` object near the bottom; this is the browser contract Symfony injects.
 3. `public/js/scribe-recording.js` and `public/js/scribe-streaming.js`: start/stop/reconnect, WebSocket setup, PCM conversion, and Mercure subscription.
-4. `public/js/scribe-transcript.js` and `public/js/scribe-output.js`: raw segments, role updates, summaries, hints, and replay states.
+4. `public/js/scribe-transcript.js`, `public/js/scribe-output.js`, and `public/js/scribe-actions.js`: raw segments, role updates, summaries, replay states, and post-visit actions.
 5. `strands_agents/api/server.py`: FastAPI route table and shared service wiring.
 6. `strands_agents/api/streaming_session.py`: live audio loop that stores, publishes, and queues role work.
 7. `strands_agents/nemo_session.py` and `strands_agents/nemo_pipeline.py`: per-session audio buffering and the singleton GPU speech pipeline.
 8. `strands_agents/api/role_inference_queue.py`, `strands_agents/agents/transcription_agent.py`, and `strands_agents/tools/assign_roles.py`: async speaker-to-role updates.
-9. `strands_agents/api/summary_request.py`, `strands_agents/api/summary_generation.py`, `strands_agents/agents/summary_agent.py`, and `strands_agents/clinical_hints.py`: post-visit summaries and assistive hints.
+9. `strands_agents/api/summary_request.py`, `strands_agents/api/summary_generation.py`, `strands_agents/agents/summary_agent.py`, and `strands_agents/clinical_context.py`: post-visit summaries and clinical context retrieval.
 10. `docker-compose.yml`, `.env.example`, and `config/packages/framework.yaml`: local ports, env propagation, browser-facing URLs, and model provider selection.
 
 ## Common Change Boundaries
@@ -405,7 +447,8 @@ Use these boundaries before editing:
 | Mercure topic names or event payloads | `ScribeController::index`, `templates/scribe/index.html.twig`, `public/js/scribe-recording.js`, `public/js/scribe-transcript.js`, `public/js/scribe-output.js`, `strands_agents/api/*` publishers |
 | NeMo model loading or GPU concurrency | `strands_agents/nemo_pipeline.py`, `strands_agents/api/server.py`, `docker/nemo/Dockerfile`, `docker-compose.yml` |
 | Role provider/model behavior | `strands_agents/agents/transcription_agent.py`, `strands_agents/api/server.py`, `.env.example`, `docker-compose.yml`, `README_STACK.md` |
-| Summary or hints behavior | `public/js/scribe-output.js`, `src/Controller/ScribeController.php`, `strands_agents/api/summary_request.py`, `strands_agents/api/summary_generation.py`, `strands_agents/clinical_hints.py` |
+| Summary behavior | `public/js/scribe-output.js`, `src/Controller/ScribeController.php`, `strands_agents/api/summary_request.py`, `strands_agents/api/summary_generation.py`, `strands_agents/clinical_context.py` |
+| Post-stop correction behavior | `public/js/scribe-output.js`, `src/Controller/ScribeController.php`, `strands_agents/api/server.py`, `strands_agents/post_visit_correction.py`, `strands_agents/corrected_role_cues.py` |
 | Storage persistence | `strands_agents/session.py`, `strands_agents/storage.py`, `strands_agents/api/server.py`, `docker-compose.yml` |
 
 ## Verification Commands

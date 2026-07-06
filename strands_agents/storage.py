@@ -27,11 +27,18 @@ class StorageBackend(Protocol):
 
     def append_segment(self, session_id: str, segment: dict) -> None: ...
     def replace_segments(self, session_id: str, segments: list[dict]) -> None: ...
+    def replace_corrected_segments(
+        self, session_id: str, segments: list[dict]
+    ) -> None: ...
     def merge_browser_segments(
         self, session_id: str, segments: list[dict]
     ) -> dict: ...
     def get_segments(self, session_id: str) -> list[dict]: ...
     def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str: ...
+    def get_corrected_segments(self, session_id: str) -> list[dict]: ...
+    def get_corrected_transcript_text(
+        self, session_id: str, max_chars: int = 3500
+    ) -> str: ...
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None: ...
     def set_row_role(self, session_id: str, segment_id: str, role: str) -> bool: ...
     def set_auto_row_roles(self, session_id: str, row_roles: dict[str, str]) -> None: ...
@@ -116,8 +123,28 @@ class SqliteBackend:
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS corrected_segments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    speaker_id TEXT,
+                    text TEXT,
+                    start REAL,
+                    end REAL,
+                    is_interim INTEGER DEFAULT 0,
+                    role TEXT,
+                    position INTEGER NOT NULL,
+                    segment_id TEXT,
+                    role_source TEXT,
+                    source TEXT,
+                    source_model TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_segments_session_position
                     ON segments(session_id, position);
+
+                CREATE INDEX IF NOT EXISTS idx_corrected_segments_session_position
+                    ON corrected_segments(session_id, position);
             """)
             # Databases created before row corrections lack the new columns;
             # SQLite raises "duplicate column" once they exist, which is fine.
@@ -218,6 +245,55 @@ class SqliteBackend:
                     ),
                 )
             self._reapply_row_role_overrides(session_id)
+            self._conn.commit()
+
+    def replace_corrected_segments(self, session_id: str, segments: list[dict]) -> None:
+        """Replace post-visit corrected transcript rows without touching live history.
+
+        Args:
+            session_id: Recording UUID whose corrected transcript is replaced.
+            segments: Corrected transcript payloads; empty clears the corrected artifact.
+        """
+        with self._lock:
+            self._ensure_session(session_id)
+            self._conn.execute(
+                "DELETE FROM corrected_segments WHERE session_id = ?",
+                (session_id,),
+            )
+            for position, segment in enumerate(segments):
+                self._conn.execute(
+                    """
+                    INSERT INTO corrected_segments (
+                        session_id,
+                        speaker_id,
+                        text,
+                        start,
+                        end,
+                        is_interim,
+                        role,
+                        position,
+                        segment_id,
+                        role_source,
+                        source,
+                        source_model
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        segment.get("speaker_id"),
+                        segment.get("text"),
+                        segment.get("start"),
+                        segment.get("end"),
+                        1 if segment.get("is_interim") else 0,
+                        segment.get("role"),
+                        position,
+                        str(segment.get("segment_id", "")) or None,
+                        segment.get("role_source"),
+                        segment.get("source"),
+                        segment.get("source_model"),
+                    ),
+                )
             self._conn.commit()
 
     def merge_browser_segments(self, session_id: str, segments: list[dict]) -> dict:
@@ -326,6 +402,50 @@ class SqliteBackend:
             segments.append(seg)
         return segments
 
+    def get_corrected_segments(self, session_id: str) -> list[dict]:
+        """Return post-visit corrected rows without changing live history.
+
+        Args:
+            session_id: Recording UUID requested by a corrected transcript consumer.
+
+        Returns:
+            Corrected segment list; empty means no corrected artifact exists.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, source, source_model
+                FROM corrected_segments
+                WHERE session_id = ?
+                ORDER BY position
+                """,
+                (session_id,),
+            ).fetchall()
+
+        segments = []
+        # Corrected rows use the same public shape as live rows, plus optional
+        # provenance fields for the slower ASR/alignment pass.
+        for row in rows:
+            seg: dict = {
+                "speaker_id": row[0],
+                "text": row[1],
+                "start": row[2],
+                "end": row[3],
+                "is_interim": bool(row[4]),
+            }
+            if row[5] is not None:
+                seg["role"] = row[5]
+            if row[6]:
+                seg["segment_id"] = row[6]
+            if row[7]:
+                seg["role_source"] = row[7]
+            if row[8]:
+                seg["source"] = row[8]
+            if row[9]:
+                seg["source_model"] = row[9]
+            segments.append(seg)
+        return segments
+
     def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str:
         """Return the accumulated transcript as plain text (for role inference context).
 
@@ -342,6 +462,30 @@ class SqliteBackend:
         segments = self.get_segments(session_id)
         lines = []
         # Each stored segment contributes one role-aware line for the agent.
+        for seg in segments:
+            speaker = seg.get("role", seg.get("speaker_id", "UNKNOWN"))
+            text = seg.get("text", "")
+            lines.append(f"[{speaker}] {text}")
+
+        full_text = "\n".join(lines)
+        return _truncate_transcript_text(full_text, max_chars)
+
+    def get_corrected_transcript_text(
+        self, session_id: str, max_chars: int = 3500
+    ) -> str:
+        """Return corrected transcript text for high-accuracy summary input.
+
+        Args:
+            session_id: Recording UUID whose corrected transcript feeds summary generation.
+            max_chars: Maximum characters; `0` returns empty context to callers.
+
+        Returns:
+            Role-attributed corrected transcript text; empty means no corrected
+            transcript is available for that session.
+        """
+        segments = self.get_corrected_segments(session_id)
+        lines = []
+        # Each corrected row contributes one role-aware line for the agent.
         for seg in segments:
             speaker = seg.get("role", seg.get("speaker_id", "UNKNOWN"))
             text = seg.get("text", "")
@@ -478,6 +622,9 @@ class SqliteBackend:
             session_id: Recording UUID to remove; unknown IDs leave storage unchanged.
         """
         with self._lock:
+            self._conn.execute(
+                "DELETE FROM corrected_segments WHERE session_id = ?", (session_id,)
+            )
             self._conn.execute(
                 "DELETE FROM segments WHERE session_id = ?", (session_id,)
             )

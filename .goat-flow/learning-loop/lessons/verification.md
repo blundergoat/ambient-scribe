@@ -5,6 +5,42 @@ last_reviewed: 2026-07-06
 
 # READ / SCOPE / VERIFY Lessons
 
+## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
+
+**Created:** 2026-07-06
+**What happened:** The first corrected source-chip scorer CLI inserted `strands_agents`
+into `sys.path` so it could import the helper during local script execution. Gruff flagged
+`design.runtime-sys-path-mutation` because that path can shadow later imports for the whole
+process.
+**Evidence:** `scripts/corrected-source-chip-score.py` (search: "def load_score_module") now
+loads the helper by file path, and `strands_agents/corrected_source_chip_score.py`
+(search: "class SourceChipArtifactScore") keeps the pure scorer importable for tests.
+**Prevention:** For fixture-only CLIs that wrap repo-local helpers, prefer
+`importlib.util.spec_from_file_location` or package-level imports that are already available
+from the caller environment. Do not add repo directories to `sys.path` inside the script.
+
+## Lesson: Post-visit correction smoke tests must stay inside reconnect grace
+
+**Created:** 2026-07-06
+**What happened:** A consult-03 browser smoke replay reached `02:57` and generated a
+summary, but the corrected transcript artifact was empty. The app had behaved correctly:
+the summary click happened after `session_lifecycle.grace_period_expired`, so `/correction`
+could no longer access retained audio and fell back to live rows.
+**Prevention:** When testing the post-visit correction lane manually, click Summarise
+immediately after Stop/finalized and verify logs include both `correction.completed` and
+`summary.requested source=corrected_segments`. A generated summary alone only proves the
+fallback path when correction grace has expired.
+
+## Lesson: Long runtime probes should become small scripts before execution
+
+**Created:** 2026-07-06
+**What happened:** During M03 post-visit timestamp work, an inline `docker compose exec`
+probe with a long embedded Python heredoc was blocked by the PreToolUse hook as too complex
+to review safely.
+**Prevention:** For GPU/runtime probes that need more than a few shell steps, add a small
+fixture-only script with `apply_patch`, compile it, and then run the script through the
+container. This gives the hook and reviewer a stable artifact instead of a dense terminal blob.
+
 ## Lesson: Graceful client recovery can disguise a server crash as a clean stop (2026-07-05)
 
 A demo replay "stopped by itself" at ~70s and was signed off as the socket-drop recovery path working: the browser drained, showed "Replay stopped", and even produced good ground-truth metrics. The server had actually CRASHED (`ValueError: buffer size must be a multiple of element size` in the new windowed emission) - the drop handler turned the crash into exactly the UI a deliberate stop produces. Two layers hid it: `logger.error("websocket.error", extra={...})` carried the exception only in invisible `extra` fields and logged no traceback (no `exc_info`), so even a reproduction showed a bare ERROR line until the logger was instrumented first (`strands_agents/api/streaming_session.py`, search: "websocket.error %s").
@@ -321,7 +357,7 @@ During M11, the plan targeted NeMo decode-time phrase boosting, but the exact mu
 ## Lesson: Hidden sidebars need layout-state smoke tests (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `templates/scribe/index.html.twig` (search: "consultation-workspace:has(.clinical-hints:not(.hidden))"), `public/js/scribe-output.js` (search: "function renderClinicalHints").
+**Evidence:** `templates/scribe/index.html.twig` (search: ".summary-column:not(:has(.summary-panel:not(.hidden)))"), `public/js/scribe-output.js` (search: "function renderSummary").
 
 During M12, the first clinical-hints UI pass hid the sidebar element but left a dedicated desktop grid column in the base layout. Static analyzers and API tests stayed green, but the clinician page would have opened with blank right-side space until hints arrived.
 
@@ -330,7 +366,7 @@ During M12, the first clinical-hints UI pass hid the sidebar element but left a 
 ## Lesson: Optional JSON knowledge files need malformed-file coverage (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `strands_agents/clinical_hints.py` (search: "except json.JSONDecodeError"), `tests/python/test_clinical_hints.py` (search: "test_load_clinical_knowledge_ignores_invalid_json").
+**Evidence:** `strands_agents/clinical_context.py` (search: "except json.JSONDecodeError"), `tests/python/test_clinical_context.py` (search: "test_load_clinical_knowledge_ignores_invalid_json").
 
 During M12, the clinical KB loader handled missing files and invalid shapes but did not handle malformed JSON. A bad PoC knowledge file would have turned an assistive hint/grounding feature into a summary-generation failure for the user.
 
@@ -393,3 +429,51 @@ actually missed the data (payload contents via SSE tap, dev panel, or browser st
 check for intentional filters on the counting path. When a browser flow has sibling
 paths (live vs replay, stop vs reset), read every sibling before generalizing evidence
 from one of them.
+
+## Lesson: Agent-only QA artifacts must be fetched from the agent origin (2026-07-06)
+
+**Created:** 2026-07-06
+**Evidence:** `strands_agents/api/server.py` (search: "/session/{session_id}/history"), `strands_agents/api/server.py` (search: "/session/{session_id}/corrected-transcript"), `src/Controller/ScribeController.php` (search: "public function correction").
+
+During corrected-transcript manual QA, the browser replay, correction, and summary all
+succeeded, but the Playwright artifact script failed with `Unexpected token '<'` after
+fetching `/session/{id}/history` from the Symfony app origin. Symfony correctly returned
+HTML 404 because only summary/correction have same-origin proxy routes; history and
+corrected-transcript are FastAPI QA routes on the agent port.
+
+**Lesson:** Before fetching a manual QA artifact, verify which service owns the route.
+Use the FastAPI agent origin for `/session/{id}/history` and
+`/session/{id}/corrected-transcript` unless a Symfony proxy exists. Treat JSON parse
+errors from HTML as route-origin mistakes before treating the product flow as failed.
+
+## Lesson: New ASR checkpoints need pinned-container proof (2026-07-06)
+
+**Created:** 2026-07-06
+**Evidence:** `scripts/eval-second-pass.sh` (search: "run_container_asr"), `scripts/second_pass_asr.py` (search: "ASRModel.from_pretrained"), `.goat-flow/plans/second-pass-accuracy/M01-prove-second-pass-eval.md` (search: "att_chunk_context_size").
+
+During the second-pass accuracy spike, `nvidia/parakeet-unified-en-0.6b` looked like
+the right newer English ASR candidate from the model card, but failed inside the pinned
+`nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3` container with
+`ConformerEncoder.__init__() got an unexpected keyword argument 'att_chunk_context_size'`.
+The fallback `nvidia/parakeet-tdt-0.6b-v3` loaded and produced scoreable artifacts in the
+same container, proving the issue was model/runtime API compatibility rather than the
+fixture runner.
+
+**Lesson:** Treat model-card recommendations as candidates, not implementation facts.
+Before planning product wiring for a newer ASR checkpoint, run it inside the exact pinned
+Docker runtime and record a fixture score or a precise compatibility failure.
+
+## Lesson: Correction allocators need ASR-drop replay proof (2026-07-06)
+
+**Created:** 2026-07-06
+**Evidence:** `strands_agents/post_visit_correction.py` (search: "append_gap_after_missing_anchor"), `tests/python/test_post_visit_correction.py` (search: "test_build_corrected_segments_preserves_live_row_when_asr_drops_patient_text").
+
+The first anchor-allocation pass fixed opener/empathy rows and passed focused tests, but a
+fresh consult-03 browser replay exposed a dropped patient utterance: second-pass ASR omitted
+"and I just want you to do something", so the allocator placed the next doctor words into
+patient-timed rows and role cleanup labelled them as doctor. Offline rebuild after preserving
+missing-anchor live rows improved corrected strict attribution from 90.3% to 96.8%.
+
+**Lesson:** For post-ASR correction, test the failure mode where the second-pass model drops
+an utterance that live preview captured. Missing anchors should preserve live text or remain
+empty; they must not consume neighboring corrected words just to keep every row populated.

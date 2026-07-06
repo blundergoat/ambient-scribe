@@ -1,9 +1,9 @@
 """
-Clinical hint and tiny RAG helpers for the assistive UI lane.
+Tiny clinical-context retrieval helpers for summary generation.
 
 This module is deliberately CPU-only and rule based for the PoC. It retrieves
-short synthetic knowledge snippets and emits clinician-review suggestions that
-can be published on the Mercure hints topic without touching the NeMo GPU.
+short synthetic knowledge snippets that can ground the post-visit summary
+without touching the NeMo GPU.
 """
 
 from __future__ import annotations
@@ -17,19 +17,19 @@ def default_clinical_knowledge_path() -> Path:
     """Return the bundled PoC knowledge-base path.
 
     Returns:
-        Path to curated synthetic KB snippets used by summary grounding and hints.
+        Path to curated synthetic KB snippets used by summary grounding.
     """
     return Path(__file__).resolve().parent / "data" / "clinical_knowledge.json"
 
 
 def load_clinical_knowledge(path: str | Path | None = None) -> list[dict[str, Any]]:
-    """Load the tiny clinical knowledge base used for suggestions.
+    """Load the tiny clinical knowledge base used for summary context.
 
     Args:
         path: Optional KB path; null uses the bundled PoC corpus.
 
     Returns:
-        Knowledge snippets; empty means summaries and hints run without RAG context.
+        Knowledge snippets; empty means summaries run without RAG context.
     """
     knowledge_path = Path(path) if path else default_clinical_knowledge_path()
     # Missing KB should not stop summaries or transcript rendering.
@@ -99,57 +99,3 @@ def retrieve_clinical_context(
         }
         for _, entry in scored_entries[:limit]
     ]
-
-
-def generate_clinical_hints(transcript: str) -> list[dict[str, str]]:
-    """Create clinician-review suggestions from transcript text and KB rules.
-
-    Args:
-        transcript: Role-attributed text; blank produces no hints.
-
-    Returns:
-        Structured hints; empty means the sidebar remains hidden.
-    """
-    # Without transcript text, there is no evidence span to show the clinician.
-    if not transcript.strip():
-        return []
-
-    transcript_lower = transcript.lower()
-    hints: list[dict[str, str]] = []
-
-    # NSAID plus ACE inhibitor can matter for renal monitoring in common practice.
-    if "naproxen" in transcript_lower and "lisinopril" in transcript_lower:
-        hints.append(
-            {
-                "type": "drug_interaction",
-                "text": "Review renal risk when naproxen is used with lisinopril.",
-                "evidence_span": "naproxen + lisinopril",
-            }
-        )
-
-    # Chest-pain sessions should usually document objective cardiac checks.
-    if "chest pain" in transcript_lower and "ecg" not in transcript_lower:
-        hints.append(
-            {
-                "type": "missing_objective",
-                "text": "Consider documenting objective cardiac assessment such as ECG or vitals.",
-                "evidence_span": "chest pain",
-            }
-        )
-
-    # Medication changes need explicit follow-up in the clinician note.
-    if any(
-        term in transcript_lower
-        for term in ("prescribing", "prescribe", "start ", "add ")
-    ):
-        # A transcript with no follow-up language should prompt a review reminder.
-        if "follow up" not in transcript_lower and "review" not in transcript_lower:
-            hints.append(
-                {
-                    "type": "follow_up",
-                    "text": "Consider adding a follow-up plan for the medication change.",
-                    "evidence_span": "medication change",
-                }
-            )
-
-    return hints

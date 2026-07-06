@@ -10,7 +10,13 @@ from fastapi.testclient import TestClient
 import api.server as api_server
 from agents import MEDICAL_SUMMARY_PROMPT
 from api.server import app, sessions
-from api.summary_generation import SessionSummaryOutput, summary_generation_prompt
+from api.summary_generation import (
+    SessionSummaryOutput,
+    SummaryCitationOutput,
+    SummarySectionOutput,
+    summary_generation_prompt,
+    summary_with_validated_citations,
+)
 
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000099"
 
@@ -90,6 +96,7 @@ class TestSummaryEndpoint:
         assert len(data["sections"]) == 1
         assert data["sections"][0]["heading"] == "Subjective"
         assert len(data["key_points"]) == 1
+        assert "clinical_hints" not in data
 
     def test_summary_uses_browser_visible_segments_from_request(self):
         """Summaries can use only the transcript rows visible in the browser."""
@@ -122,6 +129,66 @@ class TestSummaryEndpoint:
         summary_runner.assert_called_once()
         assert "[PATIENT] I have sore red skin." in summary_runner.call_args.args[1]
         assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "I have sore red skin."
+
+    def test_summary_prefers_corrected_segments_when_available(self):
+        """Corrected post-visit rows outrank stale browser-visible preview text."""
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "role": "PATIENT",
+                "text": "browser preview typo",
+                "start": 0.0,
+                "end": 1.0,
+                "segment_id": "live-0001",
+            },
+        )
+        sessions.replace_corrected_segments(
+            TEST_SESSION_ID,
+            [
+                {
+                    "speaker_id": "spk_0",
+                    "role": "DOCTOR",
+                    "text": "corrected post visit text",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "segment_id": "corrected-0001",
+                }
+            ],
+        )
+
+        mock_summary = {
+            "title": "Corrected Transcript",
+            "sections": [],
+            "key_points": [],
+        }
+
+        with patch("api.server._run_summary_generation", return_value=mock_summary) as summary_runner:
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(
+                f"/session/{TEST_SESSION_ID}/summary",
+                json={
+                    "segments": [
+                        {
+                            "speaker_id": "spk_0",
+                            "role": "PATIENT",
+                            "text": "browser preview typo",
+                            "start": 0.0,
+                            "end": 1.0,
+                            "segment_id": "live-0001",
+                        }
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        summary_runner.assert_called_once()
+        transcript = summary_runner.call_args.args[1]
+        assert "[DOCTOR] corrected post visit text" in transcript
+        assert "browser preview typo" not in transcript
+        citation_rows = summary_runner.call_args.args[2]
+        assert citation_rows[0]["segment_id"] == "corrected-0001"
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "browser preview typo"
 
     def test_summary_502_on_generation_failure(self):
         sessions.append_segment(
@@ -172,75 +239,6 @@ class TestSummaryEndpoint:
         data = response.json()
         assert data["sections"] == []
         assert data["key_points"] == []
-
-    def test_summary_publishes_clinical_hints(self, monkeypatch):
-        """Hints are published and returned when the transcript has review suggestions."""
-        sessions.append_segment(
-            TEST_SESSION_ID,
-            {
-                "speaker_id": "spk_0",
-                "text": "I am prescribing naproxen while you continue lisinopril.",
-                "start": 0.0,
-                "end": 3.0,
-            },
-        )
-        published_events = []
-
-        async def fake_publish(topic, payload, event_id=None):
-            published_events.append((topic, payload, event_id))
-            return True
-
-        monkeypatch.setattr(api_server, "CLINICAL_HINTS_ENABLED", True)
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-
-        with patch(
-            "api.server._run_summary_generation",
-            return_value={
-                "title": "Medication Review",
-                "sections": [],
-                "key_points": [],
-            },
-        ):
-            client = TestClient(app, raise_server_exceptions=False)
-            response = client.post(f"/session/{TEST_SESSION_ID}/summary")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["clinical_hints"][0]["type"] == "drug_interaction"
-        assert any(topic.endswith("/hints") for topic, _, _ in published_events)
-
-    def test_summary_returns_hints_when_mercure_publish_fails(self, monkeypatch):
-        """HTTP fallback still lets the browser render hints after Mercure failure."""
-        sessions.append_segment(
-            TEST_SESSION_ID,
-            {
-                "speaker_id": "spk_0",
-                "text": "Patient reports chest pain today.",
-                "start": 0.0,
-                "end": 3.0,
-            },
-        )
-
-        async def failing_publish(topic, payload, event_id=None):
-            return False
-
-        monkeypatch.setattr(api_server, "CLINICAL_HINTS_ENABLED", True)
-        monkeypatch.setattr(api_server, "publish_to_mercure", failing_publish)
-
-        with patch(
-            "api.server._run_summary_generation",
-            return_value={
-                "title": "Chest Pain",
-                "sections": [],
-                "key_points": [],
-            },
-        ):
-            client = TestClient(app, raise_server_exceptions=False)
-            response = client.post(f"/session/{TEST_SESSION_ID}/summary")
-
-        assert response.status_code == 200
-        assert response.json()["clinical_hints"][0]["type"] == "missing_objective"
-
 
 class TestRunSummaryGeneration:
     """Tests for the _run_summary_generation helper."""
@@ -299,3 +297,138 @@ class TestRunSummaryGeneration:
         assert "Chest pain documentation" in prompt
         assert "Document ECG and vitals." in prompt
         assert "Doctor: Patient has chest pain." in prompt
+
+    def test_summary_prompt_includes_corrected_source_ids_for_citations(self):
+        """Corrected transcript rows are exposed as stable citation sources."""
+        prompt = summary_generation_prompt(
+            "[DOCTOR] Please use the cream.",
+            [],
+            citation_segments=[
+                {
+                    "segment_id": "corrected-0001",
+                    "role": "DOCTOR",
+                    "text": "Please use the cream.",
+                    "start": 65.2,
+                    "end": 67.8,
+                }
+            ],
+        )
+
+        assert "source IDs" in prompt
+        assert '{"segment_id": "seg-0001"}' in prompt
+        assert "[source:corrected-0001 01:05-01:07 DOCTOR] Please use the cream." in prompt
+
+    def test_summary_prompt_falls_back_when_corrected_rows_are_not_citable(self):
+        """Unidentified corrected rows still produce an uncited note prompt."""
+        prompt = summary_generation_prompt(
+            "[DOCTOR] Please use the cream.",
+            [],
+            citation_segments=[
+                {
+                    "segment_id": "",
+                    "role": "DOCTOR",
+                    "text": "Please use the cream.",
+                    "start": 65.2,
+                    "end": 67.8,
+                }
+            ],
+        )
+
+        assert "[DOCTOR] Please use the cream." in prompt
+        assert "Use only these source IDs" not in prompt
+
+    def test_summary_citation_validation_omits_invalid_and_duplicate_ids(self):
+        """Only source IDs that map to corrected rows reach the browser payload."""
+        structured_summary = SessionSummaryOutput(
+            title="Skin Review",
+            sections=[
+                SummarySectionOutput(
+                    heading="Plan",
+                    content="Use topical treatment.",
+                    citations=[
+                        SummaryCitationOutput(segment_id="corrected-0001", text="model text ignored"),
+                        SummaryCitationOutput(segment_id="missing-9999"),
+                        SummaryCitationOutput(segment_id="corrected-0001"),
+                    ],
+                )
+            ],
+            key_points=["Treatment discussed"],
+        )
+
+        validated_summary = summary_with_validated_citations(
+            structured_summary,
+            [
+                {
+                    "segment_id": "corrected-0001",
+                    "role": "DOCTOR",
+                    "text": "Use the cream twice daily.",
+                    "start": 12.0,
+                    "end": 14.5,
+                }
+            ],
+        )
+
+        citations = validated_summary.sections[0].citations
+        assert len(citations) == 1
+        assert citations[0].segment_id == "corrected-0001"
+        assert citations[0].text == "Use the cream twice daily."
+        assert citations[0].role == "DOCTOR"
+        assert citations[0].start == 12.0
+        assert citations[0].end == 14.5
+
+    def test_summary_citation_validation_strips_citations_without_sources(self):
+        """Legacy summaries cannot leak model-invented citation IDs."""
+        structured_summary = SessionSummaryOutput(
+            title="Legacy",
+            sections=[
+                SummarySectionOutput(
+                    heading="Subjective",
+                    content="Patient reports pain.",
+                    citations=[SummaryCitationOutput(segment_id="seg-0001")],
+                )
+            ],
+        )
+
+        validated_summary = summary_with_validated_citations(structured_summary, [])
+
+        assert validated_summary.sections[0].citations == []
+
+    def test_run_summary_generation_hydrates_valid_citations(self):
+        """The route helper returns trusted citation details in the payload."""
+        mock_agent = MagicMock()
+        mock_agent.return_value.structured_output = SessionSummaryOutput(
+            title="Cited",
+            sections=[
+                SummarySectionOutput(
+                    heading="Plan",
+                    content="Use treatment.",
+                    citations=[SummaryCitationOutput(segment_id="corrected-0001")],
+                )
+            ],
+            key_points=[],
+        )
+
+        with patch("agents.create_summary_agent", return_value=mock_agent):
+            result = api_server._run_summary_generation(
+                "sid",
+                "[DOCTOR] Use treatment.",
+                [
+                    {
+                        "segment_id": "corrected-0001",
+                        "role": "DOCTOR",
+                        "text": "Use treatment.",
+                        "start": 3.0,
+                        "end": 4.0,
+                    }
+                ],
+            )
+
+        assert result["sections"][0]["citations"] == [
+            {
+                "segment_id": "corrected-0001",
+                "start": 3.0,
+                "end": 4.0,
+                "role": "DOCTOR",
+                "text": "Use treatment.",
+            }
+        ]

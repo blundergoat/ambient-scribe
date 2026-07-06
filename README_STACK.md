@@ -4,10 +4,9 @@ This file is the operational stack inventory for Ambient Scribe.
 It documents the models, runtimes, services, ports, and feature toggles that a
 developer or reviewer needs to understand before running or changing the app.
 The focus is the user-visible transcription flow: record a consultation, see
-speaker-labelled transcript cards, review a SOAP summary, and optionally see
-assistive clinical hints.
+speaker-labelled transcript cards, and review a SOAP summary.
 
-Last checked: 2026-07-05 against the local repo.
+Last checked: 2026-07-07 against the local repo.
 
 ## Short Version
 
@@ -21,7 +20,7 @@ The core invariant is:
 
 ```text
 NeMo owns the single NVIDIA GPU.
-Role inference, summaries, clinical hints, and medical term correction do not use that GPU.
+Role inference, summaries, clinical context retrieval, and medical term correction do not use that GPU.
 ```
 
 ## Runtime Services
@@ -30,7 +29,7 @@ Role inference, summaries, clinical hints, and medical term correction do not us
 | --- | --- | --- | --- |
 | Symfony app | `http://localhost:48082` | Serves `/scribe`, injects session config, proxies history/role endpoints | `Dockerfile`, `src/`, `templates/` |
 | FastAPI NeMo agent | `http://localhost:48101` | WebSocket audio ingest, NeMo inference, role queue, summaries, replay, Mercure publish | `strands_agents/`, `docker/nemo/Dockerfile` |
-| Mercure hub | `http://localhost:48137/.well-known/mercure` | Browser SSE fan-out for transcript, role, summary, and hint events | `docker-compose.yml` |
+| Mercure hub | `http://localhost:48137/.well-known/mercure` | Browser SSE fan-out for transcript, role, and summary events | `docker-compose.yml` |
 | Ollama | in-network `http://ollama:11434` | CPU-only local LLM provider for role and summary agents when `ROLE_AGENT_MODEL_PROVIDER=ollama`; starts through the `ollama` Compose profile, no host port published | `docker-compose.yml` service `ollama` |
 
 ## Model Inventory
@@ -39,12 +38,12 @@ Role inference, summaries, clinical hints, and medical term correction do not us
 | --- | --- | --- | --- | --- |
 | Speaker diarization | `nvidia/diar_streaming_sortformer_4spk-v2.1` via `SortformerEncLabelModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Streaming Sortformer v2.1. The Dockerfile pre-downloads `diar_streaming_sortformer_4spk-v2.1.nemo`. |
 | Automatic speech recognition | `nvidia/multitalker-parakeet-streaming-0.6b-v1` via `EncDecMultiTalkerRNNTBPEModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Multitalker Parakeet 0.6B. The Dockerfile pre-downloads `multitalker-parakeet-streaming-0.6b-v1.nemo`. |
+| Post-visit transcript correction | `nvidia/parakeet-tdt-0.6b-v3` second-pass ASR via `strands_agents/post_visit_correction.py` | NeMo container, NVIDIA GPU (runs in the NeMo executor after Stop) | `POST_VISIT_ASR_MODEL` (code default; not listed in `.env.example`) | Re-transcribes retained session audio into corrected rows stored beside the live transcript. Summaries prefer corrected rows and cite their `segment_id` values as source chips. |
 | Role inference | Strands Agent with `assign_roles` tool | AWS Bedrock or CPU-only Ollama | `.env.example` and agent code default to `ROLE_AGENT_MODEL_PROVIDER=bedrock`; bare Compose falls back to `ollama` only when no env overrides it | Maps raw `spk_0`/`spk_1` labels to DOCTOR/PATIENT. Raw transcript still appears if this fails. |
 | Local role/summary model | `qwen3.5:9b` through Ollama | CPU and system RAM | `ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b` | Recommended local model in `.env.example`; `qwen2.5:7b` is documented as faster but lower quality. |
 | Bedrock role/summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` in `.env.example` and agent code defaults | AWS Bedrock | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | Used when cloud credentials are provided. Compose still has a no-`.env` fallback of `us.anthropic.claude-sonnet-4-20250514-v1:0`; normal local setup copies `.env.example`. |
-| Summary generation | Same Strands provider/model as role inference | AWS Bedrock or CPU-only Ollama | Same `ROLE_AGENT_*` env vars | Generates JSON SOAP-style sections and key points after the visit. Max tokens are 2048 in the summary agent. |
+| Summary generation | Same Strands provider/model as role inference | AWS Bedrock or CPU-only Ollama | Same `ROLE_AGENT_*` env vars | Generates JSON SOAP-style sections and key points after the visit. Max tokens default to 4096 (`SUMMARY_AGENT_MAX_TOKENS`). |
 | Clinical summary grounding | Project-authored `strands_agents/data/clinical_knowledge.json` | CPU keyword retrieval | Always available to summary prompt when snippets match | Not an LLM or external RAG service. It adds short documentation reminders to the summary prompt. |
-| Clinical hints sidebar | Rule-based hints in `strands_agents/clinical_hints.py` | CPU | `CLINICAL_HINTS_ENABLED=1` | Publishes non-blocking review suggestions to `scribe/session/{id}/hints`. |
 | Medical term correction | `strands_agents/data/medical_lexicon.txt` | CPU post-ASR text normaliser | `MEDICAL_BOOST_ENABLED=0` by default | Exact word-boundary replacement only. NeMo decode-time phrase boosting remains GPU-pending. |
 | Role fallback | Keyword heuristics in `strands_agents/api/role_heuristics.py` | CPU | Automatic after agent failure | Gives low-confidence labels when the configured Strands model is unavailable. |
 
@@ -60,6 +59,12 @@ Important files:
   `EncDecMultiTalkerRNNTBPEModel`.
 - `strands_agents/nemo_session.py` buffers live audio and hands complete windows
   to the pipeline.
+- `strands_agents/nemo_streaming_engine.py` is the M22 session-long streaming
+  engine (`NEMO_SESSION_ENGINE=streaming`): one Sortformer speaker cache owns
+  speaker identity for the whole visit instead of per-window re-diarization.
+- `strands_agents/post_visit_correction.py` runs the post-stop second-pass ASR
+  (`nvidia/parakeet-tdt-0.6b-v3`) over retained session audio in the same GPU
+  executor and writes corrected rows to the corrected-transcript storage lane.
 - `docker/nemo/Dockerfile` uses `nvcr.io/nvidia/nemo:26.02` and installs
   `nemo_toolkit[asr]==2.7.3`.
 - `docker-compose.yml` reserves one NVIDIA GPU for `nemo-agent`.
@@ -73,6 +78,7 @@ Important env vars:
 | `NEMO_MAX_WORKERS` | `2` | Thread pool size for GPU-bound work. Increasing this changes GPU concurrency. |
 | `NEMO_BUFFER_MAX_DURATION` | `900` | Safety cap for live audio buffer duration in seconds. |
 | `NEMO_SPEAKER_CAP` | `2` | Maximum visible speaker IDs before window-local extras merge back into stable IDs; `0` allows all detected speakers. |
+| `NEMO_SESSION_ENGINE` | `windowed` (Compose and `.env.example`) | Live transcription engine. `windowed` re-diarizes each window and stitches speaker IDs; `streaming` keeps one session-long Sortformer speaker cache (M22). `scripts/start-dev.sh` exports `streaming` for daily dev runs. |
 
 The Dockerfile VRAM budget reserves the GPU for Sortformer and Parakeet and
 explicitly warns not to co-locate a GPU LLM in the same runtime.
@@ -83,8 +89,8 @@ There are two Strands agents:
 
 | Agent | File | User-facing job | Tools | Max tokens |
 | --- | --- | --- | --- | --- |
-| Role inference | `strands_agents/agents/transcription_agent.py` | Decide which raw speaker is DOCTOR/PATIENT | `assign_roles` | 1024 |
-| Summary | `strands_agents/agents/summary_agent.py` | Produce the post-visit SOAP note JSON | none | 2048 |
+| Role inference | `strands_agents/agents/transcription_agent.py` | Decide which raw speaker is DOCTOR/PATIENT | `assign_roles` | 2048 (`ROLE_AGENT_MAX_TOKENS`) |
+| Summary | `strands_agents/agents/summary_agent.py` | Produce the post-visit SOAP note JSON | none | 4096 (`SUMMARY_AGENT_MAX_TOKENS`) |
 
 Both agents use the same provider selector:
 
@@ -107,9 +113,12 @@ no-env fallback. Offline local development uses Ollama by setting
 docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
-To reuse a host-installed Ollama instead, override `OLLAMA_HOST` (for example
-`http://host.docker.internal:11434`), but note that route is unreliable on some
-Docker / WSL2 setups.
+Inside Compose, `OLLAMA_HOST` is pinned to `http://ollama:11434` in
+`docker-compose.yml` and deliberately cannot be overridden from `.env`
+(`host.docker.internal` is unreachable from the agent container on some
+Docker / WSL2 setups and a stale value silently broke role inference).
+A host-installed Ollama is only reachable when running FastAPI outside
+Docker, where the `OLLAMA_HOST` env var applies normally.
 
 Bedrock requires credentials. Keep `ROLE_AGENT_MODEL_PROVIDER=bedrock`, provide
 `ROLE_AGENT_MODEL_ID`, and inject AWS credentials or an AWS profile outside the
@@ -126,7 +135,8 @@ GET /scribe
   -> ws://localhost:48101/ws/transcribe/{session_id}
   -> NeMo publishes raw transcript segments
   -> role queue publishes DOCTOR/PATIENT updates
-  -> summary endpoint publishes summary and optional hints
+  -> post-stop correction endpoint stores corrected rows (second-pass ASR)
+  -> summary endpoint prefers corrected rows and publishes the summary
   -> Mercure streams updates back to the browser
 ```
 
@@ -134,32 +144,30 @@ Mercure topics:
 
 | Topic | Payload purpose |
 | --- | --- |
-| `scribe/session/{id}/raw` | Immediate raw speaker transcript segments. |
+| `scribe/session/{id}/raw` | Immediate raw speaker transcript segments, the finalize event, and the end-of-session quality record. |
 | `scribe/session/{id}/roles` | Speaker-to-role mapping updates and relabelled segments. |
 | `scribe/session/{id}/summary` | Completed summary payloads. |
-| `scribe/session/{id}/hints` | Optional clinical-review suggestions. |
 
 Browser source files:
 
 - `public/js/scribe.js` owns shared UI state, roles, status, and safe DOM helpers.
 - `public/js/scribe-streaming.js` owns Mercure streams, reconnects, and PCM capture.
 - `public/js/scribe-transcript.js` owns transcript card rendering and relabelling.
-- `public/js/scribe-output.js` owns replay, summary rendering, downloads, and hints.
+- `public/js/scribe-output.js` owns replay, the correction-then-summary flow, and summary rendering with source chips.
+- `public/js/scribe-actions.js` owns post-visit action visibility, summary-panel state text, safe JSON response parsing, and keyboard shortcuts.
 - `public/js/scribe-dev.js` owns the local dev inspector panel.
 - `public/js/scribe-fixtures.js` owns the dev-only Demo Audio picker for generated WAV replay.
 
-## Clinical Assistance Lane
+## Clinical Summary Grounding
 
-Clinical assistance is intentionally lightweight in this version.
+Clinical context assistance is intentionally lightweight in this version.
 
-- `CLINICAL_HINTS_ENABLED=1` enables the hints lane.
 - `strands_agents/data/clinical_knowledge.json` is a project-authored PoC corpus,
   not clinical guideline authority.
 - `retrieve_clinical_context()` uses simple keyword scoring to add short notes
   to the summary prompt.
-- `generate_clinical_hints()` emits small review prompts such as missing
-  objective documentation, follow-up reminders, or medication-review prompts.
-- Hints never diagnose, prescribe, mutate the transcript, or block the summary.
+- The retrieval helper never diagnoses, prescribes, mutates the transcript, or
+  blocks the summary.
 
 ## Medical Phrase Normalisation
 
@@ -190,6 +198,10 @@ Role state is held by `strands_agents/tools/assign_roles.py` and cleaned with
 session lifecycle teardown or orphan cleanup. Transcript durability comes from
 the selected session storage backend, not from Mercure.
 
+Both backends also keep a separate corrected-transcript lane: the post-stop
+correction pass writes corrected rows beside (never over) the live rows, and
+`GET /session/{id}/corrected-transcript` exposes them for QA scoring.
+
 ## Core Dependency Floors
 
 | Area | Dependency floor or pin | Source |
@@ -217,7 +229,7 @@ the selected session storage backend, not from Mercure.
 
 - No GPU LLM runs inside the NeMo container.
 - No browser audio is processed by PHP.
-- No external vector database is used for clinical hints.
+- No external vector database is used for clinical summary grounding.
 - No real guideline corpus is bundled; the clinical KB is project-authored PoC data.
 - No NeMo decode-time phrase boosting is proven yet.
 - No production login/auth layer is documented in the current local `/scribe` path.

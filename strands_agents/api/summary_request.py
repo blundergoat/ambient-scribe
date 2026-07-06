@@ -3,7 +3,7 @@ Summary request helpers for browser-visible transcript text.
 
 The browser asks for a summary of the transcript rows the user can see. These
 helpers normalise that browser snapshot, update session storage, and publish
-summary/hint outputs while keeping `server.py` focused on HTTP routing and
+summary outputs while keeping `server.py` focused on HTTP routing and
 status codes.
 """
 
@@ -20,7 +20,6 @@ from storage import StorageBackend
 logger = logging.getLogger(__name__)
 
 PublishToMercure = Callable[[str, dict[str, Any], int | None], Awaitable[bool]]
-GenerateClinicalHints = Callable[[str], list[dict[str, str]]]
 
 
 class BrowserVisibleSegment(BaseModel):
@@ -60,18 +59,22 @@ class SummaryContext:
     Transcript context selected for one summary request.
 
     Use in the FastAPI summary route after the clinician clicks Summarise.
-    Browser-visible sources mean the UI sent the rows on screen; session-store
-    sources mean the user summarized the full stored transcript.
+    Corrected sources mean a slower post-visit pass has produced higher-quality
+    rows. Browser-visible sources mean the UI sent the rows on screen;
+    session-store sources mean the user summarized the full stored transcript.
 
     Attributes:
         stored_segments: Rows selected for summary; empty means the user has no text.
         transcript: Role-attributed text sent to the summary agent; empty cannot summarize.
         source: Log label explaining whether UI replay rows or stored rows were used.
+        citation_segments: Rows whose `segment_id` values may be cited by the
+            summary agent; empty keeps the legacy uncited summary flow.
     """
 
     stored_segments: list[dict[str, Any]]
     transcript: str
     source: str
+    citation_segments: list[dict[str, Any]]
 
 
 def build_summary_context(
@@ -89,6 +92,19 @@ def build_summary_context(
     Returns:
         SummaryContext with selected rows, text, and source label for logs.
     """
+    corrected_segments = sessions.get_corrected_segments(session_id)
+    # Corrected rows are opt-in at the storage layer, but summary generation is
+    # the first consumer that should prefer them once the slower pass exists.
+    if corrected_segments:
+        return SummaryContext(
+            stored_segments=corrected_segments,
+            transcript=sessions.get_corrected_transcript_text(
+                session_id, max_chars=8000
+            ),
+            source="corrected_segments",
+            citation_segments=corrected_segments,
+        )
+
     browser_visible_segments = browser_visible_segments_from_summary(summary_request)
     # Browser-provided rows anchor the note to the transcript the user can see,
     # merged so rows the browser missed (finalize flush, dropped events) still
@@ -116,12 +132,14 @@ def build_summary_context(
             stored_segments=merged_rows,
             transcript=transcript_text_from_segments(merged_rows),
             source="browser_visible_segments",
+            citation_segments=[],
         )
 
     return SummaryContext(
         stored_segments=sessions.get_segments(session_id),
         transcript=sessions.get_transcript_text(session_id, max_chars=8000),
         source="session_store",
+        citation_segments=[],
     )
 
 
@@ -204,32 +222,23 @@ def transcript_text_from_segments(
 async def publish_summary_outputs(
     session_id: str,
     summary: dict[str, Any],
-    transcript: str,
     *,
-    clinical_hints_enabled: bool,
     mercure_event_ids: dict[str, int],
     publish_to_mercure: PublishToMercure,
-    generate_clinical_hints: GenerateClinicalHints,
     logger: logging.Logger,
-) -> list[dict[str, str]]:
-    """Publish summary and optional clinical hints for the browser.
+) -> None:
+    """Publish summary output for the browser.
 
     Args:
         session_id: Browser session UUID; empty would publish to the wrong topic.
         summary: Summary payload; empty still publishes an empty panel state.
-        transcript: Transcript text used for assistive hints; empty means no hints.
-        clinical_hints_enabled: False means the hints sidebar remains hidden.
         mercure_event_ids: Per-session counters used for EventSource resume.
         publish_to_mercure: Browser event publisher; false means HTTP still returns data.
-        generate_clinical_hints: CPU-only hint generator used after summary success.
         logger: Process logger; null is not accepted because failures should be visible.
-
-    Returns:
-        Clinical hint list; empty means no sidebar suggestions are shown.
     """
     mercure_event_ids.setdefault(session_id, 0)
     mercure_event_ids[session_id] += 1
-    await publish_to_mercure(
+    delivered = await publish_to_mercure(
         f"scribe/session/{session_id}/summary",
         {
             "type": "summary",
@@ -238,29 +247,9 @@ async def publish_summary_outputs(
         },
         event_id=mercure_event_ids[session_id],
     )
-
-    clinical_hints: list[dict[str, str]] = []
-    # Clinical hints are assistive only and appear beside the generated summary.
-    if clinical_hints_enabled:
-        clinical_hints = generate_clinical_hints(transcript)
-        # No hints means the clinician's sidebar stays hidden for this session.
-        if clinical_hints:
-            mercure_event_ids[session_id] += 1
-            hints_delivered = await publish_to_mercure(
-                f"scribe/session/{session_id}/hints",
-                {
-                    "type": "clinical_hints",
-                    "session_id": session_id,
-                    "hints": clinical_hints,
-                },
-                event_id=mercure_event_ids[session_id],
-            )
-            # A failed Mercure publish still leaves hints in the HTTP summary response.
-            if not hints_delivered:
-                logger.warning(
-                    "clinical_hints.publish_failed session_id=%s",
-                    session_id,
-                    extra={"session_id": session_id},
-                )
-
-    return clinical_hints
+    if not delivered:
+        logger.warning(
+            "summary.publish_failed session_id=%s",
+            session_id,
+            extra={"session_id": session_id},
+        )
