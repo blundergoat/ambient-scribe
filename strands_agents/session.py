@@ -101,6 +101,55 @@ class SessionStore:
             self._apply_row_role_override(session, segment)
         session.last_accessed_at = time.monotonic()
 
+    def merge_browser_segments(self, session_id: str, segments: list[dict]) -> dict:
+        """Merge browser-visible rows into stored history without shrinking it.
+
+        Summary requests carry the rows the clinician sees. Rows the browser
+        lacks (finalize flush, filtered blanks) stay stored, matched rows take
+        the browser role only while no correction or automatic exception owns
+        them, and rows the server never emitted are not appended to a
+        populated history. An empty store falls back to insert semantics so a
+        reconnecting browser can still restore its transcript.
+
+        Args:
+            session_id: Recording UUID the browser is summarizing.
+            segments: Browser-visible rows; empty changes nothing.
+
+        Returns:
+            Counts for the summary path to log: `matched`, `unknown`, `restored`.
+        """
+        session = self._sessions.get(session_id)
+        # A session with no stored rows is the browser-restore workflow: the
+        # browser holds the only copy, so inserts are the correct behavior.
+        if session is None or not session.segments:
+            self.replace_segments(session_id, segments)
+            return {"matched": 0, "unknown": 0, "restored": True}
+
+        stored_by_id = {
+            str(stored.get("segment_id", "")): stored
+            for stored in session.segments
+            if str(stored.get("segment_id", "")) != ""
+        }
+
+        matched = 0
+        unknown = 0
+        for segment in segments:
+            segment_id = str(segment.get("segment_id", ""))
+            stored = stored_by_id.get(segment_id) if segment_id else None
+            # Rows without identity or never emitted cannot be safely merged.
+            if stored is None:
+                unknown += 1
+                continue
+
+            matched += 1
+            # Corrected and auto-excepted rows keep their server-side label.
+            if stored.get("role_source") is not None:
+                continue
+            stored["role"] = segment.get("role")
+
+        session.last_accessed_at = time.monotonic()
+        return {"matched": matched, "unknown": unknown, "restored": False}
+
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
         """Annotate stored segments with their inferred roles.
 

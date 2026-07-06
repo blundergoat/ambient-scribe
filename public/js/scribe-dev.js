@@ -336,6 +336,9 @@ class DevPanel {
             isRecording,
             replayActive: isReplayActive,
             segmentIndex,
+            // Received-vs-stored exposes delivery gaps: fewer received rows
+            // than the quality record stored means the browser missed events.
+            segmentsReceivedVsStored: `${segmentIndex}/${latestQualityRecord?.stored_segments ?? '?'}`,
             roleMapping,
             confidence,
             roleStability,

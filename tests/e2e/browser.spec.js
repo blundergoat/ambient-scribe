@@ -558,3 +558,151 @@ test.describe("Accessibility", () => {
     );
   });
 });
+
+test.describe("Live-stop finalize drain (M21)", () => {
+  /**
+   * Stubs the summary route so drain tests stay fast and count real
+   * requestSummary calls without invoking the model.
+   */
+  async function stubSummaryRoute(page, calls) {
+    await page.route("**/session/*/summary", async (route) => {
+      calls.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ sections: [], key_points: [] }),
+      });
+    });
+  }
+
+  /** Puts the page into a live-recording state without a microphone. */
+  async function enterLiveRecordingState(page) {
+    // The real UI transition hides Start and shows Stop, so drain assertions
+    // observe the same control states a clinician would.
+    await page.evaluate(() => showRecordingUi());
+  }
+
+  test("stop waits for finalized, renders the tail, then summarizes once", async ({
+    page,
+  }) => {
+    const summaryCalls = [];
+    await loadScribePage(page);
+    await stubSummaryRoute(page, summaryCalls);
+    await injectFakeSegments(page, 3);
+    await enterLiveRecordingState(page);
+
+    await page.evaluate(() => stopRecording());
+
+    // The drain holds the visit open: no start button, waiting status.
+    await expect(page.locator("#status")).toContainText("Finishing transcription");
+    await expect(page.locator("#startBtn")).toBeHidden();
+    expect(summaryCalls).toHaveLength(0);
+
+    // The server's held-back tail arrives while the stream is still open.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "the finalize flush row",
+        start: 6.0,
+        end: 7.5,
+        segment_id: "seg-0004",
+      });
+      handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
+    });
+
+    // Drain ends: tail row visible, visit closed, exactly one summary request
+    // whose body carries the tail row the pre-M21 race used to lose.
+    await expect(page.locator("#status")).toContainText("Session ended");
+    await expect(page.locator("#startBtn")).toBeVisible();
+    await expect(
+      page.locator('.segment__text[data-segment-id="seg-0004"]')
+    ).toHaveCount(1);
+    await expect
+      .poll(() => summaryCalls.length, { timeout: 5000 })
+      .toBe(1);
+    const postedIds = summaryCalls[0].segments.map((row) => row.segment_id);
+    expect(postedIds).toContain("seg-0004");
+    expect(postedIds).toHaveLength(4);
+  });
+
+  test("a dead backend cannot hold the visit open: timeout still summarizes", async ({
+    page,
+  }) => {
+    test.setTimeout(45000);
+    const summaryCalls = [];
+    await loadScribePage(page);
+    await stubSummaryRoute(page, summaryCalls);
+    await injectFakeSegments(page, 2);
+    await enterLiveRecordingState(page);
+
+    await page.evaluate(() => stopRecording());
+    await expect(page.locator("#status")).toContainText("Finishing transcription");
+
+    // No finalized event ever arrives; the bounded timeout finishes the visit.
+    await expect(page.locator("#status")).toContainText("Session ended", {
+      timeout: 20000,
+    });
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+  });
+
+  test("reset during the drain tears down immediately without a summary", async ({
+    page,
+  }) => {
+    const summaryCalls = [];
+    await loadScribePage(page);
+    await stubSummaryRoute(page, summaryCalls);
+    await injectFakeSegments(page, 2);
+    await enterLiveRecordingState(page);
+
+    await page.evaluate(() => {
+      stopRecording();
+      resetSession();
+    });
+
+    // Reset discards the visit: drain cancelled, stream closed, no summary.
+    const state = await page.evaluate(() => ({
+      draining: isLiveDraining,
+      mercureConnected: streams?.isConnected ?? false,
+    }));
+    expect(state.draining).toBe(false);
+    expect(state.mercureConnected).toBe(false);
+
+    // A stale finalized event after reset must not resurrect the old visit.
+    await page.evaluate(() => {
+      handleRawSegment({ type: "finalized", session_id: "stale-session" });
+    });
+    await page.waitForTimeout(500);
+    expect(summaryCalls).toHaveLength(0);
+  });
+
+  test("a row correction made before Stop survives the drain into the summary body", async ({
+    page,
+  }) => {
+    const summaryCalls = [];
+    await loadScribePage(page);
+    await stubSummaryRoute(page, summaryCalls);
+    await injectCoalescedCardSegments(page);
+
+    // Clinician fixes one wrong row, then stops the visit.
+    const secondRow = page.locator('.segment__text[data-segment-id="seg-0002"]');
+    const overridePosted = page.waitForRequest(
+      (request) =>
+        request.url().includes("/roles/override") && request.method() === "POST"
+    );
+    await secondRow.click();
+    await overridePosted;
+
+    await enterLiveRecordingState(page);
+    await page.evaluate(() => {
+      stopRecording();
+      handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
+    });
+
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    const correctedRow = summaryCalls[0].segments.find(
+      (row) => row.segment_id === "seg-0002"
+    );
+    expect(correctedRow.role).toBe("DOCTOR");
+  });
+});

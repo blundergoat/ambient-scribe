@@ -27,6 +27,9 @@ class StorageBackend(Protocol):
 
     def append_segment(self, session_id: str, segment: dict) -> None: ...
     def replace_segments(self, session_id: str, segments: list[dict]) -> None: ...
+    def merge_browser_segments(
+        self, session_id: str, segments: list[dict]
+    ) -> dict: ...
     def get_segments(self, session_id: str) -> list[dict]: ...
     def get_transcript_text(self, session_id: str, max_chars: int = 3500) -> str: ...
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None: ...
@@ -216,6 +219,70 @@ class SqliteBackend:
                 )
             self._reapply_row_role_overrides(session_id)
             self._conn.commit()
+
+    def merge_browser_segments(self, session_id: str, segments: list[dict]) -> dict:
+        """Merge browser-visible rows into stored history without shrinking it.
+
+        Summary requests carry the rows the clinician sees. Rows the browser
+        lacks (finalize flush, filtered blanks) stay stored, matched rows take
+        the browser role only while no correction or automatic exception owns
+        them, and rows the server never emitted are not appended to a
+        populated history. An empty store falls back to insert semantics so a
+        reconnecting browser can still restore its transcript.
+
+        Args:
+            session_id: Recording UUID the browser is summarizing.
+            segments: Browser-visible rows; empty changes nothing.
+
+        Returns:
+            Counts for the summary path to log: `matched`, `unknown`, `restored`.
+        """
+        with self._lock:
+            stored_count_row = self._conn.execute(
+                "SELECT COUNT(*) FROM segments WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            store_is_empty = (stored_count_row[0] if stored_count_row else 0) == 0
+
+        # A session with no stored rows is the browser-restore workflow: the
+        # browser holds the only copy, so inserts are the correct behavior.
+        if store_is_empty:
+            self.replace_segments(session_id, segments)
+            return {"matched": 0, "unknown": 0, "restored": True}
+
+        matched = 0
+        unknown = 0
+        with self._lock:
+            self._ensure_session(session_id)
+            for segment in segments:
+                segment_id = str(segment.get("segment_id", ""))
+                # Rows without identity cannot be safely merged into history.
+                if segment_id == "":
+                    unknown += 1
+                    continue
+
+                cursor = self._conn.execute(
+                    """
+                    UPDATE segments SET role = ?
+                    WHERE session_id = ? AND segment_id = ? AND role_source IS NULL
+                    """,
+                    (segment.get("role"), session_id, segment_id),
+                )
+                # Corrected/auto rows also count as matched: they exist stored.
+                if cursor.rowcount > 0:
+                    matched += 1
+                else:
+                    known = self._conn.execute(
+                        "SELECT 1 FROM segments WHERE session_id = ? AND segment_id = ?",
+                        (session_id, segment_id),
+                    ).fetchone()
+                    if known is None:
+                        unknown += 1
+                    else:
+                        matched += 1
+            self._conn.commit()
+
+        return {"matched": matched, "unknown": unknown, "restored": False}
 
     def get_segments(self, session_id: str) -> list[dict]:
         """Return transcript lines in the order the browser should display them.

@@ -216,6 +216,7 @@ class TranscriptionSession:
         pipeline: NemoPipeline,
         input_format: str = "pcm",
         max_buffer_duration: float = 900.0,
+        streaming_engine=None,
     ) -> None:
         """Create a new transcription session.
 
@@ -224,9 +225,12 @@ class TranscriptionSession:
             pipeline: Shared NemoPipeline singleton (loaded at startup)
             input_format: Audio input format ("pcm" or "webm")
             max_buffer_duration: Maximum audio buffer duration in seconds.
+            streaming_engine: Optional session-long streaming engine (M22).
+                None keeps the windowed emission path unchanged.
         """
         self.session_id = session_id
         self.pipeline = pipeline
+        self._streaming_engine = streaming_engine
         self.input_format = input_format.lower()
         self.buffer = AudioBuffer(max_duration_seconds=max_buffer_duration)
         self.accumulated_transcript: list[Segment] = []
@@ -243,6 +247,10 @@ class TranscriptionSession:
         # Emitted-row counter behind the stable `segment_id` each visible row
         # gets, so clinician corrections can target exactly one transcript row.
         self._emitted_row_count: int = 0
+        # Streaming-engine bookkeeping: cumulative speech per cache slot feeds
+        # the speaker cap; per-tick phantom merges feed the continuity log.
+        self._engine_slot_durations: dict[str, float] = {}
+        self._engine_window_phantom_merges: int = 0
 
         # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
@@ -294,7 +302,15 @@ class TranscriptionSession:
 
         self.buffer.append(pcm_audio)
 
-        new_segments = self._transcribe_unemitted(hold_unstable_tail=True)
+        # The streaming engine owns speaker identity for the whole session;
+        # the windowed path re-derives it per window and stitches (M22 flag).
+        if self._streaming_engine is not None:
+            self.quality_stats.record_window(len(pcm_audio))
+            new_segments = self._emit_engine_rows(
+                self._streaming_engine.feed(pcm_audio), is_finalize=False
+            )
+        else:
+            new_segments = self._transcribe_unemitted(hold_unstable_tail=True)
         self.accumulated_transcript.extend(new_segments)
 
         duration_ms = int((time.time() - chunk_started_at) * 1000)
@@ -335,7 +351,12 @@ class TranscriptionSession:
         if self.buffer.total_bytes == 0:
             return []
 
-        tail_segments = self._transcribe_unemitted(hold_unstable_tail=False)
+        if self._streaming_engine is not None:
+            tail_segments = self._emit_engine_rows(
+                self._streaming_engine.flush(), is_finalize=True
+            )
+        else:
+            tail_segments = self._transcribe_unemitted(hold_unstable_tail=False)
         self.accumulated_transcript.extend(tail_segments)
 
         return tail_segments
@@ -420,6 +441,133 @@ class TranscriptionSession:
         )
 
         return fresh_segments
+
+    def _emit_engine_rows(self, engine_rows: list, *, is_finalize: bool) -> list[Segment]:
+        """Turn streaming-engine rows into emitted transcript segments (M22).
+
+        Engine rows arrive with session-absolute times and cache-stable
+        speaker slots, so window-time shifting and anchor stitching are
+        bypassed by design. Everything downstream of identity is shared with
+        the windowed path: speaker cap, fragment merge, row IDs, quality
+        counters, and the continuity diagnostics log.
+
+        Args:
+            engine_rows: Stabilized rows from the engine's feed/flush.
+            is_finalize: True when draining the held tail at session end.
+
+        Returns:
+            Newly emitted segments in chronological order.
+        """
+        emitted_from_seconds = self._emitted_until_seconds
+        window_segments = [
+            Segment(
+                speaker_id=row.speaker_slot,
+                text=row.text,
+                start=row.start,
+                end=row.end,
+            )
+            for row in engine_rows
+        ]
+        window_segments.sort(key=lambda segment: segment.start)
+        window_segments = self._cap_engine_speaker_slots(window_segments)
+
+        fresh_segments = merge_adjacent_fragments_for_display(window_segments)
+        fresh_segments = self._assign_row_identity(fresh_segments)
+
+        engine = self._streaming_engine
+        held_rows = getattr(engine, "pending_row_count", 0) if engine is not None else 0
+        self.quality_stats.record_segment_flow(
+            emitted_segments=len(fresh_segments),
+            held_segments=held_rows,
+        )
+
+        if fresh_segments:
+            self._emitted_until_seconds = max(
+                self._emitted_until_seconds, fresh_segments[-1].end
+            )
+
+        diagnostics = getattr(engine, "diagnostics", None)
+        self._last_window_continuity = {
+            "engine": "streaming",
+            "raw_speaker_ids": sorted(
+                {segment.speaker_id for segment in window_segments}
+            ),
+            "known_speaker_ids": sorted(self._engine_slot_durations),
+            "speaker_id_map": {},
+            "overlap_votes": [],
+            "mapping_reasons": {},
+            "window_remaps": 0,
+            "window_phantom_merges": self._engine_window_phantom_merges,
+            "late_slot_births": getattr(diagnostics, "late_slot_births", 0),
+            "revision_resyncs": getattr(diagnostics, "revision_resyncs", 0),
+        }
+        self._log_window_continuity(
+            window_start_seconds=emitted_from_seconds,
+            emitted_from_seconds=emitted_from_seconds,
+            emitted_rows=len(fresh_segments),
+            held_rows=held_rows,
+            is_finalize=is_finalize,
+        )
+
+        return fresh_segments
+
+    def _cap_engine_speaker_slots(self, segments: list[Segment]) -> list[Segment]:
+        """Fold engine speaker slots beyond the visible cap into dominant voices.
+
+        The streaming diarizer exposes up to four cache slots; dyadic visits
+        show at most `NEMO_SPEAKER_CAP` of them. Marginal slots (phantoms)
+        are folded into the dominant slot by cumulative speech time, counted
+        as phantom merges exactly like the windowed engine's cap.
+
+        Args:
+            segments: Chronological engine rows for this emission tick.
+
+        Returns:
+            The same rows with capped speaker IDs.
+        """
+        self._engine_window_phantom_merges = 0
+
+        for segment in segments:
+            self._engine_slot_durations[segment.speaker_id] = (
+                self._engine_slot_durations.get(segment.speaker_id, 0.0)
+                + max(0.0, segment.end - segment.start)
+            )
+
+        # Cap disabled means the UI shows every cache slot the engine emits.
+        if self._speaker_cap is None:
+            return segments
+
+        visible_slots = [
+            slot
+            for slot, _duration in sorted(
+                self._engine_slot_durations.items(), key=lambda item: -item[1]
+            )[: self._speaker_cap]
+        ]
+
+        capped_segments: list[Segment] = []
+        for segment in segments:
+            if segment.speaker_id in visible_slots:
+                capped_segments.append(segment)
+                continue
+
+            dominant_slot = visible_slots[0] if visible_slots else segment.speaker_id
+            self._engine_window_phantom_merges += 1
+            self.quality_stats.record_phantom_speaker_merges(1)
+            logger.info(
+                "nemo_session.phantom_speaker_merged session_id=%s window_speaker_id=%s canonical_speaker_id=%s",
+                self.session_id,
+                segment.speaker_id,
+                dominant_slot,
+                extra={
+                    "session_id": self.session_id,
+                    "window_speaker_id": segment.speaker_id,
+                    "canonical_speaker_id": dominant_slot,
+                    "engine": "streaming",
+                },
+            )
+            capped_segments.append(replace(segment, speaker_id=dominant_slot))
+
+        return capped_segments
 
     def _continue_anchor_speakers(self, segments: list[Segment]) -> list[Segment]:
         """Map each window-local speaker ID to a stable session speaker ID.
@@ -578,9 +726,10 @@ class TranscriptionSession:
         # plus one final row when they pressed Stop and the tail drained.
         continuity = self._last_window_continuity
         logger.info(
-            "nemo_session.window_continuity session_id=%s window_index=%s emitted_rows=%s",
+            "nemo_session.window_continuity session_id=%s window_index=%s phase=%s emitted_rows=%s",
             self.session_id,
             self.chunk_count,
+            "finalize" if is_finalize else "chunk",
             emitted_rows,
             extra={
                 "session_id": self.session_id,

@@ -17,6 +17,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from storage import StorageBackend
 
+logger = logging.getLogger(__name__)
+
 PublishToMercure = Callable[[str, dict[str, Any], int | None], Awaitable[bool]]
 GenerateClinicalHints = Callable[[str], list[dict[str, str]]]
 
@@ -29,7 +31,7 @@ class BrowserVisibleSegment(BaseModel):
     before generating a summary.
     Empty text means the row is ignored because it would not help the note.
     An empty `segment_id` means an older page without row identity; those rows
-    cannot retain per-row corrections across the summary's history replacement.
+    cannot be merged into a populated stored history and are skipped there.
     """
 
     speaker_id: str = "UNKNOWN"
@@ -88,15 +90,31 @@ def build_summary_context(
         SummaryContext with selected rows, text, and source label for logs.
     """
     browser_visible_segments = browser_visible_segments_from_summary(summary_request)
-    # Browser-provided rows summarize exactly the transcript the user can see.
+    # Browser-provided rows anchor the note to the transcript the user can see,
+    # merged so rows the browser missed (finalize flush, dropped events) still
+    # reach the note instead of being deleted from server history.
     if browser_visible_segments:
-        sessions.replace_segments(session_id, browser_visible_segments)
-        # Reading the rows back applies server-side row corrections, so the
-        # note never uses a stale role for a row the clinician already fixed.
-        corrected_rows = sessions.get_segments(session_id)
+        merge_result = sessions.merge_browser_segments(
+            session_id, browser_visible_segments
+        )
+        # Unknown rows or a restore-from-browser are worth a trace when
+        # diagnosing a summary that does not match the stored transcript.
+        if merge_result.get("unknown", 0) or merge_result.get("restored"):
+            logger.info(
+                "summary.segments_merged session_id=%s matched=%s unknown=%s restored=%s",
+                session_id,
+                merge_result.get("matched", 0),
+                merge_result.get("unknown", 0),
+                merge_result.get("restored", False),
+                extra={"session_id": session_id, **merge_result},
+            )
+        # Reading the rows back applies server-side row corrections and keeps
+        # tail rows the browser never received, so the note covers the whole
+        # stored consultation with the labels the clinician trusts.
+        merged_rows = sessions.get_segments(session_id)
         return SummaryContext(
-            stored_segments=corrected_rows,
-            transcript=transcript_text_from_segments(corrected_rows),
+            stored_segments=merged_rows,
+            transcript=transcript_text_from_segments(merged_rows),
             source="browser_visible_segments",
         )
 

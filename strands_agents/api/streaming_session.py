@@ -18,6 +18,7 @@ from typing import Any
 from api.role_heuristics import compute_row_role_exceptions
 from fastapi import WebSocket, WebSocketDisconnect
 from nemo_session import TranscriptionSession
+from nemo_streaming_engine import streaming_engine_enabled
 from session_quality import (
     build_session_quality_record,
     persist_session_quality_record,
@@ -166,11 +167,17 @@ async def _resume_or_create_session(
         )
         session = existing_session
     else:
+        # M22: the process-level engine flag selects windowed (default) or
+        # session-long streaming identity at session construction only.
+        engine = None
+        if streaming_engine_enabled():
+            engine = services.pipeline.create_streaming_engine(session_id)
         session = TranscriptionSession(
             session_id,
             pipeline=services.pipeline,
             input_format=services.input_format,
             max_buffer_duration=services.max_buffer_duration,
+            streaming_engine=engine,
         )
 
     await services.lifecycle.register(session_id, session)
@@ -376,6 +383,12 @@ async def _emit_session_quality_record(
         stream_state=state,
         role_state=current_state,
     )
+    # Tail role inferences keep landing after this record closes; the snapshot
+    # lets the role worker report the post-finalize delta as `quality_tail`.
+    current_state.quality_flip_snapshot = {
+        "role_flips_accepted": quality_record["role_flips_accepted"],
+        "role_flips_suppressed": quality_record["role_flips_suppressed"],
+    }
     quality_record_path = None
 
     try:

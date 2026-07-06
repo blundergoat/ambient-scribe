@@ -217,24 +217,29 @@ function startRecordingTimerIfNeeded() {
     }
 }
 
+// A dead backend must not leave a stopped live visit waiting for `finalized`.
+// Kept equal to the replay drain's REPLAY_FINALIZE_TIMEOUT_MS by design.
+const LIVE_FINALIZE_TIMEOUT_MS = 15000;
+
 /**
- * Stops the live consultation and requests a summary when text exists.
- * Use when the clinician clicks Stop or presses Space/Escape.
+ * Stops the live consultation and waits for the backend `finalized` event.
+ * The socket close makes the server run its final NeMo pass; the Mercure
+ * stream stays open so the held-back tail still renders, then `endLiveStop`
+ * reveals post-visit actions and requests the summary (same drain the demo
+ * replay uses). Use when the clinician clicks Stop or presses Space/Escape.
  */
 function stopRecording() {
     didUserStopRecording = true;
     isRecording = false;
     clearTimeout(reconnectTimer);
     stopPcmStreaming();
+    // Closing the socket tells the backend to finalize and publish `finalized`.
     transcriptionSocket?.close();
     mediaStream?.getTracks().forEach((track) => track.stop());
-    disconnectMercureStreams();
     clearInterval(timerInterval);
 
-    setElementHidden('startBtn', false);
     setElementHidden('stopBtn', true);
     setElementHidden('reconnectBtn', true);
-    setPlainStatus('Session ended');
     hideAudioLevel();
 
     const confidenceBadge = document.getElementById('confidenceBadge');
@@ -246,11 +251,35 @@ function stopRecording() {
 
     announce('Recording stopped');
 
-    // Only visits with transcript text need post-visit actions and a summary request.
-    if (segmentIndex > 0) {
-        revealPostVisitActions();
-        requestSummary();
+    // Visits without transcript text have no tail to wait for and no summary.
+    if (segmentIndex === 0) {
+        setElementHidden('startBtn', false);
+        setPlainStatus('Session ended');
+        return;
     }
+
+    isLiveDraining = true;
+    setRecordingStatus('Finishing transcription...', 'color:var(--color-speaker-a);font-weight:500;');
+    liveDrainTimeout = setTimeout(endLiveStop, LIVE_FINALIZE_TIMEOUT_MS);
+}
+
+/**
+ * Finishes a stopped live visit and reveals post-visit actions.
+ * Use when the backend publishes `finalized` or the drain timeout fires.
+ */
+function endLiveStop() {
+    // The finalize event and the drain timeout can race; only one may finish the UI.
+    if (!isLiveDraining) {
+        return;
+    }
+
+    clearTimeout(liveDrainTimeout);
+    liveDrainTimeout = null;
+    isLiveDraining = false;
+    setElementHidden('startBtn', false);
+    setPlainStatus('Session ended');
+    revealPostVisitActions();
+    requestSummary();
 }
 
 /**
@@ -266,9 +295,14 @@ function resetSession() {
     // Stop live capture before clearing UI so no late audio mutates the new visit.
     if (isRecording) {
         stopRecording();
-    } else {
-        disconnectMercureStreams();
     }
+
+    // Reset discards the visit: cancel any finalize wait and close the stream
+    // now, so no stale events bleed into the fresh session's UI.
+    clearTimeout(liveDrainTimeout);
+    liveDrainTimeout = null;
+    isLiveDraining = false;
+    disconnectMercureStreams();
 
     CONFIG.sessionId = crypto.randomUUID();
     CONFIG.topicRaw = `scribe/session/${CONFIG.sessionId}/raw`;
@@ -325,6 +359,9 @@ function resetVisitState() {
     replayDrainReason = null;
     clearTimeout(replayDrainTimeout);
     replayDrainTimeout = null;
+    isLiveDraining = false;
+    clearTimeout(liveDrainTimeout);
+    liveDrainTimeout = null;
     hasReplayAudioPlaybackStarted = false;
     releaseReplayAudioObjectUrl();
     clearInterval(timerInterval);

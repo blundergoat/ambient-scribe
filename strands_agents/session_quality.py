@@ -150,6 +150,56 @@ def build_session_quality_record(
     }
 
 
+def build_quality_tail_record(
+    session_id: str,
+    role_state: Any,
+    *,
+    recorded_at: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Build the additive post-finalize role-churn record, if any churn happened.
+
+    The `session.quality` record closes before the role queue drains its tail,
+    so flips landing after finalize are invisible to it. This record carries
+    the delta between the counters at quality time (the snapshot stamped on
+    the role state) and the counters when the role worker finished.
+
+    Args:
+        session_id: Browser session UUID the tail belongs to.
+        role_state: Role mapping state after the queue drained.
+        recorded_at: Override timestamp for tests; null uses current UTC time.
+
+    Returns:
+        JSON-safe `quality_tail` record, or None when the session never
+        finalized a quality record or no tail churn occurred.
+    """
+    snapshot = getattr(role_state, "quality_flip_snapshot", None)
+    # No snapshot means the session never emitted a quality record (error
+    # paths); there is no baseline to report a tail against.
+    if not snapshot:
+        return None
+
+    accepted_now = _count_role_label_flips(getattr(role_state, "mapping_history", []))
+    suppressed_now = int(getattr(role_state, "suppressed_flip_count", 0))
+    tail_accepted = accepted_now - int(snapshot.get("role_flips_accepted", 0))
+    tail_suppressed = suppressed_now - int(snapshot.get("role_flips_suppressed", 0))
+
+    # Quiet tails are the normal case and need no extra artifact row.
+    if tail_accepted <= 0 and tail_suppressed <= 0:
+        return None
+
+    finished_at = recorded_at or datetime.now(UTC)
+    return {
+        "schema_version": QUALITY_RECORD_SCHEMA_VERSION,
+        "type": "quality_tail",
+        "session_id": session_id,
+        "recorded_at": finished_at.isoformat().replace("+00:00", "Z"),
+        "tail_role_flips_accepted": max(0, tail_accepted),
+        "tail_role_flips_suppressed": max(0, tail_suppressed),
+        "final_role_flips_accepted": accepted_now,
+        "final_role_flips_suppressed": suppressed_now,
+    }
+
+
 def persist_session_quality_record(
     quality_record: dict[str, Any],
     *,

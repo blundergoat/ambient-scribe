@@ -64,6 +64,8 @@ class RoleMappingState:
         pending_flip_count: Consecutive contrary mappings matching the pending flip.
         suppressed_flip_count: Flip proposals kept out of the visible transcript.
         truncation_events: Agent responses cut off before role labels reached the UI.
+        quality_flip_snapshot: Flip counters at quality-record time; tail role
+            churn after finalize is reported as the delta from this snapshot.
     """
 
     current_mapping: dict[str, str] = field(default_factory=dict)
@@ -76,6 +78,7 @@ class RoleMappingState:
     pending_flip_count: int = 0
     suppressed_flip_count: int = 0
     truncation_events: int = 0
+    quality_flip_snapshot: dict[str, int] | None = None
 
     @property
     def running_confidence(self) -> float:

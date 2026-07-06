@@ -214,6 +214,52 @@ class NemoPipeline:
         """
         return self._load_error
 
+    def create_streaming_engine(self, session_id: str):
+        """Build one session-long streaming engine over the shared models (M22).
+
+        The first call configures the shared Sortformer singleton for
+        streaming. That mutation is safe because NEMO_SESSION_ENGINE is
+        process-level: windowed sessions never run in a streaming-flagged
+        process, so no windowed call observes the streaming configuration.
+
+        Args:
+            session_id: Recording UUID the engine belongs to.
+
+        Returns:
+            A `StreamingSessionEngine` holding this session's streaming state.
+
+        Raises:
+            RuntimeError: When models are not loaded (mock provider or failed
+                startup) - callers must fall back to degraded health behavior.
+        """
+        if not self._models_loaded:
+            raise RuntimeError(
+                "streaming engine requires loaded NeMo models "
+                f"(provider={self._model_provider})"
+            )
+
+        from nemo_streaming_engine import StreamingSessionEngine
+
+        if not getattr(self, "_diar_streaming_configured", False):
+            # Mirror the reference CLI's diar streaming setup once per process.
+            self._diar_model.streaming_mode = True
+            sortformer_modules = self._diar_model.sortformer_modules
+            sortformer_modules.spkcache_len = 188
+            sortformer_modules.fifo_len = 188
+            sortformer_modules.chunk_len = 0
+            sortformer_modules.chunk_left_context = 0
+            sortformer_modules.chunk_right_context = 0
+            sortformer_modules.spkcache_refresh_rate = 0
+            sortformer_modules.log = False
+            self._diar_streaming_configured = True
+            logger.info("nemo_pipeline.diar_streaming_configured")
+
+        return StreamingSessionEngine(
+            session_id=session_id,
+            asr_model=self._asr_model,
+            diar_model=self._diar_model,
+        )
+
     def transcribe_file(self, audio_path: str) -> TranscriptionResult:
         """Process a complete audio file. Returns speaker-attributed segments.
 

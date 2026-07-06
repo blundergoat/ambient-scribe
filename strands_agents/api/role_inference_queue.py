@@ -21,6 +21,7 @@ from api.role_heuristics import (
     summarize_role_establishment_cues,
 )
 from session_lifecycle import SessionLifecycle
+from session_quality import build_quality_tail_record, persist_session_quality_record
 from storage import StorageBackend
 from tools.assign_roles import (
     apply_role_mapping_result,
@@ -272,9 +273,55 @@ async def _role_inference_worker(
         role_inference_workers.pop(session_id, None)
         role_inference_queues.pop(session_id, None)
 
+        # Post-finalize role churn is invisible to the already-written quality
+        # record; persist the additive tail delta before state cleanup.
+        _emit_quality_tail_if_needed(session_id)
+
         # If the browser cannot reconnect, remove role state with the worker.
         if not services.lifecycle.is_active(session_id):
             cleanup_role_state(session_id)
+
+
+def _emit_quality_tail_if_needed(session_id: str) -> None:
+    """Persist a `quality_tail` record when role flips landed after finalize.
+
+    Args:
+        session_id: Session whose role worker just drained; unknown or
+            never-finalized sessions produce no record.
+    """
+    from tools.assign_roles import _session_states, _states_lock
+
+    with _states_lock:
+        role_state = _session_states.get(session_id)
+
+    # No role state means the session never inferred roles - nothing to report.
+    if role_state is None:
+        return
+
+    tail_record = build_quality_tail_record(session_id, role_state)
+    # A quiet tail is the normal case; only real churn earns an artifact row.
+    if tail_record is None:
+        return
+
+    try:
+        persist_session_quality_record(tail_record)
+    except Exception as persist_error:
+        logger.error(
+            "session.quality_tail_persist_failed session_id=%s %s: %s",
+            session_id,
+            type(persist_error).__name__,
+            str(persist_error)[:200],
+            extra={"session_id": session_id},
+        )
+        return
+
+    logger.info(
+        "session.quality_tail session_id=%s tail_flips_accepted=%s tail_flips_suppressed=%s",
+        session_id,
+        tail_record["tail_role_flips_accepted"],
+        tail_record["tail_role_flips_suppressed"],
+        extra={**tail_record},
+    )
 
 
 async def _receive_next_role_batch(
@@ -369,6 +416,9 @@ async def _infer_and_publish_role_update(
                 "path": path,
                 "fallback": path in {"heuristic", "none"},
                 "row_exceptions": len(row_exceptions),
+                # Tail inferences land after the quality record closed; the
+                # flag lets log analysis attribute churn to the settle window.
+                "post_finalize": not services.lifecycle.is_active(session_id),
                 "tokens_in": int(result.get("tokens_in", 0)),
                 "tokens_out": int(result.get("tokens_out", 0)),
                 "tokens_total": int(result.get("tokens_total", 0)),

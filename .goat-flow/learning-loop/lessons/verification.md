@@ -371,3 +371,25 @@ During the 0.3.0 mockup refresh, an empty-state screenshot made the new workspac
 During M17 channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
 
 **Lesson:** Eval tooling that creates server sessions must either omit session IDs and capture the generated one, or generate valid UUIDs with a run-specific salt. After changing session identity behavior, run the server path that validates the ID rather than only testing local helper formatting.
+
+## Lesson: Delivery-race claims need receiver-side evidence (2026-07-06)
+
+**Created:** 2026-07-06
+**Evidence:** `strands_agents/api/summary_request.py` (search: "Blank text is not useful"), `public/js/scribe-output.js` (search: "enterReplayDrain"), `.goat-flow/plans/0.3.0/M21-stop-race-finalize-delivery.md` (search: "corrected 2026-07-06").
+
+Analyzing a manual replay from server logs alone, the agent saw the browser summary
+carry 38 segments while the server stored 40, saw the WebSocket disconnect timestamp
+precede the finalize-flush publish, and concluded the browser's SSE teardown raced the
+flush - writing that into a milestone plan as the headline evidence. The user's dev
+panel later showed the browser had received the flush row, the `finalized` event, and
+two post-finalize role updates; the 2-row delta was blank-text segments intentionally
+filtered by `normalise_browser_visible_segments`. The race is real but lives only in the
+live-recording stop path (`stopRecording`), while the replay path already drains
+correctly via `enterReplayDrain` - reading one stop path and assuming the other matched
+compounded the error.
+
+**Lesson:** Before attributing a data gap to a delivery race, verify the receiver
+actually missed the data (payload contents via SSE tap, dev panel, or browser state) and
+check for intentional filters on the counting path. When a browser flow has sibling
+paths (live vs replay, stop vs reset), read every sibling before generalizing evidence
+from one of them.

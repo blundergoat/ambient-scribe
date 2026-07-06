@@ -195,3 +195,103 @@ async def test_finalize_emits_logs_and_persists_quality_record(monkeypatch, capl
     assert quality_events[0][1]["quality"]["final_confidence"] == 0.9
     assert quality_events[0][1]["quality"]["role_truncation_events"] == 1
     assert quality_logs
+
+
+class TestQualityTailRecord:
+    """Post-finalize role churn must be observable without touching `session.quality`."""
+
+    def make_role_state(self, *, accepted_mappings, suppressed, snapshot):
+        """Build a role-state stand-in with a mapping history and snapshot."""
+        from tools.assign_roles import RoleMappingState
+
+        state = RoleMappingState()
+        state.mapping_history = accepted_mappings
+        state.suppressed_flip_count = suppressed
+        state.quality_flip_snapshot = snapshot
+        return state
+
+    def test_no_snapshot_means_no_tail_record(self):
+        """Sessions that never finalized a quality record report no tail."""
+        from session_quality import build_quality_tail_record
+
+        state = self.make_role_state(
+            accepted_mappings=[{"speaker_0": "DOCTOR"}],
+            suppressed=2,
+            snapshot=None,
+        )
+        assert build_quality_tail_record("s1", state) is None
+
+    def test_quiet_tail_emits_nothing(self):
+        """Unchanged counters after finalize produce no artifact row."""
+        from session_quality import build_quality_tail_record
+
+        state = self.make_role_state(
+            accepted_mappings=[
+                {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"},
+            ],
+            suppressed=3,
+            snapshot={"role_flips_accepted": 0, "role_flips_suppressed": 3},
+        )
+        assert build_quality_tail_record("s1", state) is None
+
+    def test_tail_flips_report_the_delta_since_the_quality_record(self):
+        """Flips landing after finalize become an additive quality_tail row."""
+        from session_quality import build_quality_tail_record
+
+        # One flip in history (DOCTOR->PATIENT for speaker_0) after a snapshot
+        # taken at zero accepted / one suppressed; one more suppression landed.
+        state = self.make_role_state(
+            accepted_mappings=[
+                {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"},
+                {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"},
+            ],
+            suppressed=2,
+            snapshot={"role_flips_accepted": 0, "role_flips_suppressed": 1},
+        )
+
+        record = build_quality_tail_record(
+            "s1", state, recorded_at=datetime(2026, 7, 6, tzinfo=UTC)
+        )
+
+        assert record is not None
+        assert record["type"] == "quality_tail"
+        assert record["session_id"] == "s1"
+        assert record["tail_role_flips_accepted"] == 1
+        assert record["tail_role_flips_suppressed"] == 1
+        assert record["final_role_flips_accepted"] == 1
+        assert record["final_role_flips_suppressed"] == 2
+        # The additive record must never masquerade as the quality record.
+        assert record["type"] != "quality"
+
+    def test_finalize_stamps_the_flip_snapshot_on_role_state(self, tmp_path, monkeypatch):
+        """The quality emit leaves the baseline the tail delta is computed from."""
+        from tools.assign_roles import RoleMappingState
+
+        monkeypatch.setenv("SESSION_QUALITY_DIR", str(tmp_path))
+        role_state = RoleMappingState()
+        role_state.mapping_history = [
+            {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"},
+        ]
+        role_state.suppressed_flip_count = 3
+
+        record = build_session_quality_record(
+            session_id="snapshot-session",
+            audio_session=SimpleNamespace(
+                quality_stats=TranscriptionQualityStats(),
+                buffer=SimpleNamespace(duration_seconds=1.0),
+                started_at=time.time(),
+                accumulated_transcript=[],
+            ),
+            stream_state=StreamState(),
+            role_state=role_state,
+        )
+        # The streaming session stamps the snapshot right after building.
+        role_state.quality_flip_snapshot = {
+            "role_flips_accepted": record["role_flips_accepted"],
+            "role_flips_suppressed": record["role_flips_suppressed"],
+        }
+
+        assert role_state.quality_flip_snapshot == {
+            "role_flips_accepted": 0,
+            "role_flips_suppressed": 3,
+        }

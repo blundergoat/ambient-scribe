@@ -15,6 +15,10 @@ let wavStreamer = null;
 let isReplayDraining = false;
 let replayDrainReason = null;
 let replayDrainTimeout = null;
+// Live-recording stop mirrors the replay drain: the stream stays open until
+// the backend `finalized` event delivers the held-back tail (or a timeout).
+let isLiveDraining = false;
+let liveDrainTimeout = null;
 
 /**
  * Builds summary rows from the transcript rows visible in the browser.
@@ -86,6 +90,8 @@ function handleRawSegment(segmentEvent) {
     if (segmentEvent.type === 'finalized') {
         if (isReplayActive) {
             endReplay();
+        } else if (isLiveDraining) {
+            endLiveStop();
         } else {
             setPlainStatus('Transcript finalized');
         }
