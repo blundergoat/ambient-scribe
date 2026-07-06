@@ -127,6 +127,7 @@ def build_session_quality_record(
         "schema_version": QUALITY_RECORD_SCHEMA_VERSION,
         "type": "quality",
         "session_id": session_id,
+        "engine": getattr(audio_session, "engine_name", "windowed"),
         "status": status or "finalized",
         "finalized_at": finished_at.isoformat().replace("+00:00", "Z"),
         "chunks": getattr(stream_state, "chunk_count", 0),

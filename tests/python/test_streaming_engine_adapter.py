@@ -178,3 +178,37 @@ class TestEngineRowEmission:
         # routes through the windowed `_transcribe_unemitted` without error.
         assert session.process_chunk(PCM_CHUNK) == []
         assert session._streaming_engine is None
+
+
+class TestEngineQualityLabel:
+    """Quality artifacts must say which engine produced their numbers."""
+
+    def test_engine_name_reflects_the_active_engine(self):
+        streaming_session = make_session(FakeStreamingEngine(feed_batches=[]))
+        windowed_session = make_session(engine=None)
+
+        assert streaming_session.engine_name == "streaming"
+        assert windowed_session.engine_name == "windowed"
+
+    def test_substantial_late_slots_are_admitted_not_folded(self):
+        """A real voice arriving late must never fold into another speaker."""
+        engine = FakeStreamingEngine(
+            feed_batches=[
+                [
+                    EngineRow("speaker_0", "established doctor voice here", 0.0, 5.0),
+                    EngineRow("speaker_1", "established second doctor slot", 5.2, 9.0),
+                ],
+                [
+                    # A third slot with substantial speech - a genuine voice.
+                    EngineRow("speaker_2", "a genuine late-spawning voice", 10.0, 30.0),
+                ],
+            ]
+        )
+        session = make_session(engine)
+
+        session.process_chunk(PCM_CHUNK)
+        second = session.process_chunk(PCM_CHUNK)
+
+        # Corrupting attribution is worse than a third visible ID.
+        assert {segment.speaker_id for segment in second} == {"speaker_2"}
+        assert session.quality_stats.phantom_speaker_merge_count == 0

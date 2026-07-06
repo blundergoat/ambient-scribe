@@ -266,6 +266,16 @@ class TranscriptionSession:
             },
         )
 
+    @property
+    def engine_name(self) -> str:
+        """Transcription engine label recorded in quality artifacts.
+
+        Returns:
+            `streaming` when the M22 session-long engine drives emission;
+            `windowed` for the legacy per-window path.
+        """
+        return "streaming" if self._streaming_engine is not None else "windowed"
+
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
         """Process a single audio chunk through the NeMo pipeline.
 
@@ -537,20 +547,31 @@ class TranscriptionSession:
         if self._speaker_cap is None:
             return segments
 
-        visible_slots = [
+        # Fold only MARGINAL slots (hallucination-scale, mirroring the
+        # windowed engine's share filter). Substantial voices always pass:
+        # folding a real voice into another slot corrupts attribution far
+        # worse than a third raw ID, which the role mapping labels anyway.
+        # (An eager first-to-establish pinning policy did exactly that on
+        # c03, where the doctor's speech spans two early cache slots.)
+        total_speech = sum(self._engine_slot_durations.values())
+        marginal_below = max(1.5, 0.05 * total_speech)
+        substantial_slots = [
             slot
-            for slot, _duration in sorted(
-                self._engine_slot_durations.items(), key=lambda item: -item[1]
-            )[: self._speaker_cap]
+            for slot, duration in self._engine_slot_durations.items()
+            if duration >= marginal_below
         ]
 
         capped_segments: list[Segment] = []
         for segment in segments:
-            if segment.speaker_id in visible_slots:
+            duration = self._engine_slot_durations.get(segment.speaker_id, 0.0)
+            if duration >= marginal_below or not substantial_slots:
                 capped_segments.append(segment)
                 continue
 
-            dominant_slot = visible_slots[0] if visible_slots else segment.speaker_id
+            dominant_slot = max(
+                substantial_slots,
+                key=lambda slot: self._engine_slot_durations.get(slot, 0.0),
+            )
             self._engine_window_phantom_merges += 1
             self.quality_stats.record_phantom_speaker_merges(1)
             logger.info(

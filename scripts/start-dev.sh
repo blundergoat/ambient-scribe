@@ -27,6 +27,9 @@
 # Environment:
 #   ROLE_AGENT_MODEL_PROVIDER - Role inference backend: 'ollama' or 'bedrock'
 #   MODEL_PROVIDER            - Legacy alias for ROLE_AGENT_MODEL_PROVIDER
+#   NEMO_SESSION_ENGINE - Transcription engine (default here: 'streaming', the
+#                         M22 session-long identity engine; set 'windowed' to
+#                         compare against the legacy per-window engine)
 #   AGENT_PORT     - NeMo agent starting port (default: 48101)
 #   AGENT_PORT_MAX - Highest NeMo agent port to try (default: 48110)
 #   APP_PORT       - PHP app starting port (default: 48082)
@@ -360,6 +363,10 @@ if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
 fi
 
 export NEMO_MODEL_PROVIDER
+# Daily dev runs the session-long streaming engine (M22) so speaker identity
+# cannot swap mid-visit; compose/CI keep the windowed default until Phase 4
+# flips it. Override with NEMO_SESSION_ENGINE=windowed for A/B comparisons.
+export NEMO_SESSION_ENGINE="${NEMO_SESSION_ENGINE:-streaming}"
 export AGENT_PORT
 export APP_PORT
 export MERCURE_PORT
@@ -500,7 +507,7 @@ echo -e "  ${GREEN}${BOLD}Ready!${RESET} ${DIM}(${STARTUP_ELAPSED}s)${RESET}"
 echo ""
 echo -e "  ${DIM}Services:${RESET}"
 echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:${APP_PORT}/scribe${RESET}"
-echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT}${RESET}"
+echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT}${RESET}  ${DIM}engine: ${NEMO_SESSION_ENGINE}${RESET}"
 echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT}${RESET}"
 echo ""
 echo -e "  ${DIM}Useful commands:${RESET}"
