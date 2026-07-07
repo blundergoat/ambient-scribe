@@ -45,6 +45,32 @@ def test_score_flags_patient_row_with_doctor_question() -> None:
     assert "mixed_role_cues" in score.findings[0].codes
 
 
+def test_score_ignores_doctor_question_preamble_first_person() -> None:
+    """The yes-no screening preamble is doctor-owned wording, not patient symptom talk."""
+    score = score_corrected_segments(
+        [
+            _row("DOCTOR", "Um I'm just gonna ask", "corrected-0146", 244.72, 245.89),
+            _row("DOCTOR", "I'm just going to ask you some yes-no questions.", "corrected-0147"),
+        ],
+        artifact_path="user-c03-279-streaming-corrected.json",
+    )
+
+    assert score.finding_count == 0
+
+
+def test_score_still_flags_doctor_row_with_patient_symptom_statement() -> None:
+    """A real first-person symptom claim in a doctor row keeps firing after the exclusion."""
+    score = score_corrected_segments(
+        [
+            _row("DOCTOR", "I vomited twice this morning", "corrected-0001"),
+        ],
+        artifact_path="consult-03.json",
+    )
+
+    assert score.finding_count == 1
+    assert "patient_statement_in_doctor_row" in score.findings[0].codes
+
+
 def test_score_flags_doctor_row_with_patient_ack_after_question() -> None:
     """A tiny patient answer after a doctor question should be reviewable."""
     score = score_corrected_segments(

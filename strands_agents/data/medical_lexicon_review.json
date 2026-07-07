@@ -93,6 +93,216 @@
       "safety_rationale": "Phonetic variants only; no synonym is rewritten."
     },
     {
+      "canonical": "amoxicillin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "amoxi cillin",
+      "expected_visible_phrase": "amoxicillin",
+      "false_positive_guard": "The family discussed a box of cereal.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "azithromycin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "azithro mycin",
+      "expected_visible_phrase": "azithromycin",
+      "false_positive_guard": "The rhythm section was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "atorvastatin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "a torva statin",
+      "expected_visible_phrase": "atorvastatin",
+      "false_positive_guard": "A torn vest was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "metformin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "met formin",
+      "expected_visible_phrase": "metformin",
+      "false_positive_guard": "The meeting form was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "omeprazole",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "omep razole",
+      "expected_visible_phrase": "omeprazole",
+      "false_positive_guard": "The home appraisal was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "levothyroxine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "levo thyroxine",
+      "expected_visible_phrase": "levothyroxine",
+      "false_positive_guard": "The left thigh pain was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "hydrochlorothiazide",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "hydrochloro thiazide",
+      "expected_visible_phrase": "hydrochlorothiazide",
+      "false_positive_guard": "The hydro chlorination example was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "prednisone",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "predni zone",
+      "expected_visible_phrase": "prednisone",
+      "false_positive_guard": "The predawn zone was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "gabapentin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "gaba pentin",
+      "expected_visible_phrase": "gabapentin",
+      "false_positive_guard": "The garden path was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "albuterol",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "al buterol",
+      "expected_visible_phrase": "albuterol",
+      "false_positive_guard": "The album rollout was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "salbutamol",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "sal butamol",
+      "expected_visible_phrase": "salbutamol",
+      "false_positive_guard": "The salt bottle was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "amlodipine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "amlo dipine",
+      "expected_visible_phrase": "amlodipine",
+      "false_positive_guard": "The amulet display was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "rosuvastatin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "rosuva statin",
+      "expected_visible_phrase": "rosuvastatin",
+      "false_positive_guard": "The rose venue was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "pantoprazole",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "panto prazole",
+      "expected_visible_phrase": "pantoprazole",
+      "false_positive_guard": "The pantry project was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "warfarin",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "war farin",
+      "expected_visible_phrase": "warfarin",
+      "false_positive_guard": "The warfare history was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "apixaban",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "a pixaban",
+      "expected_visible_phrase": "apixaban",
+      "false_positive_guard": "A pixel banner was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "rivaroxaban",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "riva roxaban",
+      "expected_visible_phrase": "rivaroxaban",
+      "false_positive_guard": "The river rocks were unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "sertraline",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "sertra line",
+      "expected_visible_phrase": "sertraline",
+      "false_positive_guard": "The central line was not discussed.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "fluoxetine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "flu oxetine",
+      "expected_visible_phrase": "fluoxetine",
+      "false_positive_guard": "The flu vaccine was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "semaglutide",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "sema glutide",
+      "expected_visible_phrase": "semaglutide",
+      "false_positive_guard": "The seminar guide was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "HbA1c",
+      "status": "active",
+      "category": "abbreviation_acronym",
+      "raw_phrase": "h b a one c",
+      "expected_visible_phrase": "HbA1c",
+      "false_positive_guard": "The HBA one classroom label was unrelated.",
+      "provenance": "Project-curated common test abbreviation.",
+      "safety_rationale": "Common clinical abbreviation with word boundaries; no unrelated-word replacement."
+    },
+    {
       "canonical": "hypertension",
       "status": "active",
       "category": "asr_variant",
@@ -109,6 +319,96 @@
       "raw_phrase": "radiculo pathy",
       "expected_visible_phrase": "radiculopathy",
       "false_positive_guard": "The ridiculous pathway comment was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "hypothyroidism",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "hypo thyroidism",
+      "expected_visible_phrase": "hypothyroidism",
+      "false_positive_guard": "The hypoallergenic thyroid discussion was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "hyperlipidemia",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "hyper lipid emia",
+      "expected_visible_phrase": "hyperlipidemia",
+      "false_positive_guard": "The hyper link media example was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "osteoarthritis",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "osteo arthritis",
+      "expected_visible_phrase": "osteoarthritis",
+      "false_positive_guard": "The arthritis support group was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "pneumonia",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "new monia",
+      "expected_visible_phrase": "pneumonia",
+      "false_positive_guard": "The new monitor arrived.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "cellulitis",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "cell u litis",
+      "expected_visible_phrase": "cellulitis",
+      "false_positive_guard": "The cell unit was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "eczema",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "ex zema",
+      "expected_visible_phrase": "eczema",
+      "false_positive_guard": "The exam was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "gastroenteritis",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "gastro enteritis",
+      "expected_visible_phrase": "gastroenteritis",
+      "false_positive_guard": "The gastro pub was unrelated.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "asthma",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "az ma",
+      "expected_visible_phrase": "asthma",
+      "false_positive_guard": "As my appointment changed, the note stayed administrative.",
+      "provenance": "Project-curated synthetic demo ASR miss.",
+      "safety_rationale": "Phonetic variants only; no synonym is rewritten."
+    },
+    {
+      "canonical": "endometriosis",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "endo metriosis",
+      "expected_visible_phrase": "endometriosis",
+      "false_positive_guard": "The end of meeting note was unrelated.",
       "provenance": "Project-curated synthetic demo ASR miss.",
       "safety_rationale": "Phonetic variants only; no synonym is rewritten."
     },

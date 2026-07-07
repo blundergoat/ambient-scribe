@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile, WebSocket
@@ -820,21 +820,52 @@ async def roles_override(session_id: str, request: Request) -> dict:
     if segment_id:
         return await _apply_row_role_override(session_id, segment_id, role)
 
-    # Update the role state
-    state = get_or_create_state(session_id)
-    state.current_mapping[speaker_id] = role
+    return await _apply_speaker_role_override(session_id, speaker_id, role)
 
-    # Cycling back to UNKNOWN is the documented undo: drop the confirmed
-    # override so the agent may relabel this speaker again, instead of
-    # enforcing UNKNOWN over every future agent proposal.
-    if role == "UNKNOWN":
-        state.confirmed_overrides.pop(speaker_id, None)
-    else:
-        # Store as confirmed override so the agent respects it
-        state.confirmed_overrides[speaker_id] = role
 
-    # Apply to stored segments
-    sessions.apply_role_mapping(session_id, state.current_mapping)
+async def _apply_speaker_role_override(session_id: str, speaker_id: str, role: str) -> dict:
+    """Persist and broadcast a speaker-level role correction.
+
+    The clinician clicked a speaker label (e.g. cycled spk_0 to Doctor), so
+    every row of that voice relabels. A live visit also pins the choice as a
+    confirmed override the agent must respect; a finished visit persists the
+    label to storage without resurrecting role state.
+
+    Args:
+        session_id: Recording UUID the clinician is correcting.
+        speaker_id: Voice identity whose visible label the clinician chose.
+        role: Corrected role label; UNKNOWN is the documented undo.
+
+    Returns:
+        Confirmation payload with the mapping that was applied to storage.
+    """
+    # The clinician can click a speaker label the moment its card exists - often
+    # before the role worker has created any state - so a LIVE visit (active
+    # WebSocket or reconnect grace) still creates state to pin the override
+    # against later agent updates. A FINISHED visit only peeks: creating state
+    # there would publish fabricated empty mapping/confidence that wipes the
+    # earned badge in other tabs (runtime footgun).
+    visit_is_live = lifecycle.is_active(session_id) or lifecycle.has_pending_destroy(
+        session_id
+    )
+    state = get_or_create_state(session_id) if visit_is_live else peek_state(session_id)
+    # A live visit updates its speaker mapping as before.
+    if state is not None:
+        state.current_mapping[speaker_id] = role
+
+        # Cycling back to UNKNOWN is the documented undo: drop the confirmed
+        # override so the agent may relabel this speaker again, instead of
+        # enforcing UNKNOWN over every future agent proposal.
+        if role == "UNKNOWN":
+            state.confirmed_overrides.pop(speaker_id, None)
+        else:
+            # Store as confirmed override so the agent respects it
+            state.confirmed_overrides[speaker_id] = role
+
+    # Apply to stored segments. A finished visit has no live mapping left, so
+    # only the clinician's explicit correction is applied - never a fabricated one.
+    applied_mapping = state.current_mapping if state is not None else {speaker_id: role}
+    sessions.apply_role_mapping(session_id, applied_mapping)
     # A corrected artifact snapshots roles at correction time; keep it in step
     # so a retried summary cites the clinician's latest labels.
     corrected_rows = sessions.get_corrected_segments(session_id)
@@ -843,27 +874,32 @@ async def roles_override(session_id: str, request: Request) -> dict:
             if str(corrected_row.get("speaker_id", "")) == speaker_id:
                 corrected_row["role"] = role
         sessions.replace_corrected_segments(session_id, corrected_rows)
-    # Re-judge rows against the corrected mapping so automatic row exceptions
-    # stay consistent with the labels the clinician now sees.
-    row_exceptions = compute_row_role_exceptions(
-        sessions.get_segments(session_id), state.current_mapping
-    )
-    sessions.set_auto_row_roles(session_id, row_exceptions)
 
     # Publish the override to Mercure so other clients see it
     _mercure_event_ids.setdefault(session_id, 0)
     _mercure_event_ids[session_id] += 1
+    # The explicit override travels as a partial mapping - true clinician data
+    # that relabels exactly this speaker in other tabs.
+    role_event: dict = {
+        "type": "role_update",
+        "mapping": applied_mapping,
+        "flip_detected": False,
+        "manual_override": True,
+        "session_id": session_id,
+    }
+    # Re-judging rows needs the full live mapping: against a finished visit's
+    # one-entry mapping it could clear earned auto exceptions for the other
+    # speaker, and a confidence value would have to be invented.
+    if state is not None:
+        row_exceptions = compute_row_role_exceptions(
+            sessions.get_segments(session_id), state.current_mapping
+        )
+        sessions.set_auto_row_roles(session_id, row_exceptions)
+        role_event["row_exceptions"] = row_exceptions
+        role_event["confidence"] = state.running_confidence
     await publish_to_mercure(
         f"scribe/session/{session_id}/roles",
-        {
-            "type": "role_update",
-            "mapping": state.current_mapping,
-            "row_exceptions": row_exceptions,
-            "confidence": state.running_confidence,
-            "flip_detected": False,
-            "manual_override": True,
-            "session_id": session_id,
-        },
+        role_event,
         event_id=_mercure_event_ids[session_id],
     )
 
@@ -873,11 +909,11 @@ async def roles_override(session_id: str, request: Request) -> dict:
             "session_id": session_id,
             "speaker_id": speaker_id,
             "role": role,
-            "mapping": state.current_mapping,
+            "mapping": applied_mapping,
         },
     )
 
-    return {"status": "ok", "mapping": state.current_mapping}
+    return {"status": "ok", "mapping": applied_mapping}
 
 
 async def _apply_row_role_override(session_id: str, segment_id: str, role: str) -> dict:
@@ -1060,11 +1096,17 @@ async def roles_snapshot(session_id: str) -> dict:
     """
     request_started_at = time.time()
     _validate_session_id(session_id)
-    state = get_or_create_state(session_id)
+    # Peek only: a snapshot is a read, and reading a finished (or unknown)
+    # visit must not resurrect empty role state as a side effect.
+    state = peek_state(session_id)
+    # No live state means the page honestly sees "no role news" - the same
+    # shape PHP falls back to when Python is unreachable.
+    mapping = state.current_mapping if state is not None else {}
+    confidence = state.running_confidence if state is not None else 0.0
     response_payload = {
         "session_id": session_id,
-        "mapping": state.current_mapping,
-        "confidence": state.running_confidence,
+        "mapping": mapping,
+        "confidence": confidence,
     }
     logger.info(
         "roles_snapshot.completed",
@@ -1072,8 +1114,8 @@ async def roles_snapshot(session_id: str) -> dict:
             "session_id": session_id,
             "correlation_id": correlation_id_var.get("-"),
             "duration_ms": int((time.time() - request_started_at) * 1000),
-            "roles": len(state.current_mapping),
-            "confidence": state.running_confidence,
+            "roles": len(mapping),
+            "confidence": confidence,
         },
     )
     return response_payload
@@ -1107,7 +1149,19 @@ async def health():
     }
 
 
-def _summary_model_reachable() -> tuple[bool, str]:
+class SummaryModelProbe(NamedTuple):
+    """
+    Result of the off-GPU role/summary model pre-flight.
+
+    The browser shows `detail` in the header banner when `available` is False,
+    so a clinician learns the model problem before recording a consultation.
+    """
+
+    available: bool
+    detail: str
+
+
+def _probe_summary_model() -> SummaryModelProbe:
     """Best-effort reachability check for the off-GPU role/summary model.
 
     Used by the browser pre-flight so a consultation is not started when roles
@@ -1115,7 +1169,7 @@ def _summary_model_reachable() -> tuple[bool, str]:
     resolving credentials and a region without a network round-trip.
 
     Returns:
-        (available, detail) - detail is a short reason shown to the clinician.
+        Probe with `available` plus a short `detail` shown to the clinician.
     """
     provider = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
 
@@ -1127,17 +1181,17 @@ def _summary_model_reachable() -> tuple[bool, str]:
             # No resolvable credentials means every role/summary call will fail
             # mid-consultation; surface that before recording starts.
             if aws_session.get_credentials() is None:
-                return False, "bedrock credentials are not configured"
+                return SummaryModelProbe(False, "bedrock credentials are not configured")
             region = os.environ.get("AWS_DEFAULT_REGION") or aws_session.region_name
             if not region:
-                return False, "bedrock region is not configured (AWS_DEFAULT_REGION)"
+                return SummaryModelProbe(False, "bedrock region is not configured (AWS_DEFAULT_REGION)")
         except Exception as exc:
-            return False, f"bedrock credential check failed ({type(exc).__name__})"
-        return True, f"bedrock:{region}"
+            return SummaryModelProbe(False, f"bedrock credential check failed ({type(exc).__name__})")
+        return SummaryModelProbe(True, f"bedrock:{region}")
 
     # A typo'd provider would otherwise pass pre-flight and fail at first use.
     if provider != "ollama":
-        return False, f"unknown ROLE_AGENT_MODEL_PROVIDER '{provider}'"
+        return SummaryModelProbe(False, f"unknown ROLE_AGENT_MODEL_PROVIDER '{provider}'")
 
     host = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
     model = os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
@@ -1149,10 +1203,10 @@ def _summary_model_reachable() -> tuple[bool, str]:
         # match it exactly; a bare name means Ollama's :latest tag.
         is_pulled = model in names or (":" not in model and f"{model}:latest" in names)
         if is_pulled:
-            return True, f"ollama:{model}"
-        return False, f"model '{model}' is not pulled"
+            return SummaryModelProbe(True, f"ollama:{model}")
+        return SummaryModelProbe(False, f"model '{model}' is not pulled")
     except Exception as exc:
-        return False, f"ollama unreachable ({type(exc).__name__})"
+        return SummaryModelProbe(False, f"ollama unreachable ({type(exc).__name__})")
 
 
 @app.get("/agent/model-health")
@@ -1161,7 +1215,11 @@ async def agent_model_health() -> dict:
 
     The browser calls this before starting a consultation so it does not
     transcribe when DOCTOR/PATIENT roles and the summary would fail.
+
+    Returns:
+        Availability flag plus a plain-language detail the header banner can
+        show when the model is unreachable.
     """
     loop = asyncio.get_running_loop()
-    available, detail = await loop.run_in_executor(None, _summary_model_reachable)
+    available, detail = await loop.run_in_executor(None, _probe_summary_model)
     return {"available": available, "detail": detail}

@@ -297,3 +297,16 @@ fastapi and every runtime dep in the working venv was installation history. It n
 `-r ../../strands_agents/requirements.txt` (proven by building a throwaway venv from the
 single documented command), and the publisher imports pyjwt at module load so a broken
 image fails at startup instead of silently skipping publishes.
+
+## Lesson: "Peek instead of create" needs a liveness signal when the call is a write (2026-07-07)
+
+Replacing `get_or_create_state` with `peek_state` in the speaker-scope role override (0.4.0
+M04) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
+role worker has created any state, and peek-only meant that early override never became a
+confirmed override - the next agent update could undo the clinician. An existing regression
+(`tests/python/test_api.py`, search: "survives_later_agent_update") caught it immediately.
+The fix gates on lifecycle (`is_active` or `has_pending_destroy` -> create; finished visit ->
+peek). The row-scope path never had this problem because row corrections persist in
+transcript storage, not role state. When removing a state-creation side effect, first
+enumerate who legitimately relies on the creation: "reads must not create" is right for
+reads (`roles_snapshot`), but an override is a write.

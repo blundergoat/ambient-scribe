@@ -42,6 +42,26 @@ class TestSummaryPrompts:
     def test_medical_prompt_requires_citations(self):
         assert "[" in MEDICAL_SUMMARY_PROMPT and "MM:SS" in MEDICAL_SUMMARY_PROMPT
 
+    def test_medical_prompt_preserves_patient_uncertainty(self):
+        """M00 fidelity: 'I don't know' must never become a definitive assertion."""
+        assert "Never assert a clinical fact" in MEDICAL_SUMMARY_PROMPT
+        assert "unclear or not established" in MEDICAL_SUMMARY_PROMPT
+        assert "preserving the speaker's own certainty" in MEDICAL_SUMMARY_PROMPT
+        assert "absence of mention is not a negative finding" in MEDICAL_SUMMARY_PROMPT
+        assert "never answered is not a denial" in MEDICAL_SUMMARY_PROMPT
+        assert "never examination findings" in MEDICAL_SUMMARY_PROMPT
+
+    def test_medical_prompt_restricts_assessment_to_clinician_statements(self):
+        """ADR-007 Option B: the Assessment section is scribe-true, never AI-inferred."""
+        assert "Only diagnoses or differentials the clinician stated" in MEDICAL_SUMMARY_PROMPT
+        assert "Never add" in MEDICAL_SUMMARY_PROMPT
+        assert "no assessment was documented" in MEDICAL_SUMMARY_PROMPT
+
+    def test_medical_prompt_keeps_patient_reports_out_of_objective(self):
+        """Objective may hold only clinician-performed examination content (M03 item a)."""
+        assert "Only clinician-performed examination findings" in MEDICAL_SUMMARY_PROMPT
+        assert "Patient-reported symptoms belong in Subjective" in MEDICAL_SUMMARY_PROMPT
+
 
 class TestSummaryEndpoint:
     """Tests for the POST /session/{id}/summary endpoint."""

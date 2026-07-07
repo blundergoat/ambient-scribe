@@ -10,8 +10,38 @@ troponin|tro pony|troponen
 naproxen|na proxen|naproxin
 ibuprofen|i buprofen|eye buprofen
 paracetamol|para seat amol|paracetemol
+amoxicillin|amoxi cillin|amoxy cillin
+azithromycin|azithro mycin|azythromycin
+atorvastatin|a torva statin|atorva statin
+metformin|met formin|metforman
+omeprazole|omep razole|omeprazol
+levothyroxine|levo thyroxine|levothyroxin
+hydrochlorothiazide|hydrochloro thiazide|hydro chlorothiazide
+prednisone|predni zone|prednizone
+gabapentin|gaba pentin|gabapentyn
+albuterol|al buterol|albuteral
+salbutamol|sal butamol|salbutamole
+amlodipine|amlo dipine|amlodepine
+rosuvastatin|rosuva statin|ro suva statin
+pantoprazole|panto prazole|pantoprazol
+warfarin|war farin|warfaren
+apixaban|a pixaban|apixiban
+rivaroxaban|riva roxaban|rivaroxiban
+sertraline|sertra line|sertralyn
+fluoxetine|flu oxetine|fluoxetin
+semaglutide|sema glutide|semaglutid
+HbA1c|h b a one c|hba one c
 hypertension|high per tension
 radiculopathy|radiculo pathy|ridiculopathy
+hypothyroidism|hypo thyroidism|hypothyroid ism
+hyperlipidemia|hyper lipid emia|hyper lipidemia
+osteoarthritis|osteo arthritis|osteoarthritus
+pneumonia|new monia|pneumon ia
+cellulitis|cell u litis|cellulitus
+eczema|ex zema|egzema
+gastroenteritis|gastro enteritis|gastroenteritus
+asthma|az ma|asma
+endometriosis|endo metriosis|endometreosis
 myocardial infarction|my cardial infarction
 atrial fibrillation|a trial fibrillation|a fib
 gestational diabetes|gestation diabetes

@@ -14,14 +14,27 @@ python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 
   --case day1_consultation05 \
   --case day1_consultation06 \
   --case day1_consultation07 \
-  --case day1_consultation08
+  --case day1_consultation08 \
+  --case day2_consultation01 \
+  --case day2_consultation02 \
+  --case day2_consultation03 \
+  --case day2_consultation07 \
+  --case day2_consultation08 \
+  --case day2_consultation09 \
+  --case day3_consultation01 \
+  --case day3_consultation03 \
+  --case day3_consultation05 \
+  --case day5_consultation03 \
+  --case day5_consultation04 \
+  --case day5_consultation08 \
+  --case day5_consultation09
 ```
 
 This writes ignored WAV files under `tests/fixtures/audio/`. PriMock57 files are
 generated at full consultation length; `NEMO_BUFFER_MAX_DURATION` (default
-900 seconds) bounds replay GPU memory. The current demo set intentionally
-excludes PriMock57 cases 01, 09, and 10; `scripts/m2-verify.sh` defaults to
-case 02.
+900 seconds) bounds replay GPU memory. The current demo set includes 20 cases
+and intentionally excludes PriMock57 cases 01, 09, and 10; `scripts/m2-verify.sh`
+defaults to case 02.
 
 ## Add A Consultation
 

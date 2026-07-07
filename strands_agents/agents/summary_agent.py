@@ -42,6 +42,19 @@ Rules:
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
 - If the transcript is too short or uninformative, say so briefly rather than inventing content.
+- Never assert a clinical fact the transcript does not support.
+- When the patient expresses uncertainty ("I don't know", "maybe", "not sure"), document the
+  point explicitly as unclear or not established - never resolve it to one side, and never
+  infer the answer from surrounding phrasing (a patient answering "I don't know really, it
+  just happened" to a sudden-vs-gradual question means onset is UNKNOWN, not sudden).
+- Clinical characteristics (onset, severity, laterality, timing) appear only as the speaker
+  stated them, preserving the speaker's own certainty.
+- Record a negative finding only when the patient explicitly denied it or it was examined;
+  absence of mention is not a negative finding, and a clinician question or statement the
+  patient never answered is not a denial (transcripts often end mid-question - an unanswered
+  "your breathing is okay?" establishes nothing about breathing).
+- Patient answers to screening questions are reported history, never examination findings -
+  nothing is "intact" or "normal on examination" unless an examination was performed.
 - Use the structured summary schema only. No prose outside the result.
 
 Output format:
@@ -64,13 +77,19 @@ You receive a complete, role-attributed consultation transcript.
 Generate a SOAP note summarising the encounter.
 
 Required sections:
-- **Subjective**: Patient's chief complaint, symptoms, history as reported
-- **Objective**: Any examination findings, vitals, or observations mentioned
-- **Assessment**: Doctor's working diagnosis or differential
+- **Subjective**: Patient's chief complaint, symptoms, history as reported. State each
+  clinical characteristic (onset, severity, timing) exactly as the patient answered - if
+  the patient was unsure or did not know, write that the patient was unsure. Never restate
+  the clinician's question wording as if it were the patient's answer.
+- **Objective**: Only clinician-performed examination findings, vitals, or observations.
+  Patient-reported symptoms belong in Subjective. If no examination is documented, say so.
+- **Assessment**: Only diagnoses or differentials the clinician stated. Never add
+  AI-inferred diagnoses, suggested conditions, or unstated rule-outs. If the clinician
+  stated none, say no assessment was documented.
 - **Plan**: Prescribed treatment, follow-up instructions, referrals
 
-If the doctor did not explicitly state an assessment or plan, note what was discussed
-and indicate that formal documentation was not captured in the transcript.
+If the doctor did not explicitly state an assessment or plan, say that none was documented;
+you may summarise what was discussed without converting it into a diagnosis or plan.
 {_SHARED_SUMMARY_RULES}"""
 
 

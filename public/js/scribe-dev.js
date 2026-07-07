@@ -497,12 +497,14 @@ class DevPanel {
 }
 
 /**
- * Builds the "consultation-0X · complaint" label for the demo-audio selector.
+ * Builds the "consult-1.2 · complaint" label for the demo-audio selector.
  * Use for the selector trigger and each dropdown option.
  */
 function audioFixtureLabel(audioFixture) {
-    const consultationMatch = /consultation(\d+)/i.exec(audioFixture.filename);
-    const consultation = consultationMatch ? `consultation-${consultationMatch[1]}` : audioFixture.filename;
+    const consultationMatch = /day(\d+)-consultation(\d+)/i.exec(audioFixture.filename);
+    const consultation = consultationMatch
+        ? `consult-${Number.parseInt(consultationMatch[1], 10)}.${Number.parseInt(consultationMatch[2], 10)}`
+        : audioFixture.filename;
     // Drop a leading "I have" / "I've" so the label reads as a short complaint.
     const complaint = (audioFixture.complaint || '').replace(/^\s*i(?:'ve| have)\s+/i, '').trim();
     return complaint ? `${consultation} · ${complaint}` : consultation;
