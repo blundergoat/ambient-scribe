@@ -134,3 +134,44 @@ class TestMercurePublishFailures:
         result = await publish_to_mercure("test/topic", {"data": "retry"})
         assert result is True
         assert call_count == 2  # Failed once, succeeded on retry
+
+
+class TestMercureJwtMinting:
+    """The default deploy path mints the publisher JWT from MERCURE_JWT_SECRET."""
+
+    def test_pyjwt_is_declared_in_runtime_requirements(self):
+        """The minting fallback imports jwt; a fresh image must install it.
+
+        The local venv carries PyJWT transitively through dev tooling, so a
+        missing declaration passes every test while a fresh container built
+        from requirements.txt silently loses all Mercure publishes.
+        """
+        from pathlib import Path
+
+        requirements = (
+            Path(__file__).resolve().parents[2] / "strands_agents/requirements.txt"
+        ).read_text(encoding="utf-8")
+        assert "pyjwt" in requirements.lower()
+
+    def test_secret_fallback_mints_a_decodable_publisher_token(self, monkeypatch):
+        """With only a secret configured (compose default), minting must work."""
+        import jwt as pyjwt
+
+        import api.mercure_publisher as mercure_publisher
+
+        monkeypatch.delenv("MERCURE_JWT", raising=False)
+        monkeypatch.setattr(mercure_publisher, "_mercure_jwt_cache", None)
+        monkeypatch.setattr(
+            mercure_publisher,
+            "MERCURE_JWT_SECRET",
+            "unit-test-secret-of-sufficient-length!",
+        )
+
+        token = mercure_publisher._resolve_mercure_jwt()
+
+        claims = pyjwt.decode(
+            token,
+            "unit-test-secret-of-sufficient-length!",
+            algorithms=["HS256"],
+        )
+        assert claims["mercure"]["publish"] == ["*"]

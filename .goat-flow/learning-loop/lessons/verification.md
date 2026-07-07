@@ -275,3 +275,19 @@ lack app filters.
 never iterate all root handlers - the set is polluted under pytest. Pair the config assertion
 with a behavioral test: log via a child logger through a scratch handler+filter and assert the
 JSON output (search in `tests/python/test_observability.py`: "corr-child-123").
+
+## Lesson: Dev-tooling transitives mask undeclared runtime imports
+
+**Created:** 2026-07-07
+**What happened:** A post-hardening Codex P1 caught what the local test suite could not:
+`strands_agents/api/mercure_publisher.py` (search: "import jwt as pyjwt") minted the
+publisher token on the DEFAULT compose path, but `strands_agents/requirements.txt` never
+declared PyJWT. Every local test passed because the venv carried PyJWT transitively via
+`mcp` dev tooling (`pip show PyJWT` -> `Required-by: mcp`); a fresh container built from
+requirements.txt would import-fail, cache an empty token, and silently skip every
+raw/role/summary publish.
+**Lesson:** When verifying a runtime `import X` claim, checking `import X` in the local
+venv proves nothing about the deployed image. Check the declaration chain instead:
+`pip show <pkg>` and inspect `Required-by` - if only dev tools require it, treat it as
+undeclared. Regression now pins the declaration (`tests/python/test_mercure_failures.py`,
+search: "pyjwt_is_declared_in_runtime_requirements").
