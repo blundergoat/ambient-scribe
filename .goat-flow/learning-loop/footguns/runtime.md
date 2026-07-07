@@ -119,6 +119,7 @@ last_reviewed: 2026-07-07
 - **What breaks:** The browser posts summary requests to the app-origin `/session/{id}/summary` URL, but FastAPI owns the actual work. Without the Symfony proxy route, the browser can receive Symfony/PHP HTML errors and then show JSON parser failures such as `Unexpected token '<'`. (Replay uploads used to share this trap; demo replay now streams over the WebSocket and has no app-origin HTTP action.)
 - **Evidence:** The browser fetch path is same-origin, FastAPI defines the summary endpoint, and Symfony must translate the app-origin request into a FastAPI call while preserving JSON error responses.
 - **Prevention:** When adding or changing browser-to-FastAPI HTTP actions, add a Symfony same-origin proxy or explicitly prove browser CORS/config. Include a route smoke that checks `Content-Type: application/json` for failure states, not just happy-path API tests.
+- **Update (2026-07-07):** the pattern held for the summary Transcript tab: `GET /session/{id}/corrected-transcript` gained a same-origin proxy (`src/Controller/ScribeController.php`, search: "public function correctedTranscript") with unit tests for forwarding and invalid-UUID rejection.
 
 ## Footgun: Visit topics must share one multiplexed EventSource
 **Status:** active | **Created:** 2026-07-05 | **Evidence:** OBSERVED

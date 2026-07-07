@@ -623,176 +623,27 @@ function createSummarySectionBlocks(sections) {
 
     // Each backend section becomes one readable block in the order the clinician reviews it.
     for (const section of sections) {
-        const sectionChildren = [
-            createElement('div', { className: 'summary-section__heading', text: section.heading }),
-            createElement('div', { className: 'summary-section__content', text: section.content }),
-        ];
-        // Older summaries have no citations, so the section still renders as plain text.
-        const citationBlock = createSummaryCitationBlock(section.citations ?? []);
+        const contentBlock = createElement('div', {
+            className: 'summary-section__content',
+            text: section.content,
+        });
+        // Cited sections get a superscript provenance affordance after the prose;
+        // uncited sections and test pages without the popover script stay plain.
+        const provenanceBlock = typeof createSectionProvenanceBlock === 'function'
+            ? createSectionProvenanceBlock(section.citations ?? [], section.heading)
+            : null;
 
-        // A valid source block is shown under the claim it supports.
-        if (citationBlock) {
-            sectionChildren.push(citationBlock);
+        if (provenanceBlock) {
+            contentBlock.appendChild(provenanceBlock);
         }
 
-        sectionBlocks.push(createElement('div', { className: 'summary-section' }, sectionChildren));
+        sectionBlocks.push(createElement('div', { className: 'summary-section' }, [
+            createElement('div', { className: 'summary-section__heading', text: section.heading }),
+            contentBlock,
+        ]));
     }
 
     return sectionBlocks;
-}
-
-/**
- * Creates source chips for one generated summary section.
- * Use when a cited SOAP claim should show the transcript row that supports it.
- *
- * @param {Array<object>} citations - validated source rows; empty means the section stays uncited.
- * @returns {HTMLElement|null} source-chip list, or `null` when the clinician has no sources to inspect.
- */
-function createSummaryCitationBlock(citations) {
-    // No citations were returned, so the summary section remains visible without source chips.
-    if (citations.length === 0) {
-        return null;
-    }
-
-    const citationList = createElement('div', { className: 'summary-citations' });
-
-    // Each citation becomes one source chip the clinician can click or read.
-    for (const citation of citations) {
-        const citationButton = createSummaryCitationButton(citation);
-
-        // Untraceable citations are skipped so the clinician sees only usable evidence chips.
-        if (!citationButton) {
-            continue;
-        }
-
-        citationList.appendChild(citationButton);
-    }
-
-    // If every source was unusable, the clinician sees the section without a blank citation row.
-    return citationList.childElementCount === 0 ? null : citationList;
-}
-
-/**
- * Builds one clickable source chip for a validated summary citation.
- * Use when the summary panel shows evidence under a generated claim.
- *
- * @param {object} citation - backend source row; missing ID means the chip is omitted.
- * @returns {HTMLButtonElement|null} source chip, or `null` when there is no traceable row.
- */
-function createSummaryCitationButton(citation) {
-    const sourceCitation = normaliseSummaryCitation(citation);
-
-    // A citation with no source row is hidden instead of shown as weak evidence.
-    if (!sourceCitation) {
-        return null;
-    }
-
-    const citationButton = createElement('button', {
-        className: 'summary-citation',
-        attributes: {
-            type: 'button',
-            title: sourceCitation.title,
-            'aria-label': `Show source ${sourceCitation.timeLabel}`,
-        },
-        dataset: { segmentId: sourceCitation.segmentId },
-    }, [
-        createElement('span', {
-            className: 'summary-citation__time',
-            text: sourceCitation.timeLabel,
-        }),
-        createElement('span', {
-            className: 'summary-citation__role',
-            text: sourceCitation.roleLabel,
-        }),
-    ]);
-
-    // When source text is available, the chip shows the excerpt without requiring a click.
-    if (sourceCitation.text !== '') {
-        citationButton.appendChild(createElement('span', {
-            className: 'summary-citation__quote',
-            text: sourceCitation.text,
-        }));
-    }
-
-    citationButton.addEventListener('click', () => focusSummaryCitation(sourceCitation.segmentId));
-    return citationButton;
-}
-
-/**
- * Normalizes backend citation data into labels the clinician can inspect.
- * Use before creating a source chip so missing fields have safe UI fallbacks.
- *
- * @param {object} citation - citation payload from FastAPI; missing text or role falls back gracefully.
- * @returns {object|null} normalized chip data, or `null` when no source ID exists.
- */
-function normaliseSummaryCitation(citation) {
-    // Missing source identity means the citation cannot safely jump to transcript evidence.
-    const segmentId = String(citation.segment_id ?? '').trim();
-
-    // A source without an ID cannot be traced, so the clinician should not see it as evidence.
-    if (segmentId === '') {
-        return null;
-    }
-
-    // Missing source text still allows a time/role chip, but no excerpt is shown.
-    const text = String(citation.text ?? '').trim();
-    // Missing role means the chip stays generic instead of inventing Doctor/Patient.
-    const roleLabel = citation.role ?? 'Source';
-    const timeLabel = formatCitationTime(citation);
-
-    return {
-        segmentId,
-        text,
-        roleLabel,
-        timeLabel,
-        title: text === '' ? 'Source transcript row' : text,
-    };
-}
-
-/**
- * Highlights a transcript row when the cited row is visible in the live history.
- * Use when the clinician clicks a source chip and wants to jump back to the row.
- *
- * @param {string} segmentId - transcript row ID cited by the summary; empty or missing means no row can be focused.
- */
-function focusSummaryCitation(segmentId) {
-    const rowSpan = document.querySelector(
-        `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
-    );
-
-    // Corrected-only citations may not have a matching visible preview row yet.
-    if (!rowSpan) {
-        return;
-    }
-
-    rowSpan.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    rowSpan.classList.add('segment__text--cited');
-    window.setTimeout(() => rowSpan.classList.remove('segment__text--cited'), 1600);
-}
-
-/**
- * Formats one citation's timestamp range for a compact source chip.
- * Use when the clinician scans source chips and needs the spoken time.
- *
- * @param {object} citation - source row timing from FastAPI; missing times render as "Source".
- * @returns {string} time range shown on the chip, or "Source" when no timing is available.
- */
-function formatCitationTime(citation) {
-    const start = Number.parseFloat(citation.start);
-    const end = Number.parseFloat(citation.end);
-
-    // Start and end are known, so the chip can show a precise source range.
-    if (Number.isFinite(start) && Number.isFinite(end)) {
-        return `${formatTime(start)}-${formatTime(end)}`;
-    }
-
-    // Only the start is known, so the chip still points near the spoken row.
-    if (Number.isFinite(start)) {
-        return formatTime(start);
-    }
-
-    // No timing is available, so the chip falls back to source text and role.
-    return 'Source';
 }
 
 /**

@@ -13,6 +13,13 @@
 let activeSummaryTabName = 'note';
 let correctedTranscriptRowsCache = null;
 let correctedTranscriptCacheSessionId = null;
+// The deep link (M6) awaits the in-flight tab render before highlighting.
+let transcriptRenderPromise = null;
+// How long cited blocks stay highlighted before the fade begins.
+const CITED_HIGHLIGHT_MILLISECONDS = 3000;
+const MISSING_CITATION_NOTICE_MILLISECONDS = 4000;
+let citedHighlightTimeout = null;
+let missingCitationNoticeTimeout = null;
 
 /**
  * Switches the summary panel between the Note and Transcript views.
@@ -53,10 +60,113 @@ function selectSummaryTab(tabName) {
 
     // The transcript body renders lazily on first open and after New Session.
     if (!isNoteActive) {
-        renderSummaryTranscriptView().catch((transcriptError) => {
+        transcriptRenderPromise = renderSummaryTranscriptView();
+        transcriptRenderPromise.catch((transcriptError) => {
             console.warn('Transcript tab render failed:', transcriptError);
         });
     }
+}
+
+/**
+ * Switches to the Transcript tab and highlights the cited utterance blocks.
+ * Use from a provenance popover's "Open in transcript" action (M6): the
+ * first cited block scrolls into view and every cited block holds a
+ * temporary highlight that fades after CITED_HIGHLIGHT_MILLISECONDS.
+ * When no cited ID is present in the rendered transcript, a small
+ * non-blocking notice appears instead - the tab still opens and never throws.
+ */
+async function openTranscriptDeepLink(citedSegmentIds) {
+    selectSummaryTab('transcript');
+
+    // The tab render is asynchronous; highlighting needs the blocks in the DOM.
+    try {
+        await transcriptRenderPromise;
+    } catch (renderError) {
+        // The render failure is reported here; the miss notice below covers the user.
+        console.warn('Transcript render unavailable for deep link:', renderError);
+    }
+
+    const citedIds = new Set((citedSegmentIds ?? []).filter(Boolean));
+    const citedBlocks = transcriptBlocksForSegmentIds(citedIds);
+
+    // Every cited row missing from this transcript view is the non-blocking miss case.
+    if (citedBlocks.length === 0) {
+        showMissingCitationNotice();
+        return;
+    }
+
+    clearCitedTranscriptHighlights();
+    citedBlocks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (const citedBlock of citedBlocks) {
+        citedBlock.classList.add('summary-transcript__block--cited');
+    }
+    citedHighlightTimeout = window.setTimeout(
+        clearCitedTranscriptHighlights,
+        CITED_HIGHLIGHT_MILLISECONDS
+    );
+}
+
+/**
+ * Finds rendered Transcript tab blocks containing any of the cited row IDs.
+ * Use for the deep link; stitched blocks carry constituent IDs in
+ * data-segment-ids, so a citation resolves even after its row was merged.
+ */
+function transcriptBlocksForSegmentIds(citedIds) {
+    const transcriptContainer = document.getElementById('summaryTranscript');
+
+    // Test pages without the transcript body have nothing to highlight.
+    if (!transcriptContainer || citedIds.size === 0) {
+        return [];
+    }
+
+    return Array.from(
+        transcriptContainer.querySelectorAll('.summary-transcript__block')
+    ).filter((utteranceBlock) =>
+        (utteranceBlock.dataset.segmentIds ?? '')
+            .split(' ')
+            .some((segmentId) => citedIds.has(segmentId))
+    );
+}
+
+/**
+ * Removes the temporary citation highlight from every transcript block.
+ * Use before a new deep link and when the fade timer fires, so repeated
+ * jumps never stack stale highlights.
+ */
+function clearCitedTranscriptHighlights() {
+    if (citedHighlightTimeout !== null) {
+        window.clearTimeout(citedHighlightTimeout);
+        citedHighlightTimeout = null;
+    }
+
+    for (const citedBlock of document.querySelectorAll('.summary-transcript__block--cited')) {
+        citedBlock.classList.remove('summary-transcript__block--cited');
+    }
+}
+
+/**
+ * Shows the temporary "cited rows not in this view" notice (M6 miss case).
+ * Use when a deep link resolves zero blocks; the notice self-hides so it
+ * never blocks reading the transcript.
+ */
+function showMissingCitationNotice() {
+    const missNotice = document.getElementById('summaryTranscriptNotice');
+
+    // Test pages without the notice element still complete the tab switch.
+    if (!missNotice) {
+        return;
+    }
+
+    missNotice.textContent = 'The cited rows are not in this transcript view.';
+    missNotice.classList.remove('hidden');
+
+    if (missingCitationNoticeTimeout !== null) {
+        window.clearTimeout(missingCitationNoticeTimeout);
+    }
+    missingCitationNoticeTimeout = window.setTimeout(() => {
+        missNotice.classList.add('hidden');
+        missingCitationNoticeTimeout = null;
+    }, MISSING_CITATION_NOTICE_MILLISECONDS);
 }
 
 /**
@@ -198,12 +308,16 @@ function createSummaryTranscriptBlocks(transcriptRows) {
 function resetSummaryTabsState() {
     correctedTranscriptRowsCache = null;
     correctedTranscriptCacheSessionId = null;
+    transcriptRenderPromise = null;
+    clearCitedTranscriptHighlights();
     selectSummaryTab('note');
 
     const transcriptContainer = document.getElementById('summaryTranscript');
     const transcriptStatus = document.getElementById('summaryTranscriptStatus');
+    const missNotice = document.getElementById('summaryTranscriptNotice');
     transcriptContainer?.replaceChildren();
     transcriptStatus?.classList.add('hidden');
+    missNotice?.classList.add('hidden');
 }
 
 // The script tag sits after the markup, so the tablist exists at load time.

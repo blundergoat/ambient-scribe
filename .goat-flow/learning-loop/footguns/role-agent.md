@@ -1,6 +1,6 @@
 ---
 category: role-agent
-last_reviewed: 2026-07-05
+last_reviewed: 2026-07-07
 ---
 
 # Role-Attribution Agent Footguns

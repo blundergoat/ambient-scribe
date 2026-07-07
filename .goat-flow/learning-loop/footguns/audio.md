@@ -1,7 +1,7 @@
 ---
 category: audio
 hallucination-risk: high
-last_reviewed: 2026-07-05
+last_reviewed: 2026-07-07
 ---
 
 # Audio Pipeline Footguns

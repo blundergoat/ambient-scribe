@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-04
+last_reviewed: 2026-07-07
 ---
 
 # Verification Patterns
@@ -28,3 +28,21 @@ last_reviewed: 2026-07-04
 **Context:** A local quality script needs to score fixture behavior, such as DOCTOR/PATIENT role attribution, without starting FastAPI, importing HTTP clients, or touching NeMo/GPU setup.
 
 **Approach:** Extract the pure decision logic into a small importable helper, keep the CLI stdlib-only, and prove it with both the direct eval command and the log analyzer command. For M08 this means `scripts/eval-role-heuristic.py` loads `strands_agents/api/role_heuristics.py` and `python scripts/eval-role-heuristic.py > /tmp/m08-eval.out && python scripts/analyze-logs.py /tmp/m08-eval.out` renders the report.
+
+## Pattern: Doer-verifier milestone verification with fresh sessions
+
+**Created:** 2026-07-07
+
+**Context:** A phased task where each milestone needs sign-off and the implementing agent
+must never self-assess (scribe summary UX task, milestones M1-M5, 2026-07-07).
+
+**Approach:** After a milestone goes green locally, launch a FRESH agent session whose only
+job is adversarial verification: it re-reads the diffs against the acceptance criteria,
+re-runs every suite itself, writes its own throwaway probes (synthetic data only) for the
+claims most likely to be wrong, and records per-criterion PASS/FAIL with file:line evidence
+in `scribe-summary-ux-verify-M<N>.md` plus an overall verdict line. The implementing session
+then applies cheap post-verdict hardening from the verifier's non-blocking concerns and
+records trade-offs in the plan tracker. Tell the verifier which working-tree changes belong
+to OTHER milestones so it attributes rather than fails on them, and hand it the exact
+commands (test runners, lint invocations, stack URL) so a tooling miss does not masquerade
+as a milestone failure.

@@ -336,11 +336,6 @@
             text-decoration: underline dotted;
             text-underline-offset: 3px;
         }
-        .segment__text--cited {
-            background: color-mix(in srgb, var(--accent) 16%, transparent);
-            border-radius: 3px;
-            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
-        }
         .segment__row-role {
             display: inline-block;
             font-size: 0.625rem;
@@ -498,45 +493,56 @@
             line-height: 1.6;
             color: var(--text-strong);
         }
-        .summary-citations {
-            display: flex;
-            flex-direction: column;
-            gap: 0.375rem;
-            margin-top: 0.625rem;
+        .summary-section { position: relative; }
+        .summary-provenance {
+            display: inline-block;
+            margin-left: 0.25rem;
         }
-        .summary-citation {
-            display: grid;
-            grid-template-columns: auto auto minmax(0, 1fr);
-            align-items: baseline;
-            gap: 0.5rem;
-            width: 100%;
-            padding: 0.4375rem 0.5625rem;
+        .summary-provenance__toggle {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            line-height: 1;
+            vertical-align: super;
+            padding: 0.0625rem 0.375rem;
             border: 1px solid var(--surface-border);
-            border-radius: 0.375rem;
+            border-radius: 999px;
             background: var(--surface-bg-alt);
-            color: var(--text-strong);
-            font: inherit;
-            text-align: left;
+            color: var(--accent);
             cursor: pointer;
         }
-        .summary-citation:hover {
+        .summary-provenance__toggle:hover,
+        .summary-provenance__toggle[aria-expanded="true"] {
             background: var(--surface-hover);
             border-color: color-mix(in srgb, var(--accent) 35%, var(--surface-border));
         }
-        .summary-citation__time,
-        .summary-citation__role {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            color: var(--text-subtle);
-            white-space: nowrap;
+        .summary-provenance__popover {
+            position: absolute;
+            z-index: 30;
+            left: 0;
+            right: 0;
+            top: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            padding: 0.5rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.5rem;
+            background: var(--surface-bg);
+            box-shadow: var(--shadow-md);
         }
-        .summary-citation__quote {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            font-size: 0.8125rem;
-            color: var(--text-strong);
+        .summary-provenance__open {
+            align-self: flex-end;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.625rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            background: var(--surface-bg-alt);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .summary-provenance__open:hover {
+            background: var(--surface-hover);
         }
         .summary-key-points {
             list-style: disc;
@@ -583,6 +589,11 @@
             border: 1px solid var(--surface-border);
             border-radius: 0.375rem;
             background: var(--surface-bg-alt);
+            transition: background 0.6s ease, box-shadow 0.6s ease;
+        }
+        .summary-transcript__block--cited {
+            background: color-mix(in srgb, var(--accent) 16%, transparent);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
         }
         .summary-transcript__time,
         .summary-transcript__role {
@@ -1174,6 +1185,7 @@
                         </div>
                         <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">
                             <p id="summaryTranscriptStatus" class="summary-transcript__status hidden"></p>
+                            <p id="summaryTranscriptNotice" class="summary-transcript__status hidden" role="status" aria-live="polite"></p>
                             <div id="summaryTranscript" class="summary-transcript"></div>
                         </div>
                     </div>
@@ -1274,6 +1286,7 @@
     <script src="/js/scribe-stitch.js"></script>
     <script src="/js/scribe-output.js"></script>
     <script src="/js/scribe-summary-tabs.js"></script>
+    <script src="/js/scribe-provenance.js"></script>
     <script src="/js/scribe-actions.js"></script>
     {% if dev_panel_enabled is defined and dev_panel_enabled %}
     <script src="/js/scribe-dev.js"></script>

@@ -1,6 +1,6 @@
 ---
 category: docs-and-crossrefs
-last_reviewed: 2026-07-05
+last_reviewed: 2026-07-07
 ---
 
 # Docs and Cross-Reference Footguns

@@ -1,6 +1,6 @@
 ---
 category: config
-last_reviewed: 2026-07-04
+last_reviewed: 2026-07-07
 ---
 
 # Config, Networking, and Deployment Footguns

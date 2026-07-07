@@ -1,0 +1,149 @@
+---
+category: tooling-gates
+last_reviewed: 2026-07-07
+---
+
+# Tooling and Quality-Gate Lessons
+
+Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
+Split from `verification.md` on 2026-07-07 (bucket-size threshold).
+
+## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
+
+**Created:** 2026-07-06
+**What happened:** The first corrected source-chip scorer CLI inserted `strands_agents`
+into `sys.path` so it could import the helper during local script execution. Gruff flagged
+`design.runtime-sys-path-mutation` because that path can shadow later imports for the whole
+process.
+**Evidence:** `scripts/corrected-source-chip-score.py` (search: "def load_score_module") now
+loads the helper by file path, and `strands_agents/corrected_source_chip_score.py`
+(search: "class SourceChipArtifactScore") keeps the pure scorer importable for tests.
+**Prevention:** For fixture-only CLIs that wrap repo-local helpers, prefer
+`importlib.util.spec_from_file_location` or package-level imports that are already available
+from the caller environment. Do not add repo directories to `sys.path` inside the script.
+
+## Lesson: Long runtime probes should become small scripts before execution
+
+**Created:** 2026-07-06
+**What happened:** During M03 post-visit timestamp work, an inline `docker compose exec`
+probe with a long embedded Python heredoc was blocked by the PreToolUse hook as too complex
+to review safely.
+**Prevention:** For GPU/runtime probes that need more than a few shell steps, add a small
+fixture-only script with `apply_patch`, compile it, and then run the script through the
+container. This gives the hook and reviewer a stable artifact instead of a dense terminal blob.
+
+## Lesson: Semantic anchors should prefer function names over escaped route strings (2026-07-04)
+
+`./scripts/context-validate.sh` rejected a generated footgun citation that used an escaped decorator string for the WebSocket route in `strands_agents/api/server.py`. The route existed, but the checker did not accept the escaped quote form.
+
+**Lesson:** For learning-loop citations, prefer stable function-name anchors such as `(search: "async def transcribe_stream")` over quoted decorator or route literals that require escaping.
+
+## Lesson: Goat-flow installed skill edits can drift from package templates (2026-07-04)
+
+Updating installed goat-plan skill copies under `.agents/skills/`, `.claude/skills/`, and `.github/skills/` removed stale project path text, but `goat-flow audit` still compares those files to the package template in `node_modules/@blundergoat/goat-flow/workflow/skills/goat-plan/SKILL.md`.
+
+**Lesson:** When changing installed goat-flow skill text for project policy, run `goat-flow audit` and either accept/report template drift or make the change upstream in the package before claiming the audit is clean.
+
+## Lesson: Gruff context docs need marker vocabulary (2026-07-04)
+
+During M05, comments clearly described user-visible error handling but still failed `docs.missing-error-behavior-doc` because gruff's context-doc rule looks for marker words such as `reports`, `fallback`, `recover`, or `throws`.
+
+**Lesson:** When fixing gruff context-doc findings, read the rule vocabulary and include the expected marker word in plain English instead of relying on semantically similar prose.
+
+## Lesson: Gruff env placeholders are exact-token sensitive (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `.env.example` (search: "APP_SECRET=changeme"), `.env.example` (search: "MERCURE_JWT_SECRET=changemechangemechangemechangeme"), `strands_agents/.venv/lib/python3.12/site-packages/gruffpy/rule/sensitive_data/hardcoded_env_value_rule.py` (search: "_PLACEHOLDER_VALUES").
+
+During M06, intuitive placeholders such as `<generate-app-secret>` and `allowlists.secretPreviews` still left `sensitive-data.hardcoded-env-value` findings. Reading the rule showed the env-secret detector only skips exact placeholder tokens or low-entropy values, and the high-entropy detector in gruff-py 0.4.1 does not consult `secretPreviews`.
+
+**Lesson:** When gruff-py flags `.env.example`, read the sensitive-data rule before tuning config; prefer exact known placeholders such as `changeme` or low-entropy repeated local placeholders, then rerun JSON output to prove the warning disappeared.
+
+## Lesson: Gruff PHP display filters do not lower the exit threshold (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `composer.json` (search: "vendor/bin/gruff-php analyse"), `.goat-flow/plans/0.3.0/M07-fix-gruff-php-findings.md` (search: "rewired").
+
+During M07, a complexity-only gruff-php command was initially considered for the retired cyclomatic alias. The command still failed while unrelated advisory findings existed, because gruff-php's report selection changes displayed findings but the configured `minimumSeverity.analyse` threshold still controls the process exit.
+
+**Lesson:** When replacing a legacy quality gate with gruff-php, use the full `gruff-php analyse` command unless the tool documentation explicitly says a selector changes exit semantics; prove the alias with a failing and then clean run before marking the plan checkbox complete.
+
+## Lesson: Generic Gruff baseline filenames collide across tool lanes (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `gruff-php-baseline.json` (search: "gruff.baseline.v2"), `composer.json` (search: "--baseline=gruff-php-baseline.json"), `scripts/preflight-checks.sh` (search: "--baseline=gruff-php-baseline.json").
+
+During M14 review, a PHP accepted-debt baseline was written as `gruff-baseline.json`. `gruff-py` also auto-loads that filename, rejected the PHP `gruff.baseline.v2` schema, and exited with a baseline error even though the Python findings were clean.
+
+**Lesson:** When multiple Gruff implementations share a repo, do not put implementation-specific accepted debt in the generic `gruff-baseline.json`; use tool-specific baseline filenames and pass them explicitly in that tool's Composer/script gate.
+
+## Lesson: Validation wrappers must check exit codes before success text (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `scripts/preflight-checks.sh` (search: "composer_validate_exit"), `scripts/validate-composer.sh` (search: "ALLOWED_STRANDS_CLIENT_WARNING").
+
+During M14 review, direct `composer validate --strict` exited 1 for the intentionally commit-pinned Strands PHP client, but preflight had been grepping for "is valid" and therefore reported the step green despite the non-zero exit. The fix moved the exception into a wrapper that checks the exit code and allows only the reviewed warning.
+
+**Lesson:** Validation steps should key off the command exit code first; if one warning is intentionally accepted, encode that exact exception in a wrapper instead of grepping for success text in mixed success/warning output.
+
+## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `.goat-flow/plans/0.3.0/M08-observability-and-eval.md` (search: "ResponseObserver"), `vendor/blundergoat/strands-php-client/src/Http/RequestMiddleware.php` (search: "interface RequestMiddleware"), `src/Observability/StrandsClientTelemetry.php` (search: "implements RequestMiddleware").
+
+During M08, the plan described PHP client 1.5.x `ResponseObserver` hooks, but the installed 1.4.0 client only exposes `RequestMiddleware` with `beforeRequest()` and `afterResponse()`. Implementing from the plan text alone would have created a class against an absent interface.
+
+**Lesson:** Before implementing SDK instrumentation from a plan, verify the installed vendor interface and lockfile version, then update the plan with the actual contract used.
+
+## Lesson: Goat-flow setup-green can still hide cross-agent drift (2026-07-05)
+
+**Created:** 2026-07-05
+**Evidence:** `.claude/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/hooks/hooks.json` (search: "\"postToolUse\"").
+
+During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` reported `0 audit checks failed` after codex config, hooks, and skills were synced. The exact requested `goat-flow audit . --harness --agent codex` still exited non-zero because the audit drift section also compared installed `.claude/skills/`, `.github/skills/`, and `.github/hooks/hooks.json` copies against package templates.
+
+**Lesson:** When the exact audit command is the acceptance gate, trust the audit exit code and its top-level `drift.status`, not only the setup prompt's numbered checks. If drift remains, sync every named installed agent copy before declaring the audit clean.
+
+## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import").
+
+Full pytest caught that the test helper loaded `scripts/analyze-logs.py` with `importlib.util.module_from_spec()` but did not register it in `sys.modules` before executing the module. Python dataclasses resolving postponed annotations then failed during import.
+
+**Lesson:** When test-loading a hyphenated Python script that defines dataclasses or postponed annotations, insert the module into `sys.modules` before `spec.loader.exec_module(module)`, then rerun the full test gate that found the issue.
+
+## Lesson: GPU image import gates need a local/pending split (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `.goat-flow/plans/0.3.0/M09-dependency-upgrades.md` (search: "Phase-0 import one-liner"), `docker/nemo/Dockerfile` (search: "nvcr.io/nvidia/nemo:26.02").
+
+During M09, the plan required a `docker run nvcr.io/nvidia/nemo:26.02 ...` import check before dependency edits. The image pull is multi-GB and was stopped locally, so claiming the import passed would have been false while blocking all GPU-free package and contract checks would have stalled useful work.
+
+**Lesson:** For heavyweight GPU images, split verification into local manifest/package-manager gates and an explicit GPU-host build/import gate. Mark the GPU gate human-pending unless the container actually builds and imports in the current session.
+
+## Lesson: Name GPU-pending fallbacks as fallbacks (2026-07-04)
+
+**Created:** 2026-07-04
+**Evidence:** `.goat-flow/plans/0.3.0/M11-medical-phrase-boosting.md` (search: "decode-time GPU spike pending"), `strands_agents/medical_lexicon.py` (search: "normaliser for common clinical terms").
+
+During M11, the plan targeted NeMo decode-time phrase boosting, but the exact multitalker transducer API still needs a pinned-container GPU spike. Shipping the useful local path as "phrase boosting" without naming that distinction would make reviewers think the GPU decoding contract had been proven.
+
+**Lesson:** When a plan's ideal implementation depends on unrun GPU/provider proof, label the shipped local path as a fallback in code, docs, changelog, and plan status. Leave the original proof checkbox unchecked and add a focused unit test for the fallback's real contract.
+
+## Lesson: New ASR checkpoints need pinned-container proof (2026-07-06)
+
+**Created:** 2026-07-06
+**Evidence:** `scripts/eval-second-pass.sh` (search: "run_container_asr"), `scripts/second_pass_asr.py` (search: "ASRModel.from_pretrained"), `.goat-flow/plans/second-pass-accuracy/M01-prove-second-pass-eval.md` (search: "att_chunk_context_size").
+
+During the second-pass accuracy spike, `nvidia/parakeet-unified-en-0.6b` looked like
+the right newer English ASR candidate from the model card, but failed inside the pinned
+`nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3` container with
+`ConformerEncoder.__init__() got an unexpected keyword argument 'att_chunk_context_size'`.
+The fallback `nvidia/parakeet-tdt-0.6b-v3` loaded and produced scoreable artifacts in the
+same container, proving the issue was model/runtime API compatibility rather than the
+fixture runner.
+
+**Lesson:** Treat model-card recommendations as candidates, not implementation facts.
+Before planning product wiring for a newer ASR checkpoint, run it inside the exact pinned
+Docker runtime and record a fixture score or a precise compatibility failure.

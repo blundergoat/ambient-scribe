@@ -675,12 +675,11 @@ test.describe("Accessibility", () => {
   });
 });
 
-test.describe("Summary citations", () => {
-  test("renders citation chips and focuses the cited transcript row", async ({
+test.describe("Summary provenance (M5)", () => {
+  test("cited section shows a superscript affordance whose popover holds the stitched source", async ({
     page,
   }) => {
     await loadScribePage(page);
-    await injectFakeSegments(page, 1);
 
     await page.evaluate(() => {
       renderSummary({
@@ -692,11 +691,18 @@ test.describe("Summary citations", () => {
             content: "Doctor advised topical treatment.",
             citations: [
               {
-                segment_id: "seg-0001",
+                segment_id: "corrected-0001",
                 start: 0,
                 end: 1.5,
                 role: "DOCTOR",
-                text: "Test segment number 1",
+                text: "Use the cream twice",
+              },
+              {
+                segment_id: "corrected-0002",
+                start: 1.9,
+                end: 3.0,
+                role: "DOCTOR",
+                text: "daily after washing.",
               },
             ],
           },
@@ -705,17 +711,265 @@ test.describe("Summary citations", () => {
       });
     });
 
-    const citation = page.locator(".summary-citation").first();
-    await expect(citation).toContainText("00:00-00:01");
-    await expect(citation).toContainText("DOCTOR");
-    await expect(citation).toContainText("Test segment number 1");
+    // Two adjacent same-speaker rows stitch into one utterance for the label.
+    const toggle = page.locator(".summary-provenance__toggle");
+    await expect(toggle).toHaveText("1");
+    await expect(toggle).toHaveAttribute("aria-label", "View source, 1 utterance");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
-    const citedRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
-    await citation.click();
-    await expect(citedRow).toHaveClass(/segment__text--cited/);
+    await toggle.click();
+    const popover = page.locator(".summary-provenance__popover");
+    await expect(popover).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(popover).toContainText("00:00");
+    await expect(popover).toContainText("DOCTOR");
+    await expect(popover).toContainText("Use the cream twice daily after washing.");
+
+    // Escape closes the dialog and anchors keyboard focus back on the toggle.
+    await page.keyboard.press("Escape");
+    await expect(popover).toBeHidden();
+    await expect(toggle).toBeFocused();
   });
 
-  test("renders uncited summary sections without source chips", async ({ page }) => {
+  test("open in transcript closes the popover and switches tabs", async ({ page }) => {
+    await loadScribePage(page);
+
+    await page.route("**/session/*/corrected-transcript", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          session_id: "stub",
+          source: "corrected_segments",
+          segments: [
+            {
+              segment_id: "corrected-0001",
+              role: "DOCTOR",
+              text: "Use the cream twice daily.",
+              start: 0,
+              end: 1.5,
+            },
+          ],
+        }),
+      })
+    );
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Cited summary",
+        sections: [
+          {
+            heading: "Plan",
+            content: "Doctor advised topical treatment.",
+            citations: [
+              {
+                segment_id: "corrected-0001",
+                start: 0,
+                end: 1.5,
+                role: "DOCTOR",
+                text: "Use the cream twice daily.",
+              },
+            ],
+          },
+        ],
+        key_points: [],
+      });
+    });
+
+    await page.locator(".summary-provenance__toggle").click();
+    await page.locator(".summary-provenance__open").click();
+
+    await expect(page.locator(".summary-provenance__popover")).toBeHidden();
+    await expect(page.locator("#summaryTabTranscript")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator("#summaryTranscriptView")).toBeVisible();
+    // The popover reuses the same block class, so scope to the transcript tab body.
+    await expect(page.locator("#summaryTranscript .summary-transcript__block")).toContainText(
+      "Use the cream twice daily."
+    );
+  });
+
+  test("deep link highlights all cited blocks, fades, and skips uncited rows (M6)", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    await page.route("**/session/*/corrected-transcript", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          session_id: "stub",
+          source: "corrected_segments",
+          segments: [
+            {
+              segment_id: "corrected-0001",
+              role: "DOCTOR",
+              text: "How can I help you today?",
+              start: 0,
+              end: 1.5,
+            },
+            {
+              segment_id: "corrected-0002",
+              role: "PATIENT",
+              text: "My skin is red.",
+              start: 8.0,
+              end: 9.0,
+            },
+            {
+              segment_id: "corrected-0003",
+              role: "PATIENT",
+              text: "It itches at night.",
+              start: 9.4,
+              end: 10.5,
+            },
+          ],
+        }),
+      })
+    );
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Cited summary",
+        sections: [
+          {
+            heading: "Subjective",
+            content: "Skin redness with nocturnal itch.",
+            citations: [
+              {
+                segment_id: "corrected-0002",
+                start: 8.0,
+                end: 9.0,
+                role: "PATIENT",
+                text: "My skin is red.",
+              },
+              {
+                segment_id: "corrected-0003",
+                start: 9.4,
+                end: 10.5,
+                role: "PATIENT",
+                text: "It itches at night.",
+              },
+            ],
+          },
+        ],
+        key_points: [],
+      });
+    });
+
+    await page.locator(".summary-provenance__toggle").click();
+    await page.locator(".summary-provenance__open").click();
+
+    // The two cited rows stitch into one block, which carries the highlight;
+    // the uncited doctor block stays plain.
+    const citedBlocks = page.locator("#summaryTranscript .summary-transcript__block--cited");
+    await expect(citedBlocks).toHaveCount(1);
+    await expect(citedBlocks.first()).toContainText("My skin is red. It itches at night.");
+    await expect(
+      page.locator("#summaryTranscript .summary-transcript__block").first()
+    ).not.toHaveClass(/--cited/);
+    await expect(page.locator("#summaryTranscriptNotice")).toBeHidden();
+
+    // The highlight is temporary: it clears after the fade window (~3s).
+    await expect(citedBlocks).toHaveCount(0, { timeout: 5000 });
+  });
+
+  test("deep link shows a non-blocking notice when cited rows are missing (M6)", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    await page.route("**/session/*/corrected-transcript", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          session_id: "stub",
+          source: "corrected_segments",
+          segments: [
+            {
+              segment_id: "corrected-0001",
+              role: "DOCTOR",
+              text: "How can I help you today?",
+              start: 0,
+              end: 1.5,
+            },
+          ],
+        }),
+      })
+    );
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Cited summary",
+        sections: [
+          {
+            heading: "Plan",
+            content: "Emollient plan.",
+            citations: [
+              {
+                segment_id: "corrected-9999",
+                start: 30.0,
+                end: 31.0,
+                role: "DOCTOR",
+                text: "Use the emollient.",
+              },
+            ],
+          },
+        ],
+        key_points: [],
+      });
+    });
+
+    await page.locator(".summary-provenance__toggle").click();
+    await page.locator(".summary-provenance__open").click();
+
+    // The tab still opens, nothing highlights, and the notice self-reports.
+    await expect(page.locator("#summaryTabTranscript")).toHaveAttribute("aria-selected", "true");
+    const missNotice = page.locator("#summaryTranscriptNotice");
+    await expect(missNotice).toBeVisible();
+    await expect(missNotice).toContainText("The cited rows are not in this transcript view.");
+    await expect(
+      page.locator("#summaryTranscript .summary-transcript__block--cited")
+    ).toHaveCount(0);
+
+    // The notice is temporary, so it never blocks reading the transcript.
+    await expect(missNotice).toBeHidden({ timeout: 6000 });
+  });
+
+  test("a click outside the popover dismisses it", async ({ page }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Cited summary",
+        sections: [
+          {
+            heading: "Plan",
+            content: "Doctor advised topical treatment.",
+            citations: [
+              {
+                segment_id: "corrected-0001",
+                start: 0,
+                end: 1.5,
+                role: "DOCTOR",
+                text: "Use the cream twice daily.",
+              },
+            ],
+          },
+        ],
+        key_points: [],
+      });
+    });
+
+    await page.locator(".summary-provenance__toggle").click();
+    await expect(page.locator(".summary-provenance__popover")).toBeVisible();
+
+    await page.locator("#summaryTitle").click();
+    await expect(page.locator(".summary-provenance__popover")).toBeHidden();
+  });
+
+  test("renders uncited summary sections without provenance affordances", async ({ page }) => {
     await loadScribePage(page);
 
     await page.evaluate(() => {
@@ -732,10 +986,11 @@ test.describe("Summary citations", () => {
       });
     });
 
-    await expect(page.locator(".summary-section__content")).toContainText(
+    await expect(page.locator(".summary-section__content").first()).toContainText(
       "Patient reports headache."
     );
-    await expect(page.locator(".summary-citation")).toHaveCount(0);
+    await expect(page.locator(".summary-provenance__toggle")).toHaveCount(0);
+    await expect(page.locator(".summary-provenance__popover")).toHaveCount(0);
   });
 });
 
