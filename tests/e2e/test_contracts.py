@@ -1,5 +1,5 @@
 """
-E2E contract tests — validates service integration without GPU.
+E2E contract tests - validates service integration without GPU.
 
 Run with: ./scripts/e2e-test.sh
 Or manually: AGENT_PORT=48101 APP_PORT=48082 MERCURE_PORT=48137 pytest tests/e2e/ -v
@@ -44,7 +44,7 @@ def _app_reachable() -> bool:
 def _mercure_reachable() -> bool:
     try:
         r = httpx.get(f"{MERCURE_URL}/.well-known/mercure", timeout=3)
-        # Mercure returns 400 or 401 for unauthenticated GET — that's alive
+        # Mercure returns 400 or 401 for unauthenticated GET - that's alive
         return r.status_code in (200, 400, 401)
     except httpx.ConnectError:
         return False
@@ -193,7 +193,7 @@ class TestAgentFileTranscription:
         data = r.json()
         assert data["session_id"] == sid
         assert isinstance(data["segments"], list)
-        # Segments may be empty for pure silence — that's valid
+        # Segments may be empty for pure silence - that's valid
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -219,12 +219,12 @@ class TestPhpApp:
         assert "CONFIG" in body or "config" in body.lower()
         assert "topicRaw" in body or "topic" in body.lower()
 
-    def test_scribe_has_reconnect_and_download(self):
-        """Template includes reconnect and download UI elements."""
+    def test_scribe_has_reconnect_without_download(self):
+        """Template includes reconnect and intentionally omits download UI."""
         r = httpx.get(f"{APP_URL}/scribe", timeout=5)
         body = r.text
         assert "reconnectBtn" in body, "Missing reconnect button"
-        assert "downloadBtn" in body, "Missing download button"
+        assert "downloadBtn" not in body, "Download button should not be rendered"
         assert "scribe.js" in body, "Missing scribe.js script reference"
 
     def test_scribe_has_accessibility_attributes(self):
@@ -235,8 +235,7 @@ class TestPhpApp:
         assert 'role="log"' in body, "Missing role=log on transcript"
         assert 'role="status"' in body, "Missing role=status on segment count"
         assert 'aria-label="Start recording' in body, "Missing aria-label on start button"
-        assert 'aria-label="Stop recording' in body, "Missing aria-label on stop button"
-        assert 'aria-label="Download' in body, "Missing aria-label on download button"
+        assert 'aria-label="Stop current session' in body, "Missing aria-label on stop button"
         assert "sr-only" in body, "Missing sr-only class for screen reader announcements"
 
     def test_scribe_contains_session_uuid(self):
@@ -409,7 +408,7 @@ class TestSessionLifecycleE2E:
         r = httpx.get(f"{AGENT_URL}/session/{sid}/history", timeout=5)
         assert r.status_code == 200
 
-        # Summary endpoint should not 500 (404 expected — no transcript for silence)
+        # Summary endpoint should not 500 (404 expected - no transcript for silence)
         r = httpx.post(f"{AGENT_URL}/session/{sid}/summary", timeout=5)
         assert r.status_code in (200, 404)
 

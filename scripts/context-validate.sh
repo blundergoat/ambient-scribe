@@ -29,7 +29,6 @@ require_file "CLAUDE.md"
 require_file "docs/architecture.md"
 require_file "docs/domain-reference.md"
 require_file "docs/guidelines-ownership-split.md"
-require_file "tasks/handoff-template.md"
 require_file ".github/instructions/ai-agent-guidelines.instructions.md"
 
 # goat-flow canonical learning-loop surfaces (directories, not flat files)

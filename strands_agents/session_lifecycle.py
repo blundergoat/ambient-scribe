@@ -1,15 +1,9 @@
 """
-Session lifecycle manager — atomic session registration and cleanup.
+Lifecycle coordinator for browser recording sessions.
 
-Provides a single point of control for session state transitions,
-protected by per-session asyncio locks. Coordinates cleanup of
-active sessions, role state, and inference queues.
-
-Supports a reconnection grace period: when a WebSocket disconnects,
-destruction can be scheduled with a delay via schedule_destroy().
-If the same session_id reconnects within the grace window, the
-pending destroy is cancelled and the existing TranscriptionSession
-is preserved (audio buffer + transcript state intact).
+It registers live WebSocket sessions, keeps a short reconnect grace window, and
+cleans audio plus role state after the user leaves. This is what lets a browser
+refresh resume a transcript briefly instead of losing the current visit.
 """
 
 from __future__ import annotations
@@ -31,7 +25,13 @@ CloseRoleInferenceFn = Callable[[str], Awaitable[None]]
 
 
 class SessionLifecycle:
-    """Coordinates session registration and teardown under per-session locks."""
+    """
+    Coordinates live recording registration and teardown.
+
+    Use it whenever WebSocket, transcript, and role state must move together
+    from the user's perspective. Per-session locks prevent reconnect and cleanup
+    races from corrupting one visible transcript.
+    """
 
     def __init__(self) -> None:
         self._locks: dict[str, asyncio.Lock] = {}
@@ -43,22 +43,36 @@ class SessionLifecycle:
 
         If a pending destroy is scheduled for this session_id (from a
         previous disconnect), it is cancelled so the session survives.
+
+        Args:
+            session_id: Recording UUID used by the browser.
+            session: Audio/transcript state to resume or show live.
         """
-        # Cancel any pending graceful destroy — the session is being resumed.
+        # Cancel any pending graceful destroy - the session is being resumed.
         pending = self._pending_destroys.pop(session_id, None)
         if pending is not None and not pending.done():
             pending.cancel()
-            logger.info("session_lifecycle.pending_destroy_cancelled", extra={
-                "session_id": session_id,
-            })
+            logger.info(
+                "session_lifecycle.pending_destroy_cancelled",
+                extra={
+                    "session_id": session_id,
+                },
+            )
 
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.warning("session_lifecycle.register_lock_timeout", extra={
-                "session_id": session_id,
-            })
+        except asyncio.TimeoutError as error:
+            logger.warning(
+                "session_lifecycle.register_lock_timeout session_id=%s %s",
+                session_id,
+                type(error).__name__,
+                exc_info=error,
+                extra={
+                    "session_id": session_id,
+                    "error_type": type(error).__name__,
+                },
+            )
             return
         try:
             self._active[session_id] = session
@@ -70,21 +84,46 @@ class SessionLifecycle:
         session_id: str,
         close_role_inference_fn: CloseRoleInferenceFn | None = None,
     ) -> None:
-        """Atomically tear down all state for a session under its lock."""
+        """Atomically tear down all state after the user leaves a session.
+
+        Args:
+            session_id: Recording UUID whose live state should disappear.
+            close_role_inference_fn: Optional role-queue closer; `None` means only audio state is cleared.
+        """
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.error("session_lifecycle.destroy_lock_timeout", extra={
-                "session_id": session_id,
-            })
+        except asyncio.TimeoutError as error:
+            logger.error(
+                "session_lifecycle.destroy_lock_timeout session_id=%s %s",
+                session_id,
+                type(error).__name__,
+                exc_info=error,
+                extra={
+                    "session_id": session_id,
+                    "error_type": type(error).__name__,
+                },
+            )
             # Best-effort cleanup without the lock
             self._active.pop(session_id, None)
             if close_role_inference_fn is not None:
                 try:
                     await close_role_inference_fn(session_id)
-                except Exception:
-                    logger.exception("session_lifecycle.destroy_close_role_inference_failed")
+                except Exception as close_error:
+                    logger.exception(
+                        (
+                            "session_lifecycle.destroy_close_role_inference_failed "
+                            "session_id=%s %s: %s"
+                        ),
+                        session_id,
+                        type(close_error).__name__,
+                        str(close_error)[:200],
+                        extra={
+                            "session_id": session_id,
+                            "error_type": type(close_error).__name__,
+                            "error": str(close_error)[:200],
+                        },
+                    )
             cleanup_role_state(session_id)
             self._locks.pop(session_id, None)
             return
@@ -109,20 +148,30 @@ class SessionLifecycle:
         register() cancels the pending task and the session survives.
 
         If already scheduled (e.g. duplicate disconnect), this is a no-op.
+
+        Args:
+            session_id: Recording UUID that may still reconnect.
+            close_role_inference_fn: Optional role cleanup callback; `None` keeps cleanup local to lifecycle state.
+            grace_seconds: Seconds the browser can reconnect before cleanup runs.
         """
+        # Duplicate disconnects should not shorten the user's reconnect window.
         if session_id in self._pending_destroys:
             return  # already scheduled
 
         async def _delayed_destroy() -> None:
             try:
                 await asyncio.sleep(grace_seconds)
-                logger.info("session_lifecycle.grace_period_expired", extra={
-                    "session_id": session_id,
-                    "grace_seconds": grace_seconds,
-                })
+                logger.info(
+                    "session_lifecycle.grace_period_expired",
+                    extra={
+                        "session_id": session_id,
+                        "grace_seconds": grace_seconds,
+                    },
+                )
                 await self.destroy(session_id, close_role_inference_fn)
             finally:
                 current_task = asyncio.current_task()
+                # The delay task owns its pending marker until cleanup finishes.
                 if self._pending_destroys.get(session_id) is current_task:
                     self._pending_destroys.pop(session_id, None)
 
@@ -131,27 +180,55 @@ class SessionLifecycle:
             name=f"grace-destroy-{session_id}",
         )
         self._pending_destroys[session_id] = task
-        logger.info("session_lifecycle.destroy_scheduled", extra={
-            "session_id": session_id,
-            "grace_seconds": grace_seconds,
-        })
+        logger.info(
+            "session_lifecycle.destroy_scheduled",
+            extra={
+                "session_id": session_id,
+                "grace_seconds": grace_seconds,
+            },
+        )
 
     def has_pending_destroy(self, session_id: str) -> bool:
-        """Check whether a graceful destroy is pending for this session."""
+        """Check whether a browser can still resume during the grace window.
+
+        Args:
+            session_id: Recording UUID to inspect.
+
+        Returns:
+            True while cleanup is scheduled but not complete; false means no grace is pending.
+        """
         task = self._pending_destroys.get(session_id)
         return task is not None and not task.done()
 
     def get(self, session_id: str) -> TranscriptionSession | None:
-        """Return the active TranscriptionSession or None."""
+        """Return live audio state for a recording, if the browser can resume it.
+
+        Args:
+            session_id: Recording UUID requested by the browser.
+
+        Returns:
+            Active session, or `None` when the transcript cannot be resumed.
+        """
         return self._active.get(session_id)
 
     def is_active(self, session_id: str) -> bool:
-        """Check whether a session is currently connected."""
+        """Report whether the browser currently has a live recording socket.
+
+        Args:
+            session_id: Recording UUID to inspect.
+
+        Returns:
+            True for connected sessions, false for ended or grace-only sessions.
+        """
         return session_id in self._active
 
     @property
     def active_count(self) -> int:
-        """Number of currently active sessions (for monitoring)."""
+        """Count currently connected browser recordings.
+
+        Returns:
+            Number of active WebSocket sessions; `0` means no live recordings.
+        """
         return len(self._active)
 
     def clear(self) -> None:

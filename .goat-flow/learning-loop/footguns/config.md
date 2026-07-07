@@ -1,6 +1,6 @@
 ---
 category: config
-last_reviewed: 2026-07-04
+last_reviewed: 2026-07-07
 ---
 
 # Config, Networking, and Deployment Footguns
@@ -12,12 +12,12 @@ last_reviewed: 2026-07-04
 - **Files:** `.env.example` (search: "MERCURE_PUBLIC_URL=http://localhost:48137/.well-known/mercure")
 - **Files:** `docker-compose.yml` (search: "NEMO_WEBSOCKET_URL=ws://localhost:${AGENT_PORT:-48101}")
 - **Files:** `src/Controller/ScribeController.php` (search: "$mercureUrl = $this->getParameter('mercure_url')")
-- **Files:** `src/Controller/ScribeController.php` (search: "'ws_url' => $wsUrl")
+- **Files:** `src/Controller/ScribeController.php` (search: "$wsUrl      = $this->getParameter('nemo_websocket_url')")
 - **Files:** `templates/scribe/index.html.twig` (search: "const CONFIG =")
-- **Files:** `public/js/scribe.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
-- **Files:** `public/js/scribe.js` (search: "streams = new StreamOrchestrator(CONFIG.mercureUrl)")
+- **Files:** `public/js/scribe-recording.js` (search: "new WebSocket(`${CONFIG.wsUrl}/ws/transcribe/")
+- **Files:** `public/js/scribe-recording.js` (search: "streams = new StreamOrchestrator(CONFIG.mercureUrl)")
 - **What breaks:** Host-only defaults like `localhost:48101` and `localhost:48137` work on the developer machine but fail for remote clients or alternate hostnames unless every layer is overridden together.
-- **Evidence:** Symfony injects `ws_url` and `mercure_url` directly into `CONFIG`, and `public/js/scribe.js` uses those values as-is for the WebSocket and Mercure subscriptions.
+- **Evidence:** Symfony injects `ws_url` and `mercure_url` directly into `CONFIG`, and `public/js/scribe-recording.js` uses those values as-is for the WebSocket and Mercure subscriptions.
 
 ## Footgun: Terraform still advertises DynamoDB while runtime persists only memory or SQLite
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED

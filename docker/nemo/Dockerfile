@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile — NeMo Multitalker Parakeet Agent (GPU)
+# Dockerfile - NeMo Multitalker Parakeet Agent (GPU)
 # =============================================================================
 #
 # This container runs:
@@ -27,8 +27,9 @@
 # IMPORTANT: NeMo owns the GPU exclusively. The Strands role inference
 # agent uses Bedrock or CPU-only Ollama. Do NOT co-locate a GPU LLM.
 #
-# BUILD:
-#   docker build -t ambient-scribe-nemo ./docker/nemo
+# BUILD (context must be strands_agents/ - COPY pulls requirements.txt and
+# the app source from there, matching docker-compose.yml):
+#   docker build -f docker/nemo/Dockerfile -t ambient-scribe-nemo ./strands_agents
 #
 # RUN (interactive, for API discovery):
 #   docker run --rm -it --gpus all \
@@ -43,7 +44,7 @@
 #     ambient-scribe-nemo
 # =============================================================================
 
-FROM nvcr.io/nvidia/nemo:25.09
+FROM nvcr.io/nvidia/nemo:26.02
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -51,24 +52,21 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade NeMo to main branch (2.8.0rc0+) for multitalker ASR support.
-# NeMo 25.09 (v2.5.3) ships Sortformer streaming support but is missing
-# nemo.collections.asr.models.multitalker_asr_models (added in v2.7+).
-RUN pip install --no-cache-dir git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]
+# Pin NeMo to the released multitalker line instead of rebuilding from main.
+# The browser still uses the same overlap-aware checkpoints; this only makes
+# the GPU container reproducible for live transcription sessions.
+RUN pip install --no-cache-dir "nemo_toolkit[asr]==2.7.3"
 
-# Install Python dependencies for the agent (on top of NeMo's base)
-RUN pip install --no-cache-dir \
-    huggingface_hub \
-    httpx \
-    websockets \
-    fastapi \
-    uvicorn[standard] \
-    pydantic \
-    sse-starlette \
-    strands-agents[ollama]
+WORKDIR /app
+
+# Install the same agent dependencies used by local tests and the dev server.
+# A user reaching the browser WebSocket should therefore hit the same FastAPI,
+# Strands, and Mercure client floors that CI just verified.
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Download NeMo models at build time (avoids re-download on restart)
-# These are multi-GB files — cached in the Docker layer
+# These are multi-GB files - cached in the Docker layer
 #
 # IMPORTANT: The multitalker Parakeet requires the STREAMING Sortformer (v2.1),
 # NOT the offline v1. The offline v1 is for standalone diarization only.
@@ -76,7 +74,15 @@ RUN pip install --no-cache-dir \
 # the per-speaker kernel injection in the ASR model.
 RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvidia/diar_streaming_sortformer_4spk-v2.1', filename='diar_streaming_sortformer_4spk-v2.1.nemo'); hf_hub_download('nvidia/multitalker-parakeet-streaming-0.6b-v1', filename='multitalker-parakeet-streaming-0.6b-v1.nemo')"
 
-WORKDIR /app
+# The NeMo base image's runtime venv (/opt/venv) ships botocore 1.42.61, which
+# shadows the boto3/botocore that strands-agents installs into the system site and
+# breaks `import boto3` (pulled in by strands' Bedrock model at import time:
+# "cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'").
+# aiobotocore in the base image also pins botocore <1.42.62, so install the matched
+# boto3/botocore 1.42.61 pair INTO /opt/venv to satisfy both strands and aiobotocore.
+# Placed after the model-download layer so a rebuild does not re-fetch the models.
+# Bump this pair only alongside the pinned nemo:26.02 base image.
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "boto3==1.42.61" "botocore==1.42.61"
 
 # Copy application code (build context is ./strands_agents)
 # Dev override: docker-compose.yml mounts ./strands_agents:/app for hot reload
@@ -88,4 +94,4 @@ HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Default: start the FastAPI server (override with 'bash' for interactive use)
-CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000", "--ws", "websockets-sansio"]

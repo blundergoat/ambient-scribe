@@ -22,7 +22,10 @@ paths:
   #   - "out/**"
   #   - ".next/**"
   #   - "src/generated/**"
-  ignore: []
+  ignore:
+    # Vendored Tailwind runtime: scanned source here creates false positives,
+    # while UI-facing changes belong in templates and hand-written JS.
+    - "public/js/tailwind.js"
 
 allowlists:
   acceptedAbbreviations:

@@ -3,7 +3,6 @@ Tests for the dual-path role inference worker (tool invocation vs free-text).
 """
 
 import asyncio
-import json
 
 import pytest
 
@@ -16,21 +15,22 @@ from tools.assign_roles import get_or_create_state
 
 @pytest.fixture(autouse=True)
 def clear_state():
+    """Reset shared role and queue state so each test is one browser session."""
     api_server.sessions._sessions.clear()
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
     yield
     api_server.sessions._sessions.clear()
     api_server.lifecycle.clear()
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
-    api_server._session_modes.clear()
     api_server._mercure_event_ids.clear()
     role_tools._session_states.clear()
+    role_tools._pending_role_segments.clear()
 
 
 SEGMENTS = [
@@ -62,10 +62,12 @@ class TestDualPathToolInvoked:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run_with_tool(sid, segments, transcript, mode="medical"):
-            # Simulate tool invocation: update state directly
+        def fake_run_with_tool(sid, segments, role_evidence):
+            # Simulated tool calls update state before the browser receives a role event.
             state = get_or_create_state(sid)
-            state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.92)
+            state.did_update_mapping_detect_flip(
+                {"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.92
+            )
             return {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.92,
@@ -107,14 +109,19 @@ class TestDualPathToolInvoked:
 
         call_count = [0]
 
-        def fake_run_with_tool(sid, segments, transcript, mode="medical"):
+        def fake_run_with_tool(sid, segments, role_evidence):
             state = get_or_create_state(sid)
             call_count[0] += 1
+            # The first agent pass establishes roles for the transcript cards.
             if call_count[0] == 1:
-                state.update({"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8)
+                state.did_update_mapping_detect_flip(
+                    {"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.8
+                )
             else:
-                # Swap roles — triggers flip
-                state.update({"spk_0": "PATIENT", "spk_1": "DOCTOR"}, 0.9)
+                # The second pass simulates a visible role swap warning.
+                state.did_update_mapping_detect_flip(
+                    {"spk_0": "PATIENT", "spk_1": "DOCTOR"}, 0.9
+                )
             return {
                 "mapping": state.current_mapping,
                 "confidence": state.running_confidence,
@@ -125,13 +132,13 @@ class TestDualPathToolInvoked:
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(api_server, "_run_role_inference", fake_run_with_tool)
 
-        # First call — establishes mapping
+        # First call - establishes mapping
         await api_server.enqueue_role_inference(session_id, SEGMENTS)
         worker = api_server._inference_workers[session_id]
         await api_server.close_role_inference(session_id)
         await asyncio.wait_for(worker, timeout=2.0)
 
-        # Second call — flips roles
+        # Second call - flips roles
         await api_server.enqueue_role_inference(session_id, SEGMENTS)
         worker = api_server._inference_workers[session_id]
         await api_server.close_role_inference(session_id)
@@ -143,13 +150,13 @@ class TestDualPathToolInvoked:
         assert role_events[1]["flip_detected"] is True
 
 
-class TestDualPathFreeText:
-    """When the agent does NOT invoke the tool (free-text JSON fallback)."""
+class TestDualPathMappingFallback:
+    """When a fallback returns a mapping without invoking the tool."""
 
     @pytest.mark.asyncio
-    async def test_freetext_path_applies_mapping(self, monkeypatch):
-        """Free-text JSON result calls apply_role_mapping_result."""
-        session_id = "dual-freetext-session"
+    async def test_mapping_path_applies_mapping(self, monkeypatch):
+        """Mapping fallback result calls apply_role_mapping_result."""
+        session_id = "dual-mapping-session"
         published = []
 
         await _register_session(session_id)
@@ -159,16 +166,16 @@ class TestDualPathFreeText:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run_freetext(sid, segments, transcript, mode="medical"):
-            # No tool invocation — state unchanged, return plain dict
+        def fake_run_mapping(sid, segments, role_evidence):
+            # Mapping fallback leaves state for the worker to apply once.
             return {
                 "mapping": {"spk_0": "DOCTOR", "spk_1": "PATIENT"},
                 "confidence": 0.85,
-                "reasoning": "Free text response",
+                "reasoning": "Fallback mapping response",
             }
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-        monkeypatch.setattr(api_server, "_run_role_inference", fake_run_freetext)
+        monkeypatch.setattr(api_server, "_run_role_inference", fake_run_mapping)
 
         await api_server.enqueue_role_inference(session_id, SEGMENTS)
         worker = api_server._inference_workers[session_id]
@@ -198,7 +205,8 @@ class TestDualPathFreeText:
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(
-            api_server, "_run_role_inference",
+            api_server,
+            "_run_role_inference",
             lambda *a, **kw: None,
         )
 
@@ -209,6 +217,41 @@ class TestDualPathFreeText:
 
         role_events = [e for t, e in published if "roles" in t]
         assert len(role_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_provider_unreachable_publishes_system_error_once(self, monkeypatch):
+        """A provider-unreachable signal warns the browser once, without a role update."""
+        from api import role_inference_queue
+
+        session_id = "dual-provider-down-session"
+        role_inference_queue._provider_unavailable_warned.discard(session_id)
+        published = []
+
+        await _register_session(session_id)
+        for seg in SEGMENTS:
+            api_server.sessions.append_segment(session_id, dict(seg))
+
+        async def fake_publish(topic, data, event_id=None):
+            published.append((topic, data))
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        monkeypatch.setattr(
+            api_server,
+            "_run_role_inference",
+            lambda *a, **kw: {"path": "none", "mapping": {}, "provider_unreachable": True},
+        )
+
+        await api_server.enqueue_role_inference(session_id, SEGMENTS)
+        worker = api_server._inference_workers[session_id]
+        await api_server.close_role_inference(session_id)
+        await asyncio.wait_for(worker, timeout=2.0)
+
+        role_events = [e for t, e in published if "roles" in t]
+        system_errors = [e for e in role_events if e.get("type") == "system_error"]
+        role_updates = [e for e in role_events if e.get("type") == "role_update"]
+        assert len(system_errors) == 1
+        assert "check-ai-model.sh" in system_errors[0]["message"]
+        assert len(role_updates) == 0
 
 
 class TestToolInvokedAttributedSegments:
@@ -226,10 +269,17 @@ class TestToolInvokedAttributedSegments:
         async def fake_publish(topic, data, event_id=None):
             published.append((topic, data))
 
-        def fake_run(sid, segments, transcript, mode="medical"):
+        def fake_run(sid, segments, role_evidence):
             state = get_or_create_state(sid)
-            state.update({"spk_0": "INTERVIEWER", "spk_1": "CANDIDATE"}, 0.88)
-            return {"mapping": state.current_mapping, "confidence": 0.88, "reasoning": "", "_tool_invoked": True}
+            state.did_update_mapping_detect_flip(
+                {"spk_0": "DOCTOR", "spk_1": "PATIENT"}, 0.88
+            )
+            return {
+                "mapping": state.current_mapping,
+                "confidence": 0.88,
+                "reasoning": "",
+                "_tool_invoked": True,
+            }
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
         monkeypatch.setattr(api_server, "_run_role_inference", fake_run)
@@ -241,7 +291,7 @@ class TestToolInvokedAttributedSegments:
 
         role_events = [e for t, e in published if "roles" in t]
         attributed = role_events[0]["attributed_segments"]
-        assert attributed[0]["role"] == "INTERVIEWER"
+        assert attributed[0]["role"] == "DOCTOR"
         assert attributed[0]["text"] == "What brings you in?"
-        assert attributed[1]["role"] == "CANDIDATE"
+        assert attributed[1]["role"] == "PATIENT"
         assert attributed[1]["text"] == "Chest pain."

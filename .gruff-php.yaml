@@ -19,6 +19,8 @@ paths:
         - '.goat-flow/**'
         - history.json
         - infection-report.json
+        # Generated Symfony/Psalm reference; app code must not hand-edit it to satisfy docs rules.
+        - config/reference.php
         - 'src/Vendor/**'
         - 'tests/Fixtures/**'
 allowlists:

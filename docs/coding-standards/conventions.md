@@ -1,16 +1,16 @@
-# Conventions — Ambient Scribe
+# Conventions - Ambient Scribe
 
 Real-time medical transcription system. Browser captures microphone audio, streams raw PCM over WebSocket to a Python agent layer (NeMo GPU diarization + ASR), then delivers live transcripts via Mercure SSE back to the browser.
 
 ## Stack
 
-- **PHP >=8.3, Symfony 6.4** — `src/`, PSR-12, PHPStan level 10, `declare(strict_types=1)` in every file
-- **Python 3.12+, FastAPI** — `strands_agents/`, NeMo Parakeet (GPU diarization + ASR), Strands SDK
-- **Frontend** — Twig template (`templates/scribe/index.html.twig`) loads `public/js/scribe.js`; no bundler, no npm build step
-- **Mercure** — JWT-authenticated SSE for real-time transcript delivery
-- **Docker** — `docker-compose.yml` with services: `nemo-agent` (GPU), `mercure`, `app` (Symfony)
-- **Infrastructure** — Terraform in `infra/terraform/`, AWS deployment
-- **Playwright** — E2E tests in `tests/e2e/`, configured in `playwright.config.js`
+- **PHP >=8.3, Symfony 6.4** - `src/`, PSR-12, PHPStan level 10, `declare(strict_types=1)` in every file
+- **Python 3.12+, FastAPI** - `strands_agents/`, NeMo Parakeet (GPU diarization + ASR), Strands SDK
+- **Frontend** - Twig template (`templates/scribe/index.html.twig`) loads `public/js/scribe.js`; no bundler, no npm build step
+- **Mercure** - JWT-authenticated SSE for real-time transcript delivery
+- **Docker** - `docker-compose.yml` with services: `nemo-agent` (GPU), `mercure`, `app` (Symfony)
+- **Infrastructure** - Terraform in `infra/terraform/`, AWS deployment
+- **Playwright** - E2E tests in `tests/e2e/`, configured in `playwright.config.js`
 
 ## Architecture
 

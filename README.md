@@ -5,28 +5,23 @@ Real-time medical transcription system that captures clinical conversations, per
 ## Architecture
 
 ```
-+------------------+         WebSocket (audio)         +----------------------+
-|                  | ----------------------------------> |                      |
-|   Browser        |                                    |  NeMo Pipeline (GPU) |
-|   (Audio Capture |         Mercure SSE (transcripts)  |  - Diarization       |
-|    + Transcript  | <---------------------------------- |  - ASR (Parakeet)    |
-|    Display)      |                                    |                      |
-|                  |                                    +----------+-----------+
-+------------------+                                               |
-        ^                                                          | Diarized segments
-        |                                                          v
-        |  Mercure SSE                                  +----------------------+
-        |                                               |                      |
-        +---------------------------------------------- |  Transcription Agent |
-                                                        |  (Strands / Bedrock) |
-                           +-------------------+        |  - Role inference    |
-                           |                   |        |  (DOCTOR / PATIENT)  |
-                           |  Symfony App      | <------+----------------------+
-                           |  (PHP 8.3+)       |
-                           |  - ScribeController        +----------------------+
-                           |  - Orchestrator   | -----> |  Mercure Hub (SSE)   |
-                           |                   |        +----------------------+
-                           +-------------------+
++-----------+  GET /scribe, summary/history   +--------------+
+|           | ------------------------------> |  Symfony App |
+|           |                                 |  (PHP 8.3+)  |
+|           |                                 +------+-------+
+|           |                                        | proxied HTTP
+|  Browser  |  WebSocket (16 kHz PCM audio)   +------v-------------------+
+|           | ------------------------------> |  FastAPI NeMo agent      |
+|           |                                 |  - Diarization (GPU)     |
+|           |                                 |  - ASR Parakeet (GPU)    |
+|           |                                 |  - Role inference        |
+|           |                                 |    DOCTOR / PATIENT      |
+|           |                                 |    (Strands, off-GPU)    |
+|           |                                 +------+-------------------+
+|           |                                        | publish raw/roles/summary
+|           |  Mercure SSE (transcript events) +-----v--------+
+|           | <------------------------------- |  Mercure Hub |
++-----------+                                  +--------------+
 ```
 
 ## Prerequisites
@@ -44,18 +39,18 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The application will be available at `http://localhost:8080`.
+The application will be available at `http://localhost:48082`.
 
 ## Tech Stack
 
 | Layer              | Technology                                           |
 |--------------------|------------------------------------------------------|
 | ASR + Diarization  | NVIDIA NeMo multitalker Parakeet (GPU)               |
-| Role Inference     | Strands SDK + AWS Bedrock                            |
+| Role Inference     | Strands SDK + AWS Bedrock (or CPU-only Ollama)       |
 | Backend            | PHP 8.3+, Symfony 6.4                                |
 | Audio Pipeline     | WebSocket (browser -> Python)                        |
 | Transcript Delivery| Mercure Hub (SSE)                                    |
-| Frontend           | Twig, Tailwind CSS, Stimulus / AssetMapper           |
+| Frontend           | Twig, Tailwind CSS, vanilla JS modules               |
 | Infrastructure     | Docker Compose, NVIDIA Container Toolkit             |
 
 ## Development

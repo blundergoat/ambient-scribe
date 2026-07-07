@@ -1,0 +1,12 @@
+{
+    "schemaVersion": "gruff.baseline.v2",
+    "generatedAt": "2026-07-05T05:54:17+00:00",
+    "groups": [
+        {
+            "file": "composer.json",
+            "ruleId": "security.dependency-composer-unpinned",
+            "message": "Unpinned dependency constraint 'dev-dev#98bd6598f5754d5d7dfc68b0cc65d55b6651e6df' for blundergoat/strands-php-client allows non-reproducible or unexpected upgrades; pin to a bounded version range.",
+            "count": 1
+        }
+    ]
+}

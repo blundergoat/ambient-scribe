@@ -18,7 +18,7 @@ Communication: `app` → `nemo-agent` via `http://nemo-agent:8000`. `nemo-agent`
 
 ## NeMo Container
 
-Base: `nvcr.io/nvidia/nemo:25.09` + pip install NeMo from main branch (v2.8.0rc0). See `docker/nemo/Dockerfile`.
+Base: `nvcr.io/nvidia/nemo:26.02` + pinned `nemo_toolkit[asr]==2.7.3`. See `docker/nemo/Dockerfile`.
 
 Must include:
 - ffmpeg (for WebM → WAV conversion)
@@ -33,13 +33,13 @@ These variables must be consistent across services. Mismatch causes silent failu
 
 | Variable | nemo-agent | app | mercure | Notes |
 |---|---|---|---|---|
-| `MERCURE_JWT_SECRET` | — | Yes (signing) | Yes (verification) | Must match. ≥32 chars. |
-| `MERCURE_PUBLISHER_JWT` | Yes (pre-signed) | — | — | JWT signed with MERCURE_JWT_SECRET |
-| `MERCURE_HUB_URL` | `http://mercure:3701/...` | — | — | Internal Docker network |
-| `MERCURE_URL` | — | `http://mercure:3701/...` | — | PHP server-side publish URL |
-| `MERCURE_PUBLIC_URL` | — | `http://localhost:48137/...` | — | Browser-side SSE URL |
-| `NEMO_WEBSOCKET_URL` | — | `ws://localhost:48101` | — | Browser-side WebSocket URL |
-| `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | — | — | Must be bedrock or ollama, NOT local GPU |
+| `MERCURE_JWT_SECRET` | - | Yes (signing) | Yes (verification) | Must match. ≥32 chars. |
+| `MERCURE_PUBLISHER_JWT` | Yes (pre-signed) | - | - | JWT signed with MERCURE_JWT_SECRET |
+| `MERCURE_HUB_URL` | `http://mercure:3701/...` | - | - | Internal Docker network |
+| `MERCURE_URL` | - | `http://mercure:3701/...` | - | PHP server-side publish URL |
+| `MERCURE_PUBLIC_URL` | - | `http://localhost:48137/...` | - | Browser-side SSE URL |
+| `NEMO_WEBSOCKET_URL` | - | `ws://localhost:48101` | - | Browser-side WebSocket URL |
+| `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | - | - | Must be bedrock or ollama, NOT local GPU |
 
 See `.goat-flow/learning-loop/footguns/runtime.md` for JWT / Mercure publish failure debugging.
 

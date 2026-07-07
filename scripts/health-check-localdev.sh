@@ -86,7 +86,7 @@ APP_PORT="${APP_PORT:-48082}"
 MERCURE_PORT="${MERCURE_PORT:-$(port_from_url "${ENV_MERCURE_PUBLIC_URL:-http://localhost:48137/.well-known/mercure}")}"
 MERCURE_PORT="${MERCURE_PORT:-48137}"
 OLLAMA_HOST="${OLLAMA_HOST:-${ENV_OLLAMA_HOST:-http://localhost:11434}}"
-OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${ENV_ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-${ENV_OLLAMA_MODEL:-qwen2.5:14b}}}}"
+OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${ENV_ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-${ENV_OLLAMA_MODEL:-qwen3.5:9b}}}}"
 
 if [[ "$ROLE_AGENT_MODEL_PROVIDER" == "ollama" ]] && ! curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
     DETECTED_OLLAMA_HOST="$(detect_running_ollama_host || true)"
@@ -356,7 +356,7 @@ probe "http://localhost:${APP_PORT}/"
 if [[ "$PROBE_STATUS" =~ ^(200|302)$ ]]; then
     pass "${PROBE_TIME_MS}ms (HTTP ${PROBE_STATUS})"
 else
-    fail "not reachable — is start-dev.sh running?"
+    fail "not reachable - is start-dev.sh running?"
 fi
 
 step "GET /scribe"
@@ -381,7 +381,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════
-# 4. Mercure (optional — via docker compose or start-dev.sh)
+# 4. Mercure (optional - via docker compose or start-dev.sh)
 # ═════════════════════════════════════════════════════════════════════
 section "Mercure (localhost:${MERCURE_PORT})"
 
@@ -391,7 +391,7 @@ probe "http://localhost:${MERCURE_PORT}/.well-known/mercure" 3
 if [[ "$PROBE_STATUS" =~ ^(200|401|400)$ ]]; then
     pass "${PROBE_TIME_MS}ms"
 else
-    warn "not running — set MERCURE_URL in .env and restart start-dev.sh"
+    warn "not running - set MERCURE_URL in .env and restart start-dev.sh"
 fi
 
 # ═════════════════════════════════════════════════════════════════════
@@ -418,9 +418,9 @@ for port_label in "${PORT_LABELS[@]}"; do
         fi
         pass "${proc:+${proc} (pid ${pid})}"
     elif [[ "${listener_count:-0}" -gt 1 ]]; then
-        warn "${listener_count} listeners — possible conflict"
+        warn "${listener_count} listeners - possible conflict"
     else
-        # Port not in use — could be fine if checking before start
+        # Port not in use - could be fine if checking before start
         warn "no listener"
     fi
 done

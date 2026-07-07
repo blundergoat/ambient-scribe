@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# M2 Debug — Live Transcription Pipeline Debugger
+# M2 Debug - Live Transcription Pipeline Debugger
 # =============================================================================
 # Usage: ./scripts/m2-debug-live.sh [SESSION_ID]
 #
@@ -32,7 +32,7 @@ MERCURE_URL="${MERCURE_PUBLIC_URL:-http://localhost:${MERCURE_HOST_PORT}/.well-k
 
 # ── Header ──────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  Ambient Scribe — Live Debug${RESET}"
+echo -e "${BOLD}  Ambient Scribe - Live Debug${RESET}"
 echo -e "  ${DIM}$(printf '─%.0s' {1..50})${RESET}"
 echo ""
 
@@ -60,7 +60,7 @@ JWT_LEN="${JWT_LEN// /}"
 if [[ "$JWT_LEN" -gt 0 ]]; then
     echo -e "  ${PASS}  MERCURE_JWT set in container (${JWT_LEN} chars)"
 else
-    echo -e "  ${FAIL}  MERCURE_JWT empty in container — Mercure publishes will be skipped!"
+    echo -e "  ${FAIL}  MERCURE_JWT empty in container - Mercure publishes will be skipped!"
 fi
 
 echo ""

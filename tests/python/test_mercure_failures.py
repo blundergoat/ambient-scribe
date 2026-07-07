@@ -42,14 +42,14 @@ class TestMercurePublishFailures:
 
     @pytest.mark.asyncio
     async def test_publish_returns_false_on_empty_jwt(self, monkeypatch):
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
         result = await publish_to_mercure("test/topic", {"type": "test"})
         assert result is False
 
     @pytest.mark.asyncio
     async def test_segments_persisted_despite_publish_failure(self, monkeypatch):
         """Segments are saved to SessionStore even when Mercure fails."""
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
 
         session_id = "persist-test"
         segment = {"speaker_id": "spk_0", "text": "Hello", "start": 0.0, "end": 1.0}
@@ -73,19 +73,26 @@ class TestMercurePublishFailures:
         async def mock_post(self, url, **kwargs):
             nonlocal call_count
             call_count += 1
+            # The first visible event exhausts all retries so the UI sees a failed publish.
             if call_count <= 3:
                 raise ConnectionError("hub down")
 
             class FakeResponse:
                 status_code = 200
+
                 def raise_for_status(self):
                     pass
+
             return FakeResponse()
 
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "test-jwt")
+        monkeypatch.setattr(
+            "api.mercure_publisher._resolve_mercure_jwt", lambda: "test-jwt"
+        )
         monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
         # Speed up retries for testing
-        monkeypatch.setattr("api.server.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01)
+        monkeypatch.setattr(
+            "api.mercure_publisher.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01
+        )
 
         # First publish: all 3 retries fail
         result1 = await publish_to_mercure("test/topic", {"data": "first"})
@@ -104,19 +111,67 @@ class TestMercurePublishFailures:
         async def mock_post(self, url, **kwargs):
             nonlocal call_count
             call_count += 1
+            # The first Mercure attempt fails like a brief hub outage during recording.
             if call_count == 1:
                 raise ConnectionError("transient failure")
 
             class FakeResponse:
                 status_code = 200
+
                 def raise_for_status(self):
                     pass
+
             return FakeResponse()
 
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "test-jwt")
+        monkeypatch.setattr(
+            "api.mercure_publisher._resolve_mercure_jwt", lambda: "test-jwt"
+        )
         monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
-        monkeypatch.setattr("api.server.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01)
+        monkeypatch.setattr(
+            "api.mercure_publisher.MERCURE_PUBLISH_BACKOFF_SECONDS", 0.01
+        )
 
         result = await publish_to_mercure("test/topic", {"data": "retry"})
         assert result is True
         assert call_count == 2  # Failed once, succeeded on retry
+
+
+class TestMercureJwtMinting:
+    """The default deploy path mints the publisher JWT from MERCURE_JWT_SECRET."""
+
+    def test_pyjwt_is_declared_in_runtime_requirements(self):
+        """The minting fallback imports jwt; a fresh image must install it.
+
+        The local venv carries PyJWT transitively through dev tooling, so a
+        missing declaration passes every test while a fresh container built
+        from requirements.txt silently loses all Mercure publishes.
+        """
+        from pathlib import Path
+
+        requirements = (
+            Path(__file__).resolve().parents[2] / "strands_agents/requirements.txt"
+        ).read_text(encoding="utf-8")
+        assert "pyjwt" in requirements.lower()
+
+    def test_secret_fallback_mints_a_decodable_publisher_token(self, monkeypatch):
+        """With only a secret configured (compose default), minting must work."""
+        import jwt as pyjwt
+
+        import api.mercure_publisher as mercure_publisher
+
+        monkeypatch.delenv("MERCURE_JWT", raising=False)
+        monkeypatch.setattr(mercure_publisher, "_mercure_jwt_cache", None)
+        monkeypatch.setattr(
+            mercure_publisher,
+            "MERCURE_JWT_SECRET",
+            "unit-test-secret-of-sufficient-length!",
+        )
+
+        token = mercure_publisher._resolve_mercure_jwt()
+
+        claims = pyjwt.decode(
+            token,
+            "unit-test-secret-of-sufficient-length!",
+            algorithms=["HS256"],
+        )
+        assert claims["mercure"]["publish"] == ["*"]

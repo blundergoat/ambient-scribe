@@ -1,9 +1,9 @@
 # NeMo API Discovery Notes
 
-**Status:** Complete (Milestone 1, Task 1.4)
+**Status:** Superseded runtime target; API notes retained for implementation context.
 **Date:** 2026-02-19
 **Hardware:** RTX 5080 Laptop GPU (16GB VRAM, Blackwell sm_120)
-**Container:** `nvcr.io/nvidia/nemo:25.09` + NeMo main branch (v2.8.0rc0)
+**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3`.
 
 ---
 
@@ -11,9 +11,9 @@
 
 | Component | Version |
 |---|---|
-| NeMo Framework | 2.8.0rc0 (pip from main, on top of 25.09 container) |
+| NeMo Framework | 2.7.3 pinned runtime target |
 | PyTorch | 2.8.0a0+5228986c39.nv25.06 |
-| CUDA (container) | 13.x (25.09 release) |
+| CUDA (container) | 13.x-class NVIDIA NeMo release |
 | CUDA (host driver) | 13.1, Driver 591.74 |
 | GPU | NVIDIA GeForce RTX 5080 Laptop GPU (sm_120, 16303 MiB) |
 
@@ -117,7 +117,7 @@ ValueError: not enough values to unpack (expected 6, got 5)
 [['0.560 3.120 speaker_0', '3.280 4.560 speaker_0', '5.040 7.200 speaker_0']]
 ```
 
-Format: `"{start_sec} {end_sec} {speaker_id}"` — space-separated string per segment.
+Format: `"{start_sec} {end_sec} {speaker_id}"` - space-separated string per segment.
 
 ### Diarization Output (tensor)
 
@@ -221,7 +221,7 @@ The composite pipeline outputs SegLST (Segment-wise Long-form Speech Transcripti
 
 ### Recommended Approach for Milestone 2
 
-**Option A (Preferred):** Use `SpeakerTaggedASR` composite pipeline — handles streaming, overlapping speech, speaker-kernel injection natively. Requires `MultitalkerTranscriptionConfig` from NeMo examples directory.
+**Option A (Preferred):** Use `SpeakerTaggedASR` composite pipeline - handles streaming, overlapping speech, speaker-kernel injection natively. Requires `MultitalkerTranscriptionConfig` from NeMo examples directory.
 
 **Option B (Simpler fallback):** Independent diarize + ASR, align by timestamps. Good enough for GP consultations with minimal overlap:
 ```python
@@ -250,7 +250,7 @@ The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 sp
 - Sortformer: ~1.2 GB
 - Parakeet: ~4.5 GB
 - **Peak total: 11.3 GB (69% of 16GB)**
-- **Headroom: ~5 GB** — sufficient for audio buffers and Python overhead
+- **Headroom: ~5 GB** - sufficient for audio buffers and Python overhead
 - No need for Parakeet CTC fallback or sequential processing
 
 ---
@@ -259,9 +259,9 @@ The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 sp
 
 | Operation | Time | Audio Duration | RTF |
 |---|---|---|---|
-| Model load (both) | 21.0s | — | One-time startup |
-| Sortformer load | 2.8s | — | |
-| Parakeet load | 9.0s | — | |
+| Model load (both) | 21.0s | - | One-time startup |
+| Sortformer load | 2.8s | - | |
+| Parakeet load | 9.0s | - | |
 | Diarization | 0.5s | ~7.2s | 0.07x |
 | ASR transcription | 0.3s | ~7.2s | 0.04x |
 | **Total inference** | **0.8s** | **~7.2s** | **0.11x** |
@@ -283,12 +283,12 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 | 520s | 1.66 | 9.88 | 11.54 | 0.0222 | 15,568 |
 
 **Key findings:**
-- RTF ratio (first vs last): **1.11x — scaling is ~linear**
+- RTF ratio (first vs last): **1.11x - scaling is ~linear**
 - **Growing buffer is viable** for consultations up to ~8-9 minutes
-- At 520s (full 8.5 min clip), total inference is 11.5s with RTF 0.022x — still 45x faster than real-time
+- At 520s (full 8.5 min clip), total inference is 11.5s with RTF 0.022x - still 45x faster than real-time
 - VRAM grows with audio length: 9 GB at 30s → 15.6 GB at 520s (near the 16 GB limit)
-- **VRAM is the constraint, not processing time** — for 15+ minute consultations, a hybrid approach (growing buffer with periodic flush) will be needed
-- Sortformer works correctly beyond its configured `session_len_sec: 90` — segments found at all durations tested
+- **VRAM is the constraint, not processing time** - for 15+ minute consultations, a hybrid approach (growing buffer with periodic flush) will be needed
+- Sortformer works correctly beyond its configured `session_len_sec: 90` - segments found at all durations tested
 
 **Decision: Growing buffer with VRAM-aware flush.** Re-process full audio each chunk. If VRAM approaches 15 GB, flush and restart the buffer. For a typical 10-15 minute GP consultation, this means at most 1-2 flushes.
 
@@ -299,22 +299,22 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 ### Pure Silence (15 seconds)
 - **Diarization:** No segments detected (clean)
 - **ASR:** Zero words output (no hallucination)
-- **Implication:** Safe to send silence through the pipeline — no spurious transcripts
+- **Implication:** Safe to send silence through the pipeline - no spurious transcripts
 
 ### Single-Speaker Monologue (45 seconds, looped)
-- **Diarization:** 2 speakers detected — **Sortformer hallucinated a second speaker**
+- **Diarization:** 2 speakers detected - **Sortformer hallucinated a second speaker**
 - Speaker 0: 394/563 active frames, Speaker 1: 137/563 active frames
-- The OSCE audio has two speakers (doctor intro + patient responses) in the first 15s — even when looped as a "monologue", Sortformer picks up turn-taking patterns
-- **Implication:** The role inference agent should not rely solely on speaker count — it needs conversational context to validate attributions
+- The OSCE audio has two speakers (doctor intro + patient responses) in the first 15s - even when looped as a "monologue", Sortformer picks up turn-taking patterns
+- **Implication:** The role inference agent should not rely solely on speaker count - it needs conversational context to validate attributions
 
 ### Speech → Silence (15s) → Speech
 - **Diarization:** Correctly places segments before and after the gap. 1 minor segment leaked into the gap boundary
 - **ASR:** Correctly transcribes both speech portions, nothing during silence
-- **Implication:** Silence gaps are handled well — the pipeline can tolerate pauses during examination
+- **Implication:** Silence gaps are handled well - the pipeline can tolerate pauses during examination
 
 ### Baseline Two-Speaker OSCE (4.5 minutes)
 - **Diarization:** 88 segments, 2 active speakers correctly identified
-- Speaker 0: 2307/3371 frames (doctor — talks more), Speaker 1: 1024/3371 frames (patient)
+- Speaker 0: 2307/3371 frames (doctor - talks more), Speaker 1: 1024/3371 frames (patient)
 - **ASR:** 783 words, good transcription quality
 - **Implication:** The pipeline produces usable output for real consultation audio
 
@@ -330,8 +330,8 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 ### Recommended Approach: ffmpeg subprocess
 - ffmpeg is already a dependency (installed in setup-initial.sh)
 - Single `subprocess.run()` call per chunk: `ffmpeg -i input.webm -ar 16000 -ac 1 output.wav`
-- Alternative: `PyAV` (in-process, no subprocess overhead) — viable but adds a dependency
-- Alternative: `AudioWorklet` in browser sending raw PCM Float32 — eliminates server conversion but increases bandwidth ~10x
+- Alternative: `PyAV` (in-process, no subprocess overhead) - viable but adds a dependency
+- Alternative: `AudioWorklet` in browser sending raw PCM Float32 - eliminates server conversion but increases bandwidth ~10x
 
 ### Current Decision: Browser PCM + direct server buffering
 - Avoids per-chunk ffmpeg subprocess work in the live path
@@ -350,16 +350,16 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 ### Key Public Methods
 
 **Diarizer:**
-- `diarize(audio, batch_size, include_tensor_outputs, ...)` — main inference
-- `forward(...)` — training/raw forward pass
-- `predict_step(...)` — PyTorch Lightning predict
+- `diarize(audio, batch_size, include_tensor_outputs, ...)` - main inference
+- `forward(...)` - training/raw forward pass
+- `predict_step(...)` - PyTorch Lightning predict
 
 **ASR:**
-- `transcribe(audio, return_hypotheses, ...)` — main inference
-- `change_decoding_strategy(decoding_cfg)` — change greedy/beam config
-- `set_speaker_targets(spk_targets, bg_spk_targets)` — set speaker masks for kernel injection
-- `clear_speaker_targets()` — reset masks
-- `forward(...)` — training/raw forward pass
+- `transcribe(audio, return_hypotheses, ...)` - main inference
+- `change_decoding_strategy(decoding_cfg)` - change greedy/beam config
+- `set_speaker_targets(spk_targets, bg_spk_targets)` - set speaker masks for kernel injection
+- `clear_speaker_targets()` - reset masks
+- `forward(...)` - training/raw forward pass
 
 ---
 
@@ -367,12 +367,12 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ### Container Version Matrix
 
-| Issue | NeMo 24.12 (v2.1.0) | NeMo 25.09 (v2.5.3) | NeMo 25.09 + main (v2.8.0rc0) |
+| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 2.7.3 target |
 |---|---|---|---|
 | RTX 5080 (sm_120) CUDA | Fails | Works | Works |
 | Streaming Sortformer v2.1 | Fails (`spkcache_len`) | Works | Works |
-| Multitalker ASR module | Missing | Missing | Works |
-| CUDA graph decoder | N/A | N/A | Broken (workaround available) |
+| Multitalker ASR module | Missing | Missing | Expected in released line; verify during GPU build |
+| CUDA graph decoder | N/A | N/A | Verify during GPU build before changing workaround code |
 
 ### Sortformer Configuration
 

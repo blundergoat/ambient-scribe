@@ -87,10 +87,12 @@ if command -v php &>/dev/null; then
     php_version=$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION . "." . PHP_RELEASE_VERSION;')
     php_major=$(php -r 'echo PHP_MAJOR_VERSION;')
     php_minor=$(php -r 'echo PHP_MINOR_VERSION;')
-    if [[ "$php_major" -gt 8 ]] || { [[ "$php_major" -eq 8 ]] && [[ "$php_minor" -ge 3 ]]; }; then
+    # composer.json requires ">=8.3 <9.0"; this gate must agree or
+    # setup-verify passes on hosts where composer install then refuses to run.
+    if [[ "$php_major" -eq 8 ]] && [[ "$php_minor" -ge 3 ]]; then
         pass "v${php_version}"
     else
-        fail "v${php_version} - need 8.3+"
+        fail "v${php_version} - composer.json requires >=8.3 <9.0"
     fi
 else
     fail "not found"

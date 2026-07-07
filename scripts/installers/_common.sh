@@ -1,5 +1,5 @@
 #!/bin/bash
-# _common.sh — shared helper library for GOAT installer/uninstaller scripts
+# _common.sh - shared helper library for GOAT installer/uninstaller scripts
 #
 # Source this file from every script:
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

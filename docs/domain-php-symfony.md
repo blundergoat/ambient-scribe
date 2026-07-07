@@ -44,7 +44,7 @@ Single template: `templates/scribe/index.html.twig`. Contains inline JS for:
 - Mercure SSE subscription via `StreamOrchestrator`
 - Tailwind CSS styling
 
-Template variables are set in `ScribeController::index()`. When adding new config, pass it as a Twig variable — don't hardcode URLs in JS.
+Template variables are set in `ScribeController::index()`. When adding new config, pass it as a Twig variable - don't hardcode URLs in JS.
 
 ## Quality Standards
 
@@ -53,7 +53,7 @@ Template variables are set in `ScribeController::index()`. When adding new confi
 | PHPStan | Level 10 (strictest) | `composer analyse` |
 | PHP-CS-Fixer | PSR-12 | `composer cs:check` / `composer cs:fix` |
 | PHPMD | design, codesize, unusedcode | `composer analyse:messdetector` |
-| Cyclomatic complexity | Max 20 | `composer analyse:complexity` |
+| gruff-php quality gate | Complexity + design rules | `composer analyse:complexity` |
 | Coverage | Minimum 80% | `composer test:coverage` |
 | Mutation testing | infection/infection | `composer mutate` |
 
@@ -64,7 +64,7 @@ composer preflight              # All quality checks
 composer test                   # PHPUnit tests
 composer test:coverage          # Tests with HTML + clover coverage
 composer analyse                # PHPStan level 10
-composer analyse:complexity     # Cyclomatic complexity (max 20)
+composer analyse:complexity     # gruff-php PHP quality gate
 composer analyse:messdetector   # PHPMD
 composer cs:check               # PHP-CS-Fixer dry-run
 composer cs:fix                 # Auto-fix code style

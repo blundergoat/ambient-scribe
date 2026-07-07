@@ -208,7 +208,7 @@
         {
             "id": "permanent-disconnect",
             "name": "Permanent Disconnect",
-            "description": "Disconnect without reconnect — UI reaches terminal error state",
+            "description": "Disconnect without reconnect - UI reaches terminal error state",
             "events": [
                 {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Let me check your vitals first.", "start": 0.0, "end": 2.5}},
                 {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Sure, go ahead.", "start": 3.0, "end": 4.5}},
@@ -220,88 +220,6 @@
                 "segmentCount": 3,
                 "roleMapping": {},
                 "confidenceMin": 0,
-                "flipDetected": false
-            }
-        },
-        {
-            "id": "meeting-standup",
-            "name": "Meeting — Daily Standup",
-            "description": "3-person standup meeting with organiser and participants",
-            "events": [
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Alright everyone, let's get started with the standup. Sarah, you're up first.", "start": 0.0, "end": 4.0}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Yesterday I finished the authentication module. Today I'll start on the dashboard.", "start": 4.5, "end": 8.5}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Any blockers?", "start": 9.0, "end": 10.0}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "No blockers, but I might need a design review later.", "start": 10.5, "end": 13.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Great. Mike, what about you?", "start": 13.5, "end": 15.0}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_2", "text": "I've been debugging the payment integration. There's a timezone issue with the API.", "start": 15.5, "end": 20.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Let's add that to the agenda for the planning session. Anything else?", "start": 20.5, "end": 24.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_2", "text": "That's it from me.", "start": 24.5, "end": 25.5}},
-                {"type": "role_update", "delay": 200, "data": {"mapping": {"spk_0": "ORGANISER", "spk_1": "PARTICIPANT", "spk_2": "PARTICIPANT"}, "confidence": 0.88}}
-            ],
-            "expectedEndState": {
-                "segmentCount": 8,
-                "roleMapping": {"spk_0": "ORGANISER", "spk_1": "PARTICIPANT", "spk_2": "PARTICIPANT"},
-                "confidenceMin": 0.8,
-                "flipDetected": false
-            }
-        },
-        {
-            "id": "interview-technical",
-            "name": "Interview — Technical Screening",
-            "description": "Technical interview with interviewer asking about experience",
-            "events": [
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Thanks for coming in today. Can you tell me about your experience with distributed systems?", "start": 0.0, "end": 4.5}},
-                {"type": "segment", "delay": 500, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Sure. At my previous role I designed an event-driven architecture handling about 50,000 messages per second.", "start": 5.0, "end": 10.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Interesting. Walk me through how you handled failure scenarios.", "start": 10.5, "end": 13.5}},
-                {"type": "segment", "delay": 500, "data": {"type": "segment", "speaker_id": "spk_1", "text": "We used a dead letter queue pattern with automatic retry and exponential backoff. For critical paths, we had a circuit breaker that would fail open to a fallback service.", "start": 14.0, "end": 21.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "How did you monitor and observe the system in production?", "start": 21.5, "end": 24.5}},
-                {"type": "segment", "delay": 500, "data": {"type": "segment", "speaker_id": "spk_1", "text": "We used OpenTelemetry for distributed tracing, Prometheus for metrics, and had SLOs defined for each service boundary.", "start": 25.0, "end": 31.0}},
-                {"type": "role_update", "delay": 200, "data": {"mapping": {"spk_0": "INTERVIEWER", "spk_1": "CANDIDATE"}, "confidence": 0.91}}
-            ],
-            "expectedEndState": {
-                "segmentCount": 6,
-                "roleMapping": {"spk_0": "INTERVIEWER", "spk_1": "CANDIDATE"},
-                "confidenceMin": 0.9,
-                "flipDetected": false
-            }
-        },
-        {
-            "id": "tv-panel-discussion",
-            "name": "TV — Panel Discussion",
-            "description": "TV panel with host and two guests discussing tech",
-            "events": [
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Welcome back to Tech Talks. Today we're discussing the future of AI in healthcare. Let me introduce our panel.", "start": 0.0, "end": 5.5}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Thanks for having me. I've been working in health AI for the past decade and the progress has been remarkable.", "start": 6.0, "end": 11.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "And what's your take on the regulatory landscape?", "start": 11.5, "end": 13.5}},
-                {"type": "segment", "delay": 500, "data": {"type": "segment", "speaker_id": "spk_2", "text": "The FDA has been surprisingly forward-thinking. The new framework for adaptive AI medical devices is a game changer.", "start": 14.0, "end": 20.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Fascinating. Now let's talk about privacy concerns.", "start": 20.5, "end": 23.0}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Privacy is the number one concern I hear from hospital administrators. Federated learning is one promising approach.", "start": 23.5, "end": 29.0}},
-                {"type": "role_update", "delay": 200, "data": {"mapping": {"spk_0": "HOST", "spk_1": "GUEST", "spk_2": "GUEST"}, "confidence": 0.90}}
-            ],
-            "expectedEndState": {
-                "segmentCount": 6,
-                "roleMapping": {"spk_0": "HOST", "spk_1": "GUEST", "spk_2": "GUEST"},
-                "confidenceMin": 0.85,
-                "flipDetected": false
-            }
-        },
-        {
-            "id": "lecture-intro-cs",
-            "name": "Lecture — Intro to Computer Science",
-            "description": "Lecture with student questions",
-            "events": [
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Today we're going to cover the fundamentals of algorithm complexity. Who can tell me what Big O notation measures?", "start": 0.0, "end": 5.5}},
-                {"type": "segment", "delay": 500, "data": {"type": "segment", "speaker_id": "spk_1", "text": "Is it how fast an algorithm runs?", "start": 6.0, "end": 7.5}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Close. It describes how the runtime grows as the input size increases. It's about the growth rate, not absolute speed.", "start": 8.0, "end": 14.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "For example, O(n) means the runtime doubles when the input doubles. O(n squared) means it quadruples.", "start": 14.5, "end": 20.0}},
-                {"type": "segment", "delay": 400, "data": {"type": "segment", "speaker_id": "spk_1", "text": "So a nested loop would be O(n squared)?", "start": 20.5, "end": 23.0}},
-                {"type": "segment", "delay": 300, "data": {"type": "segment", "speaker_id": "spk_0", "text": "Exactly right. Now let's look at some examples on the board.", "start": 23.5, "end": 27.0}},
-                {"type": "role_update", "delay": 200, "data": {"mapping": {"spk_0": "LECTURER", "spk_1": "STUDENT"}, "confidence": 0.93}}
-            ],
-            "expectedEndState": {
-                "segmentCount": 6,
-                "roleMapping": {"spk_0": "LECTURER", "spk_1": "STUDENT"},
-                "confidenceMin": 0.9,
                 "flipDetected": false
             }
         },

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop hook: stack-adaptive lint check after each Claude turn.
-# MUST exit 0 even when errors found — non-zero causes infinite fix loops.
+# MUST exit 0 even when errors found - non-zero causes infinite fix loops.
 # Errors go to stderr (informational, not imperative).
 
 # Infinite loop guard
@@ -62,5 +62,5 @@ if [ "$HAS_PYTHON" = true ]; then
   fi
 fi
 
-# Always exit 0 — errors are informational only
+# Always exit 0 - errors are informational only
 exit 0

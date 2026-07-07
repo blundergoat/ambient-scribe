@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# E2E Test Runner — Starts services, runs contract tests, cleans up
+# E2E Test Runner - Starts services, runs contract tests, cleans up
 # =============================================================================
 #
 # Usage:
@@ -12,9 +12,9 @@
 # Tests validate API contracts, proxy chains, and service integration.
 #
 # Exit codes:
-#   0 — All tests passed
-#   1 — Tests failed
-#   2 — Service startup failed
+#   0 - All tests passed
+#   1 - Tests failed
+#   2 - Service startup failed
 # =============================================================================
 
 set -uo pipefail
@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="${REPO_ROOT}/strands_agents/.venv"
 LOG_DIR="${REPO_ROOT}/var/log/e2e"
 
-# Ports — use high range to avoid conflicts with dev stack
+# Ports - use high range to avoid conflicts with dev stack
 export AGENT_PORT="${AGENT_PORT:-48201}"
 export APP_PORT="${APP_PORT:-48202}"
 export MERCURE_PORT="${MERCURE_PORT:-48203}"
@@ -165,6 +165,9 @@ cors_origins http://localhost:${APP_PORT}" \
         MERCURE_PUBLIC_URL="http://localhost:${MERCURE_PORT}/.well-known/mercure" \
         MERCURE_JWT_SECRET="e2e-test-secret-key-minimum-32-chars" \
         php -d variables_order=EGPCS \
+            -d upload_max_filesize=128M \
+            -d post_max_size=128M \
+            -d memory_limit=512M \
             -S "0.0.0.0:${APP_PORT}" -t "${REPO_ROOT}/public" \
             "${REPO_ROOT}/public/index.php" \
             >"${LOG_DIR}/php.log" 2>&1 &
@@ -211,10 +214,10 @@ fi
 # ═══════════════════════════════════════════════════════════════════════
 if [[ "$INCLUDE_BROWSER" == "true" ]]; then
     if ! command -v npx &>/dev/null; then
-        warn "Node.js not found — skipping browser tests"
+        warn "Node.js not found - skipping browser tests"
         warn "Install Node.js and run: npm install && npx playwright install --with-deps chromium"
     elif [[ ! -f "${REPO_ROOT}/node_modules/.package-lock.json" ]]; then
-        warn "node_modules not found — skipping browser tests"
+        warn "node_modules not found - skipping browser tests"
         warn "Run: npm install && npx playwright install --with-deps chromium"
     else
         log "Running Playwright browser tests..."

@@ -30,7 +30,7 @@ ECS_CLUSTER="ambient-scribe-cluster"
 ECS_SERVICE="ambient-scribe-agent"
 LOG_GROUP_AGENT="/ecs/ambient-scribe-prod-agent"
 DYNAMODB_TABLE="ambient-scribe-prod-sessions"
-SECRET_PATH="/ambient-scribe/prod/api-key"
+SECRET_PATH="${SECRET_PATH:-REPLACE_WITH_SECRET_PATH}"
 
 # Production URL
 PROD_API_URL="${PROD_API_URL:-https://scribe.blundergoat.com}"
@@ -97,6 +97,14 @@ check_aws_credentials() {
 # =============================================================================
 check_secrets() {
     header "Secrets Manager"
+
+    # Missing secret configuration means the operator has not selected which
+    # deployed API key the UI should probe. Failing closed stops the script
+    # from reporting a healthy deployment it never actually verified.
+    if [[ "${SECRET_PATH}" == "REPLACE_WITH_SECRET_PATH" ]]; then
+        error "API key: set SECRET_PATH to the deployed Secrets Manager path before checking secrets"
+        return 1
+    fi
 
     if "${AWS_CLI}" secretsmanager describe-secret --secret-id "${SECRET_PATH}" &>/dev/null; then
         if VALUE=$("${AWS_CLI}" secretsmanager get-secret-value \

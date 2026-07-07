@@ -1,4 +1,4 @@
-# Terraform Infrastructure — Self-Contained, Create-or-BYO
+# Terraform Infrastructure - Self-Contained, Create-or-BYO
 
 ambient-scribe owns all its infrastructure. No external repos required.
 
@@ -75,7 +75,7 @@ module "network" {
 }
 ```
 
-Every downstream module (`security`, `alb`, `ecs_service`) reads from `local.vpc_id` / `local.public_subnet_ids` / `local.private_subnet_ids` — they don't know or care where the VPC came from.
+Every downstream module (`security`, `alb`, `ecs_service`) reads from `local.vpc_id` / `local.public_subnet_ids` / `local.private_subnet_ids` - they don't know or care where the VPC came from.
 
 ## Module Dependency Chain
 
@@ -98,7 +98,7 @@ Phase 6:  alarms ← alb, ecs
 ## Quick Start
 
 ```bash
-# 1. Bootstrap (once — creates S3 + DynamoDB for state)
+# 1. Bootstrap (once - creates S3 + DynamoDB for state)
 cd infra/terraform/bootstrap
 terraform init && terraform apply
 
@@ -106,7 +106,7 @@ terraform init && terraform apply
 cd ../environments/prod
 cp terraform.tfvars.example terraform.tfvars
 cp backend.hcl.example backend.hcl
-# Edit both files — at minimum set hosted_zone_id
+# Edit both files - at minimum set hosted_zone_id
 
 # 3. Deploy
 terraform init -backend-config=backend.hcl
@@ -116,4 +116,4 @@ terraform apply
 
 ## What About blundergoat-infra?
 
-Shelved. ambient-scribe originally consumed a shared VPC from `blundergoat-infra` via SSM parameters. That cross-repo dependency made first-time setup harder than it needed to be. Now everything lives here. If you have an existing VPC from another repo, use BYO mode — but you don't need one.
+Shelved. ambient-scribe originally consumed a shared VPC from `blundergoat-infra` via SSM parameters. That cross-repo dependency made first-time setup harder than it needed to be. Now everything lives here. If you have an existing VPC from another repo, use BYO mode - but you don't need one.

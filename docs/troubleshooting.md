@@ -11,7 +11,7 @@ The RTX 5080 is a Blackwell GPU (compute capability sm_120). Two compatibility c
 
 **Result:** `nvcr.io/nvidia/nemo:24.12` fails on both counts.
 
-**Solution:** Use `nvcr.io/nvidia/nemo:25.09` or newer. The 25.09 container is the first to officially include streaming Sortformer support and ships a CUDA toolkit new enough for Blackwell.
+**Solution:** Use the pinned project image base, `nvcr.io/nvidia/nemo:26.02`, with `nemo_toolkit[asr]==2.7.3`. Earlier 25.09 testing proved the minimum Blackwell direction, but the maintained Dockerfile now targets the released multitalker line instead of a moving NeMo main checkout.
 
 **Symptoms with 24.12:**
 - `SortformerModules.__init__() got an unexpected keyword argument 'spkcache_len'`
@@ -28,7 +28,7 @@ Host CUDA 13.1 is newer than the container's CUDA toolkit. Newer host drivers ar
 - GPU detected but inference crashes
 
 **Fix options:**
-1. Use the latest NeMo container (`nvcr.io/nvidia/nemo:25.09` or newer)
+1. Use the pinned NeMo container in `docker/nemo/Dockerfile` (`nvcr.io/nvidia/nemo:26.02`)
 2. Fall back to AWS g5.2xlarge spot instance (~$0.36/hr) if Blackwell issues persist
 
 ### References

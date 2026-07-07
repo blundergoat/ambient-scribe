@@ -35,3 +35,9 @@ services:
         resource: '../src/'
         exclude:
             - '../src/Kernel.php'
+
+    logger:
+        alias: App\Logging\JsonLineLogger
+        public: true
+
+    Psr\Log\LoggerInterface: '@App\Logging\JsonLineLogger'

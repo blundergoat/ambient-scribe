@@ -7,7 +7,7 @@ Current repository map for fast orientation. Dependency caches and generated out
 ```
 ambient-scribe/
 ├── src/ = PHP Symfony application code (PSR-4: App\)
-│   ├── Controller/ScribeController.php = `/`, `/scribe`, history, and role snapshot routes
+│   ├── Controller/ScribeController.php = `/`, `/scribe`, demo audio, summary/model-health proxies, history, role snapshot, and role override routes
 │   ├── Service/RoleInferenceService.php = PHP wrapper for Python role mapping calls
 │   └── Kernel.php = Symfony kernel
 ├── config/ = Symfony config
@@ -16,25 +16,40 @@ ambient-scribe/
 │   └── packages/ = framework, Mercure, Strands client, Twig, and test config
 ├── templates/scribe/index.html.twig = main Scribe UI shell and injected runtime config
 ├── public/js/ = browser-side app assets
-│   ├── scribe.js = production audio capture, WebSocket, Mercure, role, replay, and summary UI logic
-│   ├── scribe-dev.js = development helper script
+│   ├── scribe.js = shared browser state, role labels, safe DOM helpers, and theme controls
+│   ├── scribe-streaming.js = Mercure streams, browser PCM capture, and demo WAV PCM streaming
+│   ├── scribe-recording.js = live recording lifecycle and session resets
+│   ├── scribe-transcript.js = transcript card rendering, relabeling, and visible segment snapshots
+│   ├── scribe-output.js = streaming demo replay, correction-then-summary flow, and summary rendering
+│   ├── scribe-actions.js = post-visit actions, JSON parsing, toggles, and shortcuts
+│   ├── scribe-dev.js = development inspector panel
+│   ├── scribe-fixtures.js = dev-only generated WAV fixture replay picker
 │   └── tailwind.js = local Tailwind browser build asset
 ├── strands_agents/ = Python FastAPI, NeMo, storage, and Strands agent lane
-│   ├── api/server.py = HTTP/WebSocket API, Mercure publishing, role queue, summaries, replay, health
+│   ├── api/server.py = HTTP/WebSocket routes, correction endpoint, and shared service wiring
+│   ├── api/ (other modules) = streaming_session.py live loop, role_inference_queue.py, role_agent_runtime.py, role_heuristics.py, mercure_publisher.py, summary_request.py, summary_generation.py, agent_observability.py
 │   ├── agents/transcription_agent.py = role inference agent factory
-│   ├── agents/summary_agent.py = mode-specific summary agent factory
+│   ├── agents/summary_agent.py = medical summary agent factory
 │   ├── tools/assign_roles.py = Pydantic role assignment tool and session role state
 │   ├── nemo_pipeline.py = singleton Sortformer/Parakeet GPU pipeline wrapper
 │   ├── nemo_session.py = per-WebSocket audio buffering and ffmpeg conversion
+│   ├── nemo_streaming_engine.py = M22 session-long streaming engine (NEMO_SESSION_ENGINE=streaming)
+│   ├── nemo_segment_cleanup.py = server-side segment text/fragment cleanup
+│   ├── post_visit_correction.py = post-stop second-pass ASR into corrected transcript rows
+│   ├── corrected_role_cues.py = Doctor/Patient cue cleanup for corrected rows
+│   ├── corrected_source_chip_score.py = fixture-only QA scorer for corrected artifacts
+│   ├── clinical_context.py = tiny CPU clinical KB retrieval for summary grounding
+│   ├── medical_lexicon.py = opt-in post-ASR medical term normaliser
 │   ├── session.py = in-memory transcript store with TTL cleanup
 │   ├── session_lifecycle.py = active WebSocket lifecycle and reconnect cleanup
+│   ├── session_quality.py = end-of-session quality records
 │   ├── storage.py = SQLite storage backend and storage protocol
 │   └── requirements.txt = Python runtime dependencies, excluding NeMo toolkit
 ├── tests/ = automated tests and fixtures
 │   ├── Unit/ = PHPUnit tests for Symfony controller/service code
-│   ├── python/ = pytest suite for API, storage, lifecycle, role inference, Mercure, replay, and NeMo seams
+│   ├── python/ = pytest suite for API, storage, lifecycle, role inference, Mercure, and NeMo seams
 │   ├── e2e/ = Playwright and contract tests
-│   └── fixtures/ = scribe scenarios and audio fixture directory
+│   └── fixtures/ = scribe scenario JSON plus generated demo audio metadata
 ├── docker/ = container support files
 │   └── nemo/Dockerfile = NeMo GPU FastAPI image
 ├── Dockerfile = PHP Symfony app image
@@ -58,14 +73,15 @@ ambient-scribe/
 |---|---|
 | Add or change a Symfony route | `src/Controller/ScribeController.php` |
 | Change Symfony DI, params, Mercure, Strands, or Twig config | `config/services.yaml`, `config/packages/` |
-| Change browser audio capture, WebSocket, EventSource, replay, or summary UI | `public/js/scribe.js`, `templates/scribe/index.html.twig` |
+| Change browser audio capture, WebSocket, EventSource, replay, or summary UI | `public/js/`, `templates/scribe/index.html.twig` |
 | Change FastAPI HTTP or WebSocket endpoints | `strands_agents/api/server.py` |
 | Change NeMo model loading or GPU inference | `strands_agents/nemo_pipeline.py` |
 | Change audio buffering or conversion | `strands_agents/nemo_session.py` |
 | Change active session teardown or reconnect grace | `strands_agents/session_lifecycle.py` |
 | Change transcript persistence | `strands_agents/session.py`, `strands_agents/storage.py` |
-| Change role inference behavior | `strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py` |
-| Change summary generation | `strands_agents/agents/summary_agent.py`, `strands_agents/api/server.py` |
+| Change role inference behavior | `strands_agents/agents/transcription_agent.py`, `strands_agents/tools/assign_roles.py`, `strands_agents/api/role_agent_runtime.py` |
+| Change summary generation | `strands_agents/agents/summary_agent.py`, `strands_agents/api/summary_request.py`, `strands_agents/api/summary_generation.py` |
+| Change post-stop transcript correction | `strands_agents/post_visit_correction.py`, `strands_agents/corrected_role_cues.py`, `strands_agents/api/server.py` |
 | Add or change Docker services | `docker-compose.yml` |
 | Modify the NeMo container | `docker/nemo/Dockerfile` |
 | Change AWS infrastructure | `infra/terraform/environments/prod/main.tf`, `infra/terraform/modules/` |

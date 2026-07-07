@@ -3,7 +3,6 @@ Tests for the FastAPI server endpoints.
 """
 
 import asyncio
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -12,6 +11,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import api.server as api_server
+import tools.assign_roles as role_tools
 from api.server import app, lifecycle, session_history, sessions, transcribe_stream
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 
@@ -19,14 +19,6 @@ from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000001"
 TEST_SESSION_ID_2 = "00000000-0000-4000-8000-000000000002"
 TEST_SESSION_ID_3 = "00000000-0000-4000-8000-000000000003"
-import tools.assign_roles as role_tools
-
-
-def _cancel_replay_tasks() -> None:
-    for task in list(api_server._replay_tasks.values()):
-        if not task.done():
-            task.cancel()
-    api_server._replay_tasks.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -40,9 +32,8 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    api_server._session_modes.clear()
+    role_tools._pending_role_segments.clear()
     api_server._mercure_event_ids.clear()
-    _cancel_replay_tasks()
     app.state.nemo_pipeline = NemoPipeline()
     app.state.nemo_input_format = "pcm"
     app.state.http_client = httpx.AsyncClient(timeout=5.0)
@@ -52,9 +43,8 @@ def clear_sessions():
     api_server._inference_queues.clear()
     api_server._inference_workers.clear()
     role_tools._session_states.clear()
-    api_server._session_modes.clear()
+    role_tools._pending_role_segments.clear()
     api_server._mercure_event_ids.clear()
-    _cancel_replay_tasks()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
 
@@ -80,7 +70,9 @@ class TestHealthEndpoint:
     async def test_health_degraded_on_load_error(self):
         app.state.nemo_pipeline._load_error = "CUDA out of memory"
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.get("/health")
 
         assert response.status_code == 503
@@ -102,9 +94,11 @@ class TestSessionHistory:
 
     @pytest.mark.asyncio
     async def test_history_accepts_post(self):
-        """PHP StrandsClient uses postJson() — endpoint must accept POST."""
+        """PHP StrandsClient uses postJson() - endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(f"/session/{TEST_SESSION_ID}/history")
 
         assert response.status_code == 200
@@ -113,15 +107,316 @@ class TestSessionHistory:
 
     @pytest.mark.asyncio
     async def test_roles_accepts_post(self):
-        """PHP StrandsClient uses postJson() — endpoint must accept POST."""
+        """PHP StrandsClient uses postJson() - endpoint must accept POST."""
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(f"/session/{TEST_SESSION_ID}/roles")
 
         assert response.status_code == 200
         data = response.json()
         assert data["session_id"] == TEST_SESSION_ID
         assert isinstance(data["mapping"], dict)
+
+    def test_roles_override_survives_later_agent_update(self, client, monkeypatch):
+        """Manual UI correction wins when a later role-agent update disagrees."""
+        from tools.assign_roles import apply_role_mapping_result, get_or_create_state
+
+        async def fake_publish(topic, data, event_id=None):
+            """Pretend Mercure accepted the manual override event."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "The clinician clicked this speaker label.",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        result = apply_role_mapping_result(
+            session_id=TEST_SESSION_ID,
+            segments=sessions.get_segments(TEST_SESSION_ID),
+            mapping={"spk_0": "DOCTOR"},
+            confidence=0.95,
+            reasoning="Agent disagreed after the user correction.",
+        )
+
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert result.mapping["spk_0"] == "PATIENT"
+        assert state.current_mapping["spk_0"] == "PATIENT"
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
+
+    def test_unknown_override_clears_confirmed_override_so_agent_can_relabel(
+        self, client, monkeypatch
+    ):
+        """Cycling back to Unknown is an undo, not a permanent UNKNOWN pin."""
+        from tools.assign_roles import apply_role_mapping_result, get_or_create_state
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for the undo semantics."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "The clinician labelled, then unlabelled this speaker.",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+
+        first = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "DOCTOR"},
+        )
+        undo = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "UNKNOWN"},
+        )
+        assert first.status_code == 200
+        assert undo.status_code == 200
+
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert "spk_0" not in state.confirmed_overrides
+
+        # With the override cleared, a later agent decision may relabel again.
+        result = apply_role_mapping_result(
+            session_id=TEST_SESSION_ID,
+            segments=sessions.get_segments(TEST_SESSION_ID),
+            mapping={"spk_0": "PATIENT"},
+            confidence=0.95,
+            reasoning="Agent relabels after the user removed their correction.",
+        )
+        assert result.mapping["spk_0"] == "PATIENT"
+
+    def test_speaker_override_updates_corrected_rows_for_retried_summaries(
+        self, client, monkeypatch
+    ):
+        """A corrected artifact must cite the clinician's latest speaker labels."""
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for corrected-row syncing."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row before correction",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+        sessions.replace_corrected_segments(
+            TEST_SESSION_ID,
+            [
+                {
+                    "segment_id": "corrected-0001",
+                    "speaker_id": "spk_0",
+                    "role": "DOCTOR",
+                    "text": "corrected text",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        corrected_rows = sessions.get_corrected_segments(TEST_SESSION_ID)
+        assert corrected_rows[0]["role"] == "PATIENT"
+
+    def test_row_override_invalidates_stale_corrected_artifact(
+        self, client, monkeypatch
+    ):
+        """A row fix cannot map onto corrected rows, so they must not go stale."""
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for corrected-row invalidation."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row the clinician fixes",
+                "start": 0.0,
+                "end": 1.0,
+                "segment_id": "seg-0001",
+            },
+        )
+        sessions.replace_corrected_segments(
+            TEST_SESSION_ID,
+            [
+                {
+                    "segment_id": "corrected-0001",
+                    "speaker_id": "spk_0",
+                    "role": "DOCTOR",
+                    "text": "corrected text",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        # The next summary re-corrects from the updated scaffold instead of
+        # citing the pre-fix roles.
+        assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
+
+    def test_row_override_pins_one_row_without_touching_the_speaker(
+        self, client, monkeypatch
+    ):
+        """Correcting one row must not relabel the speaker's other rows."""
+        from tools.assign_roles import get_or_create_state
+
+        published_events = []
+
+        async def fake_publish(topic, data, event_id=None):
+            """Capture the roles-topic event the correction broadcasts."""
+            published_events.append((topic, data))
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        # Two rows from the same speaker; the clinician says row 2 is the patient.
+        for index in (1, 2):
+            sessions.append_segment(
+                TEST_SESSION_ID,
+                {
+                    "speaker_id": "spk_0",
+                    "text": f"row {index}",
+                    "start": float(index),
+                    "end": float(index) + 0.9,
+                    "segment_id": f"seg-{index:04d}",
+                },
+            )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0002", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ok",
+            "segment_id": "seg-0002",
+            "role": "PATIENT",
+        }
+
+        # A later agent-style speaker mapping cannot undo the row correction.
+        sessions.apply_role_mapping(TEST_SESSION_ID, {"spk_0": "DOCTOR"})
+        stored_rows = sessions.get_segments(TEST_SESSION_ID)
+        assert stored_rows[0]["role"] == "DOCTOR"
+        assert stored_rows[1]["role"] == "PATIENT"
+        assert stored_rows[1]["role_source"] == "user_row"
+
+        # The speaker-scoped stores stay untouched by a row correction.
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert "spk_0" not in state.confirmed_overrides
+        assert "spk_0" not in state.current_mapping
+
+        # Other tabs learn about the row via the additive row_overrides field.
+        roles_topic, role_event = published_events[-1]
+        assert roles_topic.endswith("/roles")
+        assert role_event["row_overrides"] == {"seg-0002": "PATIENT"}
+        assert role_event["manual_override"] is True
+
+    def test_row_override_after_role_state_cleanup_publishes_no_fabricated_mapping(
+        self, client, monkeypatch
+    ):
+        """A post-visit row fix must not broadcast empty mapping or zero confidence."""
+        published_events = []
+
+        async def fake_publish(topic, data, event_id=None):
+            """Capture the roles-topic event the late correction broadcasts."""
+            published_events.append((topic, data))
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        # The visit ended: transcript rows persist in storage, but grace-window
+        # teardown already destroyed the session's role state.
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row the clinician reviews after the visit",
+                "start": 0.0,
+                "end": 0.9,
+                "segment_id": "seg-0001",
+            },
+        )
+        role_tools.cleanup_session(TEST_SESSION_ID)
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        # The correction still sticks to the stored row.
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
+
+        # The broadcast carries only the row signal - no fabricated speaker state
+        # that would wipe another tab's earned confidence badge.
+        _, role_event = published_events[-1]
+        assert role_event["row_overrides"] == {"seg-0001": "PATIENT"}
+        assert role_event["manual_override"] is True
+        assert "mapping" not in role_event
+        assert "confidence" not in role_event
+
+        # The dead session gained no resurrected role state either.
+        assert TEST_SESSION_ID not in role_tools._session_states
+
+    def test_row_override_rejects_ambiguous_or_unknown_targets(self, client):
+        """The UI gets clear validation errors instead of silent no-ops."""
+        # Neither scope: the server cannot know what the user corrected.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"role": "DOCTOR"},
+        )
+        assert response.status_code == 400
+
+        # Both scopes at once is ambiguous and likely a client bug.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "segment_id": "seg-0001", "role": "DOCTOR"},
+        )
+        assert response.status_code == 400
+
+        # A row correction for a session with no stored transcript cannot stick.
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "DOCTOR"},
+        )
+        assert response.status_code == 404
 
 
 class TestTranscriptionEndpoints:
@@ -132,19 +427,23 @@ class TestTranscriptionEndpoints:
         class StubPipeline:
             def transcribe_file(self, audio_path):
                 assert audio_path.endswith(".wav")
-                return TranscriptionResult(segments=[
-                    Segment(
-                        speaker_id="spk_0",
-                        text="What brings you in today?",
-                        start=0.0,
-                        end=1.9,
-                    )
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(
+                            speaker_id="spk_0",
+                            text="What brings you in today?",
+                            start=0.0,
+                            end=1.9,
+                        )
+                    ]
+                )
 
         app.state.nemo_pipeline = StubPipeline()
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/transcribe/file",
                 params={"session_id": TEST_SESSION_ID},
@@ -166,7 +465,9 @@ class TestTranscriptionEndpoints:
         app.state.nemo_pipeline = StubPipeline()
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/transcribe/file",
                 data={"session_id": TEST_SESSION_ID_2},
@@ -185,14 +486,16 @@ class TestTranscriptionEndpoints:
         class StubPipeline:
             def transcribe_buffer(self, audio_buffer):
                 assert audio_buffer != b""
-                return TranscriptionResult(segments=[
-                    Segment(
-                        speaker_id="spk_1",
-                        text="I have had a cough for three days.",
-                        start=0.0,
-                        end=2.4,
-                    )
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(
+                            speaker_id="spk_1",
+                            text="I have had a cough for three days.",
+                            start=0.0,
+                            end=2.4,
+                        )
+                    ]
+                )
 
         class FakeWebSocket:
             def __init__(self):
@@ -215,11 +518,13 @@ class TestTranscriptionEndpoints:
             published_events.append((topic, data))
             return True
 
-        async def fake_enqueue(session_id, segments, mode=None):
+        async def fake_enqueue(session_id, segments):
             enqueued_segments.append((session_id, segments))
 
         # Use a real executor that runs synchronously in-process
-        sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-sync")
+        sync_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="test-sync"
+        )
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
@@ -238,16 +543,24 @@ class TestTranscriptionEndpoints:
         assert any(event[1]["type"] == "segment" for event in published_events)
         assert any(event[1]["type"] == "finalized" for event in published_events)
         sync_executor.shutdown(wait=False)
-        assert enqueued_segments == [(
-            TEST_SESSION_ID,
-            [{
-                "speaker_id": "spk_1",
-                "text": "I have had a cough for three days.",
-                "start": 0.0,
-                "end": 2.4,
-                "is_interim": False,
-            }],
-        )]
+        assert enqueued_segments == [
+            (
+                TEST_SESSION_ID,
+                [
+                    {
+                        "speaker_id": "spk_1",
+                        "text": "I have had a cough for three days.",
+                        "start": 0.0,
+                        "end": 2.4,
+                        "is_interim": False,
+                        # Every emitted row carries the stable ID clinicians can
+                        # target with a per-row role correction (M20 Phase 2).
+                        "segment_id": "seg-0001",
+                        "revision": 1,
+                    }
+                ],
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_websocket_warns_on_mercure_failure(self, monkeypatch):
@@ -260,9 +573,11 @@ class TestTranscriptionEndpoints:
 
         class StubPipeline:
             def transcribe_buffer(self, audio_buffer):
-                return TranscriptionResult(segments=[
-                    Segment(speaker_id="spk_0", text="test", start=0.0, end=1.0)
-                ])
+                return TranscriptionResult(
+                    segments=[
+                        Segment(speaker_id="spk_0", text="test", start=0.0, end=1.0)
+                    ]
+                )
 
         class FakeWebSocket:
             def __init__(self):
@@ -286,12 +601,14 @@ class TestTranscriptionEndpoints:
         async def failing_publish(topic, data, event_id=None):
             return False
 
-        async def fake_enqueue(session_id, segments, mode=None):
+        async def fake_enqueue(session_id, segments):
             pass
 
         app.state.nemo_pipeline = StubPipeline()
         app.state.nemo_input_format = "pcm"
-        monkeypatch.setattr("api.server.asyncio.get_running_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr(
+            "api.server.asyncio.get_running_loop", lambda: ImmediateLoop()
+        )
         monkeypatch.setattr("api.server.publish_to_mercure", failing_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
         # Use 0 grace period so schedule_destroy fires immediately in tests
@@ -301,7 +618,9 @@ class TestTranscriptionEndpoints:
         await transcribe_stream(websocket, TEST_SESSION_ID)
 
         # Should have sent exactly one system_error warning
-        error_messages = [m for m in sent_json_messages if m.get("type") == "system_error"]
+        error_messages = [
+            m for m in sent_json_messages if m.get("type") == "system_error"
+        ]
         assert len(error_messages) == 1
         assert error_messages[0]["message"] == "Real-time streaming unavailable"
 
@@ -312,7 +631,8 @@ class TestPublishToMercure:
     @pytest.mark.asyncio
     async def test_publish_returns_false_on_empty_jwt(self, monkeypatch):
         from api.server import publish_to_mercure
-        monkeypatch.setattr("api.server._resolve_mercure_jwt", lambda: "")
+
+        monkeypatch.setattr("api.mercure_publisher._resolve_mercure_jwt", lambda: "")
         result = await publish_to_mercure("test/topic", {"type": "test"})
         assert result is False
 
@@ -336,8 +656,9 @@ class TestSessionLifecycle:
 
         # Create role state
         from tools.assign_roles import get_or_create_state, _session_states
+
         state = get_or_create_state("lifecycle-test")
-        state.update({"spk_0": "DOCTOR"}, 0.9)
+        state.did_update_mapping_detect_flip({"spk_0": "DOCTOR"}, 0.9)
         assert "lifecycle-test" in _session_states
 
         # Destroy
@@ -359,7 +680,9 @@ class TestSessionLifecycle:
             sid = f"cycle-{i}"
             session = TranscriptionSession(sid, pipeline)
             await lifecycle.register(sid, session)
-            get_or_create_state(sid).update({"spk_0": "DOCTOR"}, 0.8)
+            get_or_create_state(sid).did_update_mapping_detect_flip(
+                {"spk_0": "DOCTOR"}, 0.8
+            )
             await lifecycle.destroy(sid)
 
         assert lifecycle.active_count == 0
@@ -377,7 +700,9 @@ class TestSessionLifecycle:
         pipeline = NemoPipeline()
         session = TranscriptionSession("timeout-test", pipeline)
         await lifecycle.register("timeout-test", session)
-        get_or_create_state("timeout-test").update({"spk_0": "DOCTOR"}, 0.9)
+        get_or_create_state("timeout-test").did_update_mapping_detect_flip(
+            {"spk_0": "DOCTOR"}, 0.9
+        )
 
         closed_sessions: list[str] = []
 
@@ -406,7 +731,7 @@ class TestThreadSafety:
     def test_concurrent_get_or_create_no_crash(self):
         """Two threads racing on get_or_create_state don't crash."""
         import threading
-        from tools.assign_roles import get_or_create_state, _session_states
+        from tools.assign_roles import get_or_create_state
 
         errors = []
 
@@ -414,13 +739,14 @@ class TestThreadSafety:
             try:
                 for _ in range(100):
                     state = get_or_create_state(session_id)
-                    state.update({"spk_0": "DOCTOR"}, 0.85)
+                    state.did_update_mapping_detect_flip(
+                        {"spk_0": "DOCTOR"}, 0.85
+                    )
             except Exception as e:
                 errors.append(e)
 
         threads = [
-            threading.Thread(target=worker, args=(f"thread-{i}",))
-            for i in range(4)
+            threading.Thread(target=worker, args=(f"thread-{i}",)) for i in range(4)
         ]
         for t in threads:
             t.start()
@@ -430,7 +756,7 @@ class TestThreadSafety:
         assert errors == []
 
     def test_concurrent_cleanup_no_crash(self):
-        """One thread creating, another cleaning up — no RuntimeError."""
+        """One thread creating, another cleaning up - no RuntimeError."""
         import threading
         from tools.assign_roles import get_or_create_state, cleanup_session
 
@@ -470,7 +796,9 @@ class TestSessionStore:
 
         store = SessionStore(max_sessions=100, ttl_seconds=1, max_segments=100)
         store.append_segment("old-session", {"speaker_id": "spk_0", "text": "old"})
-        assert store.get_segments("old-session") == [{"speaker_id": "spk_0", "text": "old"}]
+        assert store.get_segments("old-session") == [
+            {"speaker_id": "spk_0", "text": "old"}
+        ]
 
         # Wait for TTL to expire
         _time.sleep(1.1)
@@ -501,9 +829,103 @@ class TestSessionStore:
 
         store = SessionStore(max_sessions=100, ttl_seconds=7200, max_segments=100)
         for i in range(20):
-            store.append_segment("s1", {"speaker_id": "spk_0", "text": f"segment {i} " + ("x" * 40)})
+            store.append_segment(
+                "s1", {"speaker_id": "spk_0", "text": f"segment {i} " + ("x" * 40)}
+            )
 
         result = store.get_transcript_text("s1", max_chars=120)
 
         assert "\n...\n" in result
         assert len(result) <= 120
+
+
+class TestSummaryModelPreflight:
+    """The browser pre-flight must fail closed for every provider config."""
+
+    def test_unknown_provider_is_unavailable(self, monkeypatch):
+        """A typo'd provider must not let a consultation start."""
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrok")
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "bedrok" in detail
+
+    def test_bedrock_without_credentials_is_unavailable(self, monkeypatch):
+        """Empty AWS keys must surface before recording, not at summary time."""
+        import boto3
+
+        class NoCredentialsSession:
+            region_name = "ap-southeast-2"
+
+            def get_credentials(self):
+                return None
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+        monkeypatch.setattr(boto3, "Session", NoCredentialsSession)
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "credentials" in detail
+
+    def test_bedrock_with_credentials_and_region_is_available(self, monkeypatch):
+        """A resolvable credential chain plus region passes pre-flight."""
+        import boto3
+
+        class ConfiguredSession:
+            region_name = "ap-southeast-2"
+
+            def get_credentials(self):
+                return object()
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        monkeypatch.setattr(boto3, "Session", ConfiguredSession)
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is True
+        assert detail == "bedrock:ap-southeast-2"
+
+    def test_ollama_prefix_tag_is_not_treated_as_pulled(self, monkeypatch):
+        """qwen3.5:7b on disk must not satisfy a qwen3.5:9b configuration."""
+
+        class FakeTagsResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"models": [{"name": "qwen3.5:7b"}]}
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "ollama")
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
+        monkeypatch.setattr(
+            api_server.httpx, "get", lambda url, timeout: FakeTagsResponse()
+        )
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "not pulled" in detail
+
+    def test_ollama_exact_tag_passes(self, monkeypatch):
+        """The exact configured tag (or :latest for bare names) is accepted."""
+
+        class FakeTagsResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"models": [{"name": "qwen3.5:9b"}, {"name": "phi4:latest"}]}
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "ollama")
+        monkeypatch.setattr(
+            api_server.httpx, "get", lambda url, timeout: FakeTagsResponse()
+        )
+
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
+        assert api_server._summary_model_reachable() == (True, "ollama:qwen3.5:9b")
+
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "phi4")
+        assert api_server._summary_model_reachable() == (True, "ollama:phi4")

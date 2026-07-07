@@ -1,0 +1,26 @@
+{
+  "description": "Synthetic PoC snippets for Ambient Scribe summary grounding. Not exhaustive medical guidance.",
+  "entries": [
+    {
+      "id": "chest-pain-objective",
+      "title": "Chest pain documentation",
+      "keywords": ["chest pain", "troponin", "ECG", "vitals"],
+      "snippet": "Chest-pain documentation should capture symptom history, relevant risk factors, objective assessment such as ECG/vitals, and follow-up or escalation plan.",
+      "provenance": "Project-authored PoC documentation checklist, not a clinical guideline."
+    },
+    {
+      "id": "nsaid-ace-renal",
+      "title": "NSAID and ACE inhibitor review",
+      "keywords": ["naproxen", "ibuprofen", "lisinopril", "renal", "kidney"],
+      "snippet": "When NSAIDs are discussed with ACE inhibitors, consider documenting renal-risk review and safety-net advice.",
+      "provenance": "Project-authored PoC medication-safety reminder."
+    },
+    {
+      "id": "diabetes-medication-review",
+      "title": "Diabetes medication review",
+      "keywords": ["metformin", "empagliflozin", "blood glucose", "kidney tests", "renal"],
+      "snippet": "Diabetes medication changes should document glucose pattern, renal function considerations, and follow-up timing.",
+      "provenance": "Project-authored PoC documentation checklist."
+    }
+  ]
+}

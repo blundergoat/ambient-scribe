@@ -22,7 +22,7 @@ show_help() {
 Usage: $0 [OPTIONS] [PATH]
 
 Makes all .sh scripts in the scripts/ directory executable (chmod +x).
-Only targets scripts/ — does not touch Python files or other directories.
+Only targets scripts/ - does not touch Python files or other directories.
 
 OPTIONS:
     -h, --help      Show this help message
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            err "This script only targets scripts/ — no path argument accepted"
+            err "This script only targets scripts/ - no path argument accepted"
             show_help
             exit 1
             ;;

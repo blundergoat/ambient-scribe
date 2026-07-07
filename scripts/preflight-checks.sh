@@ -120,10 +120,17 @@ header
 # 1. Composer validate
 step "Composer validate"
 t=$(date +%s%N)
-if composer validate --strict 2>&1 | grep -q "is valid"; then
+composer_validate_output=$(bash scripts/validate-composer.sh 2>&1)
+composer_validate_exit=$?
+# Composer metadata must pass except for the reviewed dev-client commit warning.
+if [[ $composer_validate_exit -eq 0 ]]; then
     pass "$(elapsed_since "$t")"
 else
     fail "Composer validate"
+    # Show the first validation lines so the developer knows what blocks the visit flow.
+    echo "$composer_validate_output" | head -20 | while read -r line; do
+        echo -e "    ${DIM}${line}${RESET}"
+    done
 fi
 
 # 2. Security audit
@@ -176,24 +183,25 @@ else
     skip "php-cs-fixer not installed"
 fi
 
-# 5. Cyclomatic complexity
-step "Cyclomatic complexity (max 20)"
+# 5. PHP quality (gruff-php)
+step "PHP quality (gruff-php)"
 t=$(date +%s%N)
-complexity_script="$REPO_ROOT/scripts/check-cyclomatic-complexity.php"
-if [[ -f "$complexity_script" ]]; then
-    complexity_output=$(php "$complexity_script" --path=src --max=20 2>&1)
+# A present PHP analyzer can use its PHP-only baseline without affecting gruff-py.
+if [[ -x vendor/bin/gruff-php ]]; then
+    complexity_output=$(vendor/bin/gruff-php analyse --baseline=gruff-php-baseline.json 2>&1)
     complexity_exit=$?
+    # A zero exit means developers can continue without reviewing PHP findings.
     if [[ $complexity_exit -eq 0 ]]; then
         pass "$(elapsed_since "$t")"
     else
-        violation_count=$(echo "$complexity_output" | grep -c "^ - " || true)
-        fail "Cyclomatic complexity (${violation_count} violations)"
+        violation_count=$(echo "$complexity_output" | grep -c "^[[:space:]]*[0-9][0-9]*\\." || true)
+        fail "gruff-php (${violation_count} findings)"
         echo "$complexity_output" | head -20 | while read -r line; do
             echo -e "    ${DIM}${line}${RESET}"
         done
     fi
 else
-    skip "scripts/check-cyclomatic-complexity.php not found"
+    skip "gruff-php not installed"
 fi
 
 # 6. Mess detector (PHPMD)

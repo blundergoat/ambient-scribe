@@ -1,29 +1,9 @@
 """
-NeMo Multitalker Pipeline — shared GPU model wrapper.
+NeMo GPU transcription pipeline for the live scribe.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-This module wraps the NeMo multitalker Parakeet pipeline (Sortformer diarization
-+ multi-speaker ASR) in a singleton class that is loaded once at process startup
-and shared across all WebSocket sessions.
-
-Approach: Independent diarize (Sortformer) + ASR (multitalker Parakeet), aligned
-by proportional word distribution across diarization segments. Simpler than
-SpeakerTaggedASR and sufficient for GP consultations with minimal speaker overlap.
-
-=============================================================================
-DESIGN DECISIONS
-=============================================================================
-
-  - Models loaded ONCE at startup, shared across sessions (multi-GB GPU models)
-  - GPU-bound: all inference runs in a ThreadPoolExecutor to avoid blocking
-    the FastAPI async event loop
-  - NeMo owns the GPU exclusively — the Strands role inference agent must use
-    Bedrock or CPU-only Ollama (see Milestone 1 VRAM constraint)
-
-See: docs/nemo-api-notes.md for the actual API surface documentation.
+The FastAPI server loads this once, then each browser recording sends audio
+through it from a worker thread. It turns consultation audio into timestamped
+speaker segments that the UI can stream, relabel, replay, and summarize.
 """
 
 from __future__ import annotations
@@ -38,6 +18,11 @@ from typing import Any
 
 import numpy as np
 import soundfile
+from medical_lexicon import (
+    correct_medical_terms,
+    default_medical_lexicon_path,
+    load_medical_lexicon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,32 +33,53 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Segment:
-    """A single transcript segment with speaker attribution."""
+    """
+    One line of transcript text shown in the browser.
 
-    speaker_id: str          # e.g., "spk_0", "spk_1"
-    text: str                # Transcribed text
-    start: float             # Start time in seconds
-    end: float               # End time in seconds
+    NeMo creates the raw speaker ID and timestamp, while later role inference
+    may add DOCTOR/PATIENT labels. Empty IDs or text mean the UI has less
+    context and should avoid overconfident role display.
+
+    Attributes:
+        speaker_id: Raw NeMo speaker label such as `spk_0`; empty means unknown.
+        text: Transcript text shown to the user; empty means no speech captured.
+        start: Segment start time in seconds for transcript timing.
+        end: Segment end time in seconds for transcript timing.
+        is_interim: True when the browser may see this line revised later.
+        segment_id: Stable server ID; empty means no reconciliation ID yet.
+        revision: Version number used when a visible line is updated.
+        supersedes: Prior segment ID replaced by this line; empty means none.
+    """
+
+    speaker_id: str  # e.g., "spk_0", "spk_1"
+    text: str  # Transcribed text
+    start: float  # Start time in seconds
+    end: float  # End time in seconds
     is_interim: bool = False  # True if this segment may be revised
-    segment_id: str = ""     # Server-assigned unique ID
-    revision: int = 1        # Incremented when segment is updated
-    supersedes: str = ""     # segment_id this replaces (for reconciliation)
-
+    segment_id: str = ""  # Server-assigned unique ID
+    revision: int = 1  # Incremented when segment is updated
+    supersedes: str = ""  # segment_id this replaces (for reconciliation)
     def dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        d = {
+        """Convert the segment into the JSON shape streamed to the browser.
+
+        Returns:
+            Segment payload; missing IDs mean the browser treats it as a new raw line.
+        """
+        segment_payload = {
             "speaker_id": self.speaker_id,
             "text": self.text,
             "start": self.start,
             "end": self.end,
             "is_interim": self.is_interim,
         }
+        # Segment IDs let the UI reconcile a revised line instead of duplicating it.
         if self.segment_id:
-            d["segment_id"] = self.segment_id
-            d["revision"] = self.revision
+            segment_payload["segment_id"] = self.segment_id
+            segment_payload["revision"] = self.revision
+        # Superseded IDs tell the UI which earlier transcript line was replaced.
         if self.supersedes:
-            d["supersedes"] = self.supersedes
-        return d
+            segment_payload["supersedes"] = self.supersedes
+        return segment_payload
 
 
 @dataclass
@@ -81,7 +87,9 @@ class TranscriptionResult:
     """Result from a NeMo transcription call."""
 
     segments: list[Segment] = field(default_factory=list)
-    raw_output: dict = field(default_factory=dict)  # Store raw NeMo output for debugging
+    raw_output: dict = field(
+        default_factory=dict
+    )  # Store raw NeMo output for debugging
 
 
 # =============================================================================
@@ -90,13 +98,13 @@ class TranscriptionResult:
 
 
 class NemoPipeline:
-    """Wraps the NeMo multitalker Parakeet pipeline.
+    """
+    Wraps the NeMo multitalker Parakeet pipeline used by the browser.
 
-    Loaded once at process startup. Shared across all TranscriptionSession instances.
-    All methods are synchronous and GPU-bound — callers must use run_in_executor().
-
-    PLACEHOLDER IMPLEMENTATION: The actual NeMo API calls need to be filled in
-    after the Milestone 1 API discovery spike. See docs/nemo-api-notes.md.
+    The FastAPI app loads it once and shares it across live recordings, uploads,
+    and replay demos. Public methods stay synchronous because callers run them
+    in the GPU worker pool. Optional medical-term correction is applied here so
+    the UI never needs to know how transcript text was normalised.
     """
 
     def __init__(self) -> None:
@@ -110,13 +118,28 @@ class NemoPipeline:
         self._model_provider = os.environ.get("NEMO_MODEL_PROVIDER", "local")
         self._diar_model: Any = None
         self._asr_model: Any = None
-        self._device: Any = None
         self._models_loaded = False
         self._load_error: str | None = None
+        # Misheard drug/condition names are corrected by default; explicit
+        # MEDICAL_BOOST_ENABLED=0 opts a deployment back out.
+        self._medical_boost_enabled = _is_env_flag_enabled(
+            "MEDICAL_BOOST_ENABLED", default=True
+        )
+        self._medical_lexicon_path = Path(
+            os.environ.get("MEDICAL_LEXICON_PATH", default_medical_lexicon_path())
+        )
+        self._medical_phrases = (
+            load_medical_lexicon(self._medical_lexicon_path)
+            if self._medical_boost_enabled
+            else ()
+        )
 
-        logger.info("nemo_pipeline.loading_models", extra={
-            "provider": self._model_provider,
-        })
+        logger.info(
+            "nemo_pipeline.loading_models",
+            extra={
+                "provider": self._model_provider,
+            },
+        )
 
         if self._model_provider == "mock":
             logger.info("nemo_pipeline.mock_mode")
@@ -125,42 +148,121 @@ class NemoPipeline:
         try:
             import torch
             from nemo.collections.asr.models import SortformerEncLabelModel
-            from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+            from nemo.collections.asr.models.multitalker_asr_models import (
+                EncDecMultiTalkerRNNTBPEModel,
+            )
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            self._diar_model = SortformerEncLabelModel.from_pretrained(
-                "nvidia/diar_streaming_sortformer_4spk-v2.1"
-            ).eval().to(device)
+            self._diar_model = (
+                SortformerEncLabelModel.from_pretrained(
+                    "nvidia/diar_streaming_sortformer_4spk-v2.1"
+                )
+                .eval()
+                .to(device)
+            )
 
-            self._asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-                "nvidia/multitalker-parakeet-streaming-0.6b-v1"
-            ).eval().to(device)
+            self._asr_model = (
+                EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+                    "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+                )
+                .eval()
+                .to(device)
+            )
 
             # CUDA graph workaround (required for PyTorch 2.8 compat)
             self._asr_model.decoding.decoding.use_cuda_graph_decoder = False
             self._asr_model.decoding.decoding.decoding_computer.disable_cuda_graphs()
 
-            self._device = device
+            # Decode-time phrase boosting is GPU-pending; this toggle currently enables post-ASR correction.
+            if self._medical_boost_enabled:
+                logger.info(
+                    "nemo_pipeline.medical_lexicon.loaded",
+                    extra={
+                        "path": str(self._medical_lexicon_path),
+                        "phrases": len(self._medical_phrases),
+                    },
+                )
+
             self._models_loaded = True
 
             logger.info("nemo_pipeline.models_loaded", extra={"device": str(device)})
         except Exception as e:
             self._load_error = str(e)
-            logger.exception("nemo_pipeline.models_failed", extra={
-                "provider": self._model_provider,
-                "error": self._load_error,
-            })
+            logger.exception(
+                "nemo_pipeline.models_failed %s: %s",
+                type(e).__name__,
+                str(e)[:300],
+                extra={
+                    "provider": self._model_provider,
+                    "error_type": type(e).__name__,
+                    "error": self._load_error,
+                },
+            )
 
     @property
     def is_loaded(self) -> bool:
-        """Whether models are loaded and ready for inference."""
+        """Whether recordings can currently produce live transcript segments.
+
+        Returns:
+            True when NeMo models loaded; false means the browser sees degraded health.
+        """
         return self._models_loaded
 
     @property
     def load_error(self) -> str | None:
-        """Model load failure, if startup fell back to degraded mode."""
+        """Model-load failure shown by health checks when transcription is degraded.
+
+        Returns:
+            Error text, or `None` when users can record normally.
+        """
         return self._load_error
+
+    def create_streaming_engine(self, session_id: str):
+        """Build one session-long streaming engine over the shared models (M22).
+
+        The first call configures the shared Sortformer singleton for
+        streaming. That mutation is safe because NEMO_SESSION_ENGINE is
+        process-level: windowed sessions never run in a streaming-flagged
+        process, so no windowed call observes the streaming configuration.
+
+        Args:
+            session_id: Recording UUID the engine belongs to.
+
+        Returns:
+            A `StreamingSessionEngine` holding this session's streaming state.
+
+        Raises:
+            RuntimeError: When models are not loaded (mock provider or failed
+                startup) - callers must fall back to degraded health behavior.
+        """
+        if not self._models_loaded:
+            raise RuntimeError(
+                "streaming engine requires loaded NeMo models "
+                f"(provider={self._model_provider})"
+            )
+
+        from nemo_streaming_engine import StreamingSessionEngine
+
+        if not getattr(self, "_diar_streaming_configured", False):
+            # Mirror the reference CLI's diar streaming setup once per process.
+            self._diar_model.streaming_mode = True
+            sortformer_modules = self._diar_model.sortformer_modules
+            sortformer_modules.spkcache_len = 188
+            sortformer_modules.fifo_len = 188
+            sortformer_modules.chunk_len = 0
+            sortformer_modules.chunk_left_context = 0
+            sortformer_modules.chunk_right_context = 0
+            sortformer_modules.spkcache_refresh_rate = 0
+            sortformer_modules.log = False
+            self._diar_streaming_configured = True
+            logger.info("nemo_pipeline.diar_streaming_configured")
+
+        return StreamingSessionEngine(
+            session_id=session_id,
+            asr_model=self._asr_model,
+            diar_model=self._diar_model,
+        )
 
     def transcribe_file(self, audio_path: str) -> TranscriptionResult:
         """Process a complete audio file. Returns speaker-attributed segments.
@@ -174,9 +276,12 @@ class NemoPipeline:
         Returns:
             TranscriptionResult with speaker-attributed segments.
         """
-        logger.info("nemo_pipeline.transcribe_file.started", extra={
-            "audio_path": audio_path,
-        })
+        logger.info(
+            "nemo_pipeline.transcribe_file.started",
+            extra={
+                "audio_path": audio_path,
+            },
+        )
 
         if not self._models_loaded:
             return TranscriptionResult(segments=[], raw_output={})
@@ -185,18 +290,25 @@ class NemoPipeline:
 
         with torch.inference_mode():
             diar_output = self._diar_model.diarize(
-                audio=audio_path, batch_size=1, verbose=False,
+                audio=audio_path,
+                batch_size=1,
+                verbose=False,
             )
             asr_hyps = self._asr_model.transcribe(
-                [audio_path], return_hypotheses=True, verbose=False,
+                [audio_path],
+                return_hypotheses=True,
+                verbose=False,
             )
 
         parsed = self._parse_nemo_output(diar_output, asr_hyps)
 
-        logger.info("nemo_pipeline.transcribe_file.completed", extra={
-            "audio_path": audio_path,
-            "segments": len(parsed),
-        })
+        logger.info(
+            "nemo_pipeline.transcribe_file.completed",
+            extra={
+                "audio_path": audio_path,
+                "segments": len(parsed),
+            },
+        )
 
         return TranscriptionResult(
             segments=parsed,
@@ -204,7 +316,7 @@ class NemoPipeline:
                 "diar": str(diar_output),
                 "asr_text": asr_hyps[0].text if asr_hyps else "",
             },
-        )
+            )
 
     def transcribe_buffer(self, audio_buffer: bytes) -> TranscriptionResult:
         """Process an audio buffer (PCM bytes). Returns speaker-attributed segments.
@@ -221,27 +333,37 @@ class NemoPipeline:
         Returns:
             TranscriptionResult with speaker-attributed segments.
         """
-        logger.info("nemo_pipeline.transcribe_buffer.started", extra={
-            "buffer_bytes": len(audio_buffer),
-        })
+        logger.info(
+            "nemo_pipeline.transcribe_buffer.started",
+            extra={
+                "buffer_bytes": len(audio_buffer),
+            },
+        )
 
         if not self._models_loaded:
             return TranscriptionResult(segments=[], raw_output={})
 
-        pcm_array = np.frombuffer(audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
+        pcm_array = (
+            np.frombuffer(audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
+        )
 
-        tmp_path = None
+        scratch_audio_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                tmp_path = f.name
-                soundfile.write(tmp_path, pcm_array, 16000)
-            return self.transcribe_file(tmp_path)
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False
+            ) as scratch_audio_file:
+                scratch_audio_path = scratch_audio_file.name
+                soundfile.write(scratch_audio_path, pcm_array, 16000)
+            return self.transcribe_file(scratch_audio_path)
         finally:
-            if tmp_path:
-                Path(tmp_path).unlink(missing_ok=True)
+            # The scratch WAV exists only so NeMo can process the user's current chunk.
+            if scratch_audio_path:
+                Path(scratch_audio_path).unlink(missing_ok=True)
 
     def _parse_nemo_output(
-        self, diar_segments: Any, asr_hyps: Any,
+        self,
+        diar_segments: Any,
+        asr_hyps: Any,
     ) -> list[Segment]:
         """Align ASR words to diarization speaker segments proportionally.
 
@@ -270,11 +392,7 @@ class NemoPipeline:
         if not parsed_diar:
             return []
 
-        # Get ASR text
-        asr_text = ""
-        if asr_hyps:
-            hyp = asr_hyps[0]
-            asr_text = hyp.text if hasattr(hyp, "text") else str(hyp)
+        asr_text = self._visible_asr_text(asr_hyps)
         if not asr_text.strip():
             return [
                 Segment(speaker_id=spk, text="", start=start, end=end)
@@ -285,33 +403,95 @@ class NemoPipeline:
         if not words:
             return []
 
-        # Distribute words proportionally across diarization segments
         total_duration = sum(end - start for start, end, _ in parsed_diar)
         if total_duration <= 0:
             return []
 
+        return self._segments_from_words(parsed_diar, words, total_duration)
+
+    def _visible_asr_text(self, asr_hyps: Any) -> str:
+        """Return ASR text after optional medical correction for the UI.
+
+        Args:
+            asr_hyps: Raw NeMo hypotheses; empty means no transcript text reached ASR.
+
+        Returns:
+            Visible transcript text; blank means the UI shows timed empty segments only.
+        """
+        asr_text = ""
+        # Empty hypotheses mean diarization found timing but ASR produced no words.
+        if asr_hyps:
+            first_hypothesis = asr_hyps[0]
+            asr_text = (
+                first_hypothesis.text
+                if hasattr(first_hypothesis, "text")
+                else str(first_hypothesis)
+            )
+
+        return self.visible_text(asr_text)
+
+    def visible_text(self, asr_text: str) -> str:
+        """Normalize clinical terms in ASR text before it becomes user-visible.
+
+        Both emission paths (windowed and streaming engine) must route text
+        through this seam so transcript, summary, and download see the same
+        medical-boost corrections.
+
+        Args:
+            asr_text: Raw ASR text; empty passes through unchanged.
+
+        Returns:
+            Text with known clinical terms normalized when the boost is enabled.
+        """
+        # Enabled correction normalizes known clinical terms before they reach the UI.
+        if self._medical_boost_enabled and self._medical_phrases:
+            return correct_medical_terms(asr_text, self._medical_phrases)
+
+        return asr_text
+
+    def _segments_from_words(
+        self,
+        parsed_diar: list[tuple[float, float, str]],
+        words: list[str],
+        total_duration: float,
+    ) -> list[Segment]:
+        """Distribute ASR words across diarized speakers for transcript cards.
+
+        Args:
+            parsed_diar: Speaker timing rows; empty would produce no transcript cards.
+            words: ASR tokens; empty means the caller should avoid this helper.
+            total_duration: Sum of diarized speech duration; zero would make shares invalid.
+
+        Returns:
+            Transcript segments shown by the browser; empty means no text survived splitting.
+        """
         segments: list[Segment] = []
-        word_idx = 0
-        for i, (start, end, speaker_id) in enumerate(parsed_diar):
-            seg_duration = end - start
-            share = seg_duration / total_duration
+        word_cursor = 0
+        # Each diarized span receives a proportional share of the ASR word stream.
+        for diarization_index, (start, end, speaker_id) in enumerate(parsed_diar):
+            segment_duration = end - start
+            duration_share = segment_duration / total_duration
 
-            if i == len(parsed_diar) - 1:
-                # Last segment gets all remaining words
-                seg_words = words[word_idx:]
+            # The final visible card receives any leftover words after rounding.
+            if diarization_index == len(parsed_diar) - 1:
+                segment_words = words[word_cursor:]
+                word_cursor = len(words)
             else:
-                word_count = max(1, round(len(words) * share))
-                seg_words = words[word_idx:word_idx + word_count]
-                word_idx += len(seg_words)
+                word_count = max(1, round(len(words) * duration_share))
+                segment_words = words[word_cursor : word_cursor + word_count]
+                word_cursor += len(segment_words)
 
-            text = " ".join(seg_words)
-            if text:
-                segments.append(Segment(
-                    speaker_id=speaker_id,
-                    text=text,
-                    start=start,
-                    end=end,
-                ))
+            visible_text = " ".join(segment_words)
+            # Empty proportional splits should not create blank transcript cards.
+            if visible_text:
+                segments.append(
+                    Segment(
+                        speaker_id=speaker_id,
+                        text=visible_text,
+                        start=start,
+                        end=end,
+                    )
+                )
 
         return segments
 
@@ -322,73 +502,181 @@ class NemoPipeline:
         min_absolute_duration: float = 1.0,
         min_segment_count: int = 2,
     ) -> list[tuple[float, float, str]]:
-        """Remove brief one-off speakers with less than ``min_share`` of activity.
+        """Hide brief one-off speaker IDs before the browser sees them.
 
-        NeMo's Sortformer occasionally hallucinates a brief speaker segment
-        (e.g., <= 1 second in a 100-second recording). These ghost speakers
-        cause downstream role-inference noise. The absolute-duration and segment
-        count floors keep legitimate short speakers from being dropped solely
-        because they have less than 5% of a long recording.
+        Use after NeMo diarization when a tiny speaker blip would look like a
+        third person in a two-person consultation. Duration and repeat floors
+        keep real short turns visible for the user.
 
         Args:
-            parsed_diar: List of ``(start, end, speaker_id)`` tuples from
-                :meth:`_parse_diar_strings`.
-            min_share: Minimum fraction of total duration a speaker must
-                occupy to be kept (default 5 %).
-            min_absolute_duration: Always keep speakers above this cumulative
-                duration even if their share is small.
-            min_segment_count: Always keep speakers that appear in at least this
-                many diarization segments.
+            parsed_diar: Diarized speaker spans; empty means the transcript view
+                has no speaker rows to clean up.
+            min_share: Smallest session share to keep; zero keeps percentage from
+                hiding any detected speaker.
+            min_absolute_duration: Cumulative seconds that always keep a speaker;
+                zero means only share/repeat evidence protects short turns.
+            min_segment_count: Repeat count that always keeps a speaker; zero
+                means a one-off blip can still be kept.
 
         Returns:
-            Filtered list with the same tuple structure.
+            Filtered speaker spans; empty means no visible speaker rows remain.
         """
+        # No speaker rows reached this point, so the UI has nothing to label yet.
         if not parsed_diar:
             return parsed_diar
 
         total_duration = sum(end - start for start, end, _ in parsed_diar)
+        # Broken or zero-length timing cannot safely remove anything the user might need.
         if total_duration <= 0:
             return parsed_diar
 
-        # Accumulate per-speaker duration
+        speaker_durations, speaker_segment_counts = (
+            NemoPipeline._speaker_activity_by_id(parsed_diar)
+        )
+        suppressed = NemoPipeline._suppressed_speaker_ids(
+            speaker_durations,
+            speaker_segment_counts,
+            total_duration,
+            min_share,
+            min_absolute_duration,
+            min_segment_count,
+        )
+
+        # Hidden speaker blips are logged so support can explain why no extra role appeared.
+        if suppressed:
+            NemoPipeline._log_suppressed_speakers(
+                suppressed,
+                speaker_durations,
+                speaker_segment_counts,
+                total_duration,
+                min_share,
+                min_absolute_duration,
+                min_segment_count,
+            )
+
+        return [
+            (start, end, speaker_id)
+            for start, end, speaker_id in parsed_diar
+            if speaker_id not in suppressed
+        ]
+
+    @staticmethod
+    def _speaker_activity_by_id(
+        parsed_diar: list[tuple[float, float, str]],
+    ) -> tuple[dict[str, float], dict[str, int]]:
+        """Count each speaker's visible time and repeats.
+
+        Use while preparing transcript rows so a brief real turn is not hidden
+        just because the whole consultation is long.
+
+        Args:
+            parsed_diar: Diarized spans; empty means both returned maps are empty.
+
+        Returns:
+            Duration and count maps keyed by speaker ID; empty maps mean no speaker evidence.
+        """
         speaker_durations: dict[str, float] = {}
         speaker_segment_counts: dict[str, int] = {}
+        # Each diarization row contributes evidence for whether a speaker should stay visible.
         for start, end, speaker_id in parsed_diar:
-            speaker_durations[speaker_id] = speaker_durations.get(speaker_id, 0.0) + (end - start)
-            speaker_segment_counts[speaker_id] = speaker_segment_counts.get(speaker_id, 0) + 1
+            speaker_durations[speaker_id] = speaker_durations.get(speaker_id, 0.0) + (
+                end - start
+            )
+            speaker_segment_counts[speaker_id] = (
+                speaker_segment_counts.get(speaker_id, 0) + 1
+            )
 
-        # Suppress only tiny, one-off speakers below the proportional threshold.
-        suppressed = {
-            spk
-            for spk, dur in speaker_durations.items()
+        return speaker_durations, speaker_segment_counts
+
+    @staticmethod
+    def _suppressed_speaker_ids(
+        speaker_durations: dict[str, float],
+        speaker_segment_counts: dict[str, int],
+        total_duration: float,
+        min_share: float,
+        min_absolute_duration: float,
+        min_segment_count: int,
+    ) -> set[str]:
+        """Choose speaker IDs that would look like phantom participants.
+
+        Use after activity counts exist, before transcript cards are built, so
+        the browser does not show a third role for a tiny one-window blip.
+
+        Args:
+            speaker_durations: Seconds per speaker; empty means no one can be hidden.
+            speaker_segment_counts: Segment count per speaker; missing speakers are treated as one-off blips.
+            total_duration: Session seconds used for share checks; zero means no speaker is suppressed.
+            min_share: Smallest session share to keep; zero keeps percentage from hiding any speaker.
+            min_absolute_duration: Seconds that keep a speaker even with low share.
+            min_segment_count: Repeated appearances that keep a speaker visible.
+
+        Returns:
+            Speaker IDs to hide; empty means all detected speakers stay visible.
+        """
+        # Without a valid session duration, the UI keeps all speaker evidence.
+        if total_duration <= 0:
+            return set()
+
+        return {
+            speaker_id
+            # One activity row per speaker decides whether it looks like a phantom participant.
+            for speaker_id, speaker_duration in speaker_durations.items()
             if (
-                dur / total_duration < min_share
-                and dur <= min_absolute_duration
-                and speaker_segment_counts[spk] < min_segment_count
+                speaker_duration / total_duration < min_share
+                and speaker_duration <= min_absolute_duration
+                and speaker_segment_counts.get(speaker_id, 0) < min_segment_count
             )
         }
 
-        if suppressed:
-            for spk in suppressed:
-                logger.warning(
-                    "nemo_pipeline.hallucinated_speaker_suppressed",
-                    extra={
-                        "speaker_id": spk,
-                        "duration": speaker_durations[spk],
-                        "total_duration": total_duration,
-                        "share": speaker_durations[spk] / total_duration,
-                        "segments": speaker_segment_counts[spk],
-                        "min_share": min_share,
-                        "min_absolute_duration": min_absolute_duration,
-                        "min_segment_count": min_segment_count,
-                    },
-                )
+    @staticmethod
+    def _log_suppressed_speakers(
+        suppressed_speaker_ids: set[str],
+        speaker_durations: dict[str, float],
+        speaker_segment_counts: dict[str, int],
+        total_duration: float,
+        min_share: float,
+        min_absolute_duration: float,
+        min_segment_count: int,
+    ) -> None:
+        """Log hidden speaker blips for support and quality review.
 
-        return [
-            (start, end, spk)
-            for start, end, spk in parsed_diar
-            if spk not in suppressed
-        ]
+        Use when NeMo emitted a tiny participant that the UI will not show, so
+        a transcript-quality run can explain why roles stayed limited.
+
+        Args:
+            suppressed_speaker_ids: Speaker IDs hidden from the transcript; empty means nothing is logged.
+            speaker_durations: Seconds per speaker; missing IDs log as zero seconds.
+            speaker_segment_counts: Segment count per speaker; missing IDs log as zero repeats.
+            total_duration: Session seconds for share reporting; zero logs a zero share.
+            min_share: Share threshold that contributed to hiding the speaker.
+            min_absolute_duration: Duration threshold that would have kept the speaker.
+            min_segment_count: Repeat threshold that would have kept the speaker.
+        """
+        # Each hidden speaker gets a log row so a quality report can trace the missing role.
+        for speaker_id in suppressed_speaker_ids:
+            speaker_duration = speaker_durations.get(speaker_id, 0.0)
+            speaker_count = speaker_segment_counts.get(speaker_id, 0)
+            # Zero duration is possible only for malformed input, so report zero share safely.
+            speaker_share = speaker_duration / total_duration if total_duration > 0 else 0.0
+            logger.warning(
+                (
+                    "nemo_pipeline.hallucinated_speaker_suppressed "
+                    "speaker_id=%s duration=%.2f share=%.4f"
+                ),
+                speaker_id,
+                speaker_duration,
+                speaker_share,
+                extra={
+                    "speaker_id": speaker_id,
+                    "duration": speaker_duration,
+                    "total_duration": total_duration,
+                    "share": speaker_share,
+                    "segments": speaker_count,
+                    "min_share": min_share,
+                    "min_absolute_duration": min_absolute_duration,
+                    "min_segment_count": min_segment_count,
+                },
+            )
 
     @staticmethod
     def _parse_diar_strings(diar_output: Any) -> list[tuple[float, float, str]]:
@@ -412,13 +700,13 @@ class NemoPipeline:
             items = items[0]
 
         for item in items:
-            s = str(item).strip()
-            if s:
-                raw_strings.append(s)
+            diarization_line = str(item).strip()
+            if diarization_line:
+                raw_strings.append(diarization_line)
 
         parsed: list[tuple[float, float, str]] = []
-        for s in raw_strings:
-            match = re.match(r"([\d.]+)\s+([\d.]+)\s+(\S+)", s)
+        for diarization_line in raw_strings:
+            match = re.match(r"([\d.]+)\s+([\d.]+)\s+(\S+)", diarization_line)
             if match:
                 start = float(match.group(1))
                 end = float(match.group(2))
@@ -427,3 +715,21 @@ class NemoPipeline:
 
         parsed.sort(key=lambda x: x[0])
         return parsed
+
+
+def _is_env_flag_enabled(name: str, default: bool = False) -> bool:
+    """Read a boolean env toggle used by the user-facing transcript pipeline.
+
+    Args:
+        name: Environment variable name; unset or blank falls back to `default`.
+        default: Value an unconfigured deployment gets for this toggle.
+
+    Returns:
+        True for common enabled values; false leaves the transcript path unchanged.
+    """
+    raw_value = os.environ.get(name)
+    # An unconfigured deployment gets the toggle's shipped default.
+    if raw_value is None or raw_value.strip() == "":
+        return default
+
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}

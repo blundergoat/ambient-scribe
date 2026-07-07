@@ -47,7 +47,7 @@ applyTo: '**/*.php'
 
 - The `StrandsClient` is wired as `strands.client.scribe` in `config/packages/strands.yaml`
 - Injected via `#[Autowire(service: 'strands.client.scribe')]` in controllers/services
-- Don't create new client instances — use the wired service
+- Don't create new client instances - use the wired service
 
 ## Testing
 

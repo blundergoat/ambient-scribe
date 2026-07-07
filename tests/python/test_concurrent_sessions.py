@@ -68,14 +68,17 @@ class TestConcurrentSessions:
         def make_pipeline(session_id):
             class StubPipeline:
                 def transcribe_buffer(self, audio_buffer):
-                    return TranscriptionResult(segments=[
-                        Segment(
-                            speaker_id="spk_0",
-                            text=segment_texts[session_id],
-                            start=0.0,
-                            end=1.0,
-                        )
-                    ])
+                    return TranscriptionResult(
+                        segments=[
+                            Segment(
+                                speaker_id="spk_0",
+                                text=segment_texts[session_id],
+                                start=0.0,
+                                end=1.0,
+                            )
+                        ]
+                    )
+
             return StubPipeline()
 
         class FakeWebSocket:
@@ -100,7 +103,9 @@ class TestConcurrentSessions:
         async def fake_enqueue(session_id, segments):
             pass
 
-        monkeypatch.setattr("api.server.asyncio.get_running_loop", lambda: ImmediateLoop())
+        monkeypatch.setattr(
+            "api.server.asyncio.get_running_loop", lambda: ImmediateLoop()
+        )
         monkeypatch.setattr("api.server.publish_to_mercure", fake_publish)
         monkeypatch.setattr("api.server.enqueue_role_inference", fake_enqueue)
         monkeypatch.setattr("api.server.SESSION_RECONNECT_GRACE_SECONDS", 0.0)

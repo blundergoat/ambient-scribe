@@ -2,14 +2,14 @@
 Tests for the NeMo pipeline wrapper.
 
 These tests verify the NemoPipeline, parsing logic, and TranscriptionSession classes.
-NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock) — we test wrapper logic only.
+NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock) - we test wrapper logic only.
 """
 
 from unittest.mock import MagicMock
 
 import pytest
 
-from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
+from nemo_pipeline import NemoPipeline, Segment
 from nemo_session import AudioBuffer, TranscriptionSession
 
 
@@ -17,7 +17,9 @@ class TestSegment:
     """Tests for the Segment data class."""
 
     def test_segment_dict(self):
-        seg = Segment(speaker_id="spk_0", text="Hello", start=0.0, end=1.5, is_interim=False)
+        seg = Segment(
+            speaker_id="spk_0", text="Hello", start=0.0, end=1.5, is_interim=False
+        )
         result = seg.dict()
         assert result == {
             "speaker_id": "spk_0",
@@ -41,7 +43,7 @@ class TestAudioBuffer:
         buf.append(b"\x00" * 3200)
 
         assert buf.total_bytes == 6400
-        assert len(buf.current_window()) == 6400
+        assert len(buf.full_audio()) == 6400
         assert len(buf.full_audio()) == 6400
 
     def test_duration_calculation(self):
@@ -65,7 +67,7 @@ class TestAudioBuffer:
         buf = AudioBuffer()
         assert buf.total_bytes == 0
         assert buf.duration_seconds == 0.0
-        assert buf.current_window() == b""
+        assert buf.full_audio() == b""
 
 
 class TestTranscriptionSession:
@@ -155,7 +157,7 @@ class TestAudioFormatValidation:
         pipeline = NemoPipeline()
         session = TranscriptionSession("format-test", pipeline, input_format="pcm")
 
-        # Regular PCM silence — should not raise
+        # Regular PCM silence - should not raise
         pcm_data = b"\x00" * 3200
         session.process_chunk(pcm_data)
         assert session._format_validated is True
@@ -165,7 +167,7 @@ class TestAudioFormatValidation:
         pipeline = NemoPipeline()
         session = TranscriptionSession("format-test", pipeline, input_format="pcm")
 
-        # 2 bytes — too short for magic detection, but valid PCM
+        # 2 bytes - too short for magic detection, but valid PCM
         session.process_chunk(b"\x00\x00")
         assert session._format_validated is True
 
@@ -176,7 +178,7 @@ class TestAudioFormatValidation:
 
         result = session.process_chunk(b"")
         assert result == []
-        # Validation flag stays False — will validate on next non-empty chunk
+        # Validation flag stays False - will validate on next non-empty chunk
         assert session._format_validated is False
 
     def test_format_validation_runs_only_once(self):
@@ -283,10 +285,10 @@ class TestFilterHallucinatedSpeakers:
     def test_suppresses_speaker_below_threshold(self):
         """A speaker with 1s out of 100s total (1%) should be suppressed."""
         parsed_diar = [
-            (0.0, 30.0, "speaker_0"),   # 30s — kept
-            (30.0, 69.0, "speaker_1"),   # 39s — kept
-            (69.0, 99.0, "speaker_0"),   # 30s — kept (total speaker_0 = 60s)
-            (99.0, 100.0, "speaker_2"),  # 1s  — suppressed (1%)
+            (0.0, 30.0, "speaker_0"),  # 30s - kept
+            (30.0, 69.0, "speaker_1"),  # 39s - kept
+            (69.0, 99.0, "speaker_0"),  # 30s - kept (total speaker_0 = 60s)
+            (99.0, 100.0, "speaker_2"),  # 1s  - suppressed (1%)
         ]
 
         result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
@@ -327,8 +329,8 @@ class TestFilterHallucinatedSpeakers:
     def test_keeps_speakers_above_threshold(self):
         """Speakers with >= 5% of total duration are kept."""
         parsed_diar = [
-            (0.0, 50.0, "speaker_0"),   # 50%
-            (50.0, 100.0, "speaker_1"), # 50%
+            (0.0, 50.0, "speaker_0"),  # 50%
+            (50.0, 100.0, "speaker_1"),  # 50%
         ]
 
         result = NemoPipeline._filter_hallucinated_speakers(parsed_diar)
@@ -341,7 +343,7 @@ class TestFilterHallucinatedSpeakers:
     def test_all_speakers_below_threshold_returns_empty(self):
         """If every speaker is below 5% threshold individually but
         together they're all equal, none are suppressed (each >= threshold)."""
-        # Two speakers, each exactly 50% — both kept
+        # Two speakers, each exactly 50% - both kept
         parsed_diar = [
             (0.0, 1.0, "speaker_0"),
             (1.0, 2.0, "speaker_1"),
@@ -352,12 +354,14 @@ class TestFilterHallucinatedSpeakers:
     def test_integration_with_parse_nemo_output(self):
         """Hallucinated speaker is removed before words are distributed."""
         pipeline = NemoPipeline()
-        # speaker_2 has 0.5s out of 100.5s total — well below 5%
-        diar = [[
-            "0.0 50.0 speaker_0",
-            "50.0 100.0 speaker_1",
-            "100.0 100.5 speaker_2",
-        ]]
+        # speaker_2 has 0.5s out of 100.5s total - well below 5%
+        diar = [
+            [
+                "0.0 50.0 speaker_0",
+                "50.0 100.0 speaker_1",
+                "100.0 100.5 speaker_2",
+            ]
+        ]
         hyp = MagicMock()
         hyp.text = "word1 word2 word3 word4"
 

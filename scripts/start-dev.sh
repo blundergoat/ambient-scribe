@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Start Dev — Daily lightweight startup for Ambient Scribe
+# Start Dev - Daily lightweight startup for Ambient Scribe
 # =============================================================================
 # Usage: ./scripts/start-dev.sh
 #
@@ -27,13 +27,16 @@
 # Environment:
 #   ROLE_AGENT_MODEL_PROVIDER - Role inference backend: 'ollama' or 'bedrock'
 #   MODEL_PROVIDER            - Legacy alias for ROLE_AGENT_MODEL_PROVIDER
+#   NEMO_SESSION_ENGINE - Transcription engine (default here: 'streaming', the
+#                         M22 session-long identity engine; set 'windowed' to
+#                         compare against the legacy per-window engine)
 #   AGENT_PORT     - NeMo agent starting port (default: 48101)
 #   AGENT_PORT_MAX - Highest NeMo agent port to try (default: 48110)
 #   APP_PORT       - PHP app starting port (default: 48082)
 #   APP_PORT_MAX   - Highest PHP app port to try (default: 48090)
 #   MERCURE_PORT   - Mercure hub port (default: 48137)
 #   OLLAMA_HOST    - Ollama URL (default: http://localhost:11434)
-#   OLLAMA_MODEL   - Model name (default: from .env or qwen2.5:14b)
+#   OLLAMA_MODEL   - Model name (default: from .env or qwen3.5:9b)
 #
 # Press Ctrl+C to stop all services and containers started by this script.
 # =============================================================================
@@ -51,38 +54,28 @@ MERCURE_PORT="${MERCURE_PORT:-48137}"
 
 # ── Role inference provider & Ollama defaults ──────────────────────
 MODEL_PROVIDER="${ROLE_AGENT_MODEL_PROVIDER:-${MODEL_PROVIDER:-ollama}}"
-OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:14b}}"
+OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen3.5:9b}}"
 
-# ── Ollama helpers ─────────────────────────────────────────────────
-detect_running_ollama_host() {
-    local pid configured_host
-    while IFS= read -r pid; do
-        configured_host="$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -E '^OLLAMA_HOST=' | head -1 | cut -d= -f2-)"
-        [[ -z "$configured_host" ]] && continue
-        case "$configured_host" in
-            http://*) echo "$configured_host"; return 0 ;;
-            0.0.0.0:*) echo "http://localhost:${configured_host##*:}"; return 0 ;;
-            127.0.0.1:*|localhost:*) echo "http://localhost:${configured_host##*:}"; return 0 ;;
-        esac
-    done < <(pgrep -f 'ollama serve' 2>/dev/null || true)
-    return 1
-}
-
-dockerize_ollama_host() {
-    local host="$1"
-    # Replace localhost/127.0.0.1 with host.docker.internal for container access
-    echo "$host" | sed -E 's#(localhost|127\.0\.0\.1)#host.docker.internal#'
-}
+# The ollama container sits behind a compose profile; only the ollama
+# provider needs it. Bedrock setups start the stack without it. The agent is
+# pinned to the compose service (OLLAMA_HOST=http://ollama:11434 in
+# docker-compose.yml), so model checks must target that service - a host
+# Ollama at localhost:11434 is invisible to the agent.
+if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
+    export COMPOSE_PROFILES="${COMPOSE_PROFILES:-ollama}"
+fi
 
 # ── Cleanup on Ctrl+C ──────────────────────────────────────────────
 cleanup() {
+    # Failure paths pass a non-zero code; exiting 0 there would make a broken
+    # start look successful to setup scripts and CI wrappers.
+    local exit_code="${1:-0}"
     echo ""
     echo -e "${DIM}  Stopping containers...${RESET}"
     dc stop >/dev/null 2>&1 || true
     echo -e "  ${PASS} Containers stopped (preserved for fast restart)"
     echo -e "  ${DIM}Remove with: dc down${RESET}"
-    exit 0
+    exit "$exit_code"
 }
 trap cleanup SIGINT SIGTERM
 
@@ -110,7 +103,7 @@ fail() {
 
 header() {
     echo ""
-    echo -e "${BOLD}  Ambient Scribe — Dev Server${RESET}"
+    echo -e "${BOLD}  Ambient Scribe - Dev Server${RESET}"
     echo -e "  ${DIM}$(printf '─%.0s' {1..44})${RESET}"
     echo ""
 }
@@ -134,7 +127,7 @@ wait_healthy() {
             return 0
         fi
 
-        # Containers without a HEALTHCHECK (e.g., Mercure) — treat "running" as ready
+        # Containers without a HEALTHCHECK (e.g., Mercure) - treat "running" as ready
         if [[ "$status" == "no-healthcheck" || "$status" == "none" ]]; then
             echo -ne "\r\033[K"
             echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}running (no healthcheck)${RESET}"
@@ -168,22 +161,12 @@ STARTUP_START=$SECONDS
 
 step "Docker daemon"
 if ! command -v docker &>/dev/null || ! docker ps &>/dev/null 2>&1; then
-    fail "not running — start Docker Desktop or dockerd"
+    fail "not running - start Docker Desktop or dockerd"
     echo ""
     exit 1
 else
     pass
 fi
-
-OLLAMA_HOST_LOCAL="$OLLAMA_HOST"
-if [[ "$MODEL_PROVIDER" == "ollama" ]] && ! curl -sf "${OLLAMA_HOST_LOCAL}/api/tags" >/dev/null 2>&1; then
-    DETECTED_OLLAMA_HOST="$(detect_running_ollama_host || true)"
-    if [[ -n "$DETECTED_OLLAMA_HOST" ]] && curl -sf "${DETECTED_OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
-        echo -e "  ${YELLOW}${BOLD}Using detected Ollama endpoint${RESET} ${DIM}${DETECTED_OLLAMA_HOST}${RESET}"
-        OLLAMA_HOST_LOCAL="$DETECTED_OLLAMA_HOST"
-    fi
-fi
-OLLAMA_HOST_DOCKER="$(dockerize_ollama_host "$OLLAMA_HOST_LOCAL")"
 
 # ── Validate environment ─────────────────────────────────────────
 ENV_ERRORS=0
@@ -214,100 +197,10 @@ fi
 # ── 1. LLM Provider ────────────────────────────────────────────────
 if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
 
-    echo -e "  ${BOLD}Checking Ollama${RESET}"
-    echo ""
-
-    OLLAMA_TAGS_CACHE=""
-    if OLLAMA_TAGS_CACHE="$(curl -sf "${OLLAMA_HOST_LOCAL}/api/tags" 2>/dev/null)"; then
-        echo -e "  ${ARROW} Ollama                 ${PASS}  ${DIM}running at ${OLLAMA_HOST_LOCAL}${RESET}"
-    else
-        # Try to start ollama serve if the binary exists
-        if command -v ollama &>/dev/null; then
-            # Extract port from OLLAMA_HOST for the serve command
-            OLLAMA_SERVE_PORT=$(echo "$OLLAMA_HOST_LOCAL" | grep -oE '[0-9]+$' || echo "11434")
-            echo -e "  ${ARROW} Starting Ollama...     ${DIM}${OLLAMA_HOST_LOCAL}${RESET}"
-            OLLAMA_HOST="0.0.0.0:${OLLAMA_SERVE_PORT}" ollama serve >/dev/null 2>&1 &
-            PIDS+=($!)
-
-            # Wait for Ollama to be ready
-            for i in $(seq 1 15); do
-                if OLLAMA_TAGS_CACHE="$(curl -sf "${OLLAMA_HOST_LOCAL}/api/tags" 2>/dev/null)"; then
-                    echo -e "  ${ARROW} Ollama                 ${PASS}  ${DIM}started${RESET}"
-                    break
-                fi
-                if [[ $i -eq 15 ]]; then
-                    echo -e "  ${ARROW} Ollama                 ${FAIL}  ${RED}failed to start${RESET}"
-                    echo -e "     ${DIM}Check that port 11434 is free${RESET}"
-                    cleanup 1
-                fi
-                sleep 1
-            done
-        elif command -v docker &>/dev/null; then
-            # No ollama binary - try Docker instead
-            echo -e "  ${ARROW} Starting Ollama via Docker..."
-            OLLAMA_SERVE_PORT=$(echo "$OLLAMA_HOST_LOCAL" | grep -oE '[0-9]+$' || echo "11434")
-
-            # Check if an ollama container already exists (stopped)
-            if docker ps -a --filter "name=^ollama$" --format "{{.Names}}" 2>/dev/null | grep -q "^ollama$"; then
-                docker start ollama >/dev/null 2>&1
-            else
-                docker run -d --name ollama -p "${OLLAMA_SERVE_PORT}:11434" ollama/ollama >/dev/null 2>&1
-            fi
-            OLLAMA_DOCKER=true
-
-            # Wait for Ollama to be ready
-            for i in $(seq 1 20); do
-                if OLLAMA_TAGS_CACHE="$(curl -sf "${OLLAMA_HOST_LOCAL}/api/tags" 2>/dev/null)"; then
-                    echo -e "  ${ARROW} Ollama                 ${PASS}  ${DIM}running via Docker${RESET}"
-                    break
-                fi
-                if [[ $i -eq 20 ]]; then
-                    echo -e "  ${ARROW} Ollama                 ${FAIL}  ${RED}Docker container failed to start${RESET}"
-                    echo -e "     ${DIM}Check: docker logs ollama${RESET}"
-                    cleanup 1
-                fi
-                sleep 1
-            done
-        else
-            echo -e "  ${ARROW} Ollama                 ${FAIL}  ${RED}not running${RESET}"
-            echo -e "     ${DIM}Install from https://ollama.com or install Docker${RESET}"
-            cleanup 1
-        fi
-    fi
-
-    # Check if the model is pulled (reuse cached /api/tags response)
-    echo -ne "  ${ARROW} Model ${OLLAMA_MODEL}     "
-    model_name=$(echo "$OLLAMA_TAGS_CACHE" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    for m in data.get('models', []):
-        name = m.get('name', '')
-        if name == '${OLLAMA_MODEL}' or name.startswith('${OLLAMA_MODEL}:'):
-            print(name)
-            break
-except: pass
-" 2>/dev/null)
-    if [[ -n "$model_name" ]]; then
-        echo -e "${PASS}  ${DIM}available (${model_name})${RESET}"
-    else
-        echo -e "${YELLOW}pulling...${RESET}"
-        echo -e "     ${DIM}This may take a while on first run${RESET}"
-        # Use docker exec if ollama was started via Docker, otherwise use the binary
-        if [[ "${OLLAMA_DOCKER:-false}" == "true" ]]; then
-            if docker exec ollama ollama pull "$OLLAMA_MODEL" 2>&1; then
-                echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${PASS}  ${DIM}ready${RESET}"
-            else
-                echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${FAIL}  ${RED}pull failed${RESET}"
-                cleanup 1
-            fi
-        elif OLLAMA_HOST="$OLLAMA_HOST_LOCAL" ollama pull "$OLLAMA_MODEL" 2>&1; then
-            echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${PASS}  ${DIM}ready${RESET}"
-        else
-            echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${FAIL}  ${RED}pull failed${RESET}"
-            cleanup 1
-        fi
-    fi
+    # The agent only reaches the compose ollama service, so the model check
+    # runs after `dc up` against that service (see "Model in compose ollama"
+    # below). A host Ollama at localhost:11434 is not used by the stack.
+    echo -e "  ${BOLD}Ollama provider${RESET} ${DIM}compose service; model verified after start${RESET}"
 
 elif [[ "$MODEL_PROVIDER" == "bedrock" ]]; then
 
@@ -345,7 +238,7 @@ echo ""
 export MODEL_PROVIDER
 NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
 
-# GPU is required — NeMo transcription is the core feature
+# GPU is required - NeMo transcription is the core feature
 if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
     echo -e "  ${FAIL} ${RED}NVIDIA GPU required for NeMo transcription${RESET}"
     echo -e "     ${DIM}Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/${RESET}"
@@ -354,6 +247,16 @@ if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
 fi
 
 export NEMO_MODEL_PROVIDER
+# Daily dev runs the session-long streaming engine (M22) so speaker identity
+# cannot swap mid-visit; compose/CI keep the windowed default until Phase 4
+# flips it. Override with NEMO_SESSION_ENGINE=windowed for A/B comparisons.
+# The mock pipeline cannot construct a streaming engine (it raises at the
+# first WebSocket connect), so mock runs default to the windowed path.
+if [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
+    export NEMO_SESSION_ENGINE="${NEMO_SESSION_ENGINE:-windowed}"
+else
+    export NEMO_SESSION_ENGINE="${NEMO_SESSION_ENGINE:-streaming}"
+fi
 export AGENT_PORT
 export APP_PORT
 export MERCURE_PORT
@@ -362,7 +265,7 @@ export MERCURE_PORT
 export ROLE_AGENT_MODEL_PROVIDER="$MODEL_PROVIDER"
 
 if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
-    export OLLAMA_HOST="$OLLAMA_HOST_DOCKER"
+    # OLLAMA_HOST is pinned to the compose service in docker-compose.yml.
     export ROLE_AGENT_OLLAMA_MODEL="${ROLE_AGENT_OLLAMA_MODEL:-$OLLAMA_MODEL}"
 else
     # Pass through AWS credentials for Bedrock
@@ -393,7 +296,7 @@ step ".env file"
 if [[ -f "$REPO_ROOT/.env" ]]; then
     pass
 else
-    fail "not found — run: cp .env.example .env"
+    fail "not found - run: cp .env.example .env"
     echo ""
     exit 1
 fi
@@ -402,9 +305,9 @@ step "nvidia-smi"
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
 elif [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
-    echo -e "${WARN}  ${DIM}no GPU — using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
+    echo -e "${WARN}  ${DIM}no GPU - using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
 else
-    fail "not found — GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
+    fail "not found - GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
     echo ""
     exit 1
 fi
@@ -424,7 +327,7 @@ ALL_RUNNING=false
 step "Containers"
 if [[ "$RUNNING_COUNT" -eq "$EXPECTED_COUNT" && "$EXPECTED_COUNT" -gt 0 ]]; then
     ALL_RUNNING=true
-    pass "all ${RUNNING_COUNT}/${EXPECTED_COUNT} running — skipping to health checks"
+    pass "all ${RUNNING_COUNT}/${EXPECTED_COUNT} running - skipping to health checks"
 else
     pass "${RUNNING_COUNT}/${EXPECTED_COUNT} running"
 fi
@@ -449,7 +352,7 @@ if [[ "$ALL_RUNNING" == "false" ]]; then
 
     if [[ "$MISSING" == "true" ]]; then
         step "Build strategy"
-        fail "images missing — run ./scripts/setup-initial.sh for first-time setup"
+        fail "images missing - run ./scripts/setup-initial.sh for first-time setup"
         echo ""
         exit 1
     fi
@@ -482,6 +385,27 @@ wait_healthy "$MERCURE_CONTAINER"  "Mercure"    15
 wait_healthy "$NEMO_CONTAINER"     "nemo-agent" 120
 wait_healthy "$APP_CONTAINER"      "app"        30
 
+# The agent talks only to the compose ollama service, so the model must exist
+# in that service's volume; a fresh ollama_data volume starts empty.
+if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
+    step "Model ${OLLAMA_MODEL}"
+    OLLAMA_EXPECTED_TAG="$OLLAMA_MODEL"
+    [[ "$OLLAMA_MODEL" != *:* ]] && OLLAMA_EXPECTED_TAG="${OLLAMA_MODEL}:latest"
+    if dc exec -T ollama ollama list 2>/dev/null | awk 'NR>1 {print $1}' \
+        | grep -Fxq -e "$OLLAMA_MODEL" -e "$OLLAMA_EXPECTED_TAG"; then
+        pass "available in compose ollama"
+    else
+        echo -e "${YELLOW}pulling into compose ollama...${RESET}"
+        echo -e "     ${DIM}This may take a while on first run${RESET}"
+        if dc exec -T ollama ollama pull "$OLLAMA_MODEL"; then
+            echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${PASS}  ${DIM}ready${RESET}"
+        else
+            echo -e "  ${ARROW} Model ${OLLAMA_MODEL}     ${FAIL}  ${RED}pull failed - check the model name, network, and disk space${RESET}"
+            cleanup 1
+        fi
+    fi
+fi
+
 echo ""
 
 # =============================================================================
@@ -494,7 +418,7 @@ echo -e "  ${GREEN}${BOLD}Ready!${RESET} ${DIM}(${STARTUP_ELAPSED}s)${RESET}"
 echo ""
 echo -e "  ${DIM}Services:${RESET}"
 echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:${APP_PORT}/scribe${RESET}"
-echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT}${RESET}"
+echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT}${RESET}  ${DIM}engine: ${NEMO_SESSION_ENGINE}${RESET}"
 echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT}${RESET}"
 echo ""
 echo -e "  ${DIM}Useful commands:${RESET}"
@@ -520,5 +444,5 @@ dc logs -f nemo-agent 2>&1 | while IFS= read -r line; do
 done &
 TAIL_PID=$!
 
-# Wait — Ctrl+C triggers cleanup
+# Wait - Ctrl+C triggers cleanup
 wait $TAIL_PID 2>/dev/null

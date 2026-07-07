@@ -2,38 +2,44 @@
 # Python Dependencies for the Ambient Scribe Agent
 # =============================================================================
 #
-# strands-agents[ollama] — The Strands AI SDK with Ollama model support.
+# strands-agents[ollama] - The Strands AI SDK with Ollama model support.
 #                          Used for the role inference agent (DOCTOR/PATIENT
 #                          attribution). NOT used for NeMo transcription.
 #
-# fastapi                — Web framework for HTTP + WebSocket endpoints.
+# fastapi                - Web framework for HTTP + WebSocket endpoints.
 #
-# uvicorn[standard]      — ASGI server (uvloop + httptools for performance).
+# uvicorn[standard]      - ASGI server (uvloop + httptools for performance).
 #
-# pydantic               — Request/response validation for FastAPI.
+# pydantic               - Request/response validation for FastAPI.
 #
-# httpx                  — Async HTTP client for publishing to Mercure.
+# httpx                  - Async HTTP client for publishing to Mercure.
 #
-# websockets             — WebSocket support for FastAPI (required for ws:// endpoints).
+# PyJWT                  - Mints the HS256 Mercure publisher token from
+#                          MERCURE_JWT_SECRET (the default compose path);
+#                          without it every raw/role/summary publish is skipped.
 #
-# sse-starlette          — Server-Sent Events support for FastAPI.
+# websockets             - WebSocket support for FastAPI (required for ws:// endpoints).
+#
+# sse-starlette          - Server-Sent Events support for FastAPI.
 #                          Used for streaming role inference results to PHP.
 #
-# numpy / soundfile      — Used by nemo_pipeline.py for PCM buffer → WAV conversion.
+# numpy / soundfile      - Used by nemo_pipeline.py for PCM buffer → WAV conversion.
 #                          Pre-installed in the NeMo Docker image; listed here for
 #                          local dev outside Docker.
 #
-# NOTE: NeMo toolkit and CUDA dependencies come from the base Docker image
-# (nvcr.io/nvidia/nemo:25.09). Do NOT add nemo_toolkit here — it would
-# conflict with the pre-installed version.
+# NOTE: NeMo toolkit and CUDA dependencies are owned by docker/nemo/Dockerfile.
+# Keep this file focused on the FastAPI agent packages that the user reaches
+# through the browser, replay, summary, and role-inference flows.
 # =============================================================================
 
-strands-agents[ollama]>=1.0.0
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-pydantic>=2.0.0
-httpx>=0.27.0
-websockets>=12.0
-sse-starlette>=2.0.0
+strands-agents[ollama]>=1.45.0
+fastapi>=0.139.0
+uvicorn[standard]>=0.49.0
+pydantic>=2.13.4
+httpx>=0.28.1
+PyJWT>=2.8.0
+websockets>=16.0
+sse-starlette>=3.4.5
 numpy>=1.26.0
-soundfile>=0.12.0
+soundfile>=0.14.0
+huggingface_hub>=0.36.2,<1.0

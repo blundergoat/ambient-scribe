@@ -1,57 +1,113 @@
 """
-Transcription session — per-WebSocket stateful wrapper around the NeMo pipeline.
+Per-recording audio state for live transcription.
 
-=============================================================================
-WHAT THIS FILE DOES
-=============================================================================
-
-Each WebSocket connection creates one TranscriptionSession. The session:
-
-  1. Holds per-session state (WebM accumulator, accumulated transcript, timing)
-  2. References the shared NemoPipeline singleton (does NOT load models)
-  3. Converts WebM/Opus audio → WAV via ffmpeg for NeMo ingestion
-  4. Implements the growing buffer strategy (re-process full audio each chunk)
-
-=============================================================================
-ARCHITECTURE
-=============================================================================
-
-  NemoPipeline (singleton, loaded at startup)
-       ↑
-  TranscriptionSession (per-WebSocket, holds state)
-       ↑
-  WebSocket handler (FastAPI, calls process_chunk)
-
-Audio flow per chunk:
-  1. Browser sends WebM/Opus chunk via WebSocket
-  2. Session accumulates raw WebM bytes (first chunk contains container header)
-  3. Full accumulated WebM is converted to 16kHz mono WAV via ffmpeg
-  4. WAV file is passed to pipeline.transcribe_file() (growing buffer strategy)
-
-The session's process_chunk() is SYNCHRONOUS and GPU-bound. The WebSocket
-handler must call it via run_in_executor() to avoid blocking the event loop.
+Each browser WebSocket owns one `TranscriptionSession` and shares the process
+wide NeMo pipeline. The session buffers PCM or WebM chunks, runs synchronous
+GPU work from the API executor, and returns only transcript lines the user has
+not already seen.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import tempfile
 import time
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
 from nemo_pipeline import NemoPipeline, Segment
+from nemo_segment_cleanup import (
+    merge_adjacent_fragments_for_display,
+    shift_segment_to_session_time,
+)
+from session_quality import TranscriptionQualityStats
 
 logger = logging.getLogger(__name__)
 
+# 16 kHz mono 16-bit PCM - the browser audio contract.
+_BYTES_PER_SECOND = 16000 * 2
+# Audio replayed before the emission mark so the model has acoustic context and
+# the new window's speaker labels can be matched against the previous window.
+_WINDOW_CONTEXT_SECONDS = 0.5
+# Segments ending this close to the buffer edge are usually still mid-utterance
+# and would be revised by the next pass, so they wait one more chunk.
+_UNSTABLE_TAIL_SECONDS = 1.0
+# Minimum unheard audio a segment must contain to count as new. Context
+# re-reads jitter a few hundred ms past the mark; without this floor they
+# would re-emit the previous utterance's text at every window seam.
+_MIN_NEW_AUDIO_SECONDS = 0.3
+# Medical visits are usually dyadic; set NEMO_SPEAKER_CAP=0 to keep every ID.
+_DEFAULT_SPEAKER_CAP = 2
+
+
+def _speaker_cap_from_env() -> int | None:
+    """Return the configured visible-speaker cap for one browser session.
+
+    Returns:
+        Positive cap value, or None when operators intentionally allow all speakers.
+    """
+    raw_value = os.environ.get("NEMO_SPEAKER_CAP", str(_DEFAULT_SPEAKER_CAP)).strip()
+
+    # Empty or disabled values mean the UI can show every speaker NeMo emits.
+    if raw_value == "" or raw_value.lower() in {"0", "off", "none", "disabled"}:
+        return None
+
+    try:
+        configured_cap = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "nemo_session.speaker_cap.invalid value=%s default=%s",
+            raw_value,
+            _DEFAULT_SPEAKER_CAP,
+        )
+        return _DEFAULT_SPEAKER_CAP
+
+    # Non-positive numeric values use the same cap-disabled behavior as zero.
+    if configured_cap <= 0:
+        return None
+
+    return configured_cap
+
+
+def _segment_overlap_seconds(first_segment: Segment, second_segment: Segment) -> float:
+    """Return overlap seconds between two timestamped transcript rows.
+
+    Returns:
+        Seconds of shared time; zero means the user heard these rows separately.
+    """
+    return max(
+        0.0,
+        min(first_segment.end, second_segment.end)
+        - max(first_segment.start, second_segment.start),
+    )
+
+
+def _segment_gap_seconds(first_segment: Segment, second_segment: Segment) -> float:
+    """Return the silent gap between two transcript rows.
+
+    Returns:
+        Seconds between rows; zero means they overlap or touch in the visible timeline.
+    """
+    # First segment ending before the second creates a forward gap.
+    if first_segment.end < second_segment.start:
+        return second_segment.start - first_segment.end
+
+    # Second segment ending before the first creates the same gap in reverse.
+    if second_segment.end < first_segment.start:
+        return first_segment.start - second_segment.end
+
+    return 0.0
+
 
 class AudioBuffer:
-    """Manages the audio accumulation strategy for a session.
+    """Accumulates session audio and serves absolute-offset windows of it.
 
-    The buffer strategy (growing vs sliding window vs hybrid) is determined
-    by the Milestone 1 buffer spike. This implementation starts with a simple
-    growing buffer — replace with the chosen strategy after benchmarking.
+    Timestamps across the session are absolute (seconds since the first chunk),
+    so window reads take absolute byte offsets and stay correct even after the
+    safety cap trims old audio from the front.
     """
 
     def __init__(self, max_duration_seconds: float = 900.0) -> None:
@@ -63,7 +119,8 @@ class AudioBuffer:
         """
         self._chunks: deque[bytes] = deque()
         self._total_bytes: int = 0
-        self._max_bytes: int = int(max_duration_seconds * 16000 * 2)  # 16kHz, 16-bit = 32KB/s
+        self._trimmed_bytes: int = 0
+        self._max_bytes: int = int(max_duration_seconds * _BYTES_PER_SECOND)
 
     def append(self, pcm_audio: bytes) -> None:
         """Append PCM audio to the buffer.
@@ -78,48 +135,85 @@ class AudioBuffer:
         while self._total_bytes > self._max_bytes and len(self._chunks) > 1:
             removed = self._chunks.popleft()
             self._total_bytes -= len(removed)
+            self._trimmed_bytes += len(removed)
 
-    def current_window(self) -> bytes:
-        """Return the current audio window for NeMo processing.
+    def audio_from(self, absolute_start_byte: int) -> bytes:
+        """Return audio from an absolute session byte offset to the buffer end.
 
-        For a growing buffer strategy, this returns all accumulated audio.
-        For a sliding window strategy, this would return the last N seconds.
+        Args:
+            absolute_start_byte: Offset in bytes since the session's first chunk.
 
         Returns:
-            Concatenated PCM bytes for the current processing window.
+            PCM bytes from that offset; empty means nothing new to transcribe.
         """
-        return b"".join(self._chunks)
+        relative_start = max(0, absolute_start_byte - self._trimmed_bytes)
+        # 16-bit samples: an odd start or length would hand NeMo half a sample.
+        relative_start &= ~1
+        window = b"".join(self._chunks)[relative_start:]
+        if len(window) % 2:
+            window = window[:-1]
+        return window
 
     def full_audio(self) -> bytes:
-        """Return all accumulated audio (for final processing on session end).
+        """Return all retained audio (for final processing on session end).
 
         Returns:
-            All PCM bytes accumulated during the session.
+            All PCM bytes still held for the session.
         """
         return b"".join(self._chunks)
 
     @property
+    def end_seconds(self) -> float:
+        """Absolute session time of the newest buffered audio sample.
+
+        Returns:
+            Seconds since the first chunk; `0.0` means no audio has arrived.
+        """
+        return (self._trimmed_bytes + self._total_bytes) / _BYTES_PER_SECOND
+
+    @property
     def duration_seconds(self) -> float:
-        """Estimated duration of buffered audio in seconds."""
+        """Estimated audio duration shown by live-session diagnostics.
+
+        Returns:
+            Seconds of buffered audio; `0.0` means the user has not sent audio yet.
+        """
         return self._total_bytes / (16000 * 2)  # 16kHz, 16-bit
 
     @property
     def total_bytes(self) -> int:
-        """Total bytes in the buffer."""
+        """Raw buffered audio size used to decide whether finalization can run.
+
+        Returns:
+            Byte count; `0` means ending the session reuses existing transcript text.
+        """
         return self._total_bytes
+
+    @property
+    def trimmed_seconds(self) -> float:
+        """Absolute session time of the oldest audio still retained.
+
+        Returns:
+            Seconds trimmed from the front; `0.0` means the whole visit is retained.
+        """
+        return self._trimmed_bytes / _BYTES_PER_SECOND
 
 
 class TranscriptionSession:
-    """Manages WebM accumulation and NeMo processing across WebSocket chunks.
+    """Manages audio accumulation and NeMo processing across WebSocket chunks.
 
     One instance per WebSocket connection. References the shared NemoPipeline
-    singleton — does NOT load models.
+    singleton - does NOT load models.
 
-    Audio strategy (growing buffer):
-      - Accumulates raw WebM bytes from the browser (first chunk has container header)
-      - On each process_chunk call, converts the full accumulated WebM → WAV via ffmpeg
-      - Passes the complete WAV to pipeline.transcribe_file() for full reprocessing
-      - AudioBuffer tracks stats only (duration estimate from chunk count)
+    Audio strategy (windowed emission):
+      - Accumulates decoded PCM in AudioBuffer with absolute session timing.
+      - Each process_chunk call transcribes only audio past the emission mark
+        (plus a short context lead), so every stretch of speech is emitted to
+        the browser exactly once - no re-transcription of the whole session.
+      - Segments ending near the buffer edge are held one chunk because the
+        next pass usually revises them; finalize() drains that held tail.
+      - Speaker IDs from each window are matched to the previous window via
+        the context-overlap segment so labels stay continuous across windows.
 
     All processing methods are SYNCHRONOUS (GPU-bound). Callers must use
     asyncio.run_in_executor() to avoid blocking the event loop.
@@ -131,6 +225,7 @@ class TranscriptionSession:
         pipeline: NemoPipeline,
         input_format: str = "pcm",
         max_buffer_duration: float = 900.0,
+        streaming_engine=None,
     ) -> None:
         """Create a new transcription session.
 
@@ -139,41 +234,77 @@ class TranscriptionSession:
             pipeline: Shared NemoPipeline singleton (loaded at startup)
             input_format: Audio input format ("pcm" or "webm")
             max_buffer_duration: Maximum audio buffer duration in seconds.
+            streaming_engine: Optional session-long streaming engine (M22).
+                None keeps the windowed emission path unchanged.
         """
         self.session_id = session_id
         self.pipeline = pipeline
+        self._streaming_engine = streaming_engine
         self.input_format = input_format.lower()
         self.buffer = AudioBuffer(max_duration_seconds=max_buffer_duration)
         self.accumulated_transcript: list[Segment] = []
         self.chunk_count: int = 0
         self.started_at: float = time.time()
-        self._seen_segment_keys: set[tuple[str, int, int, str]] = set()
+        self.quality_stats: TranscriptionQualityStats = TranscriptionQualityStats()
+        self._emitted_until_seconds: float = 0.0
         self._format_validated: bool = False
+        self._speaker_cap: int | None = _speaker_cap_from_env()
+        # Per-window continuity evidence for the M20 diagnostics log; holds
+        # only speaker IDs, timings, and counts - never transcript text.
+        self._last_window_continuity: dict = {}
+        self._window_overlap_votes: list[dict] = []
+        # Emitted-row counter behind the stable `segment_id` each visible row
+        # gets, so clinician corrections can target exactly one transcript row.
+        self._emitted_row_count: int = 0
+        # Streaming-engine bookkeeping: cumulative speech per cache slot feeds
+        # the speaker cap; per-tick phantom merges feed the continuity log.
+        self._engine_slot_durations: dict[str, float] = {}
+        self._engine_window_phantom_merges: int = 0
 
+        # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
-            raise ValueError(f"Unsupported transcription input format: {self.input_format}")
+            raise ValueError(
+                f"Unsupported transcription input format: {self.input_format}"
+            )
 
-        logger.info("transcription_session.created", extra={
-            "session_id": session_id,
-            "input_format": self.input_format,
-        })
+        logger.info(
+            "transcription_session.created",
+            extra={
+                "session_id": session_id,
+                "input_format": self.input_format,
+            },
+        )
+
+    @property
+    def engine_name(self) -> str:
+        """Transcription engine label recorded in quality artifacts.
+
+        Returns:
+            `streaming` when the M22 session-long engine drives emission;
+            `windowed` for the legacy per-window path.
+        """
+        return "streaming" if self._streaming_engine is not None else "windowed"
+
+    @property
+    def engine_diagnostics(self):
+        """Streaming-engine identity diagnostics, or None on the windowed path."""
+        return getattr(self._streaming_engine, "diagnostics", None)
 
     def process_chunk(self, raw_audio: bytes) -> list[Segment]:
         """Process a single audio chunk through the NeMo pipeline.
 
-        SYNCHRONOUS — must be called via run_in_executor().
+        SYNCHRONOUS - must be called via run_in_executor().
 
         Flow:
-          1. Append WebM bytes to accumulator
-          2. Convert full accumulated WebM → WAV via ffmpeg
-          3. Pass WAV to pipeline.transcribe_file()
-          4. Return new/updated segments
+          1. Validate/decode the chunk and append PCM to the buffer
+          2. Transcribe only the window past the emission mark
+          3. Hold back the still-changing tail; emit the stable rest once
 
         Args:
-            raw_audio: Raw WebM/Opus audio bytes from the browser WebSocket
+            raw_audio: Raw PCM (or WebM) audio bytes from the browser WebSocket
 
         Returns:
-            List of transcript segments from this processing pass
+            Newly emitted transcript segments the browser has not seen before.
         """
         self.chunk_count += 1
         chunk_started_at = time.time()
@@ -184,68 +315,731 @@ class TranscriptionSession:
 
         pcm_audio = self._decode_audio(raw_audio)
         if pcm_audio == b"":
-            logger.info("transcription_session.chunk_skipped", extra={
-                "session_id": self.session_id,
-                "reason": "empty_after_decode",
-            })
+            logger.info(
+                "transcription_session.chunk_skipped",
+                extra={
+                    "session_id": self.session_id,
+                    "reason": "empty_after_decode",
+                },
+            )
             return []
 
         self.buffer.append(pcm_audio)
 
-        result = self.pipeline.transcribe_buffer(self.buffer.current_window())
-        new_segments = self._filter_new_segments(result.segments)
+        # The streaming engine owns speaker identity for the whole session;
+        # the windowed path re-derives it per window and stitches (M22 flag).
+        if self._streaming_engine is not None:
+            self.quality_stats.record_window(len(pcm_audio))
+            new_segments = self._emit_engine_rows(
+                self._streaming_engine.feed(pcm_audio), is_finalize=False
+            )
+        else:
+            new_segments = self._transcribe_unemitted(hold_unstable_tail=True)
         self.accumulated_transcript.extend(new_segments)
 
         duration_ms = int((time.time() - chunk_started_at) * 1000)
-        logger.info("transcription_session.chunk_processed", extra={
-            "session_id": self.session_id,
-            "chunk_number": self.chunk_count,
-            "audio_seconds": round(self.buffer.duration_seconds, 1),
-            "segments_returned": len(new_segments),
-            "duration_ms": duration_ms,
-        })
+        logger.info(
+            "transcription_session.chunk_processed",
+            extra={
+                "session_id": self.session_id,
+                "chunk_number": self.chunk_count,
+                "audio_seconds": round(self.buffer.duration_seconds, 1),
+                "segments_returned": len(new_segments),
+                "duration_ms": duration_ms,
+            },
+        )
 
         return new_segments
 
     def finalize(self) -> list[Segment]:
-        """Final processing on session end.
+        """Drain the held-back tail when the session ends.
 
-        Called when the WebSocket disconnects. Runs NeMo on the full
-        accumulated audio for a final high-quality transcription pass.
+        Called when the WebSocket disconnects. Transcribes the remaining
+        unemitted audio without holding anything back. The caller publishes
+        the returned tail; the full session transcript stays available on
+        `accumulated_transcript`.
 
         Returns:
-            Complete transcript segments for the entire session.
+            Only the segments the browser has not been sent yet.
         """
-        logger.info("transcription_session.finalizing", extra={
-            "session_id": self.session_id,
-            "total_chunks": self.chunk_count,
-            "audio_seconds": round(self.buffer.duration_seconds, 1),
-            "duration_seconds": round(time.time() - self.started_at, 1),
-        })
+        logger.info(
+            "transcription_session.finalizing",
+            extra={
+                "session_id": self.session_id,
+                "total_chunks": self.chunk_count,
+                "audio_seconds": round(self.buffer.duration_seconds, 1),
+                "duration_seconds": round(time.time() - self.started_at, 1),
+            },
+        )
 
         if self.buffer.total_bytes == 0:
-            return self.accumulated_transcript
+            return []
 
-        # Final pass on complete audio
-        result = self.pipeline.transcribe_buffer(self.buffer.full_audio())
-        new_segments = self._filter_new_segments(result.segments)
-        self.accumulated_transcript.extend(new_segments)
+        if self._streaming_engine is not None:
+            tail_segments = self._emit_engine_rows(
+                self._streaming_engine.flush(), is_finalize=True
+            )
+        else:
+            tail_segments = self._transcribe_unemitted(hold_unstable_tail=False)
+        self.accumulated_transcript.extend(tail_segments)
 
-        return list(self.accumulated_transcript)
+        return tail_segments
 
-    def _filter_new_segments(self, segments: list[Segment]) -> list[Segment]:
-        """Return only segments not already accumulated (deduplication by key).
+    def _transcribe_unemitted(self, *, hold_unstable_tail: bool) -> list[Segment]:
+        """Transcribe audio past the emission mark and emit each span once.
 
-        Uses (speaker_id, start_int, end_int, text) as a dedup key so that
-        re-processing the same audio window on reconnect does not emit duplicates.
+        The window starts slightly before the mark so the model has acoustic
+        context and the overlap can anchor speaker-label continuity. Segments
+        are emitted only once: the mark advances past everything returned.
+
+        Args:
+            hold_unstable_tail: True keeps segments that end near the buffer
+                edge for the next pass, because they are usually mid-utterance.
+
+        Returns:
+            Newly emitted segments in chronological order; empty means no new
+            stable speech yet.
         """
-        new_segments = []
-        for seg in segments:
-            key = (seg.speaker_id, int(seg.start * 100), int(seg.end * 100), seg.text)
-            if key not in self._seen_segment_keys:
-                self._seen_segment_keys.add(key)
-                new_segments.append(seg)
-        return new_segments
+        window_start_seconds = max(
+            0.0, self._emitted_until_seconds - _WINDOW_CONTEXT_SECONDS
+        )
+        emitted_from_seconds = self._emitted_until_seconds
+        self._last_window_continuity = {}
+        # Whole samples only: an odd byte offset would split a 16-bit sample and
+        # NeMo rejects buffers that are not a multiple of the element size.
+        window_start_byte = int(window_start_seconds * 16000) * 2
+        # The buffer may have trimmed past the requested start; the returned audio
+        # then begins at the retained head, so the timeline shift must use that
+        # actual start or new speech is timestamped too early.
+        effective_window_start_seconds = max(
+            window_start_seconds, self.buffer.trimmed_seconds
+        )
+        window_audio = self.buffer.audio_from(window_start_byte)
+        # No new audio means the user has not produced another transcribable window.
+        if window_audio == b"":
+            return []
+        self.quality_stats.record_window(len(window_audio))
+
+        result = self.pipeline.transcribe_buffer(window_audio)
+        window_segments: list[Segment] = []
+        # Each NeMo row is shifted from window-local time to the user's session timeline.
+        for segment in sorted(result.segments, key=lambda segment: segment.start):
+            window_segments.append(
+                shift_segment_to_session_time(segment, effective_window_start_seconds)
+            )
+        window_segments = self._continue_anchor_speakers(window_segments)
+
+        # Segments fully inside already-emitted audio are the context replay.
+        fresh_segments = [
+            segment
+            for segment in window_segments
+            if segment.end > self._emitted_until_seconds + _MIN_NEW_AUDIO_SECONDS
+        ]
+
+        # The buffer edge is still being spoken; those lines firm up next pass.
+        held_segment_count = 0
+        if hold_unstable_tail:
+            buffer_end_seconds = self.buffer.end_seconds
+            while (
+                fresh_segments
+                and fresh_segments[-1].end
+                > buffer_end_seconds - _UNSTABLE_TAIL_SECONDS
+            ):
+                fresh_segments.pop()
+                held_segment_count += 1
+
+        # A user may have just started a replay and received word-sized same-speaker cards.
+        fresh_segments = merge_adjacent_fragments_for_display(fresh_segments)
+        # Rows are identified after merging so one visible row carries one ID.
+        fresh_segments = self._assign_row_identity(fresh_segments)
+
+        self.quality_stats.record_segment_flow(
+            emitted_segments=len(fresh_segments),
+            held_segments=held_segment_count,
+        )
+
+        # Empty fresh segments mean the browser has no new stable text yet.
+        if fresh_segments:
+            self._emitted_until_seconds = max(
+                self._emitted_until_seconds, fresh_segments[-1].end
+            )
+
+        self._log_window_continuity(
+            window_start_seconds=window_start_seconds,
+            emitted_from_seconds=emitted_from_seconds,
+            emitted_rows=len(fresh_segments),
+            held_rows=held_segment_count,
+            is_finalize=not hold_unstable_tail,
+        )
+
+        return fresh_segments
+
+    def _emit_engine_rows(self, engine_rows: list, *, is_finalize: bool) -> list[Segment]:
+        """Turn streaming-engine rows into emitted transcript segments (M22).
+
+        Engine rows arrive with session-absolute times and cache-stable
+        speaker slots, so window-time shifting and anchor stitching are
+        bypassed by design. Everything downstream of identity is shared with
+        the windowed path: speaker cap, fragment merge, row IDs, quality
+        counters, and the continuity diagnostics log.
+
+        Args:
+            engine_rows: Stabilized rows from the engine's feed/flush.
+            is_finalize: True when draining the held tail at session end.
+
+        Returns:
+            Newly emitted segments in chronological order.
+        """
+        emitted_from_seconds = self._emitted_until_seconds
+        window_segments = [
+            Segment(
+                speaker_id=row.speaker_slot,
+                # Streaming rows bypass the windowed ASR path, so the medical
+                # boost must be applied here or drug/condition variants reach
+                # the transcript, summary, and download uncorrected.
+                text=self.pipeline.visible_text(row.text),
+                start=row.start,
+                end=row.end,
+            )
+            for row in engine_rows
+        ]
+        window_segments.sort(key=lambda segment: segment.start)
+        window_segments = self._cap_engine_speaker_slots(window_segments)
+
+        fresh_segments = merge_adjacent_fragments_for_display(window_segments)
+        fresh_segments = self._assign_row_identity(fresh_segments)
+
+        engine = self._streaming_engine
+        held_rows = getattr(engine, "pending_row_count", 0) if engine is not None else 0
+        self.quality_stats.record_segment_flow(
+            emitted_segments=len(fresh_segments),
+            held_segments=held_rows,
+        )
+
+        if fresh_segments:
+            self._emitted_until_seconds = max(
+                self._emitted_until_seconds, fresh_segments[-1].end
+            )
+
+        diagnostics = getattr(engine, "diagnostics", None)
+        self._last_window_continuity = {
+            "engine": "streaming",
+            "raw_speaker_ids": sorted(
+                {segment.speaker_id for segment in window_segments}
+            ),
+            "known_speaker_ids": sorted(self._engine_slot_durations),
+            "speaker_id_map": {},
+            "overlap_votes": [],
+            "mapping_reasons": {},
+            "window_remaps": 0,
+            "window_phantom_merges": self._engine_window_phantom_merges,
+            "late_slot_births": getattr(diagnostics, "late_slot_births", 0),
+            "revision_resyncs": getattr(diagnostics, "revision_resyncs", 0),
+        }
+        self._log_window_continuity(
+            window_start_seconds=emitted_from_seconds,
+            emitted_from_seconds=emitted_from_seconds,
+            emitted_rows=len(fresh_segments),
+            held_rows=held_rows,
+            is_finalize=is_finalize,
+        )
+
+        return fresh_segments
+
+    def _cap_engine_speaker_slots(self, segments: list[Segment]) -> list[Segment]:
+        """Fold engine speaker slots beyond the visible cap into dominant voices.
+
+        The streaming diarizer exposes up to four cache slots; dyadic visits
+        show at most `NEMO_SPEAKER_CAP` of them. Marginal slots (phantoms)
+        are folded into the dominant slot by cumulative speech time, counted
+        as phantom merges exactly like the windowed engine's cap.
+
+        Args:
+            segments: Chronological engine rows for this emission tick.
+
+        Returns:
+            The same rows with capped speaker IDs.
+        """
+        self._engine_window_phantom_merges = 0
+
+        for segment in segments:
+            self._engine_slot_durations[segment.speaker_id] = (
+                self._engine_slot_durations.get(segment.speaker_id, 0.0)
+                + max(0.0, segment.end - segment.start)
+            )
+
+        # Cap disabled means the UI shows every cache slot the engine emits.
+        if self._speaker_cap is None:
+            return segments
+
+        # Fold only MARGINAL slots (hallucination-scale, mirroring the
+        # windowed engine's share filter). Substantial voices always pass:
+        # folding a real voice into another slot corrupts attribution far
+        # worse than a third raw ID, which the role mapping labels anyway.
+        # (An eager first-to-establish pinning policy did exactly that on
+        # c03, where the doctor's speech spans two early cache slots.)
+        total_speech = sum(self._engine_slot_durations.values())
+        marginal_below = max(1.5, 0.05 * total_speech)
+        substantial_slots = [
+            slot
+            for slot, duration in self._engine_slot_durations.items()
+            if duration >= marginal_below
+        ]
+
+        capped_segments: list[Segment] = []
+        for segment in segments:
+            duration = self._engine_slot_durations.get(segment.speaker_id, 0.0)
+            if duration >= marginal_below or not substantial_slots:
+                capped_segments.append(segment)
+                continue
+
+            dominant_slot = max(
+                substantial_slots,
+                key=lambda slot: self._engine_slot_durations.get(slot, 0.0),
+            )
+            self._engine_window_phantom_merges += 1
+            self.quality_stats.record_phantom_speaker_merges(1)
+            logger.info(
+                "nemo_session.phantom_speaker_merged session_id=%s window_speaker_id=%s canonical_speaker_id=%s",
+                self.session_id,
+                segment.speaker_id,
+                dominant_slot,
+                extra={
+                    "session_id": self.session_id,
+                    "window_speaker_id": segment.speaker_id,
+                    "canonical_speaker_id": dominant_slot,
+                    "engine": "streaming",
+                },
+            )
+            capped_segments.append(replace(segment, speaker_id=dominant_slot))
+
+        return capped_segments
+
+    def _continue_anchor_speakers(self, segments: list[Segment]) -> list[Segment]:
+        """Map each window-local speaker ID to a stable session speaker ID.
+
+        Each NeMo pass labels speakers independently. The overlap vote keeps
+        the UI's visible speaker identities stable, and the cap merges stray
+        `speaker_2+` IDs back into the nearest established consultation voice.
+
+        Args:
+            segments: Window segments with absolute times; empty passes through.
+
+        Returns:
+            Segments with speaker IDs aligned to the session's existing labels.
+        """
+        # Empty windows mean NeMo found no speaker evidence in this chunk.
+        if segments == []:
+            return segments
+
+        known_speaker_ids = self._known_speaker_ids()
+        window_speaker_ids = self._window_speaker_ids(segments)
+        speaker_id_map = self._overlap_speaker_map(segments, known_speaker_ids)
+        overlap_mapped_ids = set(speaker_id_map)
+        speaker_id_map = self._complete_two_speaker_swap(
+            window_speaker_ids,
+            known_speaker_ids,
+            speaker_id_map,
+        )
+        swap_completed_ids = set(speaker_id_map) - overlap_mapped_ids
+        speaker_id_map, phantom_merge_count = self._complete_speaker_cap_map(
+            segments,
+            window_speaker_ids,
+            known_speaker_ids,
+            speaker_id_map,
+        )
+        remap_count = sum(
+            1
+            for window_speaker_id, canonical_speaker_id in speaker_id_map.items()
+            if window_speaker_id != canonical_speaker_id
+        )
+
+        # Only changed IDs matter to the final quality record.
+        if remap_count > 0:
+            self.quality_stats.record_speaker_anchor_remaps(remap_count)
+
+        # Phantom merges are the M16 signal that extra visible speakers were contained.
+        if phantom_merge_count > 0:
+            self.quality_stats.record_phantom_speaker_merges(phantom_merge_count)
+
+        self._last_window_continuity = self._window_continuity_evidence(
+            window_speaker_ids=window_speaker_ids,
+            known_speaker_ids=known_speaker_ids,
+            speaker_id_map=speaker_id_map,
+            overlap_mapped_ids=overlap_mapped_ids,
+            swap_completed_ids=swap_completed_ids,
+            remap_count=remap_count,
+            phantom_merge_count=phantom_merge_count,
+        )
+
+        return [
+            replace(
+                segment,
+                speaker_id=speaker_id_map.get(segment.speaker_id, segment.speaker_id),
+            )
+            for segment in segments
+        ]
+
+    def _assign_row_identity(self, segments: list[Segment]) -> list[Segment]:
+        """Mint a stable per-session row ID for each about-to-emit segment.
+
+        Every transcript row the clinician sees gets `seg-<n>` exactly once,
+        at emission. The ID travels through Mercure, storage, finalize
+        replacement, and summary round-trips, so a per-row role correction can
+        follow one visible line for the whole visit.
+
+        Args:
+            segments: Post-merge fresh segments; empty windows pass through.
+
+        Returns:
+            The same rows with `segment_id` set; held rows are identified later,
+            when they actually emit.
+        """
+        identified_segments: list[Segment] = []
+        # Emission order is unique within a session, making IDs collision-free.
+        for segment in segments:
+            self._emitted_row_count += 1
+            identified_segments.append(
+                replace(segment, segment_id=f"seg-{self._emitted_row_count:04d}")
+            )
+
+        return identified_segments
+
+    def _window_continuity_evidence(
+        self,
+        *,
+        window_speaker_ids: list[str],
+        known_speaker_ids: list[str],
+        speaker_id_map: dict[str, str],
+        overlap_mapped_ids: set[str],
+        swap_completed_ids: set[str],
+        remap_count: int,
+        phantom_merge_count: int,
+    ) -> dict:
+        """Build the speaker-continuity evidence for one emission window.
+
+        The record explains why each raw window speaker ID became the visible
+        canonical ID, so seam-level identity drift can be diagnosed offline.
+        It carries only IDs, votes, and counts - no transcript text.
+
+        Returns:
+            Continuity evidence consumed by the per-window diagnostics log.
+        """
+        mapping_reasons: dict[str, str] = {}
+        # Each raw window ID gets the mechanism that chose its visible identity:
+        # overlap_vote = anchored by shared audio; two_speaker_swap = paired by
+        # elimination; phantom_merge = extra ID folded into a visible voice;
+        # kept_known = no evidence, same label kept; new_visible = new speaker.
+        for window_speaker_id, canonical_speaker_id in speaker_id_map.items():
+            if window_speaker_id in overlap_mapped_ids:
+                mapping_reasons[window_speaker_id] = "overlap_vote"
+            elif window_speaker_id in swap_completed_ids:
+                mapping_reasons[window_speaker_id] = "two_speaker_swap"
+            elif window_speaker_id != canonical_speaker_id:
+                mapping_reasons[window_speaker_id] = "phantom_merge"
+            elif window_speaker_id in known_speaker_ids:
+                mapping_reasons[window_speaker_id] = "kept_known"
+            else:
+                mapping_reasons[window_speaker_id] = "new_visible"
+
+        return {
+            "raw_speaker_ids": list(window_speaker_ids),
+            "known_speaker_ids": list(known_speaker_ids),
+            "speaker_id_map": dict(speaker_id_map),
+            "canonical_speaker_ids": list(dict.fromkeys(speaker_id_map.values())),
+            "overlap_votes": list(self._window_overlap_votes),
+            "mapping_reasons": mapping_reasons,
+            "window_remaps": remap_count,
+            "window_phantom_merges": phantom_merge_count,
+        }
+
+    def _log_window_continuity(
+        self,
+        *,
+        window_start_seconds: float,
+        emitted_from_seconds: float,
+        emitted_rows: int,
+        held_rows: int,
+        is_finalize: bool,
+    ) -> None:
+        """Log one per-window speaker-continuity record for eval diagnostics.
+
+        Eval runs turn these rows into `window-continuity.jsonl` so a wrong
+        Doctor/Patient row can be traced to the emission window and mapping
+        decision that produced it. The payload never includes transcript text.
+        """
+        # One row lands here for every ~5s chunk the clinician's browser sent,
+        # plus one final row when they pressed Stop and the tail drained.
+        continuity = self._last_window_continuity
+        logger.info(
+            "nemo_session.window_continuity session_id=%s window_index=%s phase=%s emitted_rows=%s",
+            self.session_id,
+            self.chunk_count,
+            "finalize" if is_finalize else "chunk",
+            emitted_rows,
+            extra={
+                "session_id": self.session_id,
+                "window_index": self.chunk_count,
+                "phase": "finalize" if is_finalize else "chunk",
+                "window_start_seconds": round(window_start_seconds, 3),
+                "buffer_end_seconds": round(self.buffer.end_seconds, 3),
+                "emitted_from_seconds": round(emitted_from_seconds, 3),
+                "emitted_until_seconds": round(self._emitted_until_seconds, 3),
+                "raw_speaker_ids": continuity.get("raw_speaker_ids", []),
+                "known_speaker_ids": continuity.get("known_speaker_ids", []),
+                "canonical_speaker_ids": continuity.get("canonical_speaker_ids", []),
+                "speaker_id_map": continuity.get("speaker_id_map", {}),
+                "overlap_votes": continuity.get("overlap_votes", []),
+                "mapping_reasons": continuity.get("mapping_reasons", {}),
+                "window_remaps": continuity.get("window_remaps", 0),
+                "window_phantom_merges": continuity.get("window_phantom_merges", 0),
+                "cumulative_anchor_remaps": (
+                    self.quality_stats.speaker_anchor_remap_count
+                ),
+                "cumulative_phantom_merges": (
+                    self.quality_stats.phantom_speaker_merge_count
+                ),
+                "emitted_rows": emitted_rows,
+                "held_rows": held_rows,
+            },
+        )
+
+    def _known_speaker_ids(self) -> list[str]:
+        """Return speaker IDs already visible in this browser session.
+
+        Returns:
+            Stable speaker IDs in first-seen order; empty means no transcript is visible yet.
+        """
+        return list(
+            dict.fromkeys(segment.speaker_id for segment in self.accumulated_transcript)
+        )
+
+    def _window_speaker_ids(self, segments: list[Segment]) -> list[str]:
+        """Return window-local speaker IDs in first-seen order.
+
+        Args:
+            segments: Window transcript rows; empty returns no IDs.
+
+        Returns:
+            Unique IDs in the order the clinician would see them.
+        """
+        return list(dict.fromkeys(segment.speaker_id for segment in segments))
+
+    def _overlap_speaker_map(
+        self,
+        segments: list[Segment],
+        known_speaker_ids: list[str],
+    ) -> dict[str, str]:
+        """Map window IDs to known IDs by strongest overlap vote.
+
+        Returns:
+            Window-to-session speaker map; empty means there was no overlap evidence.
+        """
+        overlap_votes: list[tuple[float, str, str]] = []
+
+        # Each window/known pair gets all overlap seconds as its vote weight.
+        for window_speaker_id in self._window_speaker_ids(segments):
+            for known_speaker_id in known_speaker_ids:
+                total_overlap = sum(
+                    _segment_overlap_seconds(window_segment, known_segment)
+                    for window_segment in segments
+                    for known_segment in self.accumulated_transcript
+                    if window_segment.speaker_id == window_speaker_id
+                    and known_segment.speaker_id == known_speaker_id
+                )
+
+                # Zero overlap means this pair cannot prove speaker continuity.
+                if total_overlap <= 0:
+                    continue
+
+                overlap_votes.append(
+                    (total_overlap, window_speaker_id, known_speaker_id)
+                )
+
+        # Vote evidence feeds the per-window continuity log for seam diagnostics.
+        self._window_overlap_votes = [
+            {
+                "window_speaker_id": window_speaker_id,
+                "known_speaker_id": known_speaker_id,
+                "overlap_seconds": round(seconds, 3),
+            }
+            for seconds, window_speaker_id, known_speaker_id in sorted(
+                overlap_votes, reverse=True
+            )
+        ]
+
+        speaker_id_map: dict[str, str] = {}
+        used_window_ids: set[str] = set()
+        used_known_ids: set[str] = set()
+
+        # Strongest non-conflicting overlap wins so one window ID maps to one voice.
+        for _seconds, window_speaker_id, known_speaker_id in sorted(
+            overlap_votes,
+            reverse=True,
+        ):
+            # Already-used IDs would create one-to-many visible speaker mappings.
+            if window_speaker_id in used_window_ids or known_speaker_id in used_known_ids:
+                continue
+
+            speaker_id_map[window_speaker_id] = known_speaker_id
+            used_window_ids.add(window_speaker_id)
+            used_known_ids.add(known_speaker_id)
+
+        return speaker_id_map
+
+    def _complete_two_speaker_swap(
+        self,
+        window_speaker_ids: list[str],
+        known_speaker_ids: list[str],
+        speaker_id_map: dict[str, str],
+    ) -> dict[str, str]:
+        """Complete the classic two-speaker swap when one overlap anchor is known.
+
+        Returns:
+            Speaker map with the unanchored existing ID paired to the other visible voice.
+        """
+        completed_map = dict(speaker_id_map)
+
+        # This shortcut only applies when both window IDs are already known speakers.
+        if (
+            self._speaker_cap == 2
+            and len(known_speaker_ids) == 2
+            and len(window_speaker_ids) == 2
+            and set(window_speaker_ids).issubset(set(known_speaker_ids))
+            and len(completed_map) == 1
+        ):
+            mapped_window_id = next(iter(completed_map))
+            mapped_known_id = completed_map[mapped_window_id]
+            other_window_id = next(
+                speaker_id
+                for speaker_id in window_speaker_ids
+                if speaker_id != mapped_window_id
+            )
+            other_known_id = next(
+                speaker_id
+                for speaker_id in known_speaker_ids
+                if speaker_id != mapped_known_id
+            )
+            completed_map[other_window_id] = other_known_id
+
+        return completed_map
+
+    def _complete_speaker_cap_map(
+        self,
+        segments: list[Segment],
+        window_speaker_ids: list[str],
+        known_speaker_ids: list[str],
+        speaker_id_map: dict[str, str],
+    ) -> tuple[dict[str, str], int]:
+        """Fill missing window IDs and merge extras beyond the configured cap.
+
+        Returns:
+            Completed speaker map and the number of phantom IDs merged.
+        """
+        completed_map = dict(speaker_id_map)
+        canonical_speaker_ids = list(known_speaker_ids)
+        phantom_merge_count = 0
+
+        # Mapped known IDs must count toward the cap before new IDs are considered.
+        for canonical_speaker_id in completed_map.values():
+            # Duplicate IDs are already visible to the browser and should count once.
+            if canonical_speaker_id not in canonical_speaker_ids:
+                canonical_speaker_ids.append(canonical_speaker_id)
+
+        # Every window speaker needs an explicit visible-ID decision.
+        for window_speaker_id in window_speaker_ids:
+            # Overlap or swap logic already identified this speaker.
+            if window_speaker_id in completed_map:
+                continue
+
+            # A known ID with no overlap is still stable enough to keep visible.
+            if window_speaker_id in known_speaker_ids:
+                completed_map[window_speaker_id] = window_speaker_id
+                continue
+
+            # Cap disabled means the UI should show the new participant as-is.
+            if self._speaker_cap is None:
+                completed_map[window_speaker_id] = window_speaker_id
+                canonical_speaker_ids.append(window_speaker_id)
+                continue
+
+            # Until the cap is full, a new ID can become a visible consultation voice.
+            if len(canonical_speaker_ids) < self._speaker_cap:
+                completed_map[window_speaker_id] = window_speaker_id
+                canonical_speaker_ids.append(window_speaker_id)
+                continue
+
+            canonical_speaker_id = self._nearest_canonical_speaker_id(
+                window_speaker_id,
+                segments,
+                canonical_speaker_ids,
+                completed_map,
+            )
+            completed_map[window_speaker_id] = canonical_speaker_id
+            phantom_merge_count += 1
+            logger.info(
+                "nemo_session.phantom_speaker_merged session_id=%s window_speaker_id=%s canonical_speaker_id=%s",
+                self.session_id,
+                window_speaker_id,
+                canonical_speaker_id,
+                extra={
+                    "session_id": self.session_id,
+                    "window_speaker_id": window_speaker_id,
+                    "canonical_speaker_id": canonical_speaker_id,
+                    "speaker_cap": self._speaker_cap,
+                },
+            )
+
+        return completed_map, phantom_merge_count
+
+    def _nearest_canonical_speaker_id(
+        self,
+        window_speaker_id: str,
+        segments: list[Segment],
+        canonical_speaker_ids: list[str],
+        speaker_id_map: dict[str, str],
+    ) -> str:
+        """Choose the nearest established voice for an extra window speaker.
+
+        Returns:
+            Canonical ID with the smallest timeline gap to the extra speaker.
+        """
+        extra_segments = [
+            segment for segment in segments if segment.speaker_id == window_speaker_id
+        ]
+        best_canonical_id = canonical_speaker_ids[0]
+        best_gap = float("inf")
+
+        # Compare the extra ID to every already visible speaker track.
+        for canonical_speaker_id in canonical_speaker_ids:
+            candidate_segments = [
+                segment
+                for segment in self.accumulated_transcript
+                if segment.speaker_id == canonical_speaker_id
+            ]
+            candidate_segments.extend(
+                replace(segment, speaker_id=speaker_id_map[segment.speaker_id])
+                for segment in segments
+                if segment.speaker_id in speaker_id_map
+                and speaker_id_map[segment.speaker_id] == canonical_speaker_id
+            )
+
+            # No candidate timing means this ID cannot be nearest yet.
+            if candidate_segments == []:
+                continue
+
+            nearest_gap = min(
+                _segment_gap_seconds(extra_segment, candidate_segment)
+                for extra_segment in extra_segments
+                for candidate_segment in candidate_segments
+            )
+
+            # The closest timeline neighbor is the least disruptive UI merge target.
+            if nearest_gap < best_gap:
+                best_gap = nearest_gap
+                best_canonical_id = canonical_speaker_id
+
+        return best_canonical_id
 
     def _validate_audio_format(self, raw_audio: bytes) -> None:
         """Validate that the first audio chunk matches the configured input format."""
@@ -265,10 +1059,15 @@ class TranscriptionSession:
                 )
         elif self.input_format == "webm":
             if len(raw_audio) >= 4 and raw_audio[:4] != _WEBM_MAGIC:
-                logger.warning("audio_format.webm_magic_missing", extra={
-                    "session_id": self.session_id,
-                    "first_bytes": raw_audio[:4].hex(),
-                })
+                logger.warning(
+                    "audio_format.webm_magic_missing session_id=%s first_bytes=%s",
+                    self.session_id,
+                    raw_audio[:4].hex(),
+                    extra={
+                        "session_id": self.session_id,
+                        "first_bytes": raw_audio[:4].hex(),
+                    },
+                )
 
     def _decode_audio(self, raw_audio: bytes) -> bytes:
         """Decode the incoming browser chunk into 16kHz mono PCM."""
@@ -288,18 +1087,29 @@ class TranscriptionSession:
         input_path = None
         output_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as input_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".webm", delete=False
+            ) as input_file:
                 input_file.write(raw_audio)
                 input_path = input_file.name
 
-            with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as output_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".raw", delete=False
+            ) as output_file:
                 output_path = output_file.name
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-i", input_path,
-                    "-ar", "16000", "-ac", "1",
-                    "-f", "s16le",
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    input_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "s16le",
                     output_path,
                 ],
                 capture_output=True,
@@ -308,9 +1118,18 @@ class TranscriptionSession:
             )
             return Path(output_path).read_bytes()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error("transcription_session.webm_decode.failed", extra={
-                "error": str(e),
-            })
+            logger.error(
+                "transcription_session.webm_decode.failed session_id=%s %s: %s",
+                self.session_id,
+                type(e).__name__,
+                str(e)[:300],
+                exc_info=e,
+                extra={
+                    "session_id": self.session_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:300],
+                },
+            )
             return b""
         finally:
             if input_path:
@@ -320,49 +1139,73 @@ class TranscriptionSession:
 
     @staticmethod
     def _convert_webm_to_wav(webm_bytes: bytes) -> str | None:
-        """Convert WebM/Opus audio to 16kHz mono WAV via ffmpeg.
+        """Convert accumulated WebM audio into a WAV path for older replay tests.
 
         Args:
-            webm_bytes: Raw WebM container bytes (accumulated from browser chunks)
+            webm_bytes: Browser WebM bytes; empty or invalid bytes return `None`.
 
         Returns:
-            Path to the temporary WAV file, or None on conversion failure.
-            Caller is responsible for deleting the file.
+            Path to a WAV file the caller must delete, or `None` when decoding fails.
         """
         webm_path = None
         wav_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as infile:
-                webm_path = infile.name
-                infile.write(webm_bytes)
+            with tempfile.NamedTemporaryFile(
+                suffix=".webm", delete=False
+            ) as input_file:
+                webm_path = input_file.name
+                input_file.write(webm_bytes)
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as outfile:
-                wav_path = outfile.name
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False
+            ) as output_file:
+                wav_path = output_file.name
 
             result = subprocess.run(
                 [
-                    "ffmpeg", "-y", "-i", webm_path,
-                    "-ar", "16000", "-ac", "1",
-                    "-acodec", "pcm_s16le",
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    webm_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-acodec",
+                    "pcm_s16le",
                     wav_path,
                 ],
                 capture_output=True,
                 check=True,
                 timeout=30,
             )
-            logger.debug("transcription_session.ffmpeg.completed", extra={
-                "input_bytes": len(webm_bytes),
-                "stderr": result.stderr.decode("utf-8", errors="replace")[-200:],
-            })
+            logger.debug(
+                "transcription_session.ffmpeg.completed",
+                extra={
+                    "input_bytes": len(webm_bytes),
+                    "stderr": result.stderr.decode("utf-8", errors="replace")[-200:],
+                },
+            )
             return wav_path
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error("transcription_session.ffmpeg.failed", extra={
-                "error": str(e),
-                "stderr": (getattr(e, "stderr", None) or b"").decode("utf-8", errors="replace")[-200:],
-            })
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            logger.error(
+                "transcription_session.ffmpeg.failed %s: %s",
+                type(error).__name__,
+                str(error)[:300],
+                exc_info=error,
+                extra={
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:300],
+                    "stderr": (getattr(error, "stderr", None) or b"").decode(
+                        "utf-8", errors="replace"
+                    )[-200:],
+                },
+            )
+            # A failed conversion leaves the browser without usable WebM transcript text.
             if wav_path:
                 Path(wav_path).unlink(missing_ok=True)
             return None
         finally:
+            # The uploaded WebM scratch file is never needed after conversion.
             if webm_path:
                 Path(webm_path).unlink(missing_ok=True)

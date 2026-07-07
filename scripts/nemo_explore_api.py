@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Explore the NeMo diarization + ASR API surface in detail."""
+
+# ruff: noqa: E402
 import inspect
 import os
-import time
 import urllib.request
 
 import torch
@@ -20,14 +21,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # --- Load diarizer ---
 from nemo.collections.asr.models import SortformerEncLabelModel
 
-diar = SortformerEncLabelModel.from_pretrained(
-    "nvidia/diar_streaming_sortformer_4spk-v2.1"
-).eval().to(device)
+diar = (
+    SortformerEncLabelModel.from_pretrained(
+        "nvidia/diar_streaming_sortformer_4spk-v2.1"
+    )
+    .eval()
+    .to(device)
+)
 
 print("=== diar.diarize signature ===")
 sig = inspect.signature(diar.diarize)
 for name, param in sig.parameters.items():
-    default = param.default if param.default != inspect.Parameter.empty else "(required)"
+    default = (
+        param.default if param.default != inspect.Parameter.empty else "(required)"
+    )
     print(f"  {name}: {default}")
 
 print("\n=== Diarization output ===")
@@ -42,11 +49,17 @@ for seg in output[0]:
     print(f"  Segment: {repr(seg)}")
 
 # --- Load ASR ---
-from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
+from nemo.collections.asr.models.multitalker_asr_models import (
+    EncDecMultiTalkerRNNTBPEModel,
+)
 
-asr = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-    "nvidia/multitalker-parakeet-streaming-0.6b-v1"
-).eval().to(device)
+asr = (
+    EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+        "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+    )
+    .eval()
+    .to(device)
+)
 
 # Disable CUDA graphs
 asr.decoding.decoding.use_cuda_graph_decoder = False
@@ -55,7 +68,9 @@ asr.decoding.decoding.decoding_computer.disable_cuda_graphs()
 print("\n=== asr.transcribe signature ===")
 sig = inspect.signature(asr.transcribe)
 for name, param in sig.parameters.items():
-    default = param.default if param.default != inspect.Parameter.empty else "(required)"
+    default = (
+        param.default if param.default != inspect.Parameter.empty else "(required)"
+    )
     print(f"  {name}: {default}")
 
 # --- Test ASR with speaker mask ---
@@ -67,7 +82,7 @@ print(f"result[0].text = {result[0].text}")
 
 # Explore the Hypothesis object
 hyp = result[0]
-print(f"\n=== Hypothesis object attributes ===")
+print("\n=== Hypothesis object attributes ===")
 for attr in dir(hyp):
     if not attr.startswith("_"):
         val = getattr(hyp, attr)
@@ -82,24 +97,26 @@ print("\n=== Exploring multitalker_asr_mixins ===")
 
 # Look at the transcribe method override
 from nemo.collections.asr.parts.mixins import multitalker_asr_mixins
+
 src_file = inspect.getfile(multitalker_asr_mixins)
 print(f"Source: {src_file}")
 
 # Check _transcribe_forward method (the multitalker override)
-if hasattr(asr, '_transcribe_forward'):
+if hasattr(asr, "_transcribe_forward"):
     sig = inspect.signature(asr._transcribe_forward)
     print(f"_transcribe_forward signature: {sig}")
 
 # Check the config for multitalker transcription
-if hasattr(asr, '_cfg'):
+if hasattr(asr, "_cfg"):
     cfg = asr._cfg
-    if hasattr(cfg, 'num_speakers'):
+    if hasattr(cfg, "num_speakers"):
         print(f"num_speakers config: {cfg.num_speakers}")
 
 # --- Check SpeakerTaggedASR (composite pipeline) ---
 print("\n=== Checking SpeakerTaggedASR availability ===")
 try:
     from nemo.collections.asr.models import SpeakerTaggedASR
+
     print("SpeakerTaggedASR is available!")
     sig = inspect.signature(SpeakerTaggedASR.__init__)
     print(f"__init__ signature: {sig}")
@@ -120,7 +137,8 @@ for path in [
 
 # List all classes in multitalker_asr_models
 import nemo.collections.asr.models.multitalker_asr_models as mtm
-print(f"\nClasses in multitalker_asr_models:")
+
+print("\nClasses in multitalker_asr_models:")
 for name in dir(mtm):
     obj = getattr(mtm, name)
     if isinstance(obj, type):

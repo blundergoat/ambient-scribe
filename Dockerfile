@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile — Builds the PHP Symfony application container
+# Dockerfile - Builds the PHP Symfony application container
 # =============================================================================
 #
 # This is a simple development Dockerfile that:
@@ -18,7 +18,7 @@
 #   The build context is the ambient-scribe/ directory (set in docker-compose.yml).
 # =============================================================================
 
-# Use PHP 8.3 CLI as the base image (no Apache/Nginx — we use the built-in server)
+# Use PHP 8.3 CLI as the base image (no Apache/Nginx - we use the built-in server)
 FROM php:8.3-cli
 
 # Install system packages needed by PHP extensions and Composer
@@ -39,8 +39,16 @@ WORKDIR /app
 COPY . /app/
 
 # Install PHP dependencies (--no-dev skips test/dev packages, --optimize-autoloader for speed)
-# strands-php-client resolves from GitHub via the dev-dev branch in composer.lock.
+# strands-php-client resolves from the tagged Composer constraint in composer.lock.
 RUN composer install --no-dev --optimize-autoloader
+
+# Large PriMock demo WAVs are uploaded through Symfony before FastAPI replays them.
+# Keep local dev upload limits above the checked-in fixture corpus.
+RUN { \
+    echo "upload_max_filesize=128M"; \
+    echo "post_max_size=128M"; \
+    echo "memory_limit=512M"; \
+} > /usr/local/etc/php/conf.d/ambient-scribe-dev.ini
 
 # The PHP built-in server listens on this port
 EXPOSE 8080

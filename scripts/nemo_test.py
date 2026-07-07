@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NeMo API Discovery Test Script — Milestone 1, Task 1.4
+NeMo API Discovery Test Script - Milestone 1, Task 1.4
 
 Run this inside the NeMo Docker container to:
   1. Load the streaming Sortformer diarizer + multitalker Parakeet ASR
@@ -18,7 +18,6 @@ Usage:
 If no test audio is provided, the script downloads NeMo's sample file.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -30,6 +29,7 @@ def download_sample_audio(dest_path: str) -> str:
     url = "https://dldata-public.s3.us-east-2.amazonaws.com/2086-149220-0033.wav"
     print(f"  Downloading sample audio from {url}")
     import urllib.request
+
     urllib.request.urlretrieve(url, dest_path)
     print(f"  Saved to {dest_path}")
     return dest_path
@@ -39,8 +39,13 @@ def log_vram(label: str):
     """Print current GPU VRAM usage."""
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader"],
-            capture_output=True, text=True,
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.total,utilization.gpu",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
         )
         print(f"  VRAM ({label}): {result.stdout.strip()}")
     except FileNotFoundError:
@@ -72,6 +77,7 @@ def main():
     load_start = time.time()
 
     import torch
+
     print(f"  PyTorch version: {torch.__version__}")
     print(f"  CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
@@ -79,6 +85,7 @@ def main():
         print(f"  CUDA capability: {torch.cuda.get_device_capability(0)}")
 
     import nemo
+
     print(f"  NeMo version: {nemo.__version__}")
 
     from nemo.collections.asr.models import SortformerEncLabelModel
@@ -88,24 +95,37 @@ def main():
 
     print("  Loading streaming Sortformer diarizer...")
     diar_start = time.time()
-    diar_model = SortformerEncLabelModel.from_pretrained(
-        "nvidia/diar_streaming_sortformer_4spk-v2.1"
-    ).eval().to(device)
+    diar_model = (
+        SortformerEncLabelModel.from_pretrained(
+            "nvidia/diar_streaming_sortformer_4spk-v2.1"
+        )
+        .eval()
+        .to(device)
+    )
     print(f"  Sortformer loaded in {time.time() - diar_start:.1f}s")
     log_vram("after Sortformer")
 
     print("  Loading multitalker Parakeet ASR...")
     asr_start = time.time()
-    from nemo.collections.asr.models.multitalker_asr_models import EncDecMultiTalkerRNNTBPEModel
-    asr_model = EncDecMultiTalkerRNNTBPEModel.from_pretrained(
-        "nvidia/multitalker-parakeet-streaming-0.6b-v1"
-    ).eval().to(device)
-    # Disable CUDA graphs in decoding — incompatible with PyTorch 2.8.0a0 pre-release
+    from nemo.collections.asr.models.multitalker_asr_models import (
+        EncDecMultiTalkerRNNTBPEModel,
+    )
+
+    asr_model = (
+        EncDecMultiTalkerRNNTBPEModel.from_pretrained(
+            "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+        )
+        .eval()
+        .to(device)
+    )
+    # Disable CUDA graphs in decoding - incompatible with PyTorch 2.8.0a0 pre-release
     # (cu_call returns 5 values instead of expected 6)
-    if hasattr(asr_model, 'decoding') and hasattr(asr_model.decoding, 'decoding'):
+    if hasattr(asr_model, "decoding") and hasattr(asr_model.decoding, "decoding"):
         dd = asr_model.decoding.decoding
         dd.use_cuda_graph_decoder = False
-        if hasattr(dd, 'decoding_computer') and hasattr(dd.decoding_computer, 'disable_cuda_graphs'):
+        if hasattr(dd, "decoding_computer") and hasattr(
+            dd.decoding_computer, "disable_cuda_graphs"
+        ):
             dd.decoding_computer.disable_cuda_graphs()
             print("  Disabled CUDA graphs on decoding_computer (PyTorch 2.8 compat)")
     print(f"  Parakeet loaded in {time.time() - asr_start:.1f}s")
@@ -142,6 +162,7 @@ def main():
     except Exception as e:
         print(f"  Diarization failed: {e}")
         import traceback
+
         traceback.print_exc()
 
     # --- Standalone ASR ---
@@ -153,19 +174,19 @@ def main():
         asr_infer_time = time.time() - asr_infer_start
         print(f"  ASR time: {asr_infer_time:.1f}s")
         print(f"  Output type: {type(asr_output)}")
-        if hasattr(asr_output, '__len__'):
+        if hasattr(asr_output, "__len__"):
             print(f"  Output length: {len(asr_output)}")
         # Try to get text output
         if isinstance(asr_output, list):
             for i, item in enumerate(asr_output[:3]):
                 print(f"  Output[{i}] type: {type(item)}")
-                if hasattr(item, 'text'):
+                if hasattr(item, "text"):
                     print(f"  Output[{i}].text: {item.text}")
                 elif isinstance(item, str):
                     print(f"  Output[{i}]: {item}")
                 else:
                     print(f"  Output[{i}]: {item}")
-        elif hasattr(asr_output, 'text'):
+        elif hasattr(asr_output, "text"):
             print(f"  Text: {asr_output.text}")
         else:
             output_str = str(asr_output)
@@ -174,6 +195,7 @@ def main():
     except Exception as e:
         print(f"  ASR failed: {e}")
         import traceback
+
         traceback.print_exc()
 
     # =========================================================================
@@ -182,26 +204,34 @@ def main():
     print("\n[3/3] Summary")
     print("=" * 70)
 
-    print(f"\n--- Timing ---")
+    print("\n--- Timing ---")
     print(f"  Model load:       {load_time:.1f}s")
     log_vram("final")
 
     # Print model class info for API documentation
-    print(f"\n--- Model Classes ---")
+    print("\n--- Model Classes ---")
     print(f"  Diarizer: {type(diar_model).__module__}.{type(diar_model).__name__}")
     print(f"  ASR:      {type(asr_model).__module__}.{type(asr_model).__name__}")
 
     # Check what methods are available
-    print(f"\n--- Diarizer API (public methods) ---")
-    diar_methods = [m for m in dir(diar_model) if not m.startswith('_') and callable(getattr(diar_model, m, None))]
+    print("\n--- Diarizer API (public methods) ---")
+    diar_methods = [
+        m
+        for m in dir(diar_model)
+        if not m.startswith("_") and callable(getattr(diar_model, m, None))
+    ]
     for m in sorted(diar_methods):
-        if m in ('diarize', 'forward', 'transcribe', 'predict_step', 'infer_diarize'):
+        if m in ("diarize", "forward", "transcribe", "predict_step", "infer_diarize"):
             print(f"  {m}")
 
-    print(f"\n--- ASR API (public methods) ---")
-    asr_methods = [m for m in dir(asr_model) if not m.startswith('_') and callable(getattr(asr_model, m, None))]
+    print("\n--- ASR API (public methods) ---")
+    asr_methods = [
+        m
+        for m in dir(asr_model)
+        if not m.startswith("_") and callable(getattr(asr_model, m, None))
+    ]
     for m in sorted(asr_methods):
-        if m in ('transcribe', 'forward', 'predict_step', 'change_decoding_strategy'):
+        if m in ("transcribe", "forward", "predict_step", "change_decoding_strategy"):
             print(f"  {m}")
 
     print("\n" + "=" * 70)

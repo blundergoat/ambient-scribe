@@ -28,7 +28,7 @@ Runtime workflow rules (execution loop, autonomy tiers, DoD, router, log files) 
 
 ## Architecture
 
-Real-time multi-mode transcription system. Browser captures microphone audio via `PcmStreamer`, encodes it as raw PCM, and streams binary frames over WebSocket to the Python agent layer. NeMo Parakeet performs GPU-accelerated diarization and ASR. The Strands role inference agent assigns mode-specific roles to speaker labels using canonical DOCTOR/PATIENT slots internally. Raw segments, role updates, and summaries are published to the browser via Mercure SSE.
+Real-time medical transcription system. Browser captures consultation audio via `PcmStreamer`, encodes it as raw PCM, and streams binary frames over WebSocket to the Python agent layer. NeMo Parakeet performs GPU-accelerated diarization and ASR. The Strands role inference agent assigns DOCTOR/PATIENT roles to speaker labels. Raw segments, role updates, and summaries are published to the browser via Mercure SSE.
 
 ```
 Browser (PcmStreamer, raw PCM) → WebSocket → FastAPI (server.py)
@@ -57,7 +57,7 @@ When changing any layer, check:
 
 ## Git Hygiene
 
-- Keep commits atomic — one logical change per commit.
+- Keep commits atomic - one logical change per commit.
 - Don't mix formatting-only changes with behavioral changes.
 - Don't rewrite history unless explicitly asked.
 

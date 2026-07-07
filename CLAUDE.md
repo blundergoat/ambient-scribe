@@ -1,6 +1,6 @@
-# CLAUDE.md — v1.13.0 (2026-07-04)
+# CLAUDE.md - v1.13.0 (2026-07-04)
 
-Ambient scribe: audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Supports 6 modes (Medical, Meeting, Interview, TV/Media, Lecture, General). Core invariant: NeMo owns the single GPU; role inference never runs on it.
+Ambient scribe: medical consultation audio → WebSocket → NeMo GPU → Mercure SSE. Symfony 6.4 (PHP) + FastAPI (Python) + NeMo + Mercure. Core invariant: NeMo owns the single GPU; role inference never runs on it.
 
 Workspace boundary: this checkout is the controlling goat-flow workspace. The selected target project is the project currently being inspected or changed; it may differ from the controlling workspace. Use target-scoped commands such as `git -C <target> status` and keep writes inside the declared target. Target projects do not need goat-flow installed unless the active preset audits goat-flow installation.
 
@@ -24,18 +24,18 @@ User's explicit instruction for this session > this `CLAUDE.md` file > `.goat-fl
 
 ## Execution Loop: READ → SCOPE → ACT → VERIFY
 
-When a goat-* skill is active, the skill's Step 0 satisfies READ/SCOPE — resume at ACT.
+When a goat-* skill is active, the skill's Step 0 satisfies READ/SCOPE - resume at ACT.
 
-**READ** — Gather evidence from real files before any claim. Cross-boundary work MUST read both sides (PHP + Python + Twig/JS). Never fabricate codebase facts. Before declaring any tool or capability unavailable, read the matching playbook in `.goat-flow/skill-docs/playbooks/` (e.g. `browser-use.md`, `page-capture.md`) and run that doc's "Availability Check" section verbatim - project-local CLI tools at `~/.local/bin/` are valid; do not conflate "no harness/MCP tool" with "no tool".
+**READ** - Gather evidence from real files before any claim. Cross-boundary work MUST read both sides (PHP + Python + Twig/JS). Never fabricate codebase facts. Before declaring any tool or capability unavailable, read the matching playbook in `.goat-flow/skill-docs/playbooks/` (e.g. `browser-use.md`, `page-capture.md`) and run that doc's "Availability Check" section verbatim - project-local CLI tools at `~/.local/bin/` are valid; do not conflate "no harness/MCP tool" with "no tool".
 
 ```
 BAD:  "WebSocket publishes to topic 'transcribe'" (fabricated)
 GOOD: Read server.py:236 → publishes to 'scribe/session/{id}/raw'
 ```
 
-**SCOPE** — Declare in one step: Intent (question → answer; directive → act), Complexity (Hotfix 2/3, Standard 4/10, System 6/20, Infra 8/25), Mode, files allowed to change, non-goals, blast radius. Re-classify if reads exceed 3× estimate.
+**SCOPE** - Declare in one step: Intent (question → answer; directive → act), Complexity (Hotfix 2/3, Standard 4/10, System 6/20, Infra 8/25), Mode, files allowed to change, non-goals, blast radius. Re-classify if reads exceed 3× estimate.
 
-**ACT** — Mode transitions MUST be explicit.
+**ACT** - Mode transitions MUST be explicit.
 
 | Mode | Behaviour |
 |---|---|
@@ -47,7 +47,7 @@ GOOD: Read server.py:236 → publishes to 'scribe/session/{id}/raw'
 
 State line: `State: [MODE] | Goal: [one line] | Exit: [condition]`. Switch: "Switching to [MODE] because [reason]."
 
-**VERIFY** — Focused checks after each change; broader checks before done.
+**VERIFY** - Focused checks after each change; broader checks before done.
 - Level 1 (note, continue): flaky test, unrelated failure, non-blocking lint warning
 - Level 2 (stop, escalate): auth, API contracts, session state, Mercure, NeMo, audio format, cross-boundary
 - Re-read every `file:line` cited before presenting findings; unreadable = UNVERIFIED
@@ -68,7 +68,7 @@ Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` unde
 
 **Always:** read/search/diff, run focused tests, run `./scripts/preflight-checks.sh` sub-steps, update docs/tests required by the change.
 
-**Ask First** — touching any of these requires the checklist below:
+**Ask First** - touching any of these requires the checklist below:
 - Auth: `src/Controller/ScribeController.php`, `config/packages/framework.yaml`
 - Session lifecycle: `strands_agents/session_lifecycle.py`, `strands_agents/nemo_session.py`
 - PHP ↔ Python contracts: `src/Service/RoleInferenceService.php` ↔ `strands_agents/api/`
@@ -107,7 +107,7 @@ Footguns go to `.goat-flow/learning-loop/footguns/`; lessons go to `.goat-flow/l
 
 ## Hard Constraints
 
-- **GPU exclusivity:** NeMo owns the GPU. Role inference MUST use Bedrock or CPU Ollama — never local GPU.
+- **GPU exclusivity:** NeMo owns the GPU. Role inference MUST use Bedrock or CPU Ollama - never local GPU.
 - **ThreadPoolExecutor:** NeMo inference MUST use `run_in_executor`; never call directly in an async context.
 - **Session ID coupling:** UUID flows PHP → Twig → JS → WebSocket → Mercure. All layers MUST match.
 - **Audio contract:** Browser streams 16 kHz PCM; `NEMO_STREAM_INPUT_FORMAT` MUST agree. See `.goat-flow/learning-loop/footguns/audio.md`.

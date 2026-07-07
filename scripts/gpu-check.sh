@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# GPU Prerequisites Check — Ambient Scribe
+# GPU Prerequisites Check - Ambient Scribe
 # =============================================================================
 #
 # Verifies that the NVIDIA GPU is accessible from both the host and Docker.
@@ -23,7 +23,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 
 echo ""
-echo -e "${BOLD}Ambient Scribe — GPU Prerequisites Check${RESET}"
+echo -e "${BOLD}Ambient Scribe - GPU Prerequisites Check${RESET}"
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 

@@ -43,7 +43,7 @@ if verify_native_binary grok "Grok CLI"; then
     grok --version 2>/dev/null || echo -e "${YELLOW}Version command not available yet${NC}"
     npm_prefix_warning
 
-    # API Key Setup — skip in non-interactive mode
+    # API Key Setup - skip in non-interactive mode
     echo -e "\n${CYAN}========================================"
     echo -e "Setting up Grok API Key"
     echo -e "========================================${NC}"

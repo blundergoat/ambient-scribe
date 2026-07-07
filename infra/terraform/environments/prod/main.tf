@@ -28,7 +28,7 @@
 # (same task, same network namespace -- no service discovery needed).
 #
 # MODULE DEPENDENCY ORDER:
-#   0. network (conditional — creates VPC if vpc_id not provided)
+#   0. network (conditional - creates VPC if vpc_id not provided)
 #   1. dynamodb, ecr, ecr_app, observability, secrets (independent)
 #   2. security (needs vpc_id), iam (needs phase 1 ARNs)
 #   3. ecs (needs iam, observability, ecr), dns (needs hosted_zone_id)
@@ -112,7 +112,7 @@ locals {
 }
 
 # =============================================================================
-# Phase 0: Network (conditional — creates VPC when vpc_id is not provided)
+# Phase 0: Network (conditional - creates VPC when vpc_id is not provided)
 # =============================================================================
 
 data "aws_availability_zones" "available" {

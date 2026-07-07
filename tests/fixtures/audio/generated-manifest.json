@@ -1,0 +1,177 @@
+[
+  {
+    "filename": "primock57-day1-consultation02-i-have-sore-red-skin.wav",
+    "display_name": "PriMock57 day 1 consultation 2: I have sore, red skin",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation02",
+    "complaint": "I have sore, red skin",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 559.2,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation02_doctor.wav",
+      "audio/day1_consultation02_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation02.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation02_doctor.wav, audio/day1_consultation02_patient.wav, notes/day1_consultation02.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation03-i-have-terrible-headache.wav",
+    "display_name": "PriMock57 day 1 consultation 3: I have terrible headache",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation03",
+    "complaint": "I have terrible headache",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 544.3,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation03_doctor.wav",
+      "audio/day1_consultation03_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation03.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation03_doctor.wav, audio/day1_consultation03_patient.wav, notes/day1_consultation03.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose.wav",
+    "display_name": "PriMock57 day 1 consultation 4: I don't feel well, I have a cough and runny nose",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation04",
+    "complaint": "I don't feel well, I have a cough and runny nose",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 615.5,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation04_doctor.wav",
+      "audio/day1_consultation04_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation04.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation04_doctor.wav, audio/day1_consultation04_patient.wav, notes/day1_consultation04.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation05-lower-abdominal-pain.wav",
+    "display_name": "PriMock57 day 1 consultation 5: Lower abdominal pain",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation05",
+    "complaint": "Lower abdominal pain",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 577.0,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation05_doctor.wav",
+      "audio/day1_consultation05_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation05.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation05_doctor.wav, audio/day1_consultation05_patient.wav, notes/day1_consultation05.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation06-hard-to-breathe.wav",
+    "display_name": "PriMock57 day 1 consultation 6: hard to breathe",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation06",
+    "complaint": "hard to breathe",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 662.5,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation06_doctor.wav",
+      "audio/day1_consultation06_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation06.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation06_doctor.wav, audio/day1_consultation06_patient.wav, notes/day1_consultation06.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation07-i-have-a-cough-and-cold.wav",
+    "display_name": "PriMock57 day 1 consultation 7: I have a cough and cold",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation07",
+    "complaint": "I have a cough and cold",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 858.2,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation07_doctor.wav",
+      "audio/day1_consultation07_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation07.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation07_doctor.wav, audio/day1_consultation07_patient.wav, notes/day1_consultation07.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day1-consultation08-i-have-dry-itchy-skin.wav",
+    "display_name": "PriMock57 day 1 consultation 8: I have dry, itchy skin",
+    "dataset": "PriMock57",
+    "case_id": "day1_consultation08",
+    "complaint": "I have dry, itchy skin",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 466.2,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day1_consultation08_doctor.wav",
+      "audio/day1_consultation08_patient.wav"
+    ],
+    "source_note": "notes/day1_consultation08.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation08_doctor.wav, audio/day1_consultation08_patient.wav, notes/day1_consultation08.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  }
+]

@@ -18,13 +18,13 @@ applyTo: 'strands_agents/**/*.py'
 strands_agents/
 ├── api/
 │   ├── __init__.py
-│   └── server.py              # FastAPI — /health, /transcribe/file, /ws/transcribe/{id}, /session/{id}/history
+│   └── server.py              # FastAPI - /health, /transcribe/file, /ws/transcribe/{id}, /session/{id}/history
 ├── agents/
 │   ├── __init__.py            # Agent package
 │   └── transcription_agent.py # Strands role inference agent (Bedrock or Ollama)
 ├── tools/
 │   └── assign_roles.py        # RoleMapping, RoleMappingState, per-session store
-├── nemo_pipeline.py           # NeMo Parakeet wrapper — Segment, TranscriptionResult, NemoPipeline
+├── nemo_pipeline.py           # NeMo Parakeet wrapper - Segment, TranscriptionResult, NemoPipeline
 ├── nemo_session.py            # AudioBuffer, TranscriptionSession
 ├── session.py                 # In-memory SessionStore for transcript history
 └── requirements.txt
@@ -44,22 +44,22 @@ strands_agents/
 - `snake_case` for functions, methods, variables, and modules
 - `PascalCase` for classes and Pydantic models
 - `UPPER_SNAKE_CASE` for module-level constants
-- Descriptive names — `session_store` not `ss`, `transcription_result` not `tr`
+- Descriptive names - `session_store` not `ss`, `transcription_result` not `tr`
 
 ## Architecture Patterns
 
 - **NeMo singleton**: One `NemoPipeline` instance created at import time, shared across all WebSocket sessions
 - **Per-session state**: Each WebSocket connection gets its own `TranscriptionSession` with an `AudioBuffer`
-- **Role inference**: The Strands agent uses Bedrock (or Ollama CPU) to assign mode-specific roles to diarized speaker labels. The internal canonical slots are DOCTOR/PATIENT, but the prompt and UI adapt them for medical, meeting, interview, TV/media, lecture, and general modes.
+- **Role inference**: The Strands agent uses Bedrock (or Ollama CPU) to assign medical DOCTOR/PATIENT roles to diarized speaker labels.
 - **Role mapping state**: `RoleMappingState` in `tools/assign_roles.py` maintains per-session speaker-to-role mappings
 - **Mercure publishing**: Transcription results are published to Mercure SSE topics for real-time browser delivery
 
 ## API Contract
 
-- `POST /transcribe/file` — Upload a WAV file, returns batch transcription result
-- `WS /ws/transcribe/{session_id}` — Live audio streaming via WebSocket; binary audio frames in, transcription events out
-- `GET /session/{id}/history` — Returns transcript history for a session
-- `GET /health` — Returns `{ "status": "ok" }` (Docker healthcheck)
+- `POST /transcribe/file` - Upload a WAV file, returns batch transcription result
+- `WS /ws/transcribe/{session_id}` - Live audio streaming via WebSocket; binary audio frames in, transcription events out
+- `GET /session/{id}/history` - Returns transcript history for a session
+- `GET /health` - Returns `{ "status": "ok" }` (Docker healthcheck)
 
 Changes to Pydantic models or WebSocket message formats MUST be coordinated with the Symfony frontend (Twig template WebSocket/SSE handling).
 
