@@ -206,7 +206,7 @@ correction pass writes corrected rows beside (never over) the live rows, and
 
 | Area | Dependency floor or pin | Source |
 | --- | --- | --- |
-| PHP | `>=8.3 <8.5` | `composer.json` |
+| PHP | `>=8.3 <9.0` | `composer.json` |
 | Symfony | `^6.4` | `composer.json` |
 | Strands PHP client | `dev-dev#98bd6598f5754d5d7dfc68b0cc65d55b6651e6df` | `composer.json` |
 | NeMo base image | `nvcr.io/nvidia/nemo:26.02` | `docker/nemo/Dockerfile` |

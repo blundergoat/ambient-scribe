@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "7335ce6093c7f6d677a5a59b9234a6f9",
+    "content-hash": "f4def295d20e638976317a4132e6e5fa",
     "packages": [
         {
             "name": "blundergoat/strands-php-client",
@@ -12,12 +12,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/blundergoat/strands-php-client.git",
-                "reference": "98bd6598f5754d5d7dfc68b0cc65d55b6651e6df"
+                "reference": "95e40a518cd86bb9e0dc7ece87bf06d044664844"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/blundergoat/strands-php-client/zipball/98bd6598f5754d5d7dfc68b0cc65d55b6651e6df",
-                "reference": "98bd6598f5754d5d7dfc68b0cc65d55b6651e6df",
+                "url": "https://api.github.com/repos/blundergoat/strands-php-client/zipball/95e40a518cd86bb9e0dc7ece87bf06d044664844",
+                "reference": "95e40a518cd86bb9e0dc7ece87bf06d044664844",
                 "shasum": ""
             },
             "require": {
@@ -103,7 +103,7 @@
                 "issues": "https://github.com/blundergoat/strands-php-client/issues",
                 "source": "https://github.com/blundergoat/strands-php-client"
             },
-            "time": "2026-07-05T04:16:28+00:00"
+            "time": "2026-07-07T08:56:49+00:00"
         },
         {
             "name": "lcobucci/jwt",
@@ -5555,11 +5555,11 @@
         },
         {
             "name": "phpstan/phpstan",
-            "version": "2.2.4",
+            "version": "2.2.5",
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/f0fe3fb03bb53ce68cc2416785b260e62226ec27",
-                "reference": "f0fe3fb03bb53ce68cc2416785b260e62226ec27",
+                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/909c1e5fef7989ac0d0c1c5c42e32a5c4f6198a0",
+                "reference": "909c1e5fef7989ac0d0c1c5c42e32a5c4f6198a0",
                 "shasum": ""
             },
             "require": {
@@ -5615,7 +5615,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-07-03T07:00:23+00:00"
+            "time": "2026-07-05T06:31:06+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",
@@ -5964,24 +5964,24 @@
         },
         {
             "name": "phpunit/phpunit",
-            "version": "12.5.30",
+            "version": "12.5.31",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "900400a5b616d6fb306f9549f6da33ba615d3fbb"
+                "reference": "0608d157a284f15cc73b99a3327eff06b66a176d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/900400a5b616d6fb306f9549f6da33ba615d3fbb",
-                "reference": "900400a5b616d6fb306f9549f6da33ba615d3fbb",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/0608d157a284f15cc73b99a3327eff06b66a176d",
+                "reference": "0608d157a284f15cc73b99a3327eff06b66a176d",
                 "shasum": ""
             },
             "require": {
                 "ext-dom": "*",
+                "ext-filter": "*",
                 "ext-json": "*",
                 "ext-libxml": "*",
                 "ext-mbstring": "*",
-                "ext-xml": "*",
                 "ext-xmlwriter": "*",
                 "myclabs/deep-copy": "^1.13.4",
                 "phar-io/manifest": "^2.0.4",
@@ -6042,7 +6042,7 @@
             "support": {
                 "issues": "https://github.com/sebastianbergmann/phpunit/issues",
                 "security": "https://github.com/sebastianbergmann/phpunit/security/policy",
-                "source": "https://github.com/sebastianbergmann/phpunit/tree/12.5.30"
+                "source": "https://github.com/sebastianbergmann/phpunit/tree/12.5.31"
             },
             "funding": [
                 {
@@ -6050,7 +6050,7 @@
                     "type": "other"
                 }
             ],
-            "time": "2026-06-15T13:12:30+00:00"
+            "time": "2026-07-06T14:54:16+00:00"
         },
         {
             "name": "react/cache",
@@ -8703,7 +8703,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=8.3 <8.5"
+        "php": ">=8.3 <9.0"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

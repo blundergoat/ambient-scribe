@@ -113,7 +113,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Python API structure** - moved live streaming and role-inference queue workflows out of `server.py` while preserving FastAPI routes and browser-visible Mercure behavior.
 - **Python quality gates** - scoped gruff-py to maintained runtime code and kept pytest as the behavioral test-quality gate for integration-heavy Python tests.
 - **PHP complexity gate** - retired the bespoke cyclomatic checker and rewired Composer/preflight complexity checks to gruff-php.
-- **PHP dependency bounds** - pinned the PHP runtime range and moved `blundergoat/strands-php-client` from the moving `dev-dev` branch to the tagged 1.4 series.
+- **PHP dependency bounds** - required PHP `>=8.3 <9.0` (8.3+ within PHP 8; the deployable image stays on 8.3) and moved `blundergoat/strands-php-client` from the moving `dev-dev` branch to the tagged 1.4 series.
 - **PHP generated reference scope** - excluded the generated Symfony/Psalm `config/reference.php` from gruff-php instead of hand-editing generated output.
 - **PHPUnit strictness** - enabled failure-on-warning, failure-on-deprecation, risky-test, output, and global-state strict flags.
 - **Observable process logs** - added JSON-line logging on Python and PHP with `session_id`/`correlation_id` join keys, Strands SDK token/latency metrics, and Mercure delivery outcomes.

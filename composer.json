@@ -15,8 +15,8 @@
         "source": "https://github.com/blundergoat/ambient-scribe"
     },
     "require": {
-        "php": ">=8.3 <8.5",
-        "blundergoat/strands-php-client": "dev-dev#98bd6598f5754d5d7dfc68b0cc65d55b6651e6df",
+        "php": ">=8.3 <9.0",
+        "blundergoat/strands-php-client": "dev-dev",
         "symfony/framework-bundle": "^6.4",
         "symfony/mercure": "^0.7",
         "symfony/mercure-bundle": "^0.4",
