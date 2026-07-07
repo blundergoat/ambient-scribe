@@ -112,7 +112,7 @@ last_reviewed: 2026-07-07
 ## Footgun: App-origin summary route must stay proxied to FastAPI
 **Status:** active | **Created:** 2026-07-04 | **Evidence:** OBSERVED
 
-- **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${CONFIG.sessionId}/summary")
+- **Files:** `public/js/scribe-output.js` (search: "fetch(`/session/${requestedSessionId}/summary")
 - **Files:** `public/js/scribe-actions.js` (search: "async function readJsonResponse")
 - **Files:** `src/Controller/ScribeController.php` (search: "public function summary")
 - **Files:** `strands_agents/api/server.py` (search: "async def generate_summary")
@@ -190,6 +190,26 @@ last_reviewed: 2026-07-07
 - **Evidence:** 2026-07-06 consult-03 manual test, session `fd2d7bfb-5d23-4e32-b0fa-e4f16cf0fed7`: grace expired `19:59:34Z`; a row override `seg-0002 -> PATIENT` at `20:07:34Z` published `{"type":"role_update","mapping":{},"row_overrides":{"seg-0002":"PATIENT"},...}` and the header badge dropped from `Roles identified (92%)` to `Speakers unclear (0%)` while the row chip flipped correctly.
 - **Prevention:** Post-visit request paths must peek at existing role state rather than `get_or_create_state` before including mapping/confidence in a publish, and the browser must treat an empty mapping as "no mapping news" rather than letting a `manual_override` row-scope event overwrite session-level confidence. When adding any post-Stop interaction (overrides, review queues, edits), check what lifecycle teardown has already destroyed before republishing derived state.
 - **Current state (2026-07-07):** the row-scope publish now peeks (`strands_agents/tools/assign_roles.py`, search: "def peek_state") and omits mapping/confidence for a finished visit, and `handleRoleUpdate` routes badge news through `applyMappingAndConfidenceNews` so `manual_override` events never move the earned badge (regressions: `tests/python/test_api.py`, search: "publishes_no_fabricated_mapping"; `tests/e2e/browser.spec.js`, search: "cannot wipe the badge"). Residual trap: the speaker-scope branch of `roles_override` and the `roles_snapshot` endpoint still call `get_or_create_state` and can resurrect empty state post-teardown; badge impact is guarded browser-side, but the state fabrication itself remains.
+
+## Footgun: Logger-level filters never see records propagated from module loggers
+
+**Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/server.py` (search: "Correlation must be attached at the handler")
+- **Files:** `strands_agents/logging_config.py` (search: "dictConfig")
+- **What breaks:** Python runs a logger's filters only on records CREATED by that logger; records from child loggers propagate straight to ancestor HANDLERS without touching ancestor logger filters. The correlation-ID feature attached `CorrelationIdFilter` to the root logger with a comment claiming it covered "ALL log records" - but every module here logs via `logging.getLogger(__name__)`, so `correlation_id` was missing from essentially every JSON line and the observability feature could not join a clinician action across HTTP, WebSocket, and role-worker logs (found via PR #3 bot review).
+- **Prevention:** Anything that must stamp every record (correlation IDs, session IDs, redaction) belongs on the HANDLER (`handler.addFilter(...)` after `configure_logging()`) or a `logging.setLogRecordFactory` - never on the root logger. Regressions: `tests/python/test_observability.py` (search: "corr-child-123") proves a child-logger record carries the ID; the config assertion checks handlers existentially because pytest injects its own root capture handlers (see lessons/verification.md, search: "pytest owns extra root log handlers").
+
+## Footgun: Role overrides span three stores that must move together
+
+**Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/server.py` (search: "confirmed_overrides.pop")
+- **Files:** `public/js/scribe-transcript.js` (search: "manualOverrides.delete")
+- **Files:** `strands_agents/api/server.py` (search: "corrected artifact snapshots roles")
+- **Files:** `strands_agents/api/summary_request.py` (search: "if corrected_segments:")
+- **What breaks:** A clinician role decision is recorded in three independent places: the server's `confirmed_overrides` (enforced over agent proposals by `_apply_confirmed_overrides`), the browser's `manualOverrides` set (blocks incoming `role_update` mappings client-side), and the corrected-transcript artifact (role snapshot taken at correction time, preferred by summaries). Any mutation path that touches only one diverges the rest. Two PR #3 review findings hit this: cycling a label back to Unknown (the documented undo) stored UNKNOWN as a PERMANENT confirmed override so the agent could never relabel - and even after the server fix, the browser's `manualOverrides` would still have blocked relabels until `cycleRole` also deleted its entry; separately, overrides after the first correction never reached `corrected_segments`, so retried summaries cited pre-fix roles.
+- **Prevention:** Any new role-mutation feature (bulk relabel, undo stack, review queue) must decide explicitly for EACH of the three stores: update, invalidate, or deliberately skip - and say why. Current wiring: UNKNOWN pops the confirmed override AND the browser set; speaker overrides rewrite corrected rows in place; row overrides invalidate the corrected artifact so the next summary re-corrects (regressions: `tests/python/test_api.py`, search: "unknown_override_clears_confirmed_override", "updates_corrected_rows_for_retried_summaries", "invalidates_stale_corrected_artifact").
 
 ## Resolved Entries
 

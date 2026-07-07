@@ -25,3 +25,14 @@ last_reviewed: 2026-07-07
 - **Files:** `strands_agents/nemo_session.py` (search: "def _validate_audio_format")
 - **What breaks:** The browser always streams 16 kHz PCM through `PcmStreamer`, while the server trusts `NEMO_STREAM_INPUT_FORMAT`. If env/config drifts to `webm`, live sessions fail on the first chunk. Historically NeMo received garbage audio and produced nonsensical transcriptions with no errors in logs.
 - **Evidence:** `PcmStreamer` down-samples and emits 16-bit PCM bytes, Docker and `.env.example` expose `NEMO_STREAM_INPUT_FORMAT`, and `_validate_audio_format()` rejects mismatched magic bytes after the session starts.
+
+## Footgun: AudioBuffer trims its head silently; whole-visit consumers corrupt output
+
+**Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_session.py` (search: "def full_audio")
+- **Files:** `strands_agents/nemo_session.py` (search: "def trimmed_seconds")
+- **Files:** `strands_agents/api/server.py` (search: "retention window")
+- **Files:** `strands_agents/post_visit_correction.py` (search: "confident_anchor_count < max")
+- **What breaks:** `AudioBuffer` drops audio from the front once a visit exceeds `NEMO_BUFFER_MAX_DURATION` (default 900s), and `full_audio()` returns only the retained tail with no signal that anything is missing. Any consumer that pairs that audio with whole-visit state silently corrupts clinical output. The post-visit correction endpoint did exactly this (found via PR #3 bot review): it aligned tail-only second-pass ASR against the full-visit `live_segments` scaffold, and once tail anchors fell below the confidence gate, the proportional fallback spread tail words across every row of the visit - early history dropped or misattributed, then preferred by the summary. A sibling trap: the windowed emission shift used the REQUESTED window start while `audio_from()` clamps to the retained head, timestamping post-trim speech too early.
+- **Prevention:** Any new consumer of buffered session audio (export, finalize, re-transcription, diagnostics) MUST check `buffer.trimmed_seconds` first and either scope its other inputs to the retained window or refuse with an explicit fallback. Current guards: the correction endpoint returns `_correction_unavailable_response` when trimmed (regression: `tests/python/test_post_visit_correction.py`, search: "falls_back_when_buffer_trimmed"), and the window shift clamps via `effective_window_start_seconds` (regression: `tests/python/test_nemo_session.py`, search: "uses_retained_start_after_trim").
