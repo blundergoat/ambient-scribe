@@ -24,6 +24,16 @@ _ECHO_DUPLICATE_EXCLUDED_WORDS = (
     | _IDENTITY_ECHO_ACK_WORDS
     | frozenset({"yeah", "yes", "no", "mm", "hmm", "mhm"})
 )
+# M12: cues too generic to overrule a live scaffold on their own. On strong
+# scaffolds these were the ONLY source of cleanup damage ("Okay. Oh, I can do"
+# flipped to Doctor by "okay"; the doctor's "and I hope..." flipped to Patient
+# by "and i"), while on weak scaffolds they still help - so they form a weak
+# tier that only acts when the visit shows a weak-scaffold signal.
+_WEAK_DIRECT_CUES = frozenset({"okay", "and i"})
+# Strong direct cues never contradicted a good scaffold across four gated
+# sessions (0 strong-cue flips on every strong scaffold, 10 on the weak one),
+# so the count of strong-cue flips IS the weak-scaffold signal.
+WEAK_TIER_MIN_STRONG_FLIPS = 3
 
 _DOCTOR_CUES = (
     "hello there its dr",
@@ -544,13 +554,46 @@ def safe_source_time(value: Any) -> float:
 def apply_role_cue_cleanup(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Adjust corrected-row roles when text carries obvious speaker cues.
 
+    M12 makes the cleanup scaffold-aware: strong cues always apply, but the
+    weak tier (bare "okay"/"and I" and short-row neighbor inheritance) only
+    acts when the visit shows the weak-scaffold signal - enough strong-cue
+    flips that the live labels clearly disagree with what was said.
+
     Args:
         segments: Corrected rows in chronological order; empty means the user has no corrected artifact.
 
     Returns:
         Corrected rows with cue-based role fixes marked by `role_source`; empty stays empty.
     """
+    # Pass 1 replays today's full cleanup on scratch rows purely to count
+    # strong-cue flips - the self-referential weak-scaffold signal.
+    strong_flip_count = _sequential_cue_pass(
+        [dict(segment) for segment in segments],
+        weak_tier_enabled=True,
+    )
+    weak_tier_enabled = strong_flip_count >= WEAK_TIER_MIN_STRONG_FLIPS
+
     cleaned_segments = [dict(segment) for segment in segments]
+    _sequential_cue_pass(cleaned_segments, weak_tier_enabled=weak_tier_enabled)
+    return cleaned_segments
+
+
+def _sequential_cue_pass(
+    cleaned_segments: list[dict[str, Any]],
+    *,
+    weak_tier_enabled: bool,
+) -> int:
+    """Run one sequential cue-cleanup pass over rows, honoring the weak tier.
+
+    Args:
+        cleaned_segments: Rows mutated in place, in chronological order.
+        weak_tier_enabled: False suppresses weak-tier flips so a strong live
+            scaffold keeps its own labels; True is the historical behavior.
+
+    Returns:
+        Number of flips backed by a strong direct cue - the weak-scaffold signal.
+    """
+    strong_flip_count = 0
     # Each corrected row can carry its own cue or borrow context from a short neighbor.
     for row_index, segment in enumerate(cleaned_segments):
         # Rows created by the mixed-chip splitter already have a deliberate visible owner.
@@ -573,8 +616,9 @@ def apply_role_cue_cleanup(segments: list[dict[str, Any]]) -> list[dict[str, Any
             next_text = str(next_segment.get("text", ""))
             next_role = str(next_segment.get("role", ""))
 
+        row_text = str(segment.get("text", ""))
         inferred_role = infer_role_from_corrected_text(
-            str(segment.get("text", "")),
+            row_text,
             previous_text=previous_text,
             next_text=next_text,
             previous_role=previous_role,
@@ -584,10 +628,86 @@ def apply_role_cue_cleanup(segments: list[dict[str, Any]]) -> list[dict[str, Any
         if inferred_role is None or segment.get("role") == inferred_role:
             continue
 
+        is_strong_flip = has_strong_direct_cue(row_text, inferred_role)
+        # Strong evidence counts toward the weak-scaffold signal.
+        if is_strong_flip:
+            strong_flip_count += 1
+
+        # Historical semantics survive for: strong direct cues, the tiny-answer rule,
+        # and phrase completions whose JOINED wording carries a strong cue ("How can I
+        # help" + "this afternoon"). Only the weak tier - generic cues and borrowed
+        # neighbor evidence - defers to a strong scaffold.
+        keeps_historical_semantics = (
+            is_strong_flip
+            or is_short_patient_answer_after_doctor_question(
+                normalize_corrected_role_phrase(row_text),
+                previous_text=previous_text,
+                previous_role=previous_role,
+            )
+            or _has_strong_cue_in_joined_phrase(
+                row_text, previous_text, next_text, inferred_role
+            )
+        )
+        # A weak-tier flip against a strong scaffold does net damage - skip it.
+        if not keeps_historical_semantics and not weak_tier_enabled:
+            continue
+
         segment["role"] = inferred_role
         segment["role_source"] = ROLE_CUE_SOURCE
 
-    return cleaned_segments
+    return strong_flip_count
+
+
+def _has_strong_cue_in_joined_phrase(
+    row_text: str,
+    previous_text: str,
+    next_text: str,
+    role: str,
+) -> bool:
+    """Report whether a neighbor-joined phrase backs this role with a strong cue.
+
+    Args:
+        row_text: Current row text; short rows may complete a neighbor's phrase.
+        previous_text: Earlier row text; empty means no backward join exists.
+        next_text: Later row text; empty means no forward join exists.
+        role: Candidate role a cleanup flip wants to apply.
+
+    Returns:
+        True when either join carries a specific non-generic cue for that role,
+        so a phrase completion like "How can I help" + "this afternoon" still counts.
+    """
+    role_cues = _DOCTOR_CUES if role == "DOCTOR" else _PATIENT_CUES
+    # Each join direction can complete a cue phrase split across two chips.
+    for joined_text in (f"{previous_text} {row_text}", f"{row_text} {next_text}"):
+        padded_phrase = f" {normalize_corrected_role_phrase(joined_text)} "
+        matched_cues = {cue for cue in role_cues if f" {cue} " in padded_phrase}
+        # A surviving non-weak cue in the joined wording is real speaker evidence.
+        if matched_cues - _WEAK_DIRECT_CUES:
+            return True
+
+    return False
+
+
+def has_strong_direct_cue(text: str, role: str) -> bool:
+    """Report whether a non-generic direct cue backs this role for the row text.
+
+    Args:
+        text: Corrected row text the summary may cite.
+        role: Candidate role a cleanup flip wants to apply.
+
+    Returns:
+        True when the row itself carries a specific cue for that role beyond
+        the generic weak tier; False means only weak or contextual evidence.
+    """
+    normalized_phrase = normalize_corrected_role_phrase(text)
+    # The direct verdict must agree; neighbor-context inferences are never strong.
+    if role_from_corrected_phrase(normalized_phrase) != role:
+        return False
+
+    padded_phrase = f" {normalized_phrase} "
+    role_cues = _DOCTOR_CUES if role == "DOCTOR" else _PATIENT_CUES
+    matched_cues = {cue for cue in role_cues if f" {cue} " in padded_phrase}
+    return bool(matched_cues - _WEAK_DIRECT_CUES)
 
 
 def infer_role_from_corrected_text(

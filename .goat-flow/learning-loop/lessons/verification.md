@@ -31,6 +31,19 @@ immediately after Stop/finalized and verify logs include both `correction.comple
 `summary.requested source=corrected_segments`. A generated summary alone only proves the
 fallback path when correction grace has expired.
 
+## Lesson: Editing agent source evicts in-memory sessions via uvicorn reload
+
+**Created:** 2026-07-07
+**What happened:** A summary-prompt edit to `strands_agents/agents/summary_agent.py` triggered
+the nemo-agent's uvicorn `--reload`, which restarted the process and wiped the in-memory
+`SessionStore` - the captured user sessions' stored rows vanished mid-validation and
+`POST /session/{id}/summary` started returning 404 "No transcript found".
+**Prevention:** With `SESSION_STORAGE=memory`, treat ANY edit under `strands_agents/` as a
+session-destroying restart. Capture `/history` and `/corrected-transcript` artifacts to
+`var/quality/` BEFORE editing agent code. If server state is already gone, the summary route
+accepts the captured rows directly as `SummaryRequest.segments` under a fresh session UUID -
+that replays the full prompt+model path from on-disk artifacts.
+
 ## Lesson: Full-clip proportional word timings drift - timing splits need an internal coherence guard
 
 **Created:** 2026-07-07

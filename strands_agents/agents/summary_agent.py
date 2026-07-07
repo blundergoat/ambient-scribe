@@ -33,7 +33,11 @@ SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "4096"
 
 _SHARED_SUMMARY_RULES = """
 Rules:
-- Cite transcript timestamps in square brackets, e.g. [02:15-02:30].
+- Cite transcript timestamps in square brackets as MM:SS-MM:SS, e.g. [02:15-02:30].
+- Timestamps are minutes and seconds: the seconds field is always 00-59. Convert row times
+  given in seconds (a row at 196 seconds is [03:16], never [02:76] or [196]).
+- Square brackets contain timestamps only - never segment IDs; IDs belong solely in each
+  section's `citations` array.
 - When the prompt includes source IDs, cite only those IDs in each section's `citations` array.
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
