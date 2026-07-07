@@ -499,6 +499,11 @@
             margin-left: 0.25rem;
         }
         .summary-provenance__toggle {
+            /* Sits one layer above open popovers (z-index 30): an earlier
+               section's popover overlays the next section, and the next
+               toggle must still take a direct click (close-A-open-B). */
+            position: relative;
+            z-index: 31;
             font-size: 0.6875rem;
             font-weight: 700;
             line-height: 1;
@@ -529,6 +534,9 @@
             border-radius: 0.5rem;
             background: var(--surface-bg);
             box-shadow: var(--shadow-md);
+            /* Long citation lists scroll instead of blanketing later sections. */
+            max-height: 16rem;
+            overflow-y: auto;
         }
         .summary-provenance__open {
             align-self: flex-end;
@@ -545,8 +553,14 @@
             background: var(--surface-hover);
         }
         .summary-key-points {
+            /* TL;DR strip: visually distinct from the SOAP sections below,
+               shared theme tokens only so both themes come free. */
             list-style: disc;
-            padding-left: 1.25rem;
+            padding: 0.625rem 0.875rem 0.625rem 2rem;
+            border: 1px solid var(--surface-border);
+            border-left: 3px solid var(--accent);
+            border-radius: 0.5rem;
+            background: var(--surface-bg-alt);
             font-size: 0.875rem;
             line-height: 1.6;
             color: var(--text-strong);
@@ -799,7 +813,9 @@
             left: 0;
             right: 0;
             top: calc(100% + 0.375rem);
-            z-index: 30;
+            /* Above the raised provenance toggles (31): an open header
+               dropdown must always beat content superscripts. */
+            z-index: 32;
             background: var(--surface-bg);
             border: 1px solid var(--surface-border);
             border-radius: 0.625rem;

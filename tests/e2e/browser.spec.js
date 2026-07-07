@@ -156,6 +156,17 @@ test.describe("Transcript controls", () => {
     await loadScribePage(page);
     await injectFakeSegments(page, 1);
 
+    // A real visit always has a live recording socket; only live visits pin a
+    // speaker override into role state (finished visits must not resurrect it).
+    await page.evaluate(async () => {
+      window.__liveSocket = new WebSocket(
+        `${CONFIG.wsUrl}/ws/transcribe/${CONFIG.sessionId}`
+      );
+      await new Promise((resolve) =>
+        window.__liveSocket.addEventListener("open", resolve)
+      );
+    });
+
     const sessionId = await page.evaluate(() => CONFIG.sessionId);
     const firstSpeakerLabel = page.locator(".segment__speaker").first();
     const overrideSaved = page.waitForResponse(
@@ -934,6 +945,66 @@ test.describe("Summary provenance (M5)", () => {
 
     // The notice is temporary, so it never blocks reading the transcript.
     await expect(missNotice).toBeHidden({ timeout: 6000 });
+  });
+
+  test("an open popover does not trap the next section's toggle", async ({ page }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Two cited sections",
+        sections: [
+          {
+            heading: "Subjective",
+            content: "Patient reports dry, itchy skin.",
+            citations: [
+              {
+                segment_id: "corrected-0001",
+                start: 0,
+                end: 1.5,
+                role: "PATIENT",
+                text: "My skin is dry and itchy.",
+              },
+            ],
+          },
+          {
+            heading: "Plan",
+            content: "Doctor advised topical treatment.",
+            citations: [
+              {
+                segment_id: "corrected-0002",
+                start: 5,
+                end: 6.5,
+                role: "DOCTOR",
+                text: "Use the cream twice daily.",
+              },
+            ],
+          },
+        ],
+        key_points: [],
+      });
+    });
+
+    const toggles = page.locator(".summary-provenance__toggle");
+    const popovers = page.locator(".summary-provenance__popover");
+
+    // Section A's open popover overlays the full section width below it -
+    // exactly where section B's superscript sits.
+    await toggles.nth(0).click();
+    await expect(popovers.nth(0)).toBeVisible();
+
+    // One DIRECT mouse click on section B's toggle must open B (not be
+    // swallowed by A's popover surface) and close A in the same click.
+    await toggles.nth(1).click();
+    await expect(popovers.nth(1)).toBeVisible();
+    await expect(popovers.nth(0)).toBeHidden();
+    await expect(toggles.nth(1)).toHaveAttribute("aria-expanded", "true");
+    await expect(toggles.nth(0)).toHaveAttribute("aria-expanded", "false");
+
+    // Escape recovery is unchanged by the stacking fix.
+    await page.keyboard.press("Escape");
+    await expect(popovers.nth(1)).toBeHidden();
   });
 
   test("a click outside the popover dismisses it", async ({ page }) => {
