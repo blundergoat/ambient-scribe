@@ -167,6 +167,15 @@ last_reviewed: 2026-07-07
 - **Prevention:** Pin `stream_id = max(0, returned_id)` after the first append; mirror the reference CLI's per-step `drop_extra_pre_encoded` computation verbatim. When streaming quality looks wrong with clean logs, instrument per-step hypothesis facts (slot, n_words, head/tail, ts0/tsN, offset) before touching emission logic.
 - **Three more traps found at REAL-TIME pacing (2026-07-06, invisible at accelerated eval pacing):** (4) `CacheAwareStreamingAudioBuffer.__iter__` yields PARTIAL chunks near the buffer end and advances the cursor a full shift regardless - at 1x pacing a step loop drains the buffer every feed, truncating AND skipping audio four times per 5s chunk (garbled words, speaker fragmentation). Gate stepping on `frames_available >= full_chunk_frames` and consume partials only at flush. (5) Deriving word times from the decode/step clock is FICTION under decode lag: rows carry compressed times, the time-overlap scorer and the role layer both read garbage, and eval "attribution" numbers become unmeasurable. True times come from inverting the diarizer's own activity stream: per-slot (cumulative voiced frames -> wall seconds) ledger, then map each token timestamp through it. (6) An eager "pin the first N slots to establish" speaker cap folds a genuine voice into another slot when one speaker's audio spans two early cache slots (c03's doctor does) - fold only hallucination-scale marginal slots (share-based) and let substantial slots through; the role mapping labels them anyway.
 - **Verification rule this taught:** accelerated-pacing evals CANNOT stand in for real-time behavior on streaming integrations. Any cache-aware streaming change must pass a 1x browser replay (row order, live cadence, text sanity) in addition to eval gates.
+- **Update (2026-07-07):** pacing is NOT the whole story. `scripts/eval-corrected-fixtures.sh`
+  gained an `EVAL_PACE=1x` mode (real-time cadence, browser-like 250ms chunks) and the paced
+  consult-08 @60s streaming run scored live strict 59.1% vs 59.4% unpaced - while the real
+  browser replay scored 79.3% at the same 60s horizon (pre-M11 history; post-M11 would be
+  higher). The eval's WebSocket feed differs from the browser replay path beyond cadence
+  (candidates: browser WAV-decode/resample pipeline, finalize behavior on abrupt socket close,
+  real callback jitter). Until that residual is explained, browser replays remain the only
+  honest live-lane reference on the streaming engine; eval live numbers are comparable only
+  to other eval runs with the same pace mode.
 
 ## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
 

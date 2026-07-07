@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-06
+last_reviewed: 2026-07-07
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -30,6 +30,39 @@ could no longer access retained audio and fell back to live rows.
 immediately after Stop/finalized and verify logs include both `correction.completed` and
 `summary.requested source=corrected_segments`. A generated summary alone only proves the
 fallback path when correction grace has expired.
+
+## Lesson: Full-clip proportional word timings drift - timing splits need an internal coherence guard
+
+**Created:** 2026-07-07
+**What happened:** The first runtime M08 eval run split the consult-08 age echo at 14.32-15.12
+while the true doctor echo sits at ~16.1-16.6: the token-timestamps-proportional-to-words
+estimate that was ~200ms accurate on the 20s probe drifted ~1.6s on the full 60s correction
+clip (token density varies across pauses, and the proportional word-to-token index mapping
+ignores that). The mis-timed DOCTOR row landed inside patient-only truth and scored
+confidently-wrong: A/B on the same artifact measured 83.3% strict without the split vs 78.9%
+with it - the split itself created the regression the M04 naive split had, just via drift
+instead of row-share times.
+**Prevention:** Never trust a full-clip proportional estimate as an absolute time. Gate timing
+splits on internal coherence between independent time sources: the echo tail's timed end must
+reach or pass the live row's end (`corrected_role_cues.py`, search: "echo_end <
+safe_source_time"). When the sources disagree, keep the row whole. Probe-scale accuracy
+(short clips) does not generalize to session-length clips - re-verify timing accuracy at the
+real clip length before widening any timing-based rule.
+
+## Lesson: Strict attribution excludes cross-talk rows - check overlap-touch before predicting gate flips
+
+**Created:** 2026-07-07
+**What happened:** The M07 handoff predicted the consult-08 echo-split doctor row would swing
+strict attribution between 90.9% (pass) and 87.9% (fail). Reading `scripts/transcript-quality.py`
+(search: "touches_any_span") showed rows touching TextGrid doctor∩patient overlap are dropped from
+the strict/clean denominator entirely; the probe-timed row (15.92-16.56) touches the
+16.12-16.36 cross-talk window, so strict stayed 29/32 and only the with-overlap metric moved
+(90.6% -> 90.9%). The earlier rejected naive split landed at ~15.42-15.89 - clean patient-only
+time - which is why THAT row was counted and regressed consult-08 to 81.8%.
+**Prevention:** Before predicting how a row change moves strict attribution, compute whether the
+new span touches a reference overlap span; overlap-touching rows move only with-overlap metrics.
+Echo/boundary rows straddle cross-talk BY NATURE, so gates on them must weigh with-overlap
+attribution, chip findings, and WER buckets instead of expecting strict-attribution deltas.
 
 ## Lesson: Long runtime probes should become small scripts before execution
 

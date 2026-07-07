@@ -15,12 +15,22 @@ from typing import Any
 CORRECTED_ROLE_FILLER_WORDS = frozenset({"ah", "oh", "um", "uh", "erm", "well"})
 DOCTOR_CONNECTOR_STARTS = frozenset({"and", "are", "can", "did", "is", "okay", "was"})
 ROLE_CUE_SOURCE = "post_visit_alignment"
+_IDENTITY_ECHO_ACK_WORDS = frozenset({"alright", "ok", "okay", "right"})
+_IDENTITY_CUE_PATTERN = re.compile(r"\bmy names?\b|\bim \d+\b")
+# Duplicated fillers and bare agreements ("Yeah. Yeah, okay.") are conversation
+# noise, not a clinician echoing the patient's answer back.
+_ECHO_DUPLICATE_EXCLUDED_WORDS = (
+    CORRECTED_ROLE_FILLER_WORDS
+    | _IDENTITY_ECHO_ACK_WORDS
+    | frozenset({"yeah", "yes", "no", "mm", "hmm", "mhm"})
+)
 
 _DOCTOR_CUES = (
     "hello there its dr",
     "dr steed",
     "dr steve",
     "how can i help",
+    "can i confirm your name",
     "im sorry to hear",
     "i can understand",
     "can you tell",
@@ -54,6 +64,7 @@ _PATIENT_CUES = (
     "need to vomit",
     "headache since",
     "my chest",
+    "i vomited",
     "my hands",
     "my arms",
     "my name",
@@ -106,16 +117,309 @@ _DOCTOR_PROMPT_PATIENT_ANSWER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-def prepare_corrected_source_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def prepare_corrected_source_segments(
+    segments: list[dict[str, Any]],
+    *,
+    corrected_words: list[str] | None = None,
+    word_timings: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Return corrected rows ready for summary source chips.
 
     Args:
         segments: Corrected rows from the post-stop ASR pass; empty means the user has no corrected artifact.
+        corrected_words: Second-pass ASR words the rows were built from; None disables timing splits.
+        word_timings: Per-word timing rows aligned to `corrected_words`; None disables timing splits.
 
     Returns:
         Split and role-cleaned rows; empty stays empty for live-preview fallback.
     """
-    return apply_role_cue_cleanup(split_mixed_corrected_segments(segments))
+    echo_split_segments = split_identity_echo_segments(segments, corrected_words, word_timings)
+    return apply_role_cue_cleanup(split_mixed_corrected_segments(echo_split_segments))
+
+
+def split_identity_echo_segments(
+    segments: list[dict[str, Any]],
+    corrected_words: list[str] | None,
+    word_timings: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Split identity rows whose echoed age belongs to the clinician's next chip.
+
+    Args:
+        segments: Corrected rows in visible order; empty means nothing can be split.
+        corrected_words: Second-pass ASR words; None or empty means no timing evidence exists.
+        word_timings: Timing rows aligned index-by-index to `corrected_words`; misaligned input is ignored.
+
+    Returns:
+        Rows in the same order, with the age echo split off only when word timing proves the gap.
+    """
+    # Timing evidence must exist and describe exactly the second-pass words, or rows stay whole.
+    if not corrected_words or not word_timings or len(word_timings) != len(corrected_words):
+        return segments
+
+    split_segments: list[dict[str, Any]] = []
+    # Each row is inspected in source-chip order so inserted chips stay where the user expects.
+    for row_index, segment in enumerate(segments):
+        next_row_start: float | None = None
+        # The following chip's start time bounds how far the echo may extend without colliding.
+        if row_index + 1 < len(segments):
+            next_row_start = safe_source_time(segments[row_index + 1].get("start"))
+
+        split_segments.extend(
+            split_one_identity_echo_segment(segment, next_row_start, corrected_words, word_timings)
+        )
+
+    return split_segments
+
+
+def split_one_identity_echo_segment(
+    segment: dict[str, Any],
+    next_row_start: float | None,
+    corrected_words: list[str],
+    word_timings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Split one identity/echo row when word timing shows a real speaker gap.
+
+    Args:
+        segment: Corrected row shown under the summary; rows without the echo shape pass through.
+        next_row_start: Start of the next visible chip; None means this is the final row.
+        corrected_words: Second-pass ASR words the row text came from.
+        word_timings: Timing rows aligned to `corrected_words`; missing values keep the row whole.
+
+    Returns:
+        One unchanged row, or the patient identity chip plus the clinician echo chip.
+    """
+    row_words = split_source_row_words(segment)
+    normalized_row_words = [normalize_corrected_role_word(word) for word in row_words]
+    echo_index = identity_echo_boundary_index(normalized_row_words)
+    # Rows without the identity-plus-echoed-age shape are never timing-split.
+    if echo_index is None:
+        return [dict(segment)]
+
+    boundary_times = identity_echo_boundary_times(
+        segment,
+        next_row_start,
+        normalized_row_words,
+        echo_index,
+        corrected_words,
+        word_timings,
+    )
+    # Untrustworthy or drifted timing keeps the row whole for the safer text-only cleanup.
+    if boundary_times is None:
+        return [dict(segment)]
+
+    return build_identity_echo_parts(segment, row_words, echo_index, boundary_times)
+
+
+def identity_echo_boundary_times(
+    segment: dict[str, Any],
+    next_row_start: float | None,
+    normalized_row_words: list[str],
+    echo_index: int,
+    corrected_words: list[str],
+    word_timings: list[dict[str, Any]],
+) -> tuple[float, float, float] | None:
+    """Validate the timed identity/echo boundary for one corrected row.
+
+    Args:
+        segment: Corrected row being split; its live start/end sanity-check the estimate.
+        next_row_start: Start of the next visible chip; None means this is the final row.
+        normalized_row_words: Normalized row words used to find the row in the ASR stream.
+        echo_index: Index of the patient's own age word inside the row.
+        corrected_words: Raw second-pass ASR words.
+        word_timings: Timing rows aligned to `corrected_words`.
+
+    Returns:
+        `(identity_end, echo_start, echo_end)` seconds, or None when timing cannot be trusted.
+    """
+    stream_start = locate_row_word_span(normalized_row_words, corrected_words)
+    # Live-fallback or reshuffled rows have no matching ASR words, so no timing exists for them.
+    if stream_start is None:
+        return None
+
+    identity_end = word_timing_value(word_timings, stream_start + echo_index, "end")
+    echo_start = word_timing_value(word_timings, stream_start + echo_index + 1, "start")
+    echo_end = word_timing_value(
+        word_timings,
+        stream_start + len(normalized_row_words) - 1,
+        "end",
+    )
+    # Missing timing values mean the split boundary cannot be trusted.
+    if identity_end is None or echo_start is None or echo_end is None:
+        return None
+
+    # A voice change needs an audible gap; continuous timing means one speaker kept talking.
+    if echo_start <= identity_end or echo_end <= echo_start:
+        return None
+
+    # A boundary before the row even starts means the timing joined the wrong words.
+    if identity_end <= safe_source_time(segment.get("start")):
+        return None
+
+    # The echo is the row's trailing tail, so its timed end must reach or pass the live row
+    # end; an earlier end means the full-clip timing estimate drifted and cannot be trusted
+    # (drifted estimates placed a consult-08 echo 1.6s early, inside patient-only speech).
+    if echo_end < safe_source_time(segment.get("end")):
+        return None
+
+    # The echo may extend past the live row end, but never into the next visible chip.
+    if next_row_start is not None and echo_end > next_row_start:
+        return None
+
+    return identity_end, echo_start, echo_end
+
+
+def build_identity_echo_parts(
+    segment: dict[str, Any],
+    row_words: list[str],
+    echo_index: int,
+    boundary_times: tuple[float, float, float],
+) -> list[dict[str, Any]]:
+    """Build the patient identity chip and the clinician echo chip from one row.
+
+    Args:
+        segment: Original corrected row; both parts inherit its provenance fields.
+        row_words: Display words in visible order.
+        echo_index: Index of the patient's own age word; the echo starts after it.
+        boundary_times: Validated `(identity_end, echo_start, echo_end)` seconds.
+
+    Returns:
+        Two derivative rows in visible order, using the splitter's `-01`/`-02` ID convention.
+    """
+    identity_end, echo_start, echo_end = boundary_times
+    base_segment_id = str(segment.get("segment_id", "")).strip() or "corrected-split"
+
+    identity_part = dict(segment)
+    identity_part["segment_id"] = f"{base_segment_id}-01"
+    identity_part["role"] = "PATIENT"
+    identity_part["role_source"] = ROLE_CUE_SOURCE
+    identity_part["text"] = " ".join(row_words[: echo_index + 1])
+    identity_part["end"] = identity_end
+
+    echo_part = dict(segment)
+    echo_part["segment_id"] = f"{base_segment_id}-02"
+    echo_part["role"] = "DOCTOR"
+    echo_part["role_source"] = ROLE_CUE_SOURCE
+    echo_part["text"] = " ".join(row_words[echo_index + 1 :])
+    echo_part["start"] = echo_start
+    echo_part["end"] = echo_end
+
+    return [identity_part, echo_part]
+
+
+def split_source_row_words(segment: dict[str, Any]) -> list[str]:
+    """Return one corrected row's display words in visible order.
+
+    Args:
+        segment: Corrected row; missing or blank text means the chip shows no words.
+
+    Returns:
+        Whitespace-split words with punctuation kept; empty means nothing is visible.
+    """
+    return str(segment.get("text", "")).strip().split()
+
+
+def identity_echo_boundary_index(normalized_row_words: list[str]) -> int | None:
+    """Find the last patient word before a clinician's echoed acknowledgement.
+
+    Covers both gated echo shapes: the identity/age digit echo
+    ("...I'm 26. 26, okay.", M07) and the patient-cued word echo
+    ("...I vomited twice. Twice, okay.", M10).
+
+    Args:
+        normalized_row_words: Lowercase alphanumeric row words; empty means no echo shape.
+
+    Returns:
+        Index of the patient's own echoed word, or None when this row must stay whole.
+    """
+    # The shape needs at least a patient statement, the duplicate, and the acknowledgement.
+    if len(normalized_row_words) < 4:
+        return None
+
+    last_index = len(normalized_row_words) - 1
+    # The clinician's chip ends in an acknowledgement word like "okay".
+    if normalized_row_words[last_index] not in _IDENTITY_ECHO_ACK_WORDS:
+        return None
+
+    duplicate_index = last_index - 2
+    echoed_word = normalized_row_words[duplicate_index]
+    # Duplicated fillers or bare agreements are noise, not an echo boundary.
+    if echoed_word == "" or echoed_word in _ECHO_DUPLICATE_EXCLUDED_WORDS:
+        return None
+
+    # The echo must repeat the word immediately, or the duplicate is unrelated speech.
+    if normalized_row_words[duplicate_index + 1] != echoed_word:
+        return None
+
+    patient_phrase = " ".join(
+        word for word in normalized_row_words[: duplicate_index + 1] if word
+    )
+    # The patient part must prove itself: an identity statement, or a phrase the
+    # cue lexicon decisively owns as patient speech. Splitting never guesses.
+    if _IDENTITY_CUE_PATTERN.search(patient_phrase) is not None:
+        return duplicate_index
+    if role_from_corrected_phrase(patient_phrase) == "PATIENT":
+        return duplicate_index
+
+    return None
+
+
+def locate_row_word_span(
+    normalized_row_words: list[str],
+    corrected_words: list[str],
+) -> int | None:
+    """Find where one corrected row's words sit inside the second-pass word stream.
+
+    Args:
+        normalized_row_words: Normalized row words in visible order; empty cannot be located.
+        corrected_words: Raw second-pass ASR words; empty means there is no stream to search.
+
+    Returns:
+        Stream index of the row's first word, or None when the row text is not ASR-owned.
+    """
+    # Empty rows have no words for timing evidence to describe.
+    if normalized_row_words == []:
+        return None
+
+    normalized_stream = [normalize_corrected_role_word(word) for word in corrected_words]
+    span_length = len(normalized_row_words)
+
+    # The row text was joined verbatim from stream words, so an exact window match finds it.
+    for start_index in range(0, len(normalized_stream) - span_length + 1):
+        # The first matching window is the span the allocator consumed for this row.
+        if normalized_stream[start_index : start_index + span_length] == normalized_row_words:
+            return start_index
+
+    return None
+
+
+def word_timing_value(
+    word_timings: list[dict[str, Any]],
+    timing_index: int,
+    key: str,
+) -> float | None:
+    """Read one timing boundary from the second-pass word timing rows.
+
+    Args:
+        word_timings: Timing rows aligned to the ASR word stream.
+        timing_index: Stream index of the word whose boundary is needed.
+        key: `start` or `end` boundary of that word.
+
+    Returns:
+        Boundary seconds, or None when the timing row is missing or malformed.
+    """
+    # Out-of-range lookups mean the row span and timing rows disagree.
+    if timing_index < 0 or timing_index >= len(word_timings):
+        return None
+
+    timing = word_timings[timing_index]
+    # Malformed timing rows must never place a split boundary.
+    if not isinstance(timing, dict):
+        return None
+
+    try:
+        return float(timing[key])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def split_mixed_corrected_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:

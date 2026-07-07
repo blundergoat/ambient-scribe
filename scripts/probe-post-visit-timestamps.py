@@ -197,9 +197,15 @@ def estimate_word_timings(hypothesis: Any, audio_duration_seconds: float) -> lis
         return []
 
     words = [str(word) for word in list_from_hypothesis_value(getattr(hypothesis, "words", None))]
+    timestamp_field = getattr(hypothesis, "timestamp", None)
+    # With timestamps=True the field is a word/segment mapping, not the token-frame tensor
+    # this estimator was built for; native entries are reported separately.
+    if isinstance(timestamp_field, dict):
+        return []
+
     token_timestamps = [
         float(timestamp)
-        for timestamp in list_from_hypothesis_value(getattr(hypothesis, "timestamp", None))
+        for timestamp in list_from_hypothesis_value(timestamp_field)
     ]
     frame_count = scalar_float_from_hypothesis_value(getattr(hypothesis, "length", None))
 
@@ -235,13 +241,50 @@ def estimate_word_timings(hypothesis: Any, audio_duration_seconds: float) -> lis
     return word_timings
 
 
-def run_timestamp_probe(audio_path: Path, model_name: str, seconds_limit: float) -> dict[str, Any]:
+def native_word_timings(hypothesis: Any) -> list[dict[str, Any]]:
+    """Extract NeMo's own word-level timestamps when `timestamps=True` was requested.
+
+    Args:
+        hypothesis: NeMo ASR hypothesis; None or a tensor-shaped `timestamp` field means the
+            model produced no native word timing for this clip.
+
+    Returns:
+        Raw word entries as NeMo reports them; empty means only estimated timing exists.
+    """
+    timestamp_field = getattr(hypothesis, "timestamp", None)
+    # Without the timestamps flag the field is a token tensor, not a word-entry mapping.
+    if not isinstance(timestamp_field, dict):
+        return []
+
+    word_entries = timestamp_field.get("word", [])
+    # A non-list word field means this NeMo version reports timing another way.
+    if not isinstance(word_entries, list):
+        return []
+
+    native_timings: list[dict[str, Any]] = []
+    # Each entry is kept verbatim so the report shows exactly which keys this model emits.
+    for entry in word_entries:
+        # Non-dict entries would hide the schema the runtime needs to rely on.
+        if isinstance(entry, dict):
+            native_timings.append(dict(entry))
+
+    return native_timings
+
+
+def run_timestamp_probe(
+    audio_path: Path,
+    model_name: str,
+    seconds_limit: float,
+    request_timestamps: bool = False,
+) -> dict[str, Any]:
     """Run one offline ASR call and report whether timing fields exist.
 
     Args:
         audio_path: Fixture WAV path available inside the NeMo container.
         model_name: ASR checkpoint to inspect; empty would make model loading ambiguous.
         seconds_limit: Leading seconds to inspect; zero or lower is rejected before model load.
+        request_timestamps: True also asks NeMo for native word/segment timestamps; false keeps
+            the original token-tensor behaviour for comparison runs.
 
     Returns:
         JSON report with transcribe signature, hypothesis shape, and timing-field summary.
@@ -265,9 +308,13 @@ def run_timestamp_probe(audio_path: Path, model_name: str, seconds_limit: float)
         audio_duration = wav_duration_seconds(clipped_audio_path)
         asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
         transcribe_signature = str(inspect.signature(asr_model.transcribe))
+        transcribe_kwargs: dict[str, Any] = {"return_hypotheses": True}
+        # Native timestamps are requested only when asked, so old reports stay comparable.
+        if request_timestamps:
+            transcribe_kwargs["timestamps"] = True
         result = asr_model.transcribe(
             [str(clipped_audio_path)],
-            return_hypotheses=True,
+            **transcribe_kwargs,
         )
     finally:
         clipped_audio_path.unlink(missing_ok=True)
@@ -276,6 +323,7 @@ def run_timestamp_probe(audio_path: Path, model_name: str, seconds_limit: float)
     attributes = inspect_hypothesis_shape(hypothesis)
     timestamp_report = attributes.get("timestamp")
     word_timings = estimate_word_timings(hypothesis, audio_duration)
+    native_timings = native_word_timings(hypothesis)
 
     return {
         "model": model_name,
@@ -288,6 +336,9 @@ def run_timestamp_probe(audio_path: Path, model_name: str, seconds_limit: float)
         "hypothesis_type": type(hypothesis).__name__ if hypothesis is not None else None,
         "has_timestamp_attr": timestamp_report is not None,
         "timestamp_len": timestamp_report.get("len") if timestamp_report else None,
+        "requested_native_timestamps": request_timestamps,
+        "native_word_timing_count": len(native_timings),
+        "native_word_timings": native_timings,
         "word_timing_strategy": "token-timestamps-proportional-to-words",
         "word_timing_count": len(word_timings),
         "word_timings": word_timings,
@@ -306,6 +357,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"ASR model id, default {DEFAULT_MODEL}")
     parser.add_argument("--seconds", type=float, default=DEFAULT_SECONDS, help="Leading seconds to inspect")
     parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
+    parser.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="Also request NeMo native word/segment timestamps (timestamps=True)",
+    )
     return parser.parse_args()
 
 
@@ -316,7 +372,7 @@ def main() -> int:
         Process exit code; zero means the timestamp report was written or printed.
     """
     args = parse_args()
-    report = run_timestamp_probe(args.audio, args.model, args.seconds)
+    report = run_timestamp_probe(args.audio, args.model, args.seconds, args.timestamps)
     serialized_report = json.dumps(report, sort_keys=True, indent=2) + "\n"
 
     # A provided output path lets fixture eval scripts collect the report later.

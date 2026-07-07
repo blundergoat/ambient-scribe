@@ -15,6 +15,11 @@ import logging
 import re
 from typing import Any
 
+from corrected_role_cues import (
+    normalize_corrected_role_phrase,
+    role_from_corrected_phrase,
+)
+
 logger = logging.getLogger(__name__)
 
 DOCTOR_KEYWORDS = {
@@ -310,7 +315,202 @@ def compute_row_role_exceptions(
             )
             break
 
+    _add_orphan_speaker_exceptions(stored_segments, mapping, row_exceptions)
     return row_exceptions
+
+
+def _add_orphan_speaker_exceptions(
+    stored_segments: list[dict[str, Any]],
+    mapping: dict[str, str],
+    row_exceptions: dict[str, str],
+) -> None:
+    """Relabel orphan-speaker rows whose reassembled phrases carry a clear cue.
+
+    The streaming engine can mint an extra speaker ID before its voice cache
+    settles; role mapping then gives that orphan a role some established
+    speaker already holds, and the clinician sees the doctor's opening turns
+    on Patient cards. This M11 lane judges ONLY those orphan rows, joining
+    each with its same-speaker chronological neighbors because live rows
+    fragment cue phrases mid-utterance ("...your name and age" / "please?").
+
+    Args:
+        stored_segments: Visible transcript rows from session storage.
+        mapping: Current speaker-to-role mapping.
+        row_exceptions: M20 lane output, updated in place; rows it already
+            judged keep that decision.
+
+    Returns:
+        None; orphan-row relabels are added to `row_exceptions` in place.
+    """
+    orphan_speakers = orphan_speaker_ids(stored_segments, mapping)
+    # Sessions whose mapped speakers hold distinct roles have no orphan lane.
+    if not orphan_speakers:
+        return
+
+    ordered_rows = sorted(
+        stored_segments,
+        key=lambda row: (float(row.get("start", 0.0) or 0.0), float(row.get("end", 0.0) or 0.0)),
+    )
+    # Each orphan row is judged with its immediate same-speaker neighbors only,
+    # so a patient's one-word answer can never inherit the doctor's question cues.
+    for row_position, segment in enumerate(ordered_rows):
+        speaker_id = str(segment.get("speaker_id", ""))
+
+        # Established-speaker rows belong to the measured M20 lane, not this one.
+        if speaker_id not in orphan_speakers:
+            continue
+
+        segment_id = str(segment.get("segment_id", ""))
+        # Unidentifiable rows and rows already judged keep their current state.
+        if segment_id == "" or segment_id in row_exceptions:
+            continue
+
+        # The clinician's own row corrections outrank automatic judgment.
+        if segment.get("role_source") == "user_row":
+            continue
+
+        mapped_role = mapping.get(speaker_id, "")
+        # Orphans without a confident mapped role render raw; nothing to fix.
+        if mapped_role not in ("DOCTOR", "PATIENT"):
+            continue
+
+        inferred_role = decide_orphan_row_role(
+            str(segment.get("text", "")),
+            _same_speaker_neighbor_text(ordered_rows, row_position, -1),
+            _same_speaker_neighbor_text(ordered_rows, row_position, 1),
+        )
+        # No decisive cue, or agreement with the mapping, means no exception.
+        if inferred_role is None or inferred_role == mapped_role:
+            continue
+
+        # The shared bound stays authoritative for the whole exceptions payload.
+        if len(row_exceptions) >= ROW_EXCEPTIONS_MAX:
+            logger.warning(
+                "row_exceptions.capped max=%s segments=%s",
+                ROW_EXCEPTIONS_MAX,
+                len(stored_segments),
+                extra={
+                    "max_row_exceptions": ROW_EXCEPTIONS_MAX,
+                    "segments_considered": len(stored_segments),
+                },
+            )
+            return
+
+        row_exceptions[segment_id] = inferred_role
+
+
+def orphan_speaker_ids(
+    stored_segments: list[dict[str, Any]],
+    mapping: dict[str, str],
+) -> set[str]:
+    """Find speaker IDs whose mapped role a stronger speaker already owns.
+
+    Row counts decide who owns a role: the speaker the clinician heard most
+    under that role is canonical, and every same-role speaker with strictly
+    fewer rows is an orphan (a pre-settle identity fragment). Ties orphan
+    nobody, so an evenly split session is never judged by this lane.
+
+    Args:
+        stored_segments: Visible transcript rows from session storage.
+        mapping: Current speaker-to-role mapping; empty means no orphans.
+
+    Returns:
+        Orphan speaker IDs; empty means every mapped role has one owner.
+    """
+    row_counts: dict[str, int] = {}
+    # Only rows the clinician can see count toward role ownership.
+    for segment in stored_segments:
+        speaker_id = str(segment.get("speaker_id", ""))
+        if speaker_id:
+            row_counts[speaker_id] = row_counts.get(speaker_id, 0) + 1
+
+    speakers_by_role: dict[str, list[str]] = {}
+    # Group mapped speakers by the role the UI currently shows for them.
+    for speaker_id, role in mapping.items():
+        if speaker_id in row_counts and role in ("DOCTOR", "PATIENT"):
+            speakers_by_role.setdefault(role, []).append(speaker_id)
+
+    orphans: set[str] = set()
+    # A role with several voices keeps its loudest voice and orphans the rest.
+    for speakers in speakers_by_role.values():
+        if len(speakers) < 2:
+            continue
+
+        top_count = max(row_counts[speaker] for speaker in speakers)
+        for speaker in speakers:
+            # Strictly fewer rows than the owner marks a pre-settle fragment.
+            if row_counts[speaker] < top_count:
+                orphans.add(speaker)
+
+    return orphans
+
+
+def decide_orphan_row_role(
+    row_text: str,
+    previous_same_speaker_text: str,
+    next_same_speaker_text: str,
+) -> str | None:
+    """Judge one orphan row by its own text, then by same-speaker joins.
+
+    Args:
+        row_text: Orphan row text; empty means no evidence.
+        previous_same_speaker_text: Immediate earlier neighbor's text when it
+            shares the speaker ID; empty means no safe backward join exists.
+        next_same_speaker_text: Immediate later neighbor's text when it shares
+            the speaker ID; empty means no safe forward join exists.
+
+    Returns:
+        `DOCTOR`/`PATIENT` when exactly one reassembled phrase is decisive,
+        or None when the row should keep its mapped role.
+    """
+    candidate_phrases = [row_text]
+    # Fragmented cues complete backward ("...your name and age" + "please?").
+    if previous_same_speaker_text:
+        candidate_phrases.append(f"{previous_same_speaker_text} {row_text}")
+    # And forward ("...how can I" + "help you this afternoon?").
+    if next_same_speaker_text:
+        candidate_phrases.append(f"{row_text} {next_same_speaker_text}")
+
+    # The first decisive phrase wins; later joins cannot overrule direct text.
+    for phrase in candidate_phrases:
+        inferred_role = role_from_corrected_phrase(
+            normalize_corrected_role_phrase(phrase)
+        )
+        if inferred_role is not None:
+            return inferred_role
+
+    return None
+
+
+def _same_speaker_neighbor_text(
+    ordered_rows: list[dict[str, Any]],
+    row_position: int,
+    direction: int,
+) -> str:
+    """Return the adjacent row's text only when it shares this row's speaker.
+
+    Args:
+        ordered_rows: Rows sorted chronologically.
+        row_position: Index of the orphan row being judged.
+        direction: `-1` for the previous neighbor, `1` for the next.
+
+    Returns:
+        Neighbor text, or empty when the neighbor belongs to another speaker -
+        joining across a turn is how the M11 gate produced its one false flip.
+    """
+    neighbor_position = row_position + direction
+    # Session edges have no neighbor to complete a fragmented phrase.
+    if neighbor_position < 0 or neighbor_position >= len(ordered_rows):
+        return ""
+
+    neighbor = ordered_rows[neighbor_position]
+    # A different voice next door means any shared phrase crosses a turn.
+    if str(neighbor.get("speaker_id", "")) != str(
+        ordered_rows[row_position].get("speaker_id", "")
+    ):
+        return ""
+
+    return str(neighbor.get("text", ""))
 
 
 def heuristic_role_inference(

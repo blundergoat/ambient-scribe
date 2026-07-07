@@ -23,7 +23,17 @@ RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SOURCE_CHIP_SCORE_TEXT_PATH="$RUN_DIR/source-chip-score.txt"
 SOURCE_CHIP_SCORE_JSON_PATH="$RUN_DIR/source-chip-score.json"
 SOURCE_CHIP_FAIL_ON_FINDINGS="${CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS:-0}"
-CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
+# fast = blast chunks as quickly as the socket accepts (historical baselines);
+# 1x   = real-time pacing with browser-like chunk sizes, for live-lane numbers
+#        that match what a clinician's replay actually produces.
+PACE_MODE="${EVAL_PACE:-fast}"
+if [[ "$PACE_MODE" == "1x" && -z "${EVAL_CHUNK_MS:-}" ]]; then
+  # The browser's PCM streamer sends ~256ms chunks; 5s bursts would still be
+  # unrepresentative even when the overall rate is real-time.
+  CHUNK_MS=250
+else
+  CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
+fi
 ROLE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-8}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 declare -a FIXTURE_QUERIES=()
@@ -49,6 +59,9 @@ Environment:
                                   seconds to wait for visible live Doctor/Patient labels; default 8
   CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS
                                   set 1 to fail the eval when source-chip findings exist; default 0
+  EVAL_PACE                      fast (default, historical-baseline blast) or 1x
+                                  (real-time pacing + browser-like 250ms chunks;
+                                  live-lane numbers then reflect real replays)
 USAGE
 }
 
@@ -159,9 +172,10 @@ stream_fixture_to_websocket() {
   local wav_path="$1"
   local session_id="$2"
 
-  "$PYTHON_BIN" - "$wav_path" "$SECONDS_LIMIT" "$AGENT_WS_URL" "$session_id" "$CHUNK_MS" <<'PY'
+  "$PYTHON_BIN" - "$wav_path" "$SECONDS_LIMIT" "$AGENT_WS_URL" "$session_id" "$CHUNK_MS" "$PACE_MODE" <<'PY'
 import asyncio
 import sys
+import time
 import wave
 
 import websockets
@@ -169,7 +183,7 @@ import websockets
 
 async def main() -> None:
     """Send the selected fixture as the same PCM chunks the browser sends."""
-    wav_path, seconds_limit, agent_ws_url, session_id, chunk_ms = sys.argv[1:6]
+    wav_path, seconds_limit, agent_ws_url, session_id, chunk_ms, pace_mode = sys.argv[1:7]
     with wave.open(wav_path, "rb") as wav_file:
         sample_rate = wav_file.getframerate()
         channels = wav_file.getnchannels()
@@ -191,12 +205,21 @@ async def main() -> None:
         sent_frames = 0
         uri = f"{agent_ws_url.rstrip('/')}/ws/transcribe/{session_id}"
 
+        stream_started = time.monotonic()
         async with websockets.connect(
             uri,
             additional_headers={"x-correlation-id": f"eval-corrected-{session_id}"},
         ) as websocket:
             # Each chunk advances the server's live transcript exactly once.
             while sent_frames < frame_limit:
+                # Real-time pacing holds each chunk until its audio-clock moment,
+                # so the engine sees the cadence a clinician's replay produces.
+                if pace_mode == "1x":
+                    audio_clock = sent_frames / sample_rate
+                    lag = audio_clock - (time.monotonic() - stream_started)
+                    if lag > 0:
+                        await asyncio.sleep(lag)
+
                 frames_to_read = min(chunk_frames, frame_limit - sent_frames)
                 audio_chunk = wav_file.readframes(frames_to_read)
 
@@ -515,7 +538,8 @@ PY
   local live_score_path="$fixture_run_dir/live-transcript-quality.txt"
   local corrected_score_path="$fixture_run_dir/corrected-transcript-quality.txt"
 
-  printf 'corrected eval fixture=%s session_id=%s\n' "$fixture_name" "$session_id" >&2
+  printf 'corrected eval fixture=%s session_id=%s pace=%s chunk_ms=%s\n' \
+    "$fixture_name" "$session_id" "$PACE_MODE" "$CHUNK_MS" >&2
   stream_fixture_to_websocket "$wav_path" "$session_id"
   wait_for_quality_record "$session_id" "$quality_path"
   wait_for_live_role_labels "$session_id" "$history_path"

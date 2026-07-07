@@ -29,6 +29,12 @@ from corrected_role_cues import (
     prepare_corrected_source_segments,
     role_from_corrected_phrase,
 )
+from post_visit_word_timing import (
+    PostVisitTranscription,
+    validated_word_timings,
+    wav_duration_seconds,
+    word_timings_from_hypothesis,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +105,7 @@ def run_post_visit_correction(
     pcm_audio: bytes,
     live_segments: list[dict[str, Any]],
     model_name: str = DEFAULT_POST_VISIT_ASR_MODEL,
-    transcribe_audio_file: Callable[[str, str], str] | None = None,
+    transcribe_audio_file: Callable[[str, str], PostVisitTranscription | str] | None = None,
 ) -> PostVisitCorrectionResult:
     """Run second-pass ASR and map corrected text onto stored live rows.
 
@@ -107,7 +113,8 @@ def run_post_visit_correction(
         pcm_audio: Retained 16 kHz mono PCM from the stopped browser session; empty cannot be corrected.
         live_segments: Current transcript rows used as timing/role scaffolding; empty produces generic rows.
         model_name: ASR model id shown in corrected-row provenance; empty uses the configured default.
-        transcribe_audio_file: Optional test seam; null loads the configured NeMo ASR model.
+        transcribe_audio_file: Optional test seam returning rich or plain-text output; null loads
+            the configured NeMo ASR model.
 
     Returns:
         Corrected rows plus model metadata; empty ASR text raises a correction error.
@@ -125,7 +132,9 @@ def run_post_visit_correction(
     try:
         # Tests can inject a transcriber; the real UI path uses the configured NeMo model.
         transcriber = transcribe_audio_file or transcribe_audio_with_nemo
-        transcript_text = transcriber(selected_model_name, str(audio_path))
+        transcript_text, raw_word_timings = coerce_post_visit_transcription(
+            transcriber(selected_model_name, str(audio_path))
+        )
     finally:
         audio_path.unlink(missing_ok=True)
 
@@ -138,6 +147,7 @@ def run_post_visit_correction(
         corrected_words=words,
         live_segments=live_segments,
         model_name=selected_model_name,
+        word_timings=validated_word_timings(raw_word_timings, words),
     )
     # Empty corrected rows mean alignment had no user-visible artifact to store.
     if corrected_segments == []:
@@ -159,7 +169,7 @@ def run_post_visit_correction(
     )
 
 
-def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> str:
+def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> PostVisitTranscription:
     """Transcribe one WAV with a lazily loaded NeMo ASR checkpoint.
 
     Args:
@@ -167,7 +177,8 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> str:
         audio_path: WAV path written from the stopped browser audio buffer.
 
     Returns:
-        Plain transcript text; empty means the correction pass should fall back.
+        Transcript text plus best-effort word timings; empty text means the
+        correction pass should fall back, None timings disable timing splits.
 
     Raises:
         PostVisitCorrectionError: When NeMo cannot load or transcribe the stopped visit audio.
@@ -181,7 +192,16 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> str:
 
     try:
         asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
-        result = asr_model.transcribe([audio_path])
+        try:
+            result = asr_model.transcribe(
+                [audio_path],
+                return_hypotheses=True,
+                timestamps=True,
+            )
+        except TypeError:
+            # An overridden POST_VISIT_ASR_MODEL may predate the timestamps flag; the
+            # corrected note still renders from text alone, just without timing splits.
+            result = asr_model.transcribe([audio_path], return_hypotheses=True)
     except Exception as transcribe_error:  # pragma: no cover - depends on GPU/model.
         raise PostVisitCorrectionError(
             f"Second-pass ASR failed for {model_name}: {transcribe_error}"
@@ -189,9 +209,41 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> str:
 
     # No result means the model accepted audio but produced no reviewable text.
     if not result:
-        return ""
+        return PostVisitTranscription(text="", word_timings=None)
 
-    return normalise_transcript_text(result[0])
+    hypothesis = result[0]
+    word_timings: list[dict[str, Any]] | None = None
+    try:
+        word_timings = word_timings_from_hypothesis(
+            hypothesis,
+            wav_duration_seconds(audio_path),
+        ) or None
+    except Exception:  # pragma: no cover - depends on NeMo hypothesis internals.
+        # Timing is best-effort evidence; the corrected note must still render without it.
+        logger.warning("post_visit_correction.word_timing_extraction_failed", exc_info=True)
+
+    return PostVisitTranscription(
+        text=normalise_transcript_text(hypothesis),
+        word_timings=word_timings,
+    )
+
+
+def coerce_post_visit_transcription(
+    transcription: PostVisitTranscription | str,
+) -> tuple[str, list[dict[str, Any]] | None]:
+    """Normalise rich or plain transcriber output into text plus optional timings.
+
+    Args:
+        transcription: Transcriber return value; plain strings come from timing-unaware seams.
+
+    Returns:
+        `(text, word_timings)`; None timings mean no timing-based split can run.
+    """
+    # Timing-aware transcribers return the richer shape with word timing evidence.
+    if isinstance(transcription, PostVisitTranscription):
+        return transcription.text, transcription.word_timings
+
+    return normalise_transcript_text(transcription), None
 
 
 def _write_pcm_wav(pcm_audio: bytes) -> Path:
@@ -257,6 +309,7 @@ def build_corrected_segments(
     corrected_words: list[str],
     live_segments: list[dict[str, Any]],
     model_name: str,
+    word_timings: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Map second-pass words onto live rows for corrected summary input.
 
@@ -264,6 +317,8 @@ def build_corrected_segments(
         corrected_words: ASR tokens in spoken order; empty means no corrected rows.
         live_segments: Stored or browser-visible preview rows; empty creates generic chunks.
         model_name: ASR model id recorded on every corrected row.
+        word_timings: Validated per-word timings aligned to `corrected_words`; None
+            means echo-boundary rows stay whole.
 
     Returns:
         Corrected segment rows in chronological order; empty means no artifact exists.
@@ -302,7 +357,11 @@ def build_corrected_segments(
             }
         )
 
-    return prepare_corrected_source_segments(corrected_segments)
+    return prepare_corrected_source_segments(
+        corrected_segments,
+        corrected_words=corrected_words,
+        word_timings=word_timings,
+    )
 
 
 def normalise_scaffold_rows(live_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:

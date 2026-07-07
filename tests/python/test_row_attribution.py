@@ -192,3 +192,125 @@ class TestConsult03SliceRegression:
             flood_rows, {"speaker_0": "PATIENT"}
         )
         assert len(exceptions) == ROW_EXCEPTIONS_MAX
+
+
+# The actual consult-08 streaming-engine rows from manual session 176b2bd6
+# (2026-07-07): the engine minted `speaker_2` before its voice cache settled,
+# role mapping labeled it PATIENT (duplicating speaker_0's role), and five
+# doctor fragments rendered on Patient cards. Padding rows keep the realistic
+# row-count ordering (speaker_1 43 > speaker_0 23 > speaker_2 12 in the run).
+CONSULT08_ORPHAN_ROWS = [
+    {"segment_id": "seg-0100", "speaker_id": "speaker_0", "start": 1.28, "end": 2.0,
+     "text": "Okay. Oh, I can't do"},
+    {"segment_id": "seg-0101", "speaker_id": "speaker_2", "start": 3.60, "end": 3.65,
+     "text": "that."},
+    {"segment_id": "seg-0102", "speaker_id": "speaker_2", "start": 4.72, "end": 4.77,
+     "text": "Hello."},
+    {"segment_id": "seg-0103", "speaker_id": "speaker_2", "start": 8.72, "end": 8.77,
+     "text": "Right, so just before"},
+    {"segment_id": "seg-0104", "speaker_id": "speaker_2", "start": 9.52, "end": 11.19,
+     "text": "Any further? Can I confirm your name and age"},
+    {"segment_id": "seg-0105", "speaker_id": "speaker_2", "start": 11.52, "end": 11.57,
+     "text": "please?"},
+    {"segment_id": "seg-0106", "speaker_id": "speaker_2", "start": 17.36, "end": 17.41,
+     "text": "it, okay, and how can I"},
+    {"segment_id": "seg-0107", "speaker_id": "speaker_2", "start": 18.16, "end": 18.21,
+     "text": "help you this afternoon?"},
+    {"segment_id": "seg-0108", "speaker_id": "speaker_0", "start": 22.4, "end": 23.0,
+     "text": "I've been working"},
+    {"segment_id": "seg-0109", "speaker_id": "speaker_0", "start": 24.3, "end": 25.0,
+     "text": "for the past few days"},
+    {"segment_id": "seg-0110", "speaker_id": "speaker_0", "start": 26.3, "end": 28.4,
+     "text": "and I've realized that I've got really dry"},
+    {"segment_id": "seg-0111", "speaker_id": "speaker_0", "start": 28.5, "end": 28.9,
+     "text": "itchy skin"},
+    {"segment_id": "seg-0112", "speaker_id": "speaker_0", "start": 43.1, "end": 43.9,
+     "text": "all over my arms"},
+    {"segment_id": "seg-0113", "speaker_id": "speaker_0", "start": 45.2, "end": 45.9,
+     "text": "and my"},
+    {"segment_id": "seg-0114", "speaker_id": "speaker_0", "start": 46.0, "end": 46.5,
+     "text": "hands mainly."},
+    {"segment_id": "seg-0119", "speaker_id": "speaker_0", "start": 57.8, "end": 58.4,
+     "text": "I think it started"},
+    {"segment_id": "seg-0115", "speaker_id": "speaker_1", "start": 47.6, "end": 49.0,
+     "text": "Okay, and is this something you've had before?"},
+    {"segment_id": "seg-0116", "speaker_id": "speaker_1", "start": 55.4, "end": 56.3,
+     "text": "or was it more kind of a gradual thing?"},
+    {"segment_id": "seg-0117", "speaker_id": "speaker_1", "start": 150.4, "end": 152.9,
+     "text": "okay and did your symptoms start after you went swimming"},
+    {"segment_id": "seg-0118", "speaker_id": "speaker_2", "start": 156.32, "end": 156.37,
+     "text": "yes"},
+]
+CONSULT08_ORPHAN_MAPPING = {
+    "speaker_0": "PATIENT",
+    "speaker_1": "DOCTOR",
+    "speaker_2": "PATIENT",
+}
+
+
+class TestOrphanSpeakerRowLane:
+    """M11: cue relabeling for orphan speaker IDs the engine minted pre-settle.
+
+    Orphan = a speaker whose mapped role another, higher-row-count speaker
+    already holds. Joins for cue matching may only use the immediate
+    chronological neighbor WITH THE SAME speaker ID - the M11 gate's one
+    false flip came from joining the patient's "yes" across the doctor's turn.
+    """
+
+    def test_orphan_doctor_fragments_relabel_to_doctor(self) -> None:
+        """The four recoverable speaker_2 fragments flip to Doctor."""
+        exceptions = compute_row_role_exceptions(
+            CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
+        )
+        assert exceptions.get("seg-0103") == "DOCTOR"  # Right, so just before
+        assert exceptions.get("seg-0105") == "DOCTOR"  # please?
+        assert exceptions.get("seg-0106") == "DOCTOR"  # it, okay, and how can I
+        assert exceptions.get("seg-0107") == "DOCTOR"  # help you this afternoon?
+
+    def test_turn_boundary_answer_is_never_joined_across_speakers(self) -> None:
+        """The patient's final 'yes' after the doctor's question must not flip."""
+        exceptions = compute_row_role_exceptions(
+            CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
+        )
+        assert "seg-0118" not in exceptions
+
+    def test_cross_speaker_neighbor_join_is_refused(self) -> None:
+        """'that.' must not inherit cues from the patient's preceding row."""
+        exceptions = compute_row_role_exceptions(
+            CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
+        )
+        assert "seg-0101" not in exceptions
+
+    def test_weak_evidence_orphan_row_is_left_alone(self) -> None:
+        """'Hello.' has no decisive cue even after same-speaker joins."""
+        exceptions = compute_row_role_exceptions(
+            CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
+        )
+        assert "seg-0102" not in exceptions
+
+    def test_m20_lane_keeps_precedence_over_the_orphan_lane(self) -> None:
+        """'Any further? Can I confirm...' is already flipped by the M20 cues."""
+        exceptions = compute_row_role_exceptions(
+            CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
+        )
+        assert exceptions.get("seg-0104") == "DOCTOR"
+
+    def test_two_speaker_sessions_have_no_orphans(self) -> None:
+        """A within-cap dyad gets zero orphan-lane exceptions on short rows."""
+        rows = [
+            {"segment_id": "seg-0200", "speaker_id": "speaker_0", "start": 1.0,
+             "end": 2.0, "text": "please?"},
+            {"segment_id": "seg-0201", "speaker_id": "speaker_1", "start": 3.0,
+             "end": 4.0, "text": "My name's Isa and I'm 26."},
+        ]
+        mapping = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
+        assert compute_row_role_exceptions(rows, mapping) == {}
+
+    def test_clinician_corrected_orphan_rows_stay_untouched(self) -> None:
+        """A user row correction on an orphan row outranks the cue lane."""
+        rows = [dict(row) for row in CONSULT08_ORPHAN_ROWS]
+        for row in rows:
+            if row["segment_id"] == "seg-0105":
+                row["role_source"] = "user_row"
+        exceptions = compute_row_role_exceptions(rows, CONSULT08_ORPHAN_MAPPING)
+        assert "seg-0105" not in exceptions
