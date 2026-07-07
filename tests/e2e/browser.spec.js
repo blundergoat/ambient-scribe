@@ -1007,6 +1007,39 @@ test.describe("Summary provenance (M5)", () => {
     await expect(popovers.nth(1)).toBeHidden();
   });
 
+  test("fidelity-flagged sentences render visibly marked, never stripped", async ({ page }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Flagged note",
+        sections: [
+          {
+            heading: "Objective",
+            content: "No examination documented. Patient denies dyspnea.",
+            citations: [],
+            unverified: ["Patient denies dyspnea."],
+          },
+        ],
+        key_points: ["Denies difficulty breathing"],
+        unverified_key_points: ["Denies difficulty breathing"],
+      });
+    });
+
+    // Key points render first, so the flagged strip line is the first marker.
+    const markers = page.locator(".summary-unverified");
+    await expect(markers).toHaveCount(2);
+    await expect(markers.nth(0)).toHaveText("Denies difficulty breathing");
+    await expect(markers.nth(1)).toHaveText("Patient denies dyspnea.");
+    await expect(markers.nth(1)).toHaveAttribute("title", "Unverified against transcript");
+
+    // Flagging marks the claim in place - it never removes note content.
+    await expect(page.locator(".summary-section__content")).toContainText(
+      "No examination documented. Patient denies dyspnea."
+    );
+  });
+
   test("a click outside the popover dismisses it", async ({ page }) => {
     await loadScribePage(page);
 

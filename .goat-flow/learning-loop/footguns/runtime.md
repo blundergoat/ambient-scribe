@@ -73,6 +73,7 @@ last_reviewed: 2026-07-07
 - **What breaks:** NeMo's installed transcribe API advertises `timestamps=True`, but enabling it for `EncDecMultiTalkerRNNTBPEModel` during live chunk replay can terminate `nemo-agent` before the session quality row is emitted. The browser/eval then sees a missing `session.quality` artifact instead of a clean transcription result.
 - **Evidence:** A consult-03 83s replay session `f14375fd-a803-46b0-a38a-1fea08688bc6` with `timestamps=True` added to `_asr_model.transcribe(...)` failed with `error: no session.quality JSONL row found`. `docker compose logs nemo-agent --tail 250` showed `terminate called after throwing an instance of 'c10::AcceleratorError'` and `CUDA error: an illegal memory access was encountered` immediately after NeMo logged `Timestamps requested`.
 - **Prevention:** Do not enable multitalker ASR timestamps as a quick word-to-speaker fix. Treat it as a GPU spike requiring an isolated process, log grep, and restart after failure; keep the proportional word splitter unless a timestamp path completes `scripts/eval-fixtures.sh --all` without CUDA errors.
+- **Update (2026-07-07, 0.4.0 M06 spike):** confidence mode is NOT similarly cursed - enabling `confidence_cfg` (preserve word+token) on the same multitalker model, with the runtime's CUDA-graph workaround mirrored, ran clean on two fixtures with non-degenerate values and an error-free follow-up eval (`scripts/probe-word-confidence.py`, evidence `var/quality/word-confidence-spike/`). The timestamp caution stands; do not generalize it to confidence.
 
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
@@ -177,6 +178,21 @@ last_reviewed: 2026-07-07
   real callback jitter). Until that residual is explained, browser replays remain the only
   honest live-lane reference on the streaming engine; eval live numbers are comparable only
   to other eval runs with the same pace mode.
+- **Update (2026-07-07 evening, 0.4.0 M02 step 0 - all lanes at PINNED 60s cutoffs, current
+  code):** the gap is FIXTURE-DEPENDENT and cadence-SHAPE-shaped, not rate-shaped. c03:
+  browser replay 87.1% = eval unpaced 87.1% (identical row sets) while eval paced-1x
+  COLLAPSES to 56.5%. c08: browser 82.8% vs eval 59.4% unpaced / 57.1% paced (~23pp gap in
+  both pace modes). Candidate WAV-decode/resample is DEAD: the real `decodeWavToPcm` output
+  differs from the fixture's own samples by at most 1 LSB (zero length drift, zero samples
+  beyond 1 LSB - the `floatTo16BitPcm` asymmetric-scaling signature; inaudible). Finalize on
+  abrupt close is DE-PRIORITIZED: the c08 eval-vs-browser row diff diverges across the whole
+  timeline, dominated by role-mapping flips, not tail truncation. Prime suspect now: the
+  eval's UNIFORM 250ms sleep cadence vs the browser's audio-element-driven variable bursts
+  interacting with the cache-aware buffer's step gating. Next experiment: replay the eval
+  with a RECORDED browser chunk-arrival pattern. Artifacts: `var/quality/m02-browser/`,
+  `var/quality/corrected-fixtures/20260707T110444Z-m02-pace1x/`, plan file M02 "Result so
+  far". Browser replays are now SCRIPTABLE (playwright drives the real Demo Audio path and
+  stops at the 60s audio mark) - the "slowest loop in the project" constraint is gone.
 
 ## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
 

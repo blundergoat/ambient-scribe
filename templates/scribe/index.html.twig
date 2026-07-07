@@ -552,6 +552,12 @@
         .summary-provenance__open:hover {
             background: var(--surface-hover);
         }
+        .summary-unverified {
+            /* A note sentence the fidelity checks could not support (M07):
+               visible but non-destructive, so the clinician judges it. */
+            border-bottom: 2px dotted #d97706;
+            cursor: help;
+        }
         .summary-key-points {
             /* TL;DR strip: visually distinct from the SOAP sections below,
                shared theme tokens only so both themes come free. */

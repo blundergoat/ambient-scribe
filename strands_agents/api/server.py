@@ -1037,6 +1037,7 @@ async def generate_summary(
         session_id,
         summary_context.transcript,
         summary_context.citation_segments,
+        summary_context.stored_segments,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 

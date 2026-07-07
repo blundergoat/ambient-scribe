@@ -287,21 +287,11 @@ final class ScribeControllerTest extends TestCase
     {
         $sessionId = '00000000-0000-4000-8000-000000000299';
         $seenRequests = [];
-        $httpClient = new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'status' => 'ready',
-                        'segments' => 2,
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
-        );
+        $httpClient = $this->createJsonAgentStub($seenRequests, [
+            'session_id' => $sessionId,
+            'status' => 'ready',
+            'segments' => 2,
+        ]);
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
         $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
             'segments' => [
@@ -319,7 +309,7 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Proxies corrected transcript reads for the summary Transcript tab.
+     * Proxies corrected transcript reads for the summary Transcript tab, once and as a GET.
      *
      * @return void No payload; failure means the tab cannot show the rows the note used.
      */
@@ -327,29 +317,13 @@ final class ScribeControllerTest extends TestCase
     {
         $sessionId = '00000000-0000-4000-8000-000000000399';
         $seenRequests = [];
-        $httpClient = new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'source' => 'corrected_segments',
-                        'segments' => [
-                            [
-                                'segment_id' => 'corrected-0001',
-                                'role' => 'PATIENT',
-                                'text' => 'My skin is quite red.',
-                                'start' => 3.1,
-                                'end' => 4.2,
-                            ],
-                        ],
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
-        );
+        $httpClient = $this->createJsonAgentStub($seenRequests, [
+            'session_id' => $sessionId,
+            'source' => 'corrected_segments',
+            'segments' => [
+                ['segment_id' => 'corrected-0001', 'role' => 'PATIENT', 'text' => 'My skin is quite red.', 'start' => 3.1, 'end' => 4.2],
+            ],
+        ]);
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
         $response = $controller->correctedTranscript($sessionId);
 
@@ -637,6 +611,31 @@ final class ScribeControllerTest extends TestCase
         $response = $controller->roles('session-empty');
 
         self::assertStringContainsString('"mapping":{}', $response->getContent() ?: '');
+    }
+
+    /**
+     * Builds an agent stub that answers every proxied call with one JSON payload and records each request.
+     * Use in same-origin proxy tests that assert what the browser's page forwards to FastAPI.
+     *
+     * @param array<int, array<string, mixed>> $seenRequests - filled with each proxied call; staying empty
+     *   means the proxy never reached the agent, so the page would show a local error instead of agent data
+     * @param array<string, mixed> $agentPayload - JSON body the stubbed agent returns for the page to render
+     *
+     * @return MockHttpClient client the controller uses in place of the real FastAPI agent
+     */
+    private function createJsonAgentStub(array &$seenRequests, array $agentPayload): MockHttpClient
+    {
+        return new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $agentPayload): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode($agentPayload, JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
     }
 
     /**

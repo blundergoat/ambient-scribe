@@ -610,7 +610,10 @@ function renderSummary(summaryPayload) {
 
     // Key points lead as the TL;DR strip, then the SOAP sections (summary UX M4).
     const renderedBlocks = [
-        ...createSummaryKeyPointBlocks(summaryPayload.key_points ?? []),
+        ...createSummaryKeyPointBlocks(
+            summaryPayload.key_points ?? [],
+            summaryPayload.unverified_key_points ?? [],
+        ),
         ...createSummarySectionBlocks(summaryPayload.sections ?? []),
     ];
 
@@ -639,10 +642,11 @@ function createSummarySectionBlocks(sections) {
 
     // Each backend section becomes one readable block in the order the clinician reviews it.
     for (const section of sections) {
-        const contentBlock = createElement('div', {
-            className: 'summary-section__content',
-            text: section.content,
-        });
+        const contentBlock = createElement(
+            'div',
+            { className: 'summary-section__content' },
+            createNoteProseNodes(section.content ?? '', section.unverified ?? []),
+        );
         // Cited sections get a superscript provenance affordance after the prose;
         // uncited sections and test pages without the popover script stay plain.
         const provenanceBlock = typeof createSectionProvenanceBlock === 'function'
@@ -665,8 +669,13 @@ function createSummarySectionBlocks(sections) {
 /**
  * Creates the Key Points list in the summary panel.
  * Empty key points mean no list is shown to the clinician.
+ *
+ * @param {string[]} keyPoints - TL;DR lines from the backend; empty hides the strip entirely.
+ * @param {string[]} unverifiedKeyPoints - lines the fidelity checks could not support; empty
+ *   means every key point renders plain, exactly as before M07.
+ * @returns {HTMLElement[]} the strip block, or empty when there is nothing to list.
  */
-function createSummaryKeyPointBlocks(keyPoints) {
+function createSummaryKeyPointBlocks(keyPoints, unverifiedKeyPoints = []) {
     // No key points means the sections alone carry the generated note.
     if (keyPoints.length === 0) {
         return [];
@@ -676,7 +685,12 @@ function createSummaryKeyPointBlocks(keyPoints) {
 
     // Every model key point is textContent so it cannot inject markup.
     for (const keyPoint of keyPoints) {
-        keyPointList.appendChild(createElement('li', { text: keyPoint }));
+        // A line the transcript could not support carries the visible marker (M07).
+        if (unverifiedKeyPoints.includes(keyPoint)) {
+            keyPointList.appendChild(createElement('li', {}, [createUnverifiedMarker(keyPoint)]));
+        } else {
+            keyPointList.appendChild(createElement('li', { text: keyPoint }));
+        }
     }
 
     return [
@@ -685,6 +699,69 @@ function createSummaryKeyPointBlocks(keyPoints) {
             keyPointList,
         ]),
     ];
+}
+
+/**
+ * Builds section prose as text nodes with unverified sentences visibly marked.
+ * Use when a note ships after the fidelity redo still failed (M07): the flagged
+ * sentence stays readable, never stripped, so the clinician judges it themselves.
+ *
+ * @param {string} content - section prose; empty renders an empty block.
+ * @param {string[]} unverifiedSentences - exact sentences to mark; empty renders plain prose,
+ *   byte-identical to the pre-M07 note.
+ * @returns {Array<Node>} text nodes and marker spans in reading order.
+ */
+function createNoteProseNodes(content, unverifiedSentences) {
+    // A fully verified section renders as one plain text node, exactly as before.
+    if (unverifiedSentences.length === 0) {
+        return [document.createTextNode(content)];
+    }
+
+    const proseNodes = [];
+    let remainingProse = content;
+    // Walk the prose start to end so each flag lands where the reader meets the claim.
+    while (remainingProse.length > 0) {
+        let earliestIndex = -1;
+        let earliestSentence = '';
+        for (const sentence of unverifiedSentences) {
+            const sentenceIndex = sentence ? remainingProse.indexOf(sentence) : -1;
+            // The next flag is whichever unverified sentence appears first in the prose.
+            if (sentenceIndex !== -1 && (earliestIndex === -1 || sentenceIndex < earliestIndex)) {
+                earliestIndex = sentenceIndex;
+                earliestSentence = sentence;
+            }
+        }
+
+        // No flagged sentence remains, so the rest of the prose renders plain.
+        if (earliestIndex === -1) {
+            proseNodes.push(document.createTextNode(remainingProse));
+            break;
+        }
+
+        // Prose before the flagged claim stays plain text.
+        if (earliestIndex > 0) {
+            proseNodes.push(document.createTextNode(remainingProse.slice(0, earliestIndex)));
+        }
+        proseNodes.push(createUnverifiedMarker(earliestSentence));
+        remainingProse = remainingProse.slice(earliestIndex + earliestSentence.length);
+    }
+
+    return proseNodes;
+}
+
+/**
+ * Wraps one unsupported sentence in the visible "unverified" marker.
+ * Use wherever a fidelity-flagged claim renders, so every flag looks the same.
+ *
+ * @param {string} sentence - the exact flagged sentence; never empty here.
+ * @returns {HTMLElement} marked span the clinician can hover for the reason.
+ */
+function createUnverifiedMarker(sentence) {
+    return createElement('span', {
+        className: 'summary-unverified',
+        text: sentence,
+        attributes: { title: 'Unverified against transcript' },
+    });
 }
 
 /**

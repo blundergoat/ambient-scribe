@@ -14,6 +14,12 @@ import re
 from typing import Any
 
 from api.agent_observability import agent_metric_fields as _agent_metric_fields
+from api.summary_fidelity import (
+    FidelityViolation,
+    find_fidelity_violations,
+    regeneration_feedback,
+    summary_with_unverified_flags,
+)
 from clinical_context import retrieve_clinical_context
 
 from pydantic import BaseModel, Field
@@ -70,17 +76,22 @@ def run_summary_generation(
     session_id: str,
     transcript: str,
     citation_segments: list[dict[str, Any]] | None = None,
+    transcript_segments: list[dict[str, Any]] | None = None,
 ) -> dict | None:
     """Generate the note the clinician sees after pressing Summarise.
 
     Use after recording stops, so the SOAP panel can appear beside the
-    transcript while the GPU remains reserved for speech recognition.
+    transcript while the GPU remains reserved for speech recognition. Drafts
+    failing the deterministic fidelity checks get ONE regeneration; sentences
+    that still fail ship visibly flagged, never silently stripped (M07).
 
     Args:
         session_id: Session shown in the UI; empty would make the retry/error logs hard to trace.
         transcript: Role-attributed visit text; blank means the browser should get a retryable failure.
         citation_segments: Corrected transcript rows whose IDs may be cited; `None` or empty keeps the
             legacy uncited summary path.
+        transcript_segments: Visit rows (role/text) the fidelity checks verify against; `None` or
+            empty skips fidelity checking, so the note ships exactly as generated.
 
     Returns:
         Parsed summary payload; `None` means the browser should show a generation failure.
@@ -88,46 +99,53 @@ def run_summary_generation(
     try:
         from agents import create_summary_agent
 
-        agent = create_summary_agent()
         context_snippets = retrieve_clinical_context(transcript)
-        agent_result = agent(
-            summary_generation_prompt(
-                transcript,
-                context_snippets,
-                citation_segments=citation_segments,
-            ),
-            structured_output_model=SessionSummaryOutput,
+        base_prompt = summary_generation_prompt(
+            transcript,
+            context_snippets,
+            citation_segments=citation_segments,
         )
 
-        metric_fields = _agent_metric_fields(agent_result, "summary")
-        structured_summary = getattr(agent_result, "structured_output", None)
-        # Without a validated object, the browser should show a retryable failure.
-        if not isinstance(structured_summary, SessionSummaryOutput):
-            logger.warning(
-                "summary.structured_output_missing session_id=%s output_type=%s",
-                session_id,
-                type(structured_summary).__name__,
-                extra={
-                    "session_id": session_id,
-                    "output_type": type(structured_summary).__name__,
-                    **metric_fields,
-                },
+        violations: list[FidelityViolation] = []
+        validated_summary: SessionSummaryOutput | None = None
+        metric_fields: dict[str, Any] = {}
+        # One clean draft plus at most one fidelity-guided redo keeps the wait
+        # after "Summarise" bounded while still fixing most fabrications.
+        for attempt in (0, 1):
+            prompt = base_prompt
+            # The redo names each rejected sentence so the model cannot miss it.
+            if violations:
+                prompt = base_prompt + regeneration_feedback(violations)
+
+            validated_summary, metric_fields = _generate_validated_draft(
+                session_id, prompt, citation_segments
             )
-            return None
+            # Without a validated object, the browser should show a retryable failure.
+            if validated_summary is None:
+                return None
 
-        # No corrected rows were selected, so any model-made citation IDs are stripped before the browser sees them.
-        allowed_citation_segments = citation_segments or []
-        validated_summary = summary_with_validated_citations(
-            structured_summary,
-            allowed_citation_segments,
-            session_id=session_id,
-        )
-        # Provenance lives in the structured citations; the prose the clinician
-        # reads must not repeat reference markers as text.
-        validated_summary = summary_with_clean_display_text(
-            validated_summary, session_id=session_id
-        )
+            violations = find_fidelity_violations(
+                [section.model_dump() for section in validated_summary.sections],
+                list(validated_summary.key_points),
+                transcript_segments or [],
+            )
+            # A fidelity-clean draft is the note the clinician gets - done.
+            if not violations:
+                break
+
+            _log_fidelity_violations(session_id, attempt, violations)
+
         parsed_summary = validated_summary.model_dump()
+        # Sentences the redo could not support stay visible but marked, so the
+        # clinician sees exactly which claims lack transcript evidence.
+        if violations:
+            parsed_summary = summary_with_unverified_flags(parsed_summary, violations)
+            logger.warning(
+                "summary.fidelity_flagged session_id=%s flagged=%s",
+                session_id,
+                len(violations),
+                extra={"session_id": session_id, "flagged": len(violations)},
+            )
         parsed_summary["_agent_metrics"] = metric_fields
         return parsed_summary
     except Exception as exc:
@@ -144,6 +162,88 @@ def run_summary_generation(
             },
         )
         return None
+
+
+def _log_fidelity_violations(
+    session_id: str, attempt: int, violations: list[FidelityViolation]
+) -> None:
+    """Log one draft's fidelity failures without exposing transcript text.
+
+    Args:
+        session_id: Session shown in the UI, for traceable logs.
+        attempt: Which draft failed; `0` means the redo is about to run.
+        violations: Failures found in this draft; never empty when called.
+    """
+    rules = sorted({violation.rule for violation in violations})
+    logger.warning(
+        "summary.fidelity_violations session_id=%s attempt=%s count=%s rules=%s",
+        session_id,
+        attempt,
+        len(violations),
+        rules,
+        extra={
+            "session_id": session_id,
+            "attempt": attempt,
+            "count": len(violations),
+            "rules": rules,
+        },
+    )
+
+
+def _generate_validated_draft(
+    session_id: str,
+    prompt: str,
+    citation_segments: list[dict[str, Any]] | None,
+) -> tuple[SessionSummaryOutput | None, dict[str, Any]]:
+    """Run one summary draft through the agent, citation validation, and text cleanup.
+
+    Use once per fidelity attempt: the first call drafts the note, a second
+    call (with the rejection feedback appended to the prompt) redoes it.
+
+    Args:
+        session_id: Session shown in the UI, for traceable logs.
+        prompt: Full generation prompt, possibly carrying fidelity rejection feedback.
+        citation_segments: Corrected rows whose IDs may be cited; `None` or empty strips
+            any model-made citation IDs so the page never shows dead source chips.
+
+    Returns:
+        Validated summary plus agent metrics; a `None` summary means structured output
+        was missing and the browser should show a retryable generation failure.
+    """
+    from agents import create_summary_agent
+
+    agent = create_summary_agent()
+    agent_result = agent(prompt, structured_output_model=SessionSummaryOutput)
+
+    metric_fields = _agent_metric_fields(agent_result, "summary")
+    structured_summary = getattr(agent_result, "structured_output", None)
+    # Without a validated object, the browser should show a retryable failure.
+    if not isinstance(structured_summary, SessionSummaryOutput):
+        logger.warning(
+            "summary.structured_output_missing session_id=%s output_type=%s",
+            session_id,
+            type(structured_summary).__name__,
+            extra={
+                "session_id": session_id,
+                "output_type": type(structured_summary).__name__,
+                **metric_fields,
+            },
+        )
+        return None, metric_fields
+
+    # No corrected rows were selected, so any model-made citation IDs are stripped before the browser sees them.
+    validated_summary = summary_with_validated_citations(
+        structured_summary,
+        citation_segments or [],
+        session_id=session_id,
+    )
+    # Provenance lives in the structured citations; the prose the clinician
+    # reads must not repeat reference markers as text.
+    validated_summary = summary_with_clean_display_text(
+        validated_summary, session_id=session_id
+    )
+
+    return validated_summary, metric_fields
 
 
 def summary_generation_prompt(
