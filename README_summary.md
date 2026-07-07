@@ -61,14 +61,14 @@ Four distinct models do the work - three speech models from NVIDIA that run on
 our own GPU, and one language model in the cloud (used for both language jobs).
 The sixth row covers the one text-cleanup step that is deliberately *not* AI.
 
-| # | Job in plain English | Model | Where it runs |
-|---|---|---|---|
-| 1 | Who is speaking right now | NVIDIA Streaming Sortformer - `nvidia/diar_streaming_sortformer_4spk-v2.1` | Our GPU, live |
-| 2 | What is being said, live | NVIDIA Multitalker Parakeet 0.6B - `nvidia/multitalker-parakeet-streaming-0.6b-v1` | Our GPU, live |
-| 3 | More accurate re-transcription after stop | NVIDIA Parakeet TDT 0.6B v3 - `nvidia/parakeet-tdt-0.6b-v3` | Our GPU, after stop |
-| 4 | Decide who is Doctor vs Patient | Anthropic Claude Haiku 4.5 - `au.anthropic.claude-haiku-4-5-20251001-v1:0` via AWS Bedrock | AWS cloud (Australia region) |
-| 5 | Write the SOAP note | Same Claude Haiku 4.5 model as #4 | AWS cloud (Australia region) |
-| 6 | Fix commonly misheard drug and condition names (optional) | Not a model - curated lookup file `strands_agents/data/medical_lexicon.txt` | Our CPU, live (off by default) |
+| # | Job                                             | Model | Where it runs                    |
+|---|-------------------------------------------------|---|----------------------------------|
+| 1 | Who is speaking right now                       | NVIDIA Streaming Sortformer - `nvidia/diar_streaming_sortformer_4spk-v2.1` | Laptop GPU, live while recording |
+| 2 | What is being said, live                        | NVIDIA Multitalker Parakeet 0.6B - `nvidia/multitalker-parakeet-streaming-0.6b-v1` | Laptop GPU, live                 |
+| 3 | More accurate re-transcription after stop       | NVIDIA Parakeet TDT 0.6B v3 - `nvidia/parakeet-tdt-0.6b-v3` | Laptop GPU, after stop           |
+| 4 | Decide who is Doctor vs Patient                 | Anthropic Claude Haiku 4.5 - `au.anthropic.claude-haiku-4-5-20251001-v1:0` via AWS Bedrock | AWS cloud (Australia region)     |
+| 5 | Write the SOAP note                             | Same Claude Haiku 4.5 model as #4 | AWS cloud (Australia region)     |
+| 6 | Fix commonly misheard drug and condition names  | Not a model - curated lookup file `strands_agents/data/medical_lexicon.txt` | Laptop CPU, live                 |
 
 Two cost profiles: the NVIDIA speech models are open models baked into our
 Docker image at build time and run on our own hardware - no per-use fee. The
