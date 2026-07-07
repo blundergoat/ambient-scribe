@@ -291,3 +291,9 @@ venv proves nothing about the deployed image. Check the declaration chain instea
 `pip show <pkg>` and inspect `Required-by` - if only dev tools require it, treat it as
 undeclared. Regression now pins the declaration (`tests/python/test_mercure_failures.py`,
 search: "pyjwt_is_declared_in_runtime_requirements").
+**Follow-up (same session):** the root enabler was that `tests/python/requirements-dev.txt`
+never chained the runtime manifest, so the documented venv setup could not even import
+fastapi and every runtime dep in the working venv was installation history. It now includes
+`-r ../../strands_agents/requirements.txt` (proven by building a throwaway venv from the
+single documented command), and the publisher imports pyjwt at module load so a broken
+image fails at startup instead of silently skipping publishes.

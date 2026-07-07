@@ -353,7 +353,7 @@ else
             pass "created"
         fi
 
-        step "pip install test deps"
+        step "pip install agent + test deps"
         if [[ -f "$REPO_ROOT/tests/python/requirements-dev.txt" ]]; then
             if "$PYTHON_AGENT_DIR/.venv/bin/pip" install -q \
                 -r "$REPO_ROOT/tests/python/requirements-dev.txt" 2>&1 | tail -1; then

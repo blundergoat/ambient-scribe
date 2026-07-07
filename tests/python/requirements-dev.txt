@@ -1,6 +1,12 @@
 # Python test dependencies for user-facing transcript, streaming, and agent flows.
 # Keep these floors close to the runtime stack so tests fail where a browser or
 # operator would feel the break, especially around async WebSocket sessions.
+
+# The tests exercise the real agent modules, so the runtime dependencies are
+# installed from the same manifest the Docker image uses - a dep that works in
+# tests but is missing from the image (or vice versa) cannot happen silently.
+-r ../../strands_agents/requirements.txt
+
 pytest>=9.1.1
 pytest-asyncio>=1.4.0
 httpx>=0.28.1  # Required by FastAPI TestClient

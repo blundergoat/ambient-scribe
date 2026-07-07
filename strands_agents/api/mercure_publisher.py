@@ -16,6 +16,10 @@ import time
 from typing import Any
 
 import httpx
+# Declared in strands_agents/requirements.txt; importing at module load makes a
+# broken image fail at startup (caught by the container healthcheck) instead of
+# silently skipping every browser-visible publish at runtime.
+import jwt as pyjwt
 
 from api.agent_observability import session_id_from_topic
 
@@ -64,8 +68,6 @@ def _resolve_mercure_jwt() -> str:
         return _mercure_jwt_cache
 
     try:
-        import jwt as pyjwt
-
         token = pyjwt.encode(
             {"mercure": {"publish": ["*"]}},
             secret,
@@ -73,8 +75,8 @@ def _resolve_mercure_jwt() -> str:
         )
         _mercure_jwt_cache = token if isinstance(token, str) else token.decode("utf-8")
     except Exception:
-        # Without this log, a broken pyjwt or malformed secret is later
-        # indistinguishable from a deliberately unset MERCURE_JWT_SECRET.
+        # Without this log, a malformed secret is later indistinguishable
+        # from a deliberately unset MERCURE_JWT_SECRET.
         logger.exception("mercure.jwt_encode_failed; publishes disabled")
         _mercure_jwt_cache = ""
 
