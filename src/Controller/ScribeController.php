@@ -327,6 +327,45 @@ class ScribeController extends AbstractController
     }
 
     /**
+     * Fetches the post-stop corrected transcript rows for the summary Transcript tab.
+     *
+     * Use after correction has run so the tab can show the rows the note was built from.
+     * Missing or unavailable corrected rows stay non-fatal: the browser falls back to the
+     * live preview rows it already holds.
+     *
+     * @param string $sessionId Browser session UUID; invalid values cannot map to corrected storage.
+     *
+     * @return JsonResponse Corrected transcript payload; empty segments mean no correction exists yet.
+     */
+    #[Route('/session/{sessionId}/corrected-transcript', name: 'scribe_corrected_transcript_proxy', methods: ['GET'])]
+    public function correctedTranscript(string $sessionId): JsonResponse
+    {
+        // Invalid sessions cannot map to corrected transcript storage.
+        if (!Uuid::isValid($sessionId)) {
+            return $this->json(['detail' => 'Invalid session_id: must be a valid UUID'], Response::HTTP_BAD_REQUEST);
+        }
+
+        try {
+            $agentResponse = $this->httpClient->request(
+                'GET',
+                $this->agentUrl("/session/{$sessionId}/corrected-transcript"),
+                [
+                    'headers' => ['Accept' => 'application/json'],
+                    'timeout' => 10,
+                ],
+            );
+
+            return $this->jsonAgentResponse($agentResponse, 'Corrected transcript unavailable');
+        } catch (TransportExceptionInterface $e) {
+            return $this->json([
+                                   'session_id' => $sessionId,
+                                   'segments'   => [],
+                                   'detail'     => 'Corrected transcript service unavailable: ' . $e->getMessage(),
+                               ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+    }
+
+    /**
      * Proxies the off-GPU model-health pre-flight check to FastAPI from the browser origin.
      *
      * The browser calls this before starting a consultation so it does not transcribe when

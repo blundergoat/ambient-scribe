@@ -10,6 +10,7 @@ Mercure behavior.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from api.agent_observability import agent_metric_fields as _agent_metric_fields
@@ -119,6 +120,12 @@ def run_summary_generation(
         validated_summary = summary_with_validated_citations(
             structured_summary,
             allowed_citation_segments,
+            session_id=session_id,
+        )
+        # Provenance lives in the structured citations; the prose the clinician
+        # reads must not repeat reference markers as text.
+        validated_summary = summary_with_clean_display_text(
+            validated_summary, session_id=session_id
         )
         parsed_summary = validated_summary.model_dump()
         parsed_summary["_agent_metrics"] = metric_fields
@@ -224,9 +231,100 @@ def source_index_text(citation_segments: list[dict[str, Any]]) -> str:
     return "\n".join(source_lines)
 
 
+# One bracketed reference marker as the model writes them into prose: a time
+# or time range (legacy invalid seconds included), a segment ID with optional
+# "to" range or trailing time range, or comma-joined lists of those. Anything
+# else inside brackets is clinical text and must stay untouched.
+_REFERENCE_TIME = r"\d{1,3}:\d{2,3}(?:-\d{1,3}:\d{2,3})?"
+_REFERENCE_ID = r"(?:corrected|seg)-\d{1,6}(?:-\d{1,3})*"
+_REFERENCE_UNIT = (
+    rf"(?:{_REFERENCE_ID}(?:\s+to\s+{_REFERENCE_ID})?(?:\s+{_REFERENCE_TIME})?"
+    rf"|{_REFERENCE_TIME})"
+)
+_INLINE_REFERENCE = re.compile(
+    rf"\s*\[{_REFERENCE_UNIT}(?:\s*,\s*{_REFERENCE_UNIT})*\]"
+)
+_SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([.,;:!?])")
+
+
+def strip_inline_reference_text(content: str) -> str:
+    """Remove inline reference markers from prose the clinician reads.
+
+    Use on summary section text and key points before they reach the browser:
+    provenance stays available through each section's structured citations, so
+    the note reads clean. Bracketed clinical wording ("[severe]") is not a
+    reference and passes through unchanged.
+
+    Args:
+        content: Generated prose; empty means there is nothing to clean.
+
+    Returns:
+        The prose without reference markers or the doubled spacing they leave.
+    """
+    stripped = _INLINE_REFERENCE.sub("", content)
+    # Removing a marker before punctuation would otherwise leave "fever ."
+    stripped = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", stripped)
+    return re.sub(r"  +", " ", stripped).strip() if stripped != content else content
+
+
+def summary_with_clean_display_text(
+    structured_summary: SessionSummaryOutput,
+    session_id: str = "",
+) -> SessionSummaryOutput:
+    """Return the note with reference-free prose and untouched citations.
+
+    Use after citation validation, before Mercure or HTTP sends the summary to
+    the browser panel, so both delivery paths show the same clean note.
+
+    Args:
+        structured_summary: Validated summary; empty sections pass through.
+        session_id: Session shown in the UI; empty only in unit tests.
+
+    Returns:
+        A copy whose section content and key points carry no inline markers.
+    """
+    stripped_count = 0
+    cleaned_sections = []
+    # Each section's prose is cleaned; its citations array is the provenance record.
+    for section in structured_summary.sections:
+        cleaned_content = strip_inline_reference_text(section.content)
+        # A changed section means at least one marker left the visible note.
+        if cleaned_content != section.content:
+            stripped_count += 1
+        cleaned_sections.append(section.model_copy(update={"content": cleaned_content}))
+
+    cleaned_key_points = []
+    # Key points render as the TL;DR strip, so they get the same treatment.
+    for key_point in structured_summary.key_points:
+        cleaned_point = strip_inline_reference_text(key_point)
+        if cleaned_point != key_point:
+            stripped_count += 1
+        cleaned_key_points.append(cleaned_point)
+
+    # Counts only - transcript content never reaches the logs.
+    if stripped_count:
+        logger.info(
+            "summary.reference_markers_stripped session_id=%s blocks=%s",
+            session_id,
+            stripped_count,
+            extra={"session_id": session_id, "stripped_blocks": stripped_count},
+        )
+
+    return structured_summary.model_copy(
+        update={"sections": cleaned_sections, "key_points": cleaned_key_points}
+    )
+
+
+# Only IDs in the synthetic reference shape may be echoed to logs; anything else
+# is model-fabricated free text and could repeat transcript content.
+_SAFE_LOG_ID = re.compile(rf"^{_REFERENCE_ID}$")
+_DROPPED_ID_LOG_LIMIT = 5
+
+
 def summary_with_validated_citations(
     structured_summary: SessionSummaryOutput,
     citation_segments: list[dict[str, Any]],
+    session_id: str = "",
 ) -> SessionSummaryOutput:
     """Return the note with only citations the clinician can trace.
 
@@ -236,12 +334,16 @@ def summary_with_validated_citations(
     Args:
         structured_summary: Model-validated summary object; empty sections render as no summary content.
         citation_segments: Corrected rows the model was allowed to cite; empty strips all citation chips.
+        session_id: Session shown in the UI; empty only in unit tests.
 
     Returns:
         Summary with invalid, duplicate, or blank citation IDs removed.
     """
     source_rows = _citation_source_rows(citation_segments)
     sections: list[SummarySectionOutput] = []
+    blank_count = 0
+    duplicate_count = 0
+    unresolved_ids: list[str] = []
 
     # Each section keeps its text even when every citation is dropped.
     for section in structured_summary.sections:
@@ -251,7 +353,14 @@ def summary_with_validated_citations(
         for citation in section.citations:
             segment_id = citation.segment_id.strip()
             # Bad or repeated IDs are omitted so the clinician never sees a false source chip.
-            if segment_id == "" or segment_id in seen_ids or segment_id not in source_rows:
+            if segment_id == "":
+                blank_count += 1
+                continue
+            if segment_id in seen_ids:
+                duplicate_count += 1
+                continue
+            if segment_id not in source_rows:
+                unresolved_ids.append(segment_id)
                 continue
 
             seen_ids.add(segment_id)
@@ -263,6 +372,32 @@ def summary_with_validated_citations(
                 content=section.content,
                 citations=validated_citations,
             )
+        )
+
+    # Dropped citations mean lost provenance, so the event is worth a warning;
+    # only counts and pattern-safe synthetic IDs reach the logs.
+    if blank_count or duplicate_count or unresolved_ids:
+        loggable_ids = list(
+            dict.fromkeys(
+                candidate
+                for candidate in unresolved_ids
+                if _SAFE_LOG_ID.fullmatch(candidate)
+            )
+        )[:_DROPPED_ID_LOG_LIMIT]
+        logger.warning(
+            "summary.citations_dropped session_id=%s unresolved=%s duplicates=%s blank=%s ids=%s",
+            session_id,
+            len(unresolved_ids),
+            duplicate_count,
+            blank_count,
+            loggable_ids,
+            extra={
+                "session_id": session_id,
+                "unresolved_citations": len(unresolved_ids),
+                "duplicate_citations": duplicate_count,
+                "blank_citations": blank_count,
+                "unresolved_ids_sample": loggable_ids,
+            },
         )
 
     return SessionSummaryOutput(

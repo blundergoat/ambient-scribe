@@ -272,3 +272,31 @@ def test_pipeline_toggle_controls_summary_visible_text(tmp_path, monkeypatch):
     assert "continue metoprolol daily" in transcript_text_from_segments(
         [{"role": "PATIENT", **corrected_segments[0].dict()}]
     )
+
+
+def test_medical_correction_is_on_by_default(tmp_path, monkeypatch):
+    """An unconfigured deployment fixes misheard terms without any env setup."""
+    lexicon_path = tmp_path / "medical_lexicon.txt"
+    lexicon_path.write_text("metoprolol|metro pro lol\n", encoding="utf-8")
+    monkeypatch.delenv("MEDICAL_BOOST_ENABLED", raising=False)
+    monkeypatch.setenv("MEDICAL_LEXICON_PATH", str(lexicon_path))
+
+    pipeline = NemoPipeline()
+    hypothesis = type("Hypothesis", (), {"text": "continue metro pro lol daily"})()
+    segments = pipeline._parse_nemo_output([["0.0 2.0 speaker_0"]], [hypothesis])
+
+    assert segments[0].text == "continue metoprolol daily"
+
+
+def test_explicit_zero_still_disables_medical_correction(tmp_path, monkeypatch):
+    """A deployment that opts out with 0 keeps raw ASR text."""
+    lexicon_path = tmp_path / "medical_lexicon.txt"
+    lexicon_path.write_text("metoprolol|metro pro lol\n", encoding="utf-8")
+    monkeypatch.setenv("MEDICAL_BOOST_ENABLED", "0")
+    monkeypatch.setenv("MEDICAL_LEXICON_PATH", str(lexicon_path))
+
+    pipeline = NemoPipeline()
+    hypothesis = type("Hypothesis", (), {"text": "continue metro pro lol daily"})()
+    segments = pipeline._parse_nemo_output([["0.0 2.0 speaker_0"]], [hypothesis])
+
+    assert segments[0].text == "continue metro pro lol daily"

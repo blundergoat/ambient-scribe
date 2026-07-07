@@ -545,6 +545,63 @@
             line-height: 1.6;
             color: var(--text-strong);
         }
+        .summary-tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin-left: auto;
+        }
+        .summary-tab {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.625rem;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--text-subtle);
+            cursor: pointer;
+        }
+        .summary-tab:hover {
+            color: var(--text-strong);
+            background: var(--surface-hover);
+        }
+        .summary-tab[aria-selected="true"] {
+            background: var(--surface-bg-alt);
+            border-color: var(--surface-border);
+            color: var(--text-strong);
+        }
+        .summary-transcript {
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+        }
+        .summary-transcript__block {
+            display: grid;
+            grid-template-columns: auto auto minmax(0, 1fr);
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.4375rem 0.5625rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.375rem;
+            background: var(--surface-bg-alt);
+        }
+        .summary-transcript__time,
+        .summary-transcript__role {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            color: var(--text-subtle);
+            white-space: nowrap;
+        }
+        .summary-transcript__text {
+            min-width: 0;
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            color: var(--text-strong);
+        }
+        .summary-transcript__status {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin: 0 0 0.5rem;
+        }
 
         .summary-column > .summary-panel {
             flex: 1;
@@ -1086,25 +1143,39 @@
                 <div id="summaryPanel" class="summary-panel hidden">
                     <div class="summary-panel__header">
                         <span id="summaryTitle">Session Summary</span>
+                        <div id="summaryTabs" class="summary-tabs" role="tablist" aria-label="Summary views">
+                            <button id="summaryTabNote" type="button" class="summary-tab" role="tab"
+                                    aria-selected="true" aria-controls="summaryNoteView"
+                                    onclick="selectSummaryTab('note')">Note</button>
+                            <button id="summaryTabTranscript" type="button" class="summary-tab" role="tab"
+                                    aria-selected="false" aria-controls="summaryTranscriptView" tabindex="-1"
+                                    onclick="selectSummaryTab('transcript')">Transcript</button>
+                        </div>
                     </div>
                     <div id="summaryBody" class="summary-panel__body">
-                        <div id="summaryPending" class="summary-pending">
-                            <span class="summary-pending__bars" aria-hidden="true">
-                                <span class="summary-pending__bar"></span>
-                                <span class="summary-pending__bar"></span>
-                                <span class="summary-pending__bar"></span>
-                            </span>
-                            <span class="summary-pending__text" id="summaryPendingText">Recording in progress, the summary will generate once consultation ends.</span>
+                        <div id="summaryNoteView" role="tabpanel" aria-labelledby="summaryTabNote">
+                            <div id="summaryPending" class="summary-pending">
+                                <span class="summary-pending__bars" aria-hidden="true">
+                                    <span class="summary-pending__bar"></span>
+                                    <span class="summary-pending__bar"></span>
+                                    <span class="summary-pending__bar"></span>
+                                </span>
+                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress, the summary will generate once consultation ends.</span>
+                            </div>
+                            <div id="summaryLoading" class="summary-panel__loading hidden">
+                                <span class="recording-dot recording-pulse"></span>
+                                <span id="summaryLoadingText">Generating summary...</span>
+                            </div>
+                            <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
+                                <span id="summaryStatusBadge" class="summary-status__badge"></span>
+                                <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                            </div>
+                            <div id="summaryContent"></div>
                         </div>
-                        <div id="summaryLoading" class="summary-panel__loading hidden">
-                            <span class="recording-dot recording-pulse"></span>
-                            <span id="summaryLoadingText">Generating summary...</span>
+                        <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">
+                            <p id="summaryTranscriptStatus" class="summary-transcript__status hidden"></p>
+                            <div id="summaryTranscript" class="summary-transcript"></div>
                         </div>
-                        <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
-                            <span id="summaryStatusBadge" class="summary-status__badge"></span>
-                            <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
-                        </div>
-                        <div id="summaryContent"></div>
                     </div>
                 </div>
             </div>
@@ -1200,7 +1271,9 @@
     <script src="/js/scribe-streaming.js"></script>
     <script src="/js/scribe-recording.js"></script>
     <script src="/js/scribe-transcript.js"></script>
+    <script src="/js/scribe-stitch.js"></script>
     <script src="/js/scribe-output.js"></script>
+    <script src="/js/scribe-summary-tabs.js"></script>
     <script src="/js/scribe-actions.js"></script>
     {% if dev_panel_enabled is defined and dev_panel_enabled %}
     <script src="/js/scribe-dev.js"></script>

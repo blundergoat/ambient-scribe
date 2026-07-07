@@ -120,7 +120,11 @@ class NemoPipeline:
         self._asr_model: Any = None
         self._models_loaded = False
         self._load_error: str | None = None
-        self._medical_boost_enabled = _is_env_flag_enabled("MEDICAL_BOOST_ENABLED")
+        # Misheard drug/condition names are corrected by default; explicit
+        # MEDICAL_BOOST_ENABLED=0 opts a deployment back out.
+        self._medical_boost_enabled = _is_env_flag_enabled(
+            "MEDICAL_BOOST_ENABLED", default=True
+        )
         self._medical_lexicon_path = Path(
             os.environ.get("MEDICAL_LEXICON_PATH", default_medical_lexicon_path())
         )
@@ -698,13 +702,19 @@ class NemoPipeline:
         return parsed
 
 
-def _is_env_flag_enabled(name: str) -> bool:
+def _is_env_flag_enabled(name: str, default: bool = False) -> bool:
     """Read a boolean env toggle used by the user-facing transcript pipeline.
 
     Args:
-        name: Environment variable name; empty means the toggle is disabled.
+        name: Environment variable name; unset or blank falls back to `default`.
+        default: Value an unconfigured deployment gets for this toggle.
 
     Returns:
         True for common enabled values; false leaves the transcript path unchanged.
     """
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    raw_value = os.environ.get(name)
+    # An unconfigured deployment gets the toggle's shipped default.
+    if raw_value is None or raw_value.strip() == "":
+        return default
+
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}

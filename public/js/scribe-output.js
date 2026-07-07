@@ -462,6 +462,11 @@ function resetPostVisitCorrectionState() {
     correctionRequestPromise = null;
     correctionSessionId = null;
     hasCorrectionReadyForSession = false;
+
+    // The Transcript tab caches corrected rows per session; test pages load without it.
+    if (typeof resetSummaryTabsState === 'function') {
+        resetSummaryTabsState();
+    }
 }
 
 /**
@@ -587,9 +592,10 @@ function renderSummary(summaryPayload) {
     summaryPanel.classList.remove('hidden');
     clearElement(summaryContent);
 
+    // Key points lead as the TL;DR strip, then the SOAP sections (summary UX M4).
     const renderedBlocks = [
-        ...createSummarySectionBlocks(summaryPayload.sections ?? []),
         ...createSummaryKeyPointBlocks(summaryPayload.key_points ?? []),
+        ...createSummarySectionBlocks(summaryPayload.sections ?? []),
     ];
 
     // Empty summary payloads should explain that no content is available.

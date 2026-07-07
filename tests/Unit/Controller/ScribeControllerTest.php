@@ -319,6 +319,71 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
+     * Proxies corrected transcript reads for the summary Transcript tab.
+     *
+     * @return void No payload; failure means the tab cannot show the rows the note used.
+     */
+    public function testCorrectedTranscriptProxyForwardsToAgent(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000399';
+        $seenRequests = [];
+        $httpClient = new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode([
+                        'session_id' => $sessionId,
+                        'source' => 'corrected_segments',
+                        'segments' => [
+                            [
+                                'segment_id' => 'corrected-0001',
+                                'role' => 'PATIENT',
+                                'text' => 'My skin is quite red.',
+                                'start' => 3.1,
+                                'end' => 4.2,
+                            ],
+                        ],
+                    ], JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $response = $controller->correctedTranscript($sessionId);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('corrected-0001', $this->decodeJsonResponse($response)['segments'][0]['segment_id']);
+        self::assertCount(1, $seenRequests);
+        self::assertSame('GET', $seenRequests[0]['method']);
+        self::assertSame("http://agent.test/session/{$sessionId}/corrected-transcript", $seenRequests[0]['url']);
+    }
+
+    /**
+     * Rejects corrected transcript reads for malformed session IDs before any agent call.
+     *
+     * @return void No payload; failure means invalid IDs would reach FastAPI.
+     */
+    public function testCorrectedTranscriptProxyRejectsInvalidSessionId(): void
+    {
+        $seenRequests = [];
+        $httpClient = new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url];
+
+                return new MockResponse(body: '{}', info: ['http_code' => 200]);
+            },
+            baseUri: 'http://agent.test',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $response = $controller->correctedTranscript('not-a-uuid');
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertCount(0, $seenRequests);
+    }
+
+    /**
      * Proxies manual role corrections through Symfony so the browser avoids FastAPI CORS.
      *
      * @return void No payload; failure means clicked speaker labels may not be protected server-side.
