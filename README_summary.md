@@ -1,4 +1,4 @@
-# Ambient Scribe — Plain-English Summary
+# Ambient Scribe - Plain-English Summary
 
 
 A high-level explanation of what this project does, how a conversation becomes a
@@ -12,13 +12,13 @@ see [README_STACK.md](README_STACK.md); for the detailed walkthrough see
 ## What it does
 
 Ambient Scribe listens to a medical consultation and turns it into a reviewable
-clinical note — no typing during the visit.
+clinical note - no typing during the visit.
 
 A clinician opens a web page and presses record. While they talk with the
 patient, the conversation appears on screen in near real time as transcript
 cards labelled **Doctor** and **Patient**. When they press stop, the system
 re-checks the whole recording with a slower, more accurate second pass, then
-drafts a concise **SOAP note** (Subjective, Objective, Assessment, Plan — the
+drafts a concise **SOAP note** (Subjective, Objective, Assessment, Plan - the
 standard structure for clinical notes). Each section of the note cites the
 exact transcript lines it came from, so the clinician can verify any statement
 with one click. If a line is attributed to the wrong person, the clinician can
@@ -40,7 +40,7 @@ review, not an autonomous medical record.
    anonymous "speaker 0" and "speaker 1".
 4. **A language model names the speakers.** Off the GPU, a language model reads
    the words and decides which anonymous voice is the Doctor and which is the
-   Patient — doctors ask clinical questions and use medical terms; patients
+   Patient - doctors ask clinical questions and use medical terms; patients
    describe symptoms. It keeps re-checking as the visit goes on, so labels can
    improve mid-conversation.
 5. **The screen updates live.** Every new transcript segment and label change
@@ -57,40 +57,40 @@ review, not an autonomous medical record.
 
 ## The AI models used
 
-Four distinct models do the work — three speech models from NVIDIA that run on
+Four distinct models do the work - three speech models from NVIDIA that run on
 our own GPU, and one language model in the cloud (used for both language jobs).
 The sixth row covers the one text-cleanup step that is deliberately *not* AI.
 
 | # | Job in plain English | Model | Where it runs |
 |---|---|---|---|
-| 1 | Who is speaking right now | NVIDIA Streaming Sortformer — `nvidia/diar_streaming_sortformer_4spk-v2.1` | Our GPU, live |
-| 2 | What is being said, live | NVIDIA Multitalker Parakeet 0.6B — `nvidia/multitalker-parakeet-streaming-0.6b-v1` | Our GPU, live |
-| 3 | More accurate re-transcription after stop | NVIDIA Parakeet TDT 0.6B v3 — `nvidia/parakeet-tdt-0.6b-v3` | Our GPU, after stop |
-| 4 | Decide who is Doctor vs Patient | Anthropic Claude Haiku 4.5 — `au.anthropic.claude-haiku-4-5-20251001-v1:0` via AWS Bedrock | AWS cloud (Australia region) |
+| 1 | Who is speaking right now | NVIDIA Streaming Sortformer - `nvidia/diar_streaming_sortformer_4spk-v2.1` | Our GPU, live |
+| 2 | What is being said, live | NVIDIA Multitalker Parakeet 0.6B - `nvidia/multitalker-parakeet-streaming-0.6b-v1` | Our GPU, live |
+| 3 | More accurate re-transcription after stop | NVIDIA Parakeet TDT 0.6B v3 - `nvidia/parakeet-tdt-0.6b-v3` | Our GPU, after stop |
+| 4 | Decide who is Doctor vs Patient | Anthropic Claude Haiku 4.5 - `au.anthropic.claude-haiku-4-5-20251001-v1:0` via AWS Bedrock | AWS cloud (Australia region) |
 | 5 | Write the SOAP note | Same Claude Haiku 4.5 model as #4 | AWS cloud (Australia region) |
-| 6 | Fix commonly misheard drug and condition names (optional) | Not a model — curated lookup file `strands_agents/data/medical_lexicon.txt` | Our CPU, live (off by default) |
+| 6 | Fix commonly misheard drug and condition names (optional) | Not a model - curated lookup file `strands_agents/data/medical_lexicon.txt` | Our CPU, live (off by default) |
 
 Two cost profiles: the NVIDIA speech models are open models baked into our
-Docker image at build time and run on our own hardware — no per-use fee. The
+Docker image at build time and run on our own hardware - no per-use fee. The
 language model is pay-per-use through AWS Bedrock, and only receives transcript
 *text*, never audio.
 
 For offline or fully-local development, jobs 4 and 5 swap to **Qwen 3.5 9B**
-(`qwen3.5:9b`) running on CPU via Ollama — a one-line configuration change
+(`qwen3.5:9b`) running on CPU via Ollama - a one-line configuration change
 (`ROLE_AGENT_MODEL_PROVIDER`), after which nothing leaves the machine.
 
 Not everything is a model. Row 6, the **medical lexicon**
 (`strands_agents/data/medical_lexicon.txt`), is a human-reviewed text file
 where each line pairs a correct clinical term with the ways speech recognition
-commonly mishears it — "metro pro lol" → **metoprolol**, "high per tension" →
+commonly mishears it - "metro pro lol" → **metoprolol**, "high per tension" →
 **hypertension**. When enabled (`MEDICAL_BOOST_ENABLED=1`), the transcription
 pipeline swaps those exact phrases for the correct spelling the moment the
 speech model produces text, so the fix reaches the live transcript, the
 summary, and downloads alike. It is deliberately conservative: exact
-whole-word matches only, and it never guesses — anything not on the list stays
+whole-word matches only, and it never guesses - anything not on the list stays
 as heard. Each entry's provenance and safety rationale live in a companion
 file, `strands_agents/data/medical_lexicon_review.json`, which is audit
-documentation for reviewers and QA scripts — the running app reads only the
+documentation for reviewers and QA scripts - the running app reads only the
 `.txt` file. Two other non-AI helpers: a keyword-rule fallback that supplies
 low-confidence Doctor/Patient labels if the language model fails mid-visit,
 and a small project-authored clinical knowledge file
@@ -105,7 +105,7 @@ prompt (keyword lookup, not a licensed guideline corpus).
   on CPU. This is a hard rule in the codebase, not a preference.
 - **Audio stays home.** Speech-to-text is self-hosted, so patient audio never
   goes to a third party. The only external AI call sends transcript text to
-  AWS Bedrock in the Australia region — and the Ollama mode removes even that.
+  AWS Bedrock in the Australia region - and the Ollama mode removes even that.
 - **Live and accurate are different problems.** The streaming models make words
   appear instantly; the post-stop second pass makes the note trustworthy. The
   summary is always built from the corrected transcript when it exists.
@@ -127,16 +127,16 @@ The whole stack runs with `docker compose up --build` and requires an NVIDIA
 GPU with the Container Toolkit. Transcripts live in memory by default (SQLite
 optional) with a 2-hour retention window; Mercure only carries events and is
 never the durable store. The frontend is Twig templates with vanilla JS
-modules — no SPA framework.
+modules - no SPA framework.
 
 ## How well does it work today
 
 Measured on internal test recordings (the public PriMock57 mock-consultation
-corpus plus manual runs) — internal evaluation, not clinical validation:
+corpus plus manual runs) - internal evaluation, not clinical validation:
 
 - The newer session-long **streaming engine** attributes **85–90%** of words to
   the correct speaker, versus roughly 40–62% for the older per-window engine on
-  the same tests — which is why streaming is now the local development default.
+  the same tests - which is why streaming is now the local development default.
 - Successive role-labelling refinements lifted a recent manual run from 89.7%
   to **95.6%** correct attribution, with the confident-error rate halved.
 - The post-stop correction pass measurably improves transcript accuracy and
@@ -153,8 +153,8 @@ fixture-evaluation pipeline rather than ad-hoc testing.
 
 ## Read more
 
-- [README.md](README.md) — quick start and architecture sketch
-- [README_HOW_IT_WORKS.md](README_HOW_IT_WORKS.md) — detailed system walkthrough
-- [README_STACK.md](README_STACK.md) — full model, service, and dependency inventory
-- [README_CLINICAL_INTELLIGENCE.md](README_CLINICAL_INTELLIGENCE.md) — medical normalisation and summary grounding
-- [CHANGELOG.md](CHANGELOG.md) — feature-by-feature history with evidence
+- [README.md](README.md) - quick start and architecture sketch
+- [README_HOW_IT_WORKS.md](README_HOW_IT_WORKS.md) - detailed system walkthrough
+- [README_STACK.md](README_STACK.md) - full model, service, and dependency inventory
+- [README_CLINICAL_INTELLIGENCE.md](README_CLINICAL_INTELLIGENCE.md) - medical normalisation and summary grounding
+- [CHANGELOG.md](CHANGELOG.md) - feature-by-feature history with evidence
