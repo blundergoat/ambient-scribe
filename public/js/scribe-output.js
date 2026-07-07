@@ -6,8 +6,10 @@
 // =========================================================================
 
 // At most one post-visit summary request may be in flight per visible session.
-// Auto-trigger (live stop) and manual click/retry share this guard.
-let isSummaryRequestInFlight = false;
+// Auto-trigger (live stop) and manual click/retry share this guard. Keying by
+// session id (not a boolean) lets a reset visit request its own summary while
+// the previous visit's request is still running.
+let summaryRequestSessionId = null;
 // Correction runs once before summary so the final note can use better rows.
 let correctionRequestPromise = null;
 let correctionSessionId = null;
@@ -417,10 +419,11 @@ async function requestSummary() {
     }
 
     // One in-flight request per session keeps auto-trigger and retry from overlapping.
-    if (isSummaryRequestInFlight) {
+    if (summaryRequestSessionId === CONFIG.sessionId) {
         return;
     }
-    isSummaryRequestInFlight = true;
+    const requestedSessionId = CONFIG.sessionId;
+    summaryRequestSessionId = requestedSessionId;
 
     const summaryPanel = document.getElementById('summaryPanel');
     const summaryLoading = document.getElementById('summaryLoading');
@@ -435,21 +438,34 @@ async function requestSummary() {
         setSummaryLoadingText('Improving transcript...');
         await ensureCorrectedTranscriptReady();
         setSummaryLoadingText('Generating summary...');
-        const response = await fetch(`/session/${CONFIG.sessionId}/summary`, {
+        const response = await fetch(`/session/${requestedSessionId}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ segments: readVisibleTranscriptSegments() }),
         });
 
         const summaryPayload = await readJsonResponse(response, { detail: 'Summary generation failed.' });
+        // A reset or replay may have started a new session mid-request; the
+        // old visit's summary must not render into the new visit's panel.
+        if (CONFIG.sessionId !== requestedSessionId) {
+            return;
+        }
         renderSummaryResponse(response, summaryPayload);
     } catch (summaryError) {
         console.error('Summary request failed:', summaryError);
-        showSummaryFailure('Could not reach the summary service.');
+        if (CONFIG.sessionId === requestedSessionId) {
+            showSummaryFailure('Could not reach the summary service.');
+        }
     } finally {
-        setSummaryLoadingText('Generating summary...');
-        summaryLoading.classList.add('hidden');
-        isSummaryRequestInFlight = false;
+        // The shared panel now belongs to the new session; only the owning
+        // request may touch its loading state.
+        if (CONFIG.sessionId === requestedSessionId) {
+            setSummaryLoadingText('Generating summary...');
+            summaryLoading.classList.add('hidden');
+        }
+        if (summaryRequestSessionId === requestedSessionId) {
+            summaryRequestSessionId = null;
+        }
     }
 }
 

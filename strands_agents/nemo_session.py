@@ -189,6 +189,15 @@ class AudioBuffer:
         """
         return self._total_bytes
 
+    @property
+    def trimmed_seconds(self) -> float:
+        """Absolute session time of the oldest audio still retained.
+
+        Returns:
+            Seconds trimmed from the front; `0.0` means the whole visit is retained.
+        """
+        return self._trimmed_bytes / _BYTES_PER_SECOND
+
 
 class TranscriptionSession:
     """Manages audio accumulation and NeMo processing across WebSocket chunks.
@@ -399,6 +408,12 @@ class TranscriptionSession:
         # Whole samples only: an odd byte offset would split a 16-bit sample and
         # NeMo rejects buffers that are not a multiple of the element size.
         window_start_byte = int(window_start_seconds * 16000) * 2
+        # The buffer may have trimmed past the requested start; the returned audio
+        # then begins at the retained head, so the timeline shift must use that
+        # actual start or new speech is timestamped too early.
+        effective_window_start_seconds = max(
+            window_start_seconds, self.buffer.trimmed_seconds
+        )
         window_audio = self.buffer.audio_from(window_start_byte)
         # No new audio means the user has not produced another transcribable window.
         if window_audio == b"":
@@ -409,7 +424,9 @@ class TranscriptionSession:
         window_segments: list[Segment] = []
         # Each NeMo row is shifted from window-local time to the user's session timeline.
         for segment in sorted(result.segments, key=lambda segment: segment.start):
-            window_segments.append(shift_segment_to_session_time(segment, window_start_seconds))
+            window_segments.append(
+                shift_segment_to_session_time(segment, effective_window_start_seconds)
+            )
         window_segments = self._continue_anchor_speakers(window_segments)
 
         # Segments fully inside already-emitted audio are the context replay.
@@ -477,7 +494,10 @@ class TranscriptionSession:
         window_segments = [
             Segment(
                 speaker_id=row.speaker_slot,
-                text=row.text,
+                # Streaming rows bypass the windowed ASR path, so the medical
+                # boost must be applied here or drug/condition variants reach
+                # the transcript, summary, and download uncorrected.
+                text=self.pipeline.visible_text(row.text),
                 start=row.start,
                 end=row.end,
             )

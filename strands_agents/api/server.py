@@ -274,8 +274,12 @@ async def _periodic_cleanup() -> None:
 app = FastAPI(title="Ambient Scribe Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CorrelationIdMiddleware)
 
-# Install correlation_id filter on root logger so ALL log records include it.
-logging.getLogger().addFilter(CorrelationIdFilter())
+# Correlation must be attached at the handler: Python runs logger-level
+# filters only on the logger that created a record, so a root-logger filter
+# never sees records propagated from module loggers like api.role_inference_queue.
+_correlation_id_filter = CorrelationIdFilter()
+for _root_handler in logging.getLogger().handlers:
+    _root_handler.addFilter(_correlation_id_filter)
 
 
 def create_storage_backend() -> StorageBackend:
@@ -553,6 +557,16 @@ async def correct_session_transcript(
             live_segments,
         )
 
+    # A trimmed buffer holds only the visit's tail; aligning tail-only ASR against
+    # the full-visit scaffold would drop or misattribute the early clinical history,
+    # so the live transcript stays the source of truth for long visits.
+    if active_session.buffer.trimmed_seconds > 0.0:
+        return _correction_unavailable_response(
+            session_id,
+            "Visit audio exceeded the retention window; the live transcript is used as-is.",
+            live_segments,
+        )
+
     retained_audio = active_session.buffer.full_audio()
     # Empty audio means the user stopped before the browser sent usable samples.
     if retained_audio == b"":
@@ -810,11 +824,25 @@ async def roles_override(session_id: str, request: Request) -> dict:
     state = get_or_create_state(session_id)
     state.current_mapping[speaker_id] = role
 
-    # Store as confirmed override so the agent respects it
-    state.confirmed_overrides[speaker_id] = role
+    # Cycling back to UNKNOWN is the documented undo: drop the confirmed
+    # override so the agent may relabel this speaker again, instead of
+    # enforcing UNKNOWN over every future agent proposal.
+    if role == "UNKNOWN":
+        state.confirmed_overrides.pop(speaker_id, None)
+    else:
+        # Store as confirmed override so the agent respects it
+        state.confirmed_overrides[speaker_id] = role
 
     # Apply to stored segments
     sessions.apply_role_mapping(session_id, state.current_mapping)
+    # A corrected artifact snapshots roles at correction time; keep it in step
+    # so a retried summary cites the clinician's latest labels.
+    corrected_rows = sessions.get_corrected_segments(session_id)
+    if corrected_rows:
+        for corrected_row in corrected_rows:
+            if str(corrected_row.get("speaker_id", "")) == speaker_id:
+                corrected_row["role"] = role
+        sessions.replace_corrected_segments(session_id, corrected_rows)
     # Re-judge rows against the corrected mapping so automatic row exceptions
     # stay consistent with the labels the clinician now sees.
     row_exceptions = compute_row_role_exceptions(
@@ -880,6 +908,12 @@ async def _apply_row_role_override(session_id: str, segment_id: str, role: str) 
             status_code=404,
             detail="No stored transcript for this session; row correction not saved",
         )
+
+    # Corrected rows use their own segmentation, so a live-row fix cannot be
+    # mapped onto them; drop the stale artifact and let the next summary
+    # re-correct from the updated scaffold instead of citing the old role.
+    if sessions.get_corrected_segments(session_id):
+        sessions.replace_corrected_segments(session_id, [])
 
     # Peek only: after grace teardown there is no live role state, and creating
     # one here would broadcast a fabricated empty mapping with zero confidence.
@@ -1077,22 +1111,44 @@ def _summary_model_reachable() -> tuple[bool, str]:
     """Best-effort reachability check for the off-GPU role/summary model.
 
     Used by the browser pre-flight so a consultation is not started when roles
-    and the summary would fail. Ollama is verified by listing tags; other
-    providers (Bedrock) cannot be cheaply probed here and are assumed configured.
+    and the summary would fail. Ollama is verified by listing tags; Bedrock by
+    resolving credentials and a region without a network round-trip.
 
     Returns:
         (available, detail) - detail is a short reason shown to the clinician.
     """
     provider = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+
+    if provider == "bedrock":
+        try:
+            import boto3
+
+            aws_session = boto3.Session()
+            # No resolvable credentials means every role/summary call will fail
+            # mid-consultation; surface that before recording starts.
+            if aws_session.get_credentials() is None:
+                return False, "bedrock credentials are not configured"
+            region = os.environ.get("AWS_DEFAULT_REGION") or aws_session.region_name
+            if not region:
+                return False, "bedrock region is not configured (AWS_DEFAULT_REGION)"
+        except Exception as exc:
+            return False, f"bedrock credential check failed ({type(exc).__name__})"
+        return True, f"bedrock:{region}"
+
+    # A typo'd provider would otherwise pass pre-flight and fail at first use.
     if provider != "ollama":
-        return True, provider
+        return False, f"unknown ROLE_AGENT_MODEL_PROVIDER '{provider}'"
+
     host = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
     model = os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
     try:
         response = httpx.get(f"{host}/api/tags", timeout=4.0)
         response.raise_for_status()
-        names = [entry.get("name", "") for entry in response.json().get("models", [])]
-        if any(model.split(":")[0] in name for name in names):
+        names = {entry.get("name", "") for entry in response.json().get("models", [])}
+        # The agents request the exact configured tag, so the pre-flight must
+        # match it exactly; a bare name means Ollama's :latest tag.
+        is_pulled = model in names or (":" not in model and f"{model}:latest" in names)
+        if is_pulled:
             return True, f"ollama:{model}"
         return False, f"model '{model}' is not pulled"
     except Exception as exc:

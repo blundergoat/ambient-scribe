@@ -457,6 +457,11 @@ function handleUnexpectedDisconnect(closeCode) {
         return;
     }
 
+    // Retries are exhausted: release the microphone now. resetSession() takes
+    // the non-recording branch after this point and would never stop these
+    // tracks, leaving the mic capturing while the UI says the connection failed.
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
     isRecording = false;
     setElementHidden('stopBtn', true);
     setElementHidden('reconnectBtn', false);

@@ -212,6 +212,14 @@ resolve_fixtures() {
 
     FIXTURE_PATHS+=("${matches[0]}")
   done
+
+  # Zero fixtures would print a green report without evaluating anything;
+  # fresh checkouts hit this because WAV fixtures are gitignored.
+  if [[ ${#FIXTURE_PATHS[@]} -eq 0 ]]; then
+    echo "error: no WAV fixtures found under $FIXTURE_DIR" >&2
+    echo "Generate them first: python3 scripts/generate-demo-consultation-audio.py" >&2
+    exit 2
+  fi
 }
 
 require_ready_agent() {

@@ -130,7 +130,9 @@ def build_session_quality_record(
         "engine": getattr(audio_session, "engine_name", "windowed"),
         "status": status or "finalized",
         "finalized_at": finished_at.isoformat().replace("+00:00", "Z"),
-        "chunks": getattr(stream_state, "chunk_count", 0),
+        # The session-wide counter survives reconnects; the per-socket stream
+        # state only saw chunks since the last resume and would underreport.
+        "chunks": getattr(audio_session, "chunk_count", 0),
         "audio_seconds": round(audio_session.buffer.duration_seconds, 3),
         "session_duration_seconds": round(
             finished_at.timestamp() - audio_session.started_at, 3

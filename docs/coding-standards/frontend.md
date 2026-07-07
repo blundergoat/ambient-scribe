@@ -57,7 +57,7 @@ getUserMedia() -> PcmStreamer (downsample to 16kHz PCM) -> WebSocket.send(binary
 
 ## Mercure SSE
 
-```
+```text
 EventSource(mercureUrl?topic=raw&topic=roles&topic=summary)
   -> route by payload type: segment/finalized -> transcript handlers
                             role_update       -> handleRoleUpdate

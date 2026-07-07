@@ -27,8 +27,9 @@
 # IMPORTANT: NeMo owns the GPU exclusively. The Strands role inference
 # agent uses Bedrock or CPU-only Ollama. Do NOT co-locate a GPU LLM.
 #
-# BUILD:
-#   docker build -t ambient-scribe-nemo ./docker/nemo
+# BUILD (context must be strands_agents/ - COPY pulls requirements.txt and
+# the app source from there, matching docker-compose.yml):
+#   docker build -f docker/nemo/Dockerfile -t ambient-scribe-nemo ./strands_agents
 #
 # RUN (interactive, for API discovery):
 #   docker run --rm -it --gpus all \

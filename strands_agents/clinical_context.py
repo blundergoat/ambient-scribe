@@ -40,6 +40,9 @@ def load_clinical_knowledge(path: str | Path | None = None) -> list[dict[str, An
         payload = json.loads(knowledge_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return []
+    # Valid JSON that is not an object (array, string, number) has no entries.
+    if not isinstance(payload, dict):
+        return []
     entries = payload.get("entries", [])
     # Invalid KB shape degrades to no retrieval rather than unsafe suggestions.
     if not isinstance(entries, list):

@@ -1045,6 +1045,40 @@ def test_correction_endpoint_falls_back_when_audio_is_missing() -> None:
     assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
 
 
+def test_correction_endpoint_falls_back_when_buffer_trimmed() -> None:
+    """Tail-only retained audio must not be aligned against the full-visit scaffold."""
+    transcription_session = TranscriptionSession(
+        TEST_SESSION_ID,
+        pipeline=NemoPipeline(),
+        input_format="pcm",
+        max_buffer_duration=1.0,
+    )
+    # Two seconds against a one-second cap trims the visit's opening audio.
+    transcription_session.buffer.append(b"\0\0" * 16000)
+    transcription_session.buffer.append(b"\0\0" * 16000)
+    asyncio.run(lifecycle.register(TEST_SESSION_ID, transcription_session))
+    sessions.append_segment(
+        TEST_SESSION_ID,
+        {
+            "speaker_id": "speaker_0",
+            "role": "PATIENT",
+            "text": "early history the buffer no longer holds",
+            "start": 0.0,
+            "end": 1.0,
+            "segment_id": "live-0001",
+        },
+    )
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(f"/session/{TEST_SESSION_ID}/correction")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["source"] == "live_segments"
+    assert "retention window" in response.json()["detail"]
+    assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
+
+
 def _seed_stopped_session_with_audio() -> None:
     """Register a session with retained PCM like the post-finalize grace window."""
     transcription_session = TranscriptionSession(

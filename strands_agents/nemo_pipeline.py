@@ -428,9 +428,24 @@ class NemoPipeline:
                 else str(first_hypothesis)
             )
 
+        return self.visible_text(asr_text)
+
+    def visible_text(self, asr_text: str) -> str:
+        """Normalize clinical terms in ASR text before it becomes user-visible.
+
+        Both emission paths (windowed and streaming engine) must route text
+        through this seam so transcript, summary, and download see the same
+        medical-boost corrections.
+
+        Args:
+            asr_text: Raw ASR text; empty passes through unchanged.
+
+        Returns:
+            Text with known clinical terms normalized when the boost is enabled.
+        """
         # Enabled correction normalizes known clinical terms before they reach the UI.
         if self._medical_boost_enabled and self._medical_phrases:
-            asr_text = correct_medical_terms(asr_text, self._medical_phrases)
+            return correct_medical_terms(asr_text, self._medical_phrases)
 
         return asr_text
 

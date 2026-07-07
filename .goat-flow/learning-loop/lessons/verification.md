@@ -261,3 +261,17 @@ Playwright strict-mode violation: the class now resolves in BOTH the popover and
 **Prevention:** When a component builder is reused across views, scope e2e locators to
 the owning container (`#summaryTranscript .summary-transcript__block`). Audit existing
 locators for a class the moment a second consumer of its builder lands.
+
+## Lesson: pytest owns extra root log handlers; assert on the app's handler only
+
+**Created:** 2026-07-07
+**What happened:** While regression-testing the correlation-ID fix (filter moved from the
+root logger to the root handler, `strands_agents/api/server.py`, search: "CorrelationIdFilter"),
+a test asserted that EVERY `logging.getLogger().handlers` entry carries the filter. It failed:
+pytest's logging plugin injects its own capture handlers at the root, and those legitimately
+lack app filters.
+**Prevention:** Tests about app logging configuration must quantify existentially
+("at least one root handler carries the filter") or pin the specific dictConfig handler,
+never iterate all root handlers - the set is polluted under pytest. Pair the config assertion
+with a behavioral test: log via a child logger through a scratch handler+filter and assert the
+JSON output (search in `tests/python/test_observability.py`: "corr-child-123").

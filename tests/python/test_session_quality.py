@@ -37,7 +37,10 @@ def test_quality_record_summarizes_session_without_transcript_text(tmp_path):
         started_at=datetime(2026, 7, 5, 0, 0, tzinfo=UTC).timestamp(),
         accumulated_transcript=[SimpleNamespace(), SimpleNamespace(), SimpleNamespace()],
         quality_stats=quality_stats,
+        chunk_count=5,
     )
+    # The socket saw fewer chunks than the session (a reconnect happened);
+    # the record must report the session-wide count.
     stream_state = SimpleNamespace(
         chunk_count=2,
         chunk_inference_ms=[100, 300],
@@ -64,7 +67,7 @@ def test_quality_record_summarizes_session_without_transcript_text(tmp_path):
     record_path = persist_session_quality_record(record, base_directory=tmp_path)
 
     assert record["type"] == "quality"
-    assert record["chunks"] == 2
+    assert record["chunks"] == 5
     assert record["emitted_segments"] == 3
     assert record["held_segments"] == 1
     assert record["phantom_speaker_merges"] == 1
@@ -125,6 +128,7 @@ async def test_finalize_emits_logs_and_persists_quality_record(monkeypatch, capl
             self.buffer = SimpleNamespace(duration_seconds=5.0)
             self.started_at = time.time() - 6
             self.accumulated_transcript = []
+            self.chunk_count = 2
             self.quality_stats = TranscriptionQualityStats()
             self.quality_stats.record_window(32000)
             self.quality_stats.record_segment_flow(emitted_segments=1, held_segments=0)

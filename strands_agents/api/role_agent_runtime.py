@@ -176,7 +176,7 @@ def _run_role_heuristic_fallback(
         Heuristic payload for the browser, or None when no label evidence exists.
     """
     try:
-        heuristic_result = _heuristic_role_inference(segments, "")
+        heuristic_result = _heuristic_role_inference(segments)
 
         # No heuristic result means the UI should keep raw speaker labels for now.
         if heuristic_result is None:

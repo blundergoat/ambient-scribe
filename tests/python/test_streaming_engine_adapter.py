@@ -103,6 +103,22 @@ class TestEngineRowEmission:
         assert session.accumulated_transcript[-1].text == "how can I help"
         assert session.quality_stats.emitted_segment_count == 3
 
+    def test_engine_rows_receive_medical_boost_correction(self, tmp_path, monkeypatch):
+        """Streaming rows must pass the same lexicon seam as windowed rows."""
+        lexicon_path = tmp_path / "medical_lexicon.txt"
+        lexicon_path.write_text("metoprolol|metro pro lol\n", encoding="utf-8")
+        monkeypatch.setenv("MEDICAL_BOOST_ENABLED", "1")
+        monkeypatch.setenv("MEDICAL_LEXICON_PATH", str(lexicon_path))
+
+        engine = FakeStreamingEngine(
+            feed_batches=[[EngineRow("speaker_0", "continue metro pro lol daily", 0.5, 1.8)]]
+        )
+        session = make_session(engine)
+
+        segments = session.process_chunk(PCM_CHUNK)
+
+        assert [seg.text for seg in segments] == ["continue metoprolol daily"]
+
     def test_speaker_cap_folds_marginal_slots_into_the_dominant_voice(self):
         engine = FakeStreamingEngine(
             feed_batches=[

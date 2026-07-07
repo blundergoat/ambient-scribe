@@ -175,7 +175,16 @@ async def close_role_inference(session_id: str) -> None:
         cleanup_role_state(session_id)
         return
 
-    await queue.put(None)
+    # The queue is bounded; if a hung inference has left it full, waiting
+    # forever would stall session teardown, so drop the close signal instead.
+    try:
+        await asyncio.wait_for(queue.put(None), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "role_inference.close_signal_dropped session_id=%s",
+            session_id,
+            extra={"session_id": session_id},
+        )
 
 
 def cancel_orphaned_role_inference(live_session_ids: set[str]) -> int:
@@ -195,6 +204,7 @@ def cancel_orphaned_role_inference(live_session_ids: set[str]) -> int:
     # Each orphaned queue belongs to a recording that has aged out of the UI.
     for session_id in orphaned_session_ids:
         role_inference_queues.pop(session_id, None)
+        _provider_unavailable_warned.discard(session_id)
         worker = role_inference_workers.pop(session_id, None)
         # A live worker without a session would publish labels to a closed visit.
         if worker and not worker.done():
@@ -272,6 +282,8 @@ async def _role_inference_worker(
     finally:
         role_inference_workers.pop(session_id, None)
         role_inference_queues.pop(session_id, None)
+        # The one-shot warning marker must not outlive the visit's worker.
+        _provider_unavailable_warned.discard(session_id)
 
         # Post-finalize role churn is invisible to the already-written quality
         # record; persist the additive tail delta before state cleanup.

@@ -98,10 +98,12 @@ check_aws_credentials() {
 check_secrets() {
     header "Secrets Manager"
 
-    # Missing secret configuration means the operator has not selected which deployed API key the UI should probe.
+    # Missing secret configuration means the operator has not selected which
+    # deployed API key the UI should probe. Failing closed stops the script
+    # from reporting a healthy deployment it never actually verified.
     if [[ "${SECRET_PATH}" == "REPLACE_WITH_SECRET_PATH" ]]; then
-        warn "API key: set SECRET_PATH to the deployed Secrets Manager path before checking secrets"
-        return 0
+        error "API key: set SECRET_PATH to the deployed Secrets Manager path before checking secrets"
+        return 1
     fi
 
     if "${AWS_CLI}" secretsmanager describe-secret --secret-id "${SECRET_PATH}" &>/dev/null; then

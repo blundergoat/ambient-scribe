@@ -89,6 +89,17 @@ class TestAudioBuffer:
         assert buf.audio_from(32000) == b"b" * 32000
         assert buf.end_seconds == 2.0
 
+    def test_trimmed_seconds_tracks_head_trim(self):
+        """trimmed_seconds reports the absolute session time of the retained head."""
+        buf = AudioBuffer(max_duration_seconds=1.0)
+
+        buf.append(b"a" * 32000)
+        assert buf.trimmed_seconds == 0.0
+
+        # The safety cap drops the first second; retention now starts at 1.0s.
+        buf.append(b"b" * 32000)
+        assert buf.trimmed_seconds == 1.0
+
     def test_full_audio_returns_all_data(self):
         """full_audio() returns all accumulated PCM bytes."""
         buf = AudioBuffer()
@@ -140,6 +151,28 @@ class TestProcessChunk:
 
         assert [segment.text for segment in segments] == ["hello"]
         assert session.accumulated_transcript == segments
+
+    def test_window_shift_uses_retained_start_after_trim(self):
+        """After a head trim, window rows are shifted by the retained start, not the request."""
+        pipeline = NemoPipeline()
+        session = TranscriptionSession(
+            "test-session", pipeline, input_format="pcm", max_buffer_duration=1.0
+        )
+        # Pre-seed one second so the next chunk trims it from the head.
+        session.buffer.append(b"\x00" * 32000)
+
+        late_result = TranscriptionResult(
+            segments=[Segment(speaker_id="spk_0", start=0.0, end=0.5, text="late")]
+        )
+
+        # The 4s chunk trims the seeded second; retained audio now starts at 1.0s.
+        with patch.object(pipeline, "transcribe_buffer", return_value=late_result):
+            segments = session.process_chunk(b"\x00" * 32000 * 4)
+
+        assert session.buffer.trimmed_seconds == 1.0
+        # Window-local 0.0 is the retained head (absolute 1.0s), not session start.
+        assert [segment.start for segment in segments] == [1.0]
+        assert [segment.end for segment in segments] == [1.5]
 
     def test_process_chunk_holds_back_unstable_tail(self):
         """A segment still touching the buffer edge waits for the next pass."""

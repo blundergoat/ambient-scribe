@@ -95,6 +95,8 @@ async function openTranscriptDeepLink(citedSegmentIds) {
         return;
     }
 
+    // A successful jump supersedes any lingering miss notice from an earlier one.
+    hideMissingCitationNotice();
     clearCitedTranscriptHighlights();
     citedBlocks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
     for (const citedBlock of citedBlocks) {
@@ -142,6 +144,20 @@ function clearCitedTranscriptHighlights() {
     for (const citedBlock of document.querySelectorAll('.summary-transcript__block--cited')) {
         citedBlock.classList.remove('summary-transcript__block--cited');
     }
+}
+
+/**
+ * Hides the miss notice and cancels its self-hide timer.
+ * Use when a later jump succeeds or New Session resets the panel, so a
+ * stale "rows not in this view" message never outlives its moment.
+ */
+function hideMissingCitationNotice() {
+    if (missingCitationNoticeTimeout !== null) {
+        window.clearTimeout(missingCitationNoticeTimeout);
+        missingCitationNoticeTimeout = null;
+    }
+
+    document.getElementById('summaryTranscriptNotice')?.classList.add('hidden');
 }
 
 /**
@@ -310,14 +326,13 @@ function resetSummaryTabsState() {
     correctedTranscriptCacheSessionId = null;
     transcriptRenderPromise = null;
     clearCitedTranscriptHighlights();
+    hideMissingCitationNotice();
     selectSummaryTab('note');
 
     const transcriptContainer = document.getElementById('summaryTranscript');
     const transcriptStatus = document.getElementById('summaryTranscriptStatus');
-    const missNotice = document.getElementById('summaryTranscriptNotice');
     transcriptContainer?.replaceChildren();
     transcriptStatus?.classList.add('hidden');
-    missNotice?.classList.add('hidden');
 }
 
 // The script tag sits after the markup, so the tablist exists at load time.

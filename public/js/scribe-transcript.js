@@ -664,7 +664,12 @@ function cycleRole(speakerId) {
 
     previousRoleMapping = { ...roleMapping };
     roleMapping[speakerId] = nextRole;
-    manualOverrides.add(speakerId);
+    if (nextRole === 'UNKNOWN') {
+        // Unknown is the undo: future agent updates may relabel this speaker.
+        manualOverrides.delete(speakerId);
+    } else {
+        manualOverrides.add(speakerId);
+    }
     relabelSegments();
     sendRoleOverride(speakerId, nextRole);
 }
@@ -794,14 +799,18 @@ function applyRowRoleOverrides(rowOverrides) {
  * without touching rows the clinician corrected personally.
  */
 function applyAutoRowExceptions(rowExceptions) {
-    // Markers for rows the new mapping now explains are removed first.
-    for (const staleSegmentId of autoRowRoles.keys()) {
-        if (rowExceptions[staleSegmentId] === undefined) {
-            removeRowRoleMarker(staleSegmentId);
-        }
-    }
-
+    // The map must be cleared before any marker removal: removeRowRoleMarker
+    // refreshes the owning card, and that refresh reads autoRowRoles - a stale
+    // entry would resolve the old auto role and leave the card header wrong.
+    const staleSegmentIds = [...autoRowRoles.keys()].filter(
+        (segmentId) => rowExceptions[segmentId] === undefined
+    );
     autoRowRoles.clear();
+
+    // Markers for rows the new mapping now explains are removed first.
+    for (const staleSegmentId of staleSegmentIds) {
+        removeRowRoleMarker(staleSegmentId);
+    }
 
     // Each exception restyles exactly one visible row.
     for (const [segmentId, rowRole] of Object.entries(rowExceptions)) {

@@ -187,6 +187,44 @@ def test_eval_role_heuristic_script_runs_without_gpu():
     assert "overall_accuracy=" in result.stdout
 
 
+def test_correlation_filter_is_attached_to_root_handlers():
+    """Logger-level filters skip propagated records; handlers must carry it."""
+    from api.server import CorrelationIdFilter
+
+    root_handlers = logging.getLogger().handlers
+    assert root_handlers, "configure_logging must install a root handler"
+    # pytest adds capture handlers of its own; the app's configured handler
+    # is the one that must carry the filter.
+    assert any(
+        isinstance(handler_filter, CorrelationIdFilter)
+        for handler in root_handlers
+        for handler_filter in handler.filters
+    )
+
+
+def test_child_logger_records_carry_correlation_id():
+    """Module loggers (api.*) must inherit the correlation ID via propagation."""
+    import io
+
+    from api.server import CorrelationIdFilter, correlation_id_var
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(CorrelationIdFilter())
+    handler.setFormatter(JsonLoggingFormatter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    token = correlation_id_var.set("corr-child-123")
+    try:
+        logging.getLogger("api.child_module_under_test").info("child event")
+    finally:
+        root.removeHandler(handler)
+        correlation_id_var.reset(token)
+
+    logged = json.loads(stream.getvalue())
+    assert logged["correlation_id"] == "corr-child-123"
+
+
 def test_session_history_echoes_correlation_id(caplog):
     """PHP-proxied history calls keep the same correlation ID in response and logs."""
     from api.server import app

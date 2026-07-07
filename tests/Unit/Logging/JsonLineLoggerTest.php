@@ -65,6 +65,26 @@ final class JsonLineLoggerTest extends TestCase
     }
 
     /**
+     * Guarantees a logging call can never throw into the clinician request path.
+     *
+     * @return void No payload; failure means a bad context byte would 500 the scribe page.
+     */
+    public function testInvalidUtf8ContextIsSubstitutedInsteadOfThrowing(): void
+    {
+        $logFile = $this->temporaryLogFile();
+        $logger = new JsonLineLogger($logFile, LogLevel::DEBUG);
+
+        $logger->error('strands.client.failed', [
+            'detail' => "broken \xC3 byte",
+        ]);
+
+        $event = $this->readFirstJsonLine($logFile);
+        self::assertSame('strands.client.failed', $event['event']);
+        // The invalid byte is replaced with U+FFFD rather than crashing the caller.
+        self::assertStringContainsString("broken \u{FFFD} byte", $event['detail']);
+    }
+
+    /**
      * Creates a writable temporary log target for one logger scenario.
      *
      * @return string Path to an empty file; empty means the test could not capture logs.

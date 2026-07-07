@@ -53,6 +53,16 @@ def _resolve_mercure_jwt() -> str:
         _mercure_jwt_cache = ""
         return _mercure_jwt_cache
 
+    # The documented contract is >= 32 chars for HS256; minting a token from a
+    # weaker secret would silently weaken the publish channel.
+    if len(secret) < 32:
+        logger.error(
+            "mercure.jwt_secret_too_short length=%s required=32; publishes disabled",
+            len(secret),
+        )
+        _mercure_jwt_cache = ""
+        return _mercure_jwt_cache
+
     try:
         import jwt as pyjwt
 
@@ -63,6 +73,9 @@ def _resolve_mercure_jwt() -> str:
         )
         _mercure_jwt_cache = token if isinstance(token, str) else token.decode("utf-8")
     except Exception:
+        # Without this log, a broken pyjwt or malformed secret is later
+        # indistinguishable from a deliberately unset MERCURE_JWT_SECRET.
+        logger.exception("mercure.jwt_encode_failed; publishes disabled")
         _mercure_jwt_cache = ""
 
     return _mercure_jwt_cache

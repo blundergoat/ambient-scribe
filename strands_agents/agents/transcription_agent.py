@@ -109,7 +109,7 @@ def _create_role_agent_model():
 
         return BedrockModel(
             model_id=ROLE_AGENT_MODEL_ID,
-            region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-2"),
+            region_name=os.environ.get("AWS_DEFAULT_REGION") or "ap-southeast-2",
             streaming=True,
             max_tokens=ROLE_AGENT_MAX_TOKENS,
         )

@@ -333,6 +333,14 @@ def main() -> int:
                 primock57_manifest_entry(consultation, output_path)
             )
 
+    # A mistyped --case would otherwise overwrite the manifest with an empty
+    # list and exit 0, making demo generation look successful.
+    if selected_cases and not generated_manifest:
+        raise SystemExit(
+            f"no demo cases matched --case {sorted(selected_cases)}; "
+            "check the filename or case id against DEMO_CONSULTATIONS"
+        )
+
     manifest_path = output_dir / "generated-manifest.json"
     manifest_path.write_text(
         json.dumps(generated_manifest, indent=2) + "\n",

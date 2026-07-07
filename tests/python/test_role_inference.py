@@ -501,7 +501,7 @@ class TestHeuristicRoleInference:
             },
             {"speaker_id": "spk_1", "text": "Thank you", "start": 2.0, "end": 3.0},
         ]
-        result = _heuristic_role_inference(segments, "")
+        result = _heuristic_role_inference(segments)
         assert result is not None
         assert result["mapping"]["spk_0"] == "DOCTOR"
         assert result["confidence"] == 0.4
@@ -522,19 +522,14 @@ class TestHeuristicRoleInference:
                 "end": 3.0,
             },
         ]
-        result = _heuristic_role_inference(segments, "")
+        result = _heuristic_role_inference(segments)
         assert result is not None
         assert result["mapping"]["spk_1"] == "PATIENT"
         assert result["confidence"] == 0.4
 
-    def test_empty_transcript_and_no_segments_returns_none(self):
+    def test_no_segments_returns_none(self):
         """Empty input should return None."""
-        result = _heuristic_role_inference([], "")
-        assert result is None
-
-    def test_empty_transcript_with_whitespace_returns_none(self):
-        """Whitespace-only transcript with no segments returns None."""
-        result = _heuristic_role_inference([], "   ")
+        result = _heuristic_role_inference([])
         assert result is None
 
     def test_medical_both_keywords_strongest_wins(self):
@@ -553,25 +548,27 @@ class TestHeuristicRoleInference:
                 "end": 5.0,
             },
         ]
-        result = _heuristic_role_inference(segments, "")
+        result = _heuristic_role_inference(segments)
         assert result is not None
         # spk_0 has 5 doctor keywords vs 0 patient
         assert result["mapping"]["spk_0"] == "DOCTOR"
         # spk_1 has 3 patient keywords vs 0 doctor
         assert result["mapping"]["spk_1"] == "PATIENT"
 
-    def test_three_speakers_stay_medical_roles(self):
-        """Extra speakers remain patient-labelled until the UI has a stronger role."""
+    def test_three_speakers_leave_extras_unlabelled(self):
+        """Extra speakers keep raw labels rather than being guessed as patients."""
         segments = [
             {"speaker_id": "spk_0", "text": "First", "start": 0.0, "end": 1.0},
             {"speaker_id": "spk_1", "text": "Second", "start": 1.0, "end": 2.0},
             {"speaker_id": "spk_2", "text": "Third", "start": 2.0, "end": 3.0},
         ]
-        result = _heuristic_role_inference(segments, "")
+        result = _heuristic_role_inference(segments)
         assert result is not None
         assert result["mapping"]["spk_0"] == "DOCTOR"
         assert result["mapping"]["spk_1"] == "PATIENT"
-        assert result["mapping"]["spk_2"] == "PATIENT"
+        # A family member or carer must not have their words attributed to the
+        # patient by a keyword fallback that has no evidence about them.
+        assert result["mapping"]["spk_2"] == "UNKNOWN"
 
     def test_medical_no_keywords_assigns_by_order(self):
         """Speakers with no keyword match get first-available roles."""
@@ -579,16 +576,12 @@ class TestHeuristicRoleInference:
             {"speaker_id": "spk_0", "text": "Hello", "start": 0.0, "end": 1.0},
             {"speaker_id": "spk_1", "text": "Hi", "start": 1.0, "end": 2.0},
         ]
-        result = _heuristic_role_inference(segments, "")
+        result = _heuristic_role_inference(segments)
         assert result is not None
         # First speaker gets DOCTOR (first available), second gets PATIENT
         assert result["mapping"]["spk_0"] == "DOCTOR"
         assert result["mapping"]["spk_1"] == "PATIENT"
 
-    def test_heuristic_with_transcript_only(self):
-        """Segments empty but transcript non-empty - returns None (no speaker_ids)."""
-        result = _heuristic_role_inference([], "some transcript")
-        assert result is None
 
 
 # =========================================================================

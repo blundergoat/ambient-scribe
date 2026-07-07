@@ -53,7 +53,7 @@ Template variables are set in `ScribeController::index()`. When adding new confi
 | PHPStan | Level 10 (strictest) | `composer analyse` |
 | PHP-CS-Fixer | PSR-12 | `composer cs:check` / `composer cs:fix` |
 | PHPMD | design, codesize, unusedcode | `composer analyse:messdetector` |
-| Cyclomatic complexity | Max 20 | `composer analyse:complexity` |
+| gruff-php quality gate | Complexity + design rules | `composer analyse:complexity` |
 | Coverage | Minimum 80% | `composer test:coverage` |
 | Mutation testing | infection/infection | `composer mutate` |
 

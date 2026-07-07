@@ -80,9 +80,23 @@ final class JsonLineLogger extends AbstractLogger
             unset($context['correlation_id']);
         }
 
-        $event    += $this->sanitizeContext($context);
-        $jsonLine = json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        $stream   = fopen($this->streamUri, 'ab');
+        $event += $this->sanitizeContext($context);
+        // A logging call must never break the caller: invalid UTF-8 is
+        // substituted rather than thrown, and any remaining encode failure
+        // degrades to a minimal line instead of an exception.
+        $jsonLine = json_encode($event, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($jsonLine === false) {
+            $jsonLine = json_encode([
+                'ts'     => $event['ts'],
+                'level'  => $normalizedLevel,
+                'event'  => 'logging.encode_failed',
+                'logger' => 'php',
+            ], JSON_UNESCAPED_SLASHES);
+        }
+        if ($jsonLine === false) {
+            return;
+        }
+        $stream = fopen($this->streamUri, 'ab');
 
         // If stderr is unavailable, failing open keeps the clinician page from crashing.
         if ($stream === false) {
@@ -142,10 +156,12 @@ final class JsonLineLogger extends AbstractLogger
         }
 
         // Exceptions are summarized without stack traces or request bodies.
+        // Truncation is multibyte-safe so it cannot split a UTF-8 character
+        // into an invalid byte sequence.
         if ($value instanceof \Throwable) {
             return [
                 'error_type' => $value::class,
-                'error'      => substr($value->getMessage(), 0, 200),
+                'error'      => mb_substr($value->getMessage(), 0, 200),
             ];
         }
 

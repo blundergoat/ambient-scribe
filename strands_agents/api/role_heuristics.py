@@ -515,19 +515,17 @@ def _same_speaker_neighbor_text(
 
 def heuristic_role_inference(
     segments: list[dict[str, Any]],
-    transcript: str,
 ) -> dict[str, Any] | None:
     """Infer DOCTOR/PATIENT labels from visible transcript text.
 
     Args:
-        segments: Transcript segments shown in the UI; empty falls back to transcript text only.
-        transcript: Plain transcript text; blank plus no segments means no role evidence exists.
+        segments: Transcript segments shown in the UI; empty means no role evidence exists.
 
     Returns:
         Role mapping payload, or `None` when the UI should keep raw speaker labels.
     """
-    # No transcript evidence means the browser should keep raw speaker labels.
-    if not segments and not transcript.strip():
+    # No per-speaker evidence means the browser should keep raw speaker labels.
+    if not segments:
         return None
 
     speaker_texts, speaker_order = _collect_visible_speaker_text(segments)
@@ -622,4 +620,7 @@ def _fill_missing_visible_roles(
                 mapping[speaker_id] = "PATIENT"
                 assigned_roles.add("PATIENT")
             else:
-                mapping[speaker_id] = "PATIENT"
+                # Extra speakers (family members, carers) have no keyword evidence;
+                # guessing PATIENT would misattribute their words in the note, so
+                # the UI keeps the raw speaker label instead.
+                mapping[speaker_id] = "UNKNOWN"

@@ -96,6 +96,10 @@ fi
 if [[ ! -f "$WAV_FILE" ]]; then
     check "Test WAV file" "fail" "not found: $WAV_FILE"
     echo ""
+    echo "  WAV fixtures are gitignored; generate them first:"
+    echo "    python3 scripts/generate-demo-consultation-audio.py --include-primock57"
+    echo "  Or point at any 16 kHz mono WAV with: $0 --wav <path>"
+    echo ""
     exit 1
 else
     WAV_SIZE=$(stat -c%s "$WAV_FILE" 2>/dev/null || stat -f%z "$WAV_FILE" 2>/dev/null)

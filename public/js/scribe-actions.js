@@ -53,8 +53,9 @@ async function readJsonResponse(response, fallbackPayload) {
 }
 
 document.addEventListener('keydown', (event) => {
-    // Typing in a form field should not start or stop the consultation.
-    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+    // Interacting with a focused control (typing, activating a button or
+    // link, opening a select) should not start or stop the consultation.
+    if (event.target.closest?.('input, textarea, select, button, a, [contenteditable="true"]')) {
         return;
     }
 

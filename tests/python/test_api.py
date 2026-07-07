@@ -158,6 +158,139 @@ class TestSessionHistory:
         assert state.current_mapping["spk_0"] == "PATIENT"
         assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
 
+    def test_unknown_override_clears_confirmed_override_so_agent_can_relabel(
+        self, client, monkeypatch
+    ):
+        """Cycling back to Unknown is an undo, not a permanent UNKNOWN pin."""
+        from tools.assign_roles import apply_role_mapping_result, get_or_create_state
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for the undo semantics."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "The clinician labelled, then unlabelled this speaker.",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+
+        first = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "DOCTOR"},
+        )
+        undo = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "UNKNOWN"},
+        )
+        assert first.status_code == 200
+        assert undo.status_code == 200
+
+        state = get_or_create_state(TEST_SESSION_ID)
+        assert "spk_0" not in state.confirmed_overrides
+
+        # With the override cleared, a later agent decision may relabel again.
+        result = apply_role_mapping_result(
+            session_id=TEST_SESSION_ID,
+            segments=sessions.get_segments(TEST_SESSION_ID),
+            mapping={"spk_0": "PATIENT"},
+            confidence=0.95,
+            reasoning="Agent relabels after the user removed their correction.",
+        )
+        assert result.mapping["spk_0"] == "PATIENT"
+
+    def test_speaker_override_updates_corrected_rows_for_retried_summaries(
+        self, client, monkeypatch
+    ):
+        """A corrected artifact must cite the clinician's latest speaker labels."""
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for corrected-row syncing."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row before correction",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+        sessions.replace_corrected_segments(
+            TEST_SESSION_ID,
+            [
+                {
+                    "segment_id": "corrected-0001",
+                    "speaker_id": "spk_0",
+                    "role": "DOCTOR",
+                    "text": "corrected text",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        corrected_rows = sessions.get_corrected_segments(TEST_SESSION_ID)
+        assert corrected_rows[0]["role"] == "PATIENT"
+
+    def test_row_override_invalidates_stale_corrected_artifact(
+        self, client, monkeypatch
+    ):
+        """A row fix cannot map onto corrected rows, so they must not go stale."""
+
+        async def fake_publish(topic, data, event_id=None):
+            """Publishing is not under test for corrected-row invalidation."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "row the clinician fixes",
+                "start": 0.0,
+                "end": 1.0,
+                "segment_id": "seg-0001",
+            },
+        )
+        sessions.replace_corrected_segments(
+            TEST_SESSION_ID,
+            [
+                {
+                    "segment_id": "corrected-0001",
+                    "speaker_id": "spk_0",
+                    "role": "DOCTOR",
+                    "text": "corrected text",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"segment_id": "seg-0001", "role": "PATIENT"},
+        )
+        assert response.status_code == 200
+
+        # The next summary re-corrects from the updated scaffold instead of
+        # citing the pre-fix roles.
+        assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
+
     def test_row_override_pins_one_row_without_touching_the_speaker(
         self, client, monkeypatch
     ):
@@ -704,3 +837,95 @@ class TestSessionStore:
 
         assert "\n...\n" in result
         assert len(result) <= 120
+
+
+class TestSummaryModelPreflight:
+    """The browser pre-flight must fail closed for every provider config."""
+
+    def test_unknown_provider_is_unavailable(self, monkeypatch):
+        """A typo'd provider must not let a consultation start."""
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrok")
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "bedrok" in detail
+
+    def test_bedrock_without_credentials_is_unavailable(self, monkeypatch):
+        """Empty AWS keys must surface before recording, not at summary time."""
+        import boto3
+
+        class NoCredentialsSession:
+            region_name = "ap-southeast-2"
+
+            def get_credentials(self):
+                return None
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+        monkeypatch.setattr(boto3, "Session", NoCredentialsSession)
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "credentials" in detail
+
+    def test_bedrock_with_credentials_and_region_is_available(self, monkeypatch):
+        """A resolvable credential chain plus region passes pre-flight."""
+        import boto3
+
+        class ConfiguredSession:
+            region_name = "ap-southeast-2"
+
+            def get_credentials(self):
+                return object()
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        monkeypatch.setattr(boto3, "Session", ConfiguredSession)
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is True
+        assert detail == "bedrock:ap-southeast-2"
+
+    def test_ollama_prefix_tag_is_not_treated_as_pulled(self, monkeypatch):
+        """qwen3.5:7b on disk must not satisfy a qwen3.5:9b configuration."""
+
+        class FakeTagsResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"models": [{"name": "qwen3.5:7b"}]}
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "ollama")
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
+        monkeypatch.setattr(
+            api_server.httpx, "get", lambda url, timeout: FakeTagsResponse()
+        )
+
+        available, detail = api_server._summary_model_reachable()
+
+        assert available is False
+        assert "not pulled" in detail
+
+    def test_ollama_exact_tag_passes(self, monkeypatch):
+        """The exact configured tag (or :latest for bare names) is accepted."""
+
+        class FakeTagsResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"models": [{"name": "qwen3.5:9b"}, {"name": "phi4:latest"}]}
+
+        monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "ollama")
+        monkeypatch.setattr(
+            api_server.httpx, "get", lambda url, timeout: FakeTagsResponse()
+        )
+
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
+        assert api_server._summary_model_reachable() == (True, "ollama:qwen3.5:9b")
+
+        monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "phi4")
+        assert api_server._summary_model_reachable() == (True, "ollama:phi4")

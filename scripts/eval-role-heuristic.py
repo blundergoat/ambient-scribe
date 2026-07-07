@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ ROLE_HEURISTICS_MODULE = REPO_ROOT / "strands_agents/api/role_heuristics.py"
 
 
 def load_heuristic_role_inference() -> Callable[
-    [list[dict[str, Any]], str], dict[str, Any] | None
+    [list[dict[str, Any]]], dict[str, Any] | None
 ]:
     """Load the role heuristic without importing the full FastAPI app.
 
@@ -41,6 +42,12 @@ def load_heuristic_role_inference() -> Callable[
     # Missing loader means the local checkout is incomplete, so the eval would not test the app code.
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load role heuristic from {ROLE_HEURISTICS_MODULE}")
+
+    # role_heuristics imports sibling runtime modules (corrected_role_cues), so
+    # the strands_agents directory must be importable before exec.
+    strands_agents_dir = str(ROLE_HEURISTICS_MODULE.parent.parent)
+    if strands_agents_dir not in sys.path:
+        sys.path.insert(0, strands_agents_dir)
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -112,8 +119,7 @@ def evaluate_scenario(scenario: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     segments = segment_events(scenario)
-    transcript = "\n".join(str(segment.get("text", "")) for segment in segments)
-    result = HEURISTIC_ROLE_INFERENCE(segments, transcript) or {}
+    result = HEURISTIC_ROLE_INFERENCE(segments) or {}
     actual = result.get("mapping", {})
     # A malformed heuristic result is counted as zero correct for visible roles.
     if not isinstance(actual, dict):

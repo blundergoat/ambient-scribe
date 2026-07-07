@@ -200,7 +200,7 @@ docker compose exec ollama ollama pull qwen3.5:9b
 | `qwen3.5:9b` | ~8GB | default local demo model |
 | `qwen2.5:7b` | ~8GB | faster, lower quality fallback |
 
-These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously - transcript segments appear immediately, and Doctor/Patient labels update a few seconds later.
+These are role attribution calls (short prompts), not full conversations. The latency is acceptable because role inference runs asynchronously - transcript segments appear immediately, and Doctor/Patient labels update after role inference completes (tens of seconds per call on CPU with the 9B default).
 
 ### Changing the Ollama model
 

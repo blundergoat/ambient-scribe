@@ -15,6 +15,11 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# All compose calls target this repo's project, no matter the caller's cwd.
+dc() {
+  docker compose --project-directory "$REPO_ROOT" "$@"
+}
+
 env_file_value() {
   local key="$1"
   local value
@@ -135,14 +140,14 @@ check_ollama() {
   echo "Checking AI model service (ollama: ${MODEL})…"
 
   # 1. Is the ollama service running?
-  if ! docker compose ps --status running ollama >/dev/null 2>&1 \
-     || [ -z "$(docker compose ps --status running -q ollama 2>/dev/null)" ]; then
+  if ! dc ps --status running ollama >/dev/null 2>&1 \
+     || [ -z "$(dc ps --status running -q ollama 2>/dev/null)" ]; then
     echo "→ ollama service is not running. Starting it…"
-    docker compose up -d ollama
+    dc up -d ollama
   fi
 
   # 2. Can the agent reach it in-network?
-  if docker compose exec -T nemo-agent curl -fsS -m 6 http://ollama:11434/api/tags >/dev/null 2>&1; then
+  if dc exec -T nemo-agent curl -fsS -m 6 http://ollama:11434/api/tags >/dev/null 2>&1; then
     echo "✔ agent can reach ollama at http://ollama:11434"
   else
     echo "✘ agent cannot reach http://ollama:11434."
@@ -152,11 +157,21 @@ check_ollama() {
   fi
 
   # 3. Is the model pulled? Pull it if not (persists in the ollama_data volume).
-  if docker compose exec -T ollama ollama list 2>/dev/null | grep -q "${MODEL%%:*}"; then
+  # The agent requests the exact configured tag, so a same-prefix model
+  # (qwen3.5:7b vs qwen3.5:9b) must not count as present.
+  local expected_tag="${MODEL}"
+  if [[ "$MODEL" != *:* ]]; then
+    expected_tag="${MODEL}:latest"
+  fi
+  if dc exec -T ollama ollama list 2>/dev/null | awk 'NR>1 {print $1}' \
+      | grep -Fxq -e "${MODEL}" -e "${expected_tag}"; then
     echo "✔ model ${MODEL} is present"
   else
     echo "→ model ${MODEL} not found - pulling (~9 GB, one time)…"
-    docker compose exec -T ollama ollama pull "${MODEL}"
+    if ! dc exec -T ollama ollama pull "${MODEL}"; then
+      echo "✘ pull failed for ${MODEL}. Check the model name, network access, and disk space."
+      exit 1
+    fi
   fi
 
   echo "✔ AI model ready. Reload the Scribe page and retry."
