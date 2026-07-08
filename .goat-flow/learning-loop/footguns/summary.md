@@ -20,7 +20,7 @@ last_reviewed: 2026-07-09
 **Status:** active | **Created:** 2026-07-09 | **Evidence:** ACTUAL_MEASURED
 
 - **Files:** `strands_agents/api/summary_fidelity.py` (search: "_did_patient_deny_topic")
-- **Files:** `strands_agents/api/summary_fidelity.py` (search: "len(row[\"text\"]) <= 40")
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: "<= 40 and any(")
 - **Files:** `strands_agents/api/summary_fidelity.py` (search: "_does_row_mention_any_stem")
 - **Files:** `strands_agents/api/summary_fidelity.py` (search: "_EXAM_ABSENCE_PATTERN")
 - **What breaks:** Three heuristics make the deterministic checker's verdict depend on transcript row SHAPE rather than content:

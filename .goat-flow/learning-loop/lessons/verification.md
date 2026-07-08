@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-09
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -325,3 +325,19 @@ serving container for GPU gates, and generally one probe of the physical depende
 byte-identity claim rides on. Attribution order when a gate diff appears: (1) device parity
 with the baseline, (2) same-code same-device rerun for run-to-run stability, (3) only then
 suspect the code.
+
+## Lesson: Styling-carried UI state does not survive text paste - read fidelity and correction outcomes from logs
+
+**Created:** 2026-07-09
+**What happened:** During the 2026-07-08 (UTC) manual round, a pasted c03 note showed no
+"Unverified against transcript" markers and the review concluded "zero flags fired". The agent
+log showed `summary.fidelity_flagged flagged=3` for that exact session - the amber marker is
+styling, and a text copy strips it. The same analysis initially reported "no errors in the test
+window" because the sweep grepped `ERROR|Traceback|CUDA error`; the evening's only real failure
+was logged at WARNING as `correction.unavailable ... CUDA driver error: device not ready`, which
+none of those patterns match. Both wrong claims were corrected only by reading the logs.
+**Prevention:** Pasted UI text is evidence of CONTENT, never of styling-carried state (fidelity
+flags, confidence tinting, badges) and never of absence. Before claiming anything about a
+session's fidelity or correction outcome, grep the agent log for `summary.fidelity_` and
+`correction.` with the session id. Error sweeps over this stack must match loosely
+(`-i "unavailable|failed|cuda"`), not exact phrases or level names.
