@@ -37,6 +37,8 @@
 #   MERCURE_PORT   - Mercure hub port (default: 48137)
 #   OLLAMA_HOST    - Ollama URL (default: http://localhost:11434)
 #   OLLAMA_MODEL   - Model name (default: from .env or qwen3.5:9b)
+#   START_DEV_LOG_TAIL - Historical nemo-agent log lines to show before
+#                        following new logs (default: 0; use 'all' for full)
 #
 # Press Ctrl+C to stop all services and containers started by this script.
 # =============================================================================
@@ -450,10 +452,16 @@ echo ""
 # =============================================================================
 # STEP 6: Stream Logs + Wait
 # =============================================================================
-echo -e "  ${DIM}Streaming nemo-agent logs (Ctrl+C to stop)...${RESET}"
+START_DEV_LOG_TAIL="${START_DEV_LOG_TAIL:-0}"
+if ! [[ "$START_DEV_LOG_TAIL" =~ ^([0-9]+|all)$ ]]; then
+    echo -e "  ${YELLOW}${BOLD}Warning:${RESET} ${DIM}Invalid START_DEV_LOG_TAIL='${START_DEV_LOG_TAIL}', using 0${RESET}"
+    START_DEV_LOG_TAIL=0
+fi
+
+echo -e "  ${DIM}Streaming new nemo-agent logs (Ctrl+C to stop; START_DEV_LOG_TAIL=N for history)...${RESET}"
 echo ""
 
-dc logs -f nemo-agent 2>&1 | while IFS= read -r line; do
+dc logs -f --tail="$START_DEV_LOG_TAIL" nemo-agent 2>&1 | while IFS= read -r line; do
     case "$line" in
         *"/health"*) ;; # skip Docker healthcheck spam
         *WARNING*|*ERROR*|*Traceback*|*"POST "*|*"GET "*|*WebSocket*|*"model"*|*"loaded"*)

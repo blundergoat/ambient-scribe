@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-09
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -193,6 +193,17 @@ last_reviewed: 2026-07-07
   `var/quality/corrected-fixtures/20260707T110444Z-m02-pace1x/`, plan file M02 "Result so
   far". Browser replays are now SCRIPTABLE (playwright drives the real Demo Audio path and
   stops at the 60s audio mark) - the "slowest loop in the project" constraint is gone.
+- **Update (2026-07-08 UTC manual round - hold-then-flush quantified in the BROWSER lane):**
+  the step-gating suspect now has direct browser-lane evidence. `nemo_session.window_continuity`
+  ticks arrived every ~5s with zero misses on all three manual sessions, yet `emitted_rows=0`
+  for up to 10 CONSECUTIVE windows during a long single-speaker monologue (day3-consultation01,
+  session `203d1d35`, windows 19-28), after which window 29 released 25 rows at once - some
+  rows landing 50-70s after their audio. Every session shows held roughly 3-4x emitted
+  (`session.quality held_segments/emitted_segments`: 323/109, 479/118, 1018/306). Live-UX
+  symptom: the screen freezes exactly while the patient delivers the key narrative, then dumps.
+  Whatever gates emission is speech-structure-sensitive (long turns starve it) - the same shape
+  as the eval-vs-browser cadence suspect, so M02's recorded-cadence replay should try to explain
+  the monologue hold with the same mechanism.
 
 ## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
 
@@ -254,6 +265,26 @@ last_reviewed: 2026-07-07
   code drift from hardware numerics before touching any code. After GPU restore, grep the
   agent log for "CUDA is not available" over the full session window before trusting any
   metrics recorded in it.
+
+## Footgun: Second-pass correction failure silently swaps the summary's input lane
+
+**Status:** active | **Created:** 2026-07-09 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/api/server.py` (search: "correction.unavailable")
+- **Files:** `strands_agents/api/summary_request.py` (search: "corrected_segments")
+- **What breaks:** The post-visit correction endpoint makes exactly ONE attempt; any second-pass failure returns HTTP 200 with `correction.unavailable` at WARNING, and the next summary request silently falls back from `corrected_segments` to `browser_visible_segments` (raw live rows: worse ASR, dual-identity duplicate rows, different row shapes for the fidelity checker) - stacking with the 8000-char head-truncation footgun (footguns/summary.md). The observed failure was transient: `CUDA driver error: device not ready` on the FIRST transcribe call, ~12s after `session_lifecycle.destroy_scheduled`, on the longest session of the evening (116 chunks), while the two shorter sessions' corrections succeeded minutes earlier and `torch.cuda.is_available()` printed True in-container immediately afterwards. That is consistent with racing the live session's GPU teardown (cudaErrorNotReady = async work still pending), NOT with the WSL adapter drop documented below. A single retry would very likely have succeeded; none exists.
+- **Log-grep trap:** the failure is logged at WARNING with the wording "CUDA driver error", so sweeps for `ERROR`, `Traceback`, or the phrase "CUDA error" all miss it. Grep `correction.unavailable` explicitly when auditing a session.
+- **Evidence:** 2026-07-08 (UTC) session `0a40e243-c813-48a5-b87f-e069da4def40`: `correction.unavailable ... duration_ms=12350 detail=Second-pass ASR failed for nvidia/parakeet-tdt-0.6b-v3: CUDA driver error: device not ready`, then `summary.requested source=browser_visible_segments` 14s later. Same evening, sessions `d97a9bde`/`203d1d35` logged `correction.completed` (17.4s / 11.5s) and `summary.requested source=corrected_segments`. Related but distinct root cause with the same downstream fallback: lessons/verification.md (search: "correction smoke tests must stay inside reconnect grace").
+- **Prevention:** 0.4.0 M09 owns retry + fallback visibility. Until then, after every manual or e2e correction run, verify BOTH `correction.completed` AND `summary.requested source=corrected_segments` in the agent log before judging note quality - the existing grace-expiry lesson's check now has two root causes that trip it.
+
+## Footgun: Phantom-speaker merging can fold short real interjections into the other speaker's row
+
+**Status:** active | **Created:** 2026-07-09 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_session.py` (search: "phantom_speaker_merged")
+- **What breaks:** The streaming engine folds window-local marginal speaker slots into a canonical speaker (the hallucination-scale guard from the cache-aware integration entry above). When a real patient interjection is short enough to look marginal inside one window, the fold assigns those words to the OTHER speaker's canonical stream, and they render inside that speaker's row - the cross-talk bleed family seen in every manual acceptance run.
+- **Evidence:** OBSERVED correlation, not yet a confirmed mechanism: 2026-07-08 (UTC) session `203d1d35` (day3-consultation01) logged six `phantom_speaker_merged window_speaker_id=speaker_2 canonical_speaker_id=speaker_0` events at exactly the wall-clock timestamps where the patient's consent answer ("I think I am. Yeah,") rendered inside the doctor's secure-location row. Same family, other direction observed in day5-consultation09: only 3 phantom merges while the patient's audio ran under TWO kept identities (speaker_0 + speaker_3) that both emitted text for the same spans - whole utterances duplicated, both mapped PATIENT.
+- **Prevention:** Before touching the fold threshold, confirm the mechanism: replay a bleed fixture with per-window slot shares logged and check whether the bled words' window slot was folded. Any threshold change is streaming-engine territory (Ask First: `strands_agents/nemo_session.py`) and must pass the M01-style byte-identity gates plus a bleed-specific fixture check.
 
 ## Resolved Entries
 
