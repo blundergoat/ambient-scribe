@@ -38,14 +38,23 @@ function readVisibleTranscriptSegments() {
         // clinician correction > automatic row exception > speaker mapping.
         for (const rowSpan of segmentElement.querySelectorAll('.segment__text')) {
             const segmentId = rowSpan.dataset.segmentId ?? '';
-            visibleSegments.push({
+            const summaryRow = {
                 segment_id: segmentId,
                 speaker_id: cardSpeakerId,
                 role: resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId),
                 text: rowTextFromSpan(rowSpan),
                 start: Number.parseFloat(rowSpan.dataset.start) || 0,
                 end: Number.parseFloat(rowSpan.dataset.end) || 0,
-            });
+            };
+
+            // Measured rows echo their heard-confidence back so a server
+            // restore keeps it; unmeasured rows stay absent-is-absent.
+            const rowConfidence = Number.parseFloat(rowSpan.dataset.confidence);
+            if (Number.isFinite(rowConfidence)) {
+                summaryRow.confidence = rowConfidence;
+            }
+
+            visibleSegments.push(summaryRow);
         }
     }
 
@@ -517,6 +526,12 @@ function createRowTextSpan(segment) {
         text: segment.text,
         dataset: { start: segment.start, end: segment.end },
     });
+
+    // Rows keep their heard-confidence so summary round-trips and the later
+    // low-confidence styling read the same value; unmeasured rows stay bare.
+    if (Number.isFinite(segment.confidence)) {
+        rowSpan.dataset.confidence = segment.confidence;
+    }
 
     // Rows without a server row ID (older histories) cannot be corrected individually.
     if (!segment.segment_id) {

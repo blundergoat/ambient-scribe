@@ -26,11 +26,20 @@ import soundfile
 from corrected_role_cues import (
     CORRECTED_ROLE_FILLER_WORDS,
     DOCTOR_CONNECTOR_STARTS,
+    locate_row_word_span,
+    normalize_corrected_role_word,
     prepare_corrected_source_segments,
     role_from_corrected_phrase,
+    split_source_row_words,
+)
+from nemo_confidence import (
+    enable_word_confidence_decoding,
+    transcript_row_confidence,
+    word_confidences_for_display_words,
 )
 from post_visit_word_timing import (
     PostVisitTranscription,
+    validated_word_confidences,
     validated_word_timings,
     wav_duration_seconds,
     word_timings_from_hypothesis,
@@ -132,8 +141,8 @@ def run_post_visit_correction(
     try:
         # Tests can inject a transcriber; the real UI path uses the configured NeMo model.
         transcriber = transcribe_audio_file or transcribe_audio_with_nemo
-        transcript_text, raw_word_timings = coerce_post_visit_transcription(
-            transcriber(selected_model_name, str(audio_path))
+        transcript_text, raw_word_timings, raw_word_confidences = (
+            coerce_post_visit_transcription(transcriber(selected_model_name, str(audio_path)))
         )
     finally:
         audio_path.unlink(missing_ok=True)
@@ -148,6 +157,7 @@ def run_post_visit_correction(
         live_segments=live_segments,
         model_name=selected_model_name,
         word_timings=validated_word_timings(raw_word_timings, words),
+        word_confidences=validated_word_confidences(raw_word_confidences, words),
     )
     # Empty corrected rows mean alignment had no user-visible artifact to store.
     if corrected_segments == []:
@@ -192,6 +202,14 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> PostVisitTra
 
     try:
         asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
+        # Confidence is a pure observer of the decode (probe-proven byte-identical
+        # output); enabling it lets corrected rows carry per-row confidence.
+        try:
+            enable_word_confidence_decoding(asr_model)
+        except Exception:  # pragma: no cover - depends on NeMo decoding internals.
+            # A model that cannot take the config still corrects text; its rows
+            # simply render without confidence styling.
+            logger.warning("post_visit_correction.confidence_enable_failed", exc_info=True)
         try:
             result = asr_model.transcribe(
                 [audio_path],
@@ -222,28 +240,37 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> PostVisitTra
         # Timing is best-effort evidence; the corrected note must still render without it.
         logger.warning("post_visit_correction.word_timing_extraction_failed", exc_info=True)
 
+    transcript_text = normalise_transcript_text(hypothesis)
     return PostVisitTranscription(
-        text=normalise_transcript_text(hypothesis),
+        text=transcript_text,
         word_timings=word_timings,
+        word_confidences=word_confidences_for_display_words(
+            hypothesis, split_words(transcript_text)
+        ),
     )
 
 
 def coerce_post_visit_transcription(
     transcription: PostVisitTranscription | str,
-) -> tuple[str, list[dict[str, Any]] | None]:
-    """Normalise rich or plain transcriber output into text plus optional timings.
+) -> tuple[str, list[dict[str, Any]] | None, list[float] | None]:
+    """Normalise rich or plain transcriber output into text plus optional evidence.
 
     Args:
         transcription: Transcriber return value; plain strings come from timing-unaware seams.
 
     Returns:
-        `(text, word_timings)`; None timings mean no timing-based split can run.
+        `(text, word_timings, word_confidences)`; None timings mean no timing-based
+        split can run, None confidences leave corrected rows unmeasured.
     """
-    # Timing-aware transcribers return the richer shape with word timing evidence.
+    # Evidence-aware transcribers return the richer shape with timing and confidence.
     if isinstance(transcription, PostVisitTranscription):
-        return transcription.text, transcription.word_timings
+        return (
+            transcription.text,
+            transcription.word_timings,
+            transcription.word_confidences,
+        )
 
-    return normalise_transcript_text(transcription), None
+    return normalise_transcript_text(transcription), None, None
 
 
 def _write_pcm_wav(pcm_audio: bytes) -> Path:
@@ -310,6 +337,7 @@ def build_corrected_segments(
     live_segments: list[dict[str, Any]],
     model_name: str,
     word_timings: list[dict[str, Any]] | None = None,
+    word_confidences: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Map second-pass words onto live rows for corrected summary input.
 
@@ -319,6 +347,8 @@ def build_corrected_segments(
         model_name: ASR model id recorded on every corrected row.
         word_timings: Validated per-word timings aligned to `corrected_words`; None
             means echo-boundary rows stay whole.
+        word_confidences: Validated per-word confidence aligned to `corrected_words`;
+            None leaves every corrected row unmeasured.
 
     Returns:
         Corrected segment rows in chronological order; empty means no artifact exists.
@@ -330,7 +360,11 @@ def build_corrected_segments(
     scaffold_rows = normalise_scaffold_rows(live_segments)
     # A missing live transcript still allows text correction, but roles stay unknown.
     if scaffold_rows == []:
-        return build_unscaffolded_segments(corrected_words, model_name)
+        return stamp_corrected_row_confidence(
+            build_unscaffolded_segments(corrected_words, model_name),
+            corrected_words,
+            word_confidences,
+        )
 
     allocated_chunks = allocate_words_to_scaffold(corrected_words, scaffold_rows)
     corrected_segments: list[dict[str, Any]] = []
@@ -357,11 +391,62 @@ def build_corrected_segments(
             }
         )
 
-    return prepare_corrected_source_segments(
-        corrected_segments,
-        corrected_words=corrected_words,
-        word_timings=word_timings,
+    return stamp_corrected_row_confidence(
+        prepare_corrected_source_segments(
+            corrected_segments,
+            corrected_words=corrected_words,
+            word_timings=word_timings,
+        ),
+        corrected_words,
+        word_confidences,
     )
+
+
+def stamp_corrected_row_confidence(
+    segments: list[dict[str, Any]],
+    corrected_words: list[str],
+    word_confidences: list[float] | None,
+) -> list[dict[str, Any]]:
+    """Attach per-row confidence to corrected rows built from ASR words.
+
+    Runs after echo splits and role cleanup so each final visible row is
+    located in the ASR word stream by its own words. Rows that cannot be
+    located (live-text fallbacks, reshuffled rows) stay unmeasured and render
+    exactly as they do today.
+
+    Args:
+        segments: Final corrected rows in visible order; empty passes through.
+        corrected_words: Second-pass ASR words the rows were built from.
+        word_confidences: Values aligned to `corrected_words`; None stamps nothing.
+
+    Returns:
+        The same rows, with `confidence` set where the word span was found.
+    """
+    # e.g. the clinician pressed Stop, the second ASR pass re-heard the visit,
+    # and the summary is about to cite these rows as its source chips.
+    # Without validated values every corrected row stays unmeasured.
+    if not word_confidences:
+        return segments
+
+    # Each visible row is located independently so split rows stay accurate.
+    for segment in segments:
+        normalized_row_words = [
+            normalize_corrected_role_word(word)
+            for word in split_source_row_words(segment)
+        ]
+        span_start = locate_row_word_span(normalized_row_words, corrected_words)
+        # Rows whose text is not ASR-owned have no confidence evidence.
+        if span_start is None:
+            continue
+
+        row_confidence = transcript_row_confidence(
+            word_confidences[span_start : span_start + len(normalized_row_words)]
+        )
+        # A row with no measured words keeps today's unstyled rendering.
+        if row_confidence is not None:
+            segment["confidence"] = row_confidence
+
+    return segments
 
 
 def normalise_scaffold_rows(live_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:

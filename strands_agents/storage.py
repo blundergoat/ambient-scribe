@@ -112,6 +112,7 @@ class SqliteBackend:
                     position INTEGER NOT NULL,
                     segment_id TEXT,
                     role_source TEXT,
+                    confidence REAL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
@@ -137,6 +138,7 @@ class SqliteBackend:
                     role_source TEXT,
                     source TEXT,
                     source_model TEXT,
+                    confidence REAL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
@@ -146,11 +148,14 @@ class SqliteBackend:
                 CREATE INDEX IF NOT EXISTS idx_corrected_segments_session_position
                     ON corrected_segments(session_id, position);
             """)
-            # Databases created before row corrections lack the new columns;
-            # SQLite raises "duplicate column" once they exist, which is fine.
+            # Databases created before row corrections or row confidence lack
+            # the newer columns; SQLite raises "duplicate column" once they
+            # exist, which is fine.
             for add_column_sql in (
                 "ALTER TABLE segments ADD COLUMN segment_id TEXT",
                 "ALTER TABLE segments ADD COLUMN role_source TEXT",
+                "ALTER TABLE segments ADD COLUMN confidence REAL",
+                "ALTER TABLE corrected_segments ADD COLUMN confidence REAL",
             ):
                 try:
                     self._conn.execute(add_column_sql)
@@ -190,8 +195,8 @@ class SqliteBackend:
             position = self._next_position(session_id)
             self._conn.execute(
                 """
-                INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -203,6 +208,7 @@ class SqliteBackend:
                     segment.get("role"),
                     position,
                     str(segment.get("segment_id", "")) or None,
+                    segment.get("confidence"),
                 ),
             )
             # A re-appended row the clinician already corrected keeps their label.
@@ -229,8 +235,8 @@ class SqliteBackend:
             for position, segment in enumerate(segments):
                 self._conn.execute(
                     """
-                    INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -242,6 +248,7 @@ class SqliteBackend:
                         segment.get("role"),
                         position,
                         str(segment.get("segment_id", "")) or None,
+                        segment.get("confidence"),
                     ),
                 )
             self._reapply_row_role_overrides(session_id)
@@ -275,9 +282,10 @@ class SqliteBackend:
                         segment_id,
                         role_source,
                         source,
-                        source_model
+                        source_model,
+                        confidence
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -292,6 +300,7 @@ class SqliteBackend:
                         segment.get("role_source"),
                         segment.get("source"),
                         segment.get("source_model"),
+                        segment.get("confidence"),
                     ),
                 )
             self._conn.commit()
@@ -372,7 +381,7 @@ class SqliteBackend:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source
+                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, confidence
                 FROM segments
                 WHERE session_id = ?
                 ORDER BY position
@@ -399,6 +408,9 @@ class SqliteBackend:
             # The source marker shows which rows carry a human correction.
             if row[7]:
                 seg["role_source"] = row[7]
+            # Unmeasured rows omit the key so they render exactly as before.
+            if row[8] is not None:
+                seg["confidence"] = row[8]
             segments.append(seg)
         return segments
 
@@ -414,7 +426,7 @@ class SqliteBackend:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, source, source_model
+                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, source, source_model, confidence
                 FROM corrected_segments
                 WHERE session_id = ?
                 ORDER BY position
@@ -443,6 +455,9 @@ class SqliteBackend:
                 seg["source"] = row[8]
             if row[9]:
                 seg["source_model"] = row[9]
+            # Unmeasured rows omit the key so they render exactly as before.
+            if row[10] is not None:
+                seg["confidence"] = row[10]
             segments.append(seg)
         return segments
 

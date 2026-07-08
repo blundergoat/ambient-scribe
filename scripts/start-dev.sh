@@ -240,6 +240,14 @@ NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
 
 # GPU is required - NeMo transcription is the core feature
 if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
+    # The tooling exists but no adapter answered: WSL2 dropped the GPU, and the
+    # nemo-agent container would fail with "no adapters were found".
+    if [[ "$NVIDIA_SMI_PRESENT" == "true" ]]; then
+        echo -e "  ${FAIL} ${RED}nvidia-smi reports NO adapter - WSL2 lost the GPU${RESET}"
+        echo -e "     ${DIM}Fix from Windows (not inside WSL): quit Docker Desktop, run 'wsl --shutdown',${RESET}"
+        echo -e "     ${DIM}start Docker Desktop again, then re-run this script. Reboot Windows if it persists.${RESET}"
+        exit 1
+    fi
     echo -e "  ${FAIL} ${RED}NVIDIA GPU required for NeMo transcription${RESET}"
     echo -e "     ${DIM}Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/${RESET}"
     echo -e "     ${DIM}Or set NEMO_MODEL_PROVIDER=mock in .env for test/development only${RESET}"
@@ -302,10 +310,20 @@ else
 fi
 
 step "nvidia-smi"
+# A named adapter means live transcription can run on the GPU.
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
+# Mock mode never touches the GPU, so a missing adapter is only a warning.
 elif [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
     echo -e "${WARN}  ${DIM}no GPU - using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
+# The driver tooling exists but no adapter answered: the WSL2 GPU has dropped
+# and the nemo-agent container would fail with "no adapters were found".
+elif [[ "$NVIDIA_SMI_PRESENT" == "true" ]]; then
+    fail "nvidia-smi reports NO adapter - WSL2 lost the GPU"
+    echo -e "     ${DIM}Fix from Windows (not inside WSL): quit Docker Desktop, run 'wsl --shutdown',${RESET}"
+    echo -e "     ${DIM}start Docker Desktop again, then re-run this script. Reboot Windows if it persists.${RESET}"
+    echo ""
+    exit 1
 else
     fail "not found - GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
     echo ""

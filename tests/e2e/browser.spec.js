@@ -1395,3 +1395,48 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
     expect(summaryRows.map((row) => row.segment_id)).toEqual(["seg-a", "seg-b", "seg-x", "seg-c"]);
   });
 });
+
+test.describe("Row confidence passthrough (M06)", () => {
+  test("a measured row renders like any other, keeps its value, and echoes it in the summary snapshot", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    // One clearly measured row and one legacy unmeasured row arrive live.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "I have terrible headaches",
+        start: 0.0,
+        end: 1.5,
+        segment_id: "seg-0001",
+        confidence: 0.71,
+      });
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_1",
+        text: "How long has that been going on?",
+        start: 2.0,
+        end: 3.5,
+        segment_id: "seg-0002",
+      });
+    });
+
+    // Both rows render as plain transcript text - no confidence styling yet.
+    const rows = page.locator(".segment__text");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toHaveText("I have terrible headaches");
+    await expect(rows.nth(1)).toHaveText("How long has that been going on?");
+
+    // The measured row carries its value; the unmeasured row stays bare.
+    await expect(rows.nth(0)).toHaveAttribute("data-confidence", "0.71");
+    const unmeasuredAttribute = await rows.nth(1).getAttribute("data-confidence");
+    expect(unmeasuredAttribute).toBeNull();
+
+    // The summary snapshot echoes the value so a server restore keeps it.
+    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    expect(summaryRows[0].confidence).toBe(0.71);
+    expect(summaryRows[1]).not.toHaveProperty("confidence");
+  });
+});

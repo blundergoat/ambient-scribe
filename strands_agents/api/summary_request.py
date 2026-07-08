@@ -39,6 +39,9 @@ class BrowserVisibleSegment(BaseModel):
     end: float = 0.0
     role: str | None = None
     segment_id: str = ""
+    # Row ASR confidence echoed back by the browser; None means the row never
+    # carried one and a restore-from-browser keeps it unmeasured.
+    confidence: float | None = None
 
 
 class SummaryRequest(BaseModel):
@@ -182,6 +185,9 @@ def normalise_browser_visible_segments(
             continue
 
         segment_payload["text"] = text
+        # Unmeasured rows drop the key so stored history stays absent-is-absent.
+        if segment_payload.get("confidence") is None:
+            segment_payload.pop("confidence", None)
         normalised_segments.append(segment_payload)
 
     return normalised_segments

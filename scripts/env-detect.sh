@@ -79,18 +79,30 @@ APP_CONTAINER=$(_resolve_container "${COMPOSE_PROJECT}-app-1" "app")
 MERCURE_CONTAINER=$(_resolve_container "${COMPOSE_PROJECT}-mercure-1" "mercure")
 
 # --- GPU detection (host-side nvidia-smi only, no container launch) ---
+# HAS_NVIDIA_SMI means "an adapter is actually visible", not just "the binary
+# exists": on WSL2 the GPU adapter can silently drop while nvidia-smi still
+# exits 0 with EMPTY output, and the failure would otherwise only surface later
+# as a cryptic "no adapters were found" container start error
+# (footguns/runtime.md, search: "silently move NeMo to CPU").
 HAS_NVIDIA_SMI="false"
+NVIDIA_SMI_PRESENT="false"
 GPU_NAME=""
 GPU_VRAM_MB=0
 
+# The driver tooling is installed; now prove an adapter actually answers.
 if command -v nvidia-smi &>/dev/null; then
-    HAS_NVIDIA_SMI="true"
+    NVIDIA_SMI_PRESENT="true"
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
     _vram_raw=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
     GPU_VRAM_MB="${_vram_raw:-0}"
     # Strip whitespace
     GPU_VRAM_MB="${GPU_VRAM_MB// /}"
     unset _vram_raw
+
+    # Only a named adapter counts as a usable GPU for live transcription.
+    if [[ -n "${GPU_NAME// /}" ]]; then
+        HAS_NVIDIA_SMI="true"
+    fi
 fi
 
 # --- Colors ---

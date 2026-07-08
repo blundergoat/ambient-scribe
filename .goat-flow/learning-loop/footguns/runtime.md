@@ -227,6 +227,34 @@ last_reviewed: 2026-07-07
 - **What breaks:** A clinician role decision is recorded in three independent places: the server's `confirmed_overrides` (enforced over agent proposals by `_apply_confirmed_overrides`), the browser's `manualOverrides` set (blocks incoming `role_update` mappings client-side), and the corrected-transcript artifact (role snapshot taken at correction time, preferred by summaries). Any mutation path that touches only one diverges the rest. Two PR #3 review findings hit this: cycling a label back to Unknown (the documented undo) stored UNKNOWN as a PERMANENT confirmed override so the agent could never relabel - and even after the server fix, the browser's `manualOverrides` would still have blocked relabels until `cycleRole` also deleted its entry; separately, overrides after the first correction never reached `corrected_segments`, so retried summaries cited pre-fix roles.
 - **Prevention:** Any new role-mutation feature (bulk relabel, undo stack, review queue) must decide explicitly for EACH of the three stores: update, invalidate, or deliberately skip - and say why. Current wiring: UNKNOWN pops the confirmed override AND the browser set; speaker overrides rewrite corrected rows in place; row overrides invalidate the corrected artifact so the next summary re-corrects (regressions: `tests/python/test_api.py`, search: "unknown_override_clears_confirmed_override", "updates_corrected_rows_for_retried_summaries", "invalidates_stale_corrected_artifact").
 
+## Footgun: A hot-reload can silently move NeMo to CPU when WSL drops the GPU adapter
+
+**Status:** active | **Created:** 2026-07-08 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "cuda if torch.cuda.is_available")
+- **Files:** `scripts/eval-corrected-fixtures.sh` (search: "AGENT_HTTP_URL")
+- **What breaks:** WSL2 can lose its GPU adapter mid-session while everything else keeps
+  working: `/dev/dxg` still exists, `nvidia-smi` exits 0 while printing NOTHING, `/health`
+  stays green, and the next uvicorn hot-reload loads both models on CPU because the pipeline
+  falls back silently (`cuda if available else cpu`). Observed 2026-07-08: the first CPU load
+  logged only NeMo warnings ("No conditional node support for Cuda ... CUDA is not
+  available") at 08:35Z after ~25 hot-reloads and two probe processes; the M06 phase-2 gate
+  eval then ran on CPU against the GPU M01 baseline and produced a false "regression" (c08
+  live +6 words diverging from row 7; c02 role-mapping luck flip). Two same-code CPU runs
+  were byte-identical to each other, proving device numerics - not code - moved the text.
+  `docker compose restart nemo-agent` cannot recover this state: the nvidia runtime hook
+  fails with "WSL environment detected but no adapters were found" and the container stays
+  DOWN until a Windows-side `wsl --shutdown`.
+- **Prevention:** Before ANY baseline-gated eval, verify device liveness in the running
+  container - `docker exec ambient-scribe-nemo-agent-1 python -c "import torch;
+  print(torch.cuda.is_available())"` must print True; env vars alone are NOT liveness
+  (lessons/verification.md "Verify the running container's env" now has a device
+  counterpart). Treat a byte-identity gate failure as UNATTRIBUTED until the run's device
+  matches the baseline's device; re-run the same eval twice on the same device to separate
+  code drift from hardware numerics before touching any code. After GPU restore, grep the
+  agent log for "CUDA is not available" over the full session window before trusting any
+  metrics recorded in it.
+
 ## Resolved Entries
 
 ## Footgun: PriMock replay WAVs exceed PHP's default upload ceiling

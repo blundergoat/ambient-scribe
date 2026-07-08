@@ -310,3 +310,18 @@ peek). The row-scope path never had this problem because row corrections persist
 transcript storage, not role state. When removing a state-creation side effect, first
 enumerate who legitimately relies on the creation: "reads must not create" is right for
 reads (`roles_snapshot`), but an override is a write.
+
+## Lesson: Environment-variable checks are not device-liveness checks (2026-07-08)
+
+The M06 phase-2 gate followed the standing rule "verify the RUNNING container env, not
+compose defaults" - `NEMO_SESSION_ENGINE=streaming` and `MEDICAL_BOOST_ENABLED=1` were
+confirmed in the container before the eval - and the eval STILL ran on the wrong hardware:
+WSL had silently dropped the GPU adapter, a hot-reload had loaded both models on CPU, and
+env vars said nothing about it. The false byte-identity failure cost two attribution evals
+and one control run to unwind (footguns/runtime.md, search: "silently move NeMo to CPU").
+Env inspection proves CONFIGURATION; it never proves the RESOURCE is attached. Before a
+baseline-gated run, also assert the resource itself: `torch.cuda.is_available()` in the
+serving container for GPU gates, and generally one probe of the physical dependency any
+byte-identity claim rides on. Attribution order when a gate diff appears: (1) device parity
+with the baseline, (2) same-code same-device rerun for run-to-run stability, (3) only then
+suspect the code.

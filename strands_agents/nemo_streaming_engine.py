@@ -19,6 +19,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from nemo_confidence import (
+    transcript_row_confidence,
+    word_confidences_for_display_words,
+)
+
 logger = logging.getLogger(__name__)
 
 STREAMING_ENGINE_FLAG = "NEMO_SESSION_ENGINE"
@@ -57,21 +62,30 @@ class EngineRow:
         text: Stabilized transcript text for this step span.
         start: Absolute session start seconds.
         end: Absolute session end seconds.
+        confidence: How clearly the row was heard (0-1); None means this row
+            carries no value and renders without confidence styling.
     """
 
     speaker_slot: str
     text: str
     start: float
     end: float
+    confidence: float | None = None
 
 
 @dataclass
 class _WordEntry:
-    """One heard word with the span of the step that first produced it."""
+    """One heard word with the span of the step that first produced it.
+
+    Confidence refreshes on every step while the word is still unemitted, so a
+    word firms up (or weakens) as NeMo hears more context; None means the step
+    that produced it carried no usable confidence.
+    """
 
     text: str
     start: float
     end: float
+    confidence: float | None = None
 
 
 # NeMo's cache-aware decoder freely rewrites roughly the last
@@ -390,6 +404,10 @@ class StreamingSessionEngine:
             words = str(hypothesis.text).split()
             word_log = self._word_logs.setdefault(slot_index, [])
             emitted_count = self._emitted_word_counts.get(slot_index, 0)
+            # Confidence recomputes over the whole hypothesis each step, so
+            # held words keep firming up until they emit; a misaligned list is
+            # discarded rather than styling the wrong rows.
+            word_values = word_confidences_for_display_words(hypothesis, words)
 
             # Update revisable words in place; count only revisions that would
             # have touched already-emitted text (they resync silently).
@@ -398,53 +416,95 @@ class StreamingSessionEngine:
                     if index < emitted_count:
                         self.diagnostics.revision_resyncs += 1
                     word_log[index].text = words[index]
+                # Fresh confidence describes this word better than the step
+                # that first produced it.
+                if word_values is not None:
+                    word_log[index].confidence = word_values[index]
 
             # NeMo shrank the hypothesis: drop unemitted tail entries so the
             # log tracks reality; emitted words stay emitted (emit-once).
             if len(words) < len(word_log):
                 del word_log[max(emitted_count, len(words)) :]
 
-            appended = words[len(word_log) :]
+            appended_base_index = len(word_log)
+            appended = words[appended_base_index:]
+            # Newly heard words join the log with their spoken span and the
+            # confidence NeMo reported for them this step.
             if appended:
-                # Token timestamps count the instance's voiced frames; the
-                # diar-activity ledger inverts them to true spoken times.
-                # Tokens (BPE) outnumber words, so this step's new tokens are
-                # spread proportionally across this step's new words.
-                timestamps = getattr(hypothesis, "timestamp", None)
-                total_tokens = len(timestamps) if timestamps is not None else 0
-                tokens_before = self._slot_token_counts.get(slot_index, 0)
-                new_tokens = max(0, total_tokens - tokens_before)
-                self._slot_token_counts[slot_index] = total_tokens
-
-                for position, _word in enumerate(appended):
-                    if new_tokens > 0 and timestamps is not None:
-                        token_lo = tokens_before + int(
-                            position * new_tokens / len(appended)
-                        )
-                        token_hi = tokens_before + int(
-                            (position + 1) * new_tokens / len(appended)
-                        )
-                        token_hi = min(max(token_hi, token_lo + 1), total_tokens)
-                        word_start = self._wall_time_for_voiced_frame(
-                            slot_index, float(timestamps[token_lo])
-                        )
-                        word_end = self._wall_time_for_voiced_frame(
-                            slot_index, float(timestamps[token_hi - 1]) + 1.0
-                        )
-                    else:
-                        step_offset = float(
-                            getattr(self._streamer, "_offset_chunk_start_time", 0.0)
-                            or 0.0
-                        )
-                        word_start = step_offset
-                        word_end = step_offset + self._frame_len_sec
-                    word_log.append(
-                        _WordEntry(
-                            text=_word,
-                            start=word_start,
-                            end=max(word_end, word_start + 0.05),
-                        )
+                word_log.extend(
+                    self._appended_word_entries(
+                        slot_index, hypothesis, appended, appended_base_index, word_values
                     )
+                )
+
+    def _appended_word_entries(
+        self,
+        slot_index: int,
+        hypothesis: Any,
+        appended: list[str],
+        appended_base_index: int,
+        word_values: list[float] | None,
+    ) -> list[_WordEntry]:
+        """Build log entries for the words a step just added to one slot.
+
+        Token timestamps count the instance's voiced frames; the diar-activity
+        ledger inverts them to true spoken times. Tokens (BPE) outnumber words,
+        so this step's new tokens are spread proportionally across the new words.
+
+        Args:
+            slot_index: Speaker cache slot the words belong to.
+            hypothesis: This step's slot hypothesis; a tensor-less `timestamp`
+                falls back to step-clock word spans.
+            appended: Newly heard words; callers skip empty batches.
+            appended_base_index: Hypothesis word index of the first new word.
+            word_values: Full-hypothesis confidence; None leaves words unmeasured.
+
+        Returns:
+            One `_WordEntry` per appended word, in spoken order.
+        """
+        timestamps = getattr(hypothesis, "timestamp", None)
+        total_tokens = len(timestamps) if timestamps is not None else 0
+        tokens_before = self._slot_token_counts.get(slot_index, 0)
+        new_tokens = max(0, total_tokens - tokens_before)
+        self._slot_token_counts[slot_index] = total_tokens
+
+        entries: list[_WordEntry] = []
+        # Each new word gets its own share of this step's new tokens.
+        for position, appended_word in enumerate(appended):
+            # Real token timestamps recover the word's true spoken time.
+            if new_tokens > 0 and timestamps is not None:
+                token_lo = tokens_before + int(position * new_tokens / len(appended))
+                token_hi = tokens_before + int(
+                    (position + 1) * new_tokens / len(appended)
+                )
+                token_hi = min(max(token_hi, token_lo + 1), total_tokens)
+                word_start = self._wall_time_for_voiced_frame(
+                    slot_index, float(timestamps[token_lo])
+                )
+                word_end = self._wall_time_for_voiced_frame(
+                    slot_index, float(timestamps[token_hi - 1]) + 1.0
+                )
+            else:
+                # Without token evidence the step clock is the best span.
+                step_offset = float(
+                    getattr(self._streamer, "_offset_chunk_start_time", 0.0) or 0.0
+                )
+                word_start = step_offset
+                word_end = step_offset + self._frame_len_sec
+            entries.append(
+                _WordEntry(
+                    text=appended_word,
+                    start=word_start,
+                    end=max(word_end, word_start + 0.05),
+                    confidence=(
+                        word_values[appended_base_index + position]
+                        if word_values is not None
+                        else None
+                    ),
+                )
+            )
+
+        return entries
 
     def _emit_stable_words(self, *, mutable_tail_words: int) -> list[EngineRow]:
         """Emit each slot's stable unemitted words as one row per slot.
@@ -495,6 +555,9 @@ class StreamingSessionEngine:
                     text=" ".join(entry.text for entry in group),
                     start=group[0].start,
                     end=max(entry.end for entry in group),
+                    confidence=transcript_row_confidence(
+                        entry.confidence for entry in group
+                    ),
                 )
                 rows.append(row)
                 self._count_emitted(row)

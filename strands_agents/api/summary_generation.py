@@ -97,8 +97,6 @@ def run_summary_generation(
         Parsed summary payload; `None` means the browser should show a generation failure.
     """
     try:
-        from agents import create_summary_agent
-
         context_snippets = retrieve_clinical_context(transcript)
         base_prompt = summary_generation_prompt(
             transcript,

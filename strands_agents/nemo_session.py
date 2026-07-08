@@ -500,6 +500,9 @@ class TranscriptionSession:
                 text=self.pipeline.visible_text(row.text),
                 start=row.start,
                 end=row.end,
+                # Row confidence describes the audio span, so it survives the
+                # text normalisation above unchanged.
+                confidence=row.confidence,
             )
             for row in engine_rows
         ]
