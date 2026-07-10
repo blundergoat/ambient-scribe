@@ -1,13 +1,8 @@
-"""
-Deterministic fidelity checks for the generated post-visit note (0.4.0 M07).
+"""Verify the generated note against the transcript before the clinician sees it.
 
-After the summary agent drafts the SOAP note, these checks compare every
-sentence against the visit transcript and catch the fabrication families the
-M00 replay campaign proved prompt rules cannot reliably prevent: patient
-uncertainty resolved to one side, negative findings the patient never gave,
-and screening answers dressed up as examination findings. Violations first
-earn one regeneration; survivors are visibly flagged in the note rather than
-silently removed, so the clinician always sees what could not be verified.
+When the user requests a summary, these checks catch unsupported uncertainty,
+denials, exam claims, patient mental states, and non-verbatim quotations. A
+failed draft gets one retry; surviving claims stay visible with a warning.
 """
 
 from __future__ import annotations
@@ -45,6 +40,75 @@ _NOTE_UNCERTAINTY_MARKERS = (
     "couldn't say",
     "could not say",
     "patient-unsure",
+)
+
+# A note may attribute uncertainty, memory failure, lack of knowledge, or
+# refusal to the patient only when the patient's own words establish that
+# state for the same clinical topic (M11).
+_PATIENT_STATE_MARKER_PATTERN = re.compile(
+    r"""
+    (?P<memory>
+        \b(?:
+            (?:unable|inability)\s+to\s+(?:clearly\s+)?
+             (?:recall|remember|specify|detail|name|identify)
+            |(?:cannot|can\s+not|can't|could\s+not|couldn't|did\s+not|didn't
+             |does\s+not|doesn't|do\s+not|don't)
+             \s+(?:clearly\s+)?(?:recall|remember|specify|detail|name|identify)
+            |not(?:\s+[a-z]+){0,3}\s+i\s+(?:recall|remember)
+        )\b
+    )
+    |(?P<knowledge>
+        \b(?:
+            unsure|uncertain|not\s+sure
+            |(?:did\s+not|didn't|does\s+not|doesn't|do\s+not|don't)\s+know
+        )\b
+    )
+    |(?P<refusal>
+        \b(?:
+            (?:declined|refused)\s+to\s+(?:answer|say|name|state|disclose|discuss)
+            |(?:would\s+rather\s+not|did\s+not\s+want\s+to|didn't\s+want\s+to)
+             \s+(?:answer|say|name|state|disclose|discuss)
+        )\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# The state must be explicitly attributed to the patient, including the
+# gendered/neutral pronoun forms produced by the summary model.
+_PATIENT_ATTRIBUTION_PATTERN = re.compile(
+    r"\b(?:patient|she|he|they|her|his)\b", re.IGNORECASE
+)
+
+# Subjective notes often omit the repeated patient noun: after the user opens
+# the note, "Takes an inhaler but cannot recall..." still reads as patient history.
+_IMPLICIT_SUBJECTIVE_PATIENT_PATTERN = re.compile(
+    r"^\s*(?:currently\s+)?(?:unable|takes?|uses?|reports?|describes?|states?|recalls?|"
+    r"remembers?|has|had|feels?|felt|lives?|works?|attends?)\b",
+    re.IGNORECASE,
+)
+_NON_PATIENT_STATE_ATTRIBUTION_PATTERN = re.compile(
+    r"\b(?:doctor|clinician|physician|provider|transcript|record|audio)\b",
+    re.IGNORECASE,
+)
+
+# Words surrounding a state marker that describe grammar rather than its
+# clinical topic. The remaining words reuse M10's stem matcher.
+_STATE_TOPIC_STOPWORDS = frozenset(
+    "about answer answered answering as being could details develop developed developing "
+    "develops did does due had has have he her incomplete insect lack reduced regarding "
+    "specifically "
+    "him his inability is it its kind knew know known medication-specific "
+    "of one ones patient prior recall recalled recalling reaction-specific really remember "
+    "remembered remembering say said she similar specifics state stated stating takes the "
+    "their them they this to transcript unable unsure was were whether which who".split()
+)
+
+# Explicit quote attribution narrows evidence to that role. Unattributed
+# quotation marks may match either speaker role.
+_PATIENT_QUOTE_ATTRIBUTION_PATTERN = re.compile(r"\bpatient\b", re.IGNORECASE)
+_DOCTOR_QUOTE_ATTRIBUTION_PATTERN = re.compile(
+    r"\b(?:doctor|clinician|physician|provider|gp)\b", re.IGNORECASE
 )
 
 # Clinical characteristics whose value must come from the patient, keyed by the
@@ -178,6 +242,10 @@ _TOPIC_STEM_SYNONYMS = {
     "moving": ("mov", "spread", "radiat"),
     "location": ("locat", "anywhere", "elsewhere", "area"),
     "locations": ("locat", "anywhere", "elsewhere", "area"),
+    "ability": ("abil", "able", "unable"),
+    "laziness": ("lazy", "motivat"),
+    "motivation": ("motivat", "lazy"),
+    "tightness": ("tight",),
 }
 
 # Words too generic to identify a denied topic on their own.
@@ -232,6 +300,19 @@ class FidelityViolation:
     word_count: int = 0
 
 
+@dataclass(frozen=True)
+class _QuotedSpan:
+    """Keep one paired quote and its position in the visible note sentence.
+
+    The verifier uses it when deciding whether the clinician sees a verbatim quote.
+    Each instance covers one quote, so a valid span cannot hide an invalid one.
+    """
+
+    text: str
+    start: int
+    end: int
+
+
 def regeneration_feedback(violations: list[FidelityViolation]) -> str:
     """Build the correction block appended to the prompt for the one retry.
 
@@ -280,10 +361,12 @@ def summary_with_unverified_flags(
     if not violations:
         return parsed_summary
 
+    # Each surviving failure must be placed where the clinician reads it.
     for violation in violations:
         placed = False
         # The sentence is flagged where the clinician will actually read it.
         for section in parsed_summary.get("sections", []):
+            # A matching section receives the browser's visible warning marker.
             if violation.sentence in str(section.get("content", "")):
                 section.setdefault("unverified", [])
                 # One flag per sentence keeps repeated rules from stacking markers.
@@ -292,9 +375,12 @@ def summary_with_unverified_flags(
                 placed = True
         # Key-point lines live outside sections and carry their own flag list.
         if not placed:
+            # Each visible key point is another possible location for the sentence.
             for key_point in parsed_summary.get("key_points", []):
+                # A matching key point needs the same warning as section prose.
                 if violation.sentence in str(key_point):
                     flagged_points = parsed_summary.setdefault("unverified_key_points", [])
+                    # A duplicate rule must not create duplicate UI markers.
                     if key_point not in flagged_points:
                         flagged_points.append(key_point)
 
@@ -338,6 +424,7 @@ def find_fidelity_violations(
     # Sections first, key points last - the same order the clinician reads.
     for section in sections:
         heading = str(section.get("heading", ""))
+        # Every visible section sentence is verified independently.
         for ordinal, sentence in enumerate(_sentences(str(section.get("content", "")))):
             violations.extend(
                 _sentence_violations(
@@ -348,7 +435,9 @@ def find_fidelity_violations(
                     sentence_ordinal=ordinal,
                 )
             )
+    # Key points are verified after the full note sections the user reads first.
     for key_point in key_points:
+        # A key point may contain more than one displayed sentence.
         for ordinal, sentence in enumerate(_sentences(str(key_point))):
             violations.extend(
                 _sentence_violations(
@@ -375,6 +464,7 @@ def _contains_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
     """
     # Word boundaries keep clinical vocabulary from matching inside other words.
     for phrase in phrases:
+        # One whole-phrase match is enough to support this wording.
         if re.search(rf"\b{re.escape(phrase)}\b", text) is not None:
             return True
 
@@ -395,6 +485,7 @@ def _sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'‘“])", text.strip())
 
     merged: list[str] = []
+    # Each non-empty fragment becomes or extends one sentence shown in the note.
     for part in (piece.strip() for piece in parts if piece.strip()):
         # A fragment with an unclosed quote is mid-quotation - re-join it so
         # quoted patient speech is never judged as a bare fragment.
@@ -434,7 +525,7 @@ def _sentence_violations(
     uncertain_characteristics: set[str],
     sentence_ordinal: int = -1,
 ) -> list[FidelityViolation]:
-    """Run all three fidelity rules over one note sentence.
+    """Run every deterministic fidelity rule over one note sentence.
 
     Args:
         sentence: One sentence the clinician would read; never empty here.
@@ -446,11 +537,15 @@ def _sentence_violations(
     Returns:
         Violations for this sentence; empty means the sentence is supported.
     """
-    found: list[FidelityViolation] = []
+    sentence_violations: list[FidelityViolation] = []
     word_count = len(re.findall(r"[A-Za-z'][A-Za-z'-]*", sentence))
 
-    def _record(rule: str, reason: str, subtype: str) -> None:
-        found.append(
+    def _add_visible_violation(rule: str, reason: str, subtype: str) -> None:
+        """Add one warning for this sentence to the clinician-facing result.
+
+        Use after a rule finds unsupported wording in the displayed note.
+        """
+        sentence_violations.append(
             FidelityViolation(
                 location,
                 sentence,
@@ -465,19 +560,29 @@ def _sentence_violations(
     unresolved = _uncertainty_violation(sentence, uncertain_characteristics, normalized_rows)
     # The patient said "I don't know", so a resolved value would mislead the reader.
     if unresolved is not None:
-        _record("uncertainty-resolved", *unresolved)
+        _add_visible_violation("uncertainty-resolved", *unresolved)
 
     unsupported_denial = _negative_finding_violation(sentence, normalized_rows)
     # A denial the patient never gave reads as a cleared symptom to the clinician.
     if unsupported_denial is not None:
-        _record("negative-without-denial", *unsupported_denial)
+        _add_visible_violation("negative-without-denial", *unsupported_denial)
 
     exam_claim = _exam_language_violation(sentence, normalized_rows)
     # Exam findings that never happened carry the most clinical weight of all.
     if exam_claim is not None:
-        _record("exam-not-performed", *exam_claim)
+        _add_visible_violation("exam-not-performed", *exam_claim)
 
-    return found
+    invented_state = _patient_state_violation(sentence, location, normalized_rows)
+    # Garbled or missing transcript material cannot become a patient mental state.
+    if invented_state is not None:
+        _add_visible_violation("patient-state-without-evidence", *invented_state)
+
+    unsupported_quote = _non_verbatim_quote_violation(sentence, normalized_rows)
+    # Quotation marks promise verbatim words, so every lexical span must verify.
+    if unsupported_quote is not None:
+        _add_visible_violation("non-verbatim-quote", *unsupported_quote)
+
+    return sentence_violations
 
 
 def _characteristics_answered_with_uncertainty(
@@ -494,12 +599,15 @@ def _characteristics_answered_with_uncertainty(
     uncertain: set[str] = set()
     # Each doctor question is paired with the patient's answer up to two rows later.
     for row_index, row in enumerate(normalized_rows):
+        # Patient rows cannot introduce the clinician's offered answer choices.
         if row["role"] != "DOCTOR":
             continue
+        # Each clinical characteristic has its own supported answer vocabulary.
         for characteristic, tokens in _CHARACTERISTIC_ASSERTION_TOKENS.items():
             # The doctor must actually have offered the characteristic's options.
             if not any(token in row["text"] for token in tokens):
                 continue
+            # Nearby patient rows may contain the answer the note must preserve.
             for answer in normalized_rows[row_index + 1 : row_index + 3]:
                 # Only the patient's own uncertainty makes the value unresolvable.
                 if answer["role"] == "PATIENT" and _contains_any_phrase(
@@ -526,6 +634,7 @@ def _uncertainty_violation(
         (reason, subtype), or None when the sentence is honest about the uncertainty.
     """
     lowered = sentence.lower()
+    # Each unresolved characteristic must stay unresolved wherever it appears.
     for characteristic in uncertain_characteristics:
         tokens = _CHARACTERISTIC_ASSERTION_TOKENS[characteristic]
         # Sentences that never mention the characteristic cannot resolve it.
@@ -557,28 +666,510 @@ def _uncertainty_violation(
                 "uncertainty-not-preserved",
             )
 
+    # No unresolved characteristic was misstated, so the UI needs no warning.
     return None
 
 
-def _has_patient_verbatim_quote(sentence: str, normalized_rows: list[dict[str, str]]) -> bool:
-    """Report whether the sentence quotes the patient's own words verbatim.
+def _normalized_lexical_tokens(text: str) -> tuple[str, ...]:
+    """Normalize note/transcript words for quote comparison.
 
-    Args:
-        sentence: Note sentence possibly containing a quoted answer.
-        normalized_rows: Lowercased transcript rows to match quotes against.
-
-    Returns:
-        True when a quoted fragment appears in a patient row - the honest as-stated form.
+    Use before deciding whether a quoted phrase can stay unflagged in the note.
     """
-    quoted_fragments = re.findall(r"[\"'‘’“”]([^\"'‘’“”]{4,80})[\"'‘’“”]", sentence)
-    # Each quoted fragment is honest only if the patient actually said it.
-    for fragment in quoted_fragments:
-        fragment_lower = fragment.lower().strip()
-        for row in normalized_rows:
-            if row["role"] == "PATIENT" and fragment_lower[:40] in row["text"]:
+    return tuple(re.findall(r"[^\W_]+", text.casefold()))
+
+
+def _is_word_apostrophe(text: str, index: int) -> bool:
+    """Separate apostrophes from quote marks in visible note text.
+
+    Use so contractions such as "don't" never create a false UI warning.
+    """
+    # A mark at either edge cannot sit inside a word the clinician reads.
+    if index <= 0 or index >= len(text) - 1:
+        return False
+
+    return text[index - 1].isalnum() and text[index + 1].isalnum()
+
+
+def _extract_quoted_spans(sentence: str) -> list[_QuotedSpan]:
+    """Find paired quote marks in one clinician-visible sentence.
+
+    Use to verify lexical quotes while ignoring apostrophes and unpaired marks.
+    """
+    quoted_spans: list[_QuotedSpan] = []
+    # Empty opener positions mean no quoted phrase is currently open in the note.
+    straight_double_start: int | None = None
+    straight_single_start: int | None = None
+    curly_double_start: int | None = None
+    curly_single_start: int | None = None
+
+    def _save_closed_quote(opening_index: int | None, closing_index: int) -> None:
+        """Save one paired quote for the note's final fidelity check.
+
+        Use when the parser reaches the matching closing mark shown in the UI.
+        """
+        # A closing mark without an opener gives the user no complete quote to verify.
+        if opening_index is None:
+            return
+        quoted_text = sentence[opening_index + 1 : closing_index]
+        # Punctuation-only pairs make no verbatim lexical claim.
+        if _normalized_lexical_tokens(quoted_text):
+            quoted_spans.append(
+                _QuotedSpan(quoted_text, opening_index, closing_index + 1)
+            )
+
+    # Each character may open/close one of the four quote styles shown in the note.
+    for index, character in enumerate(sentence):
+        # Straight double marks toggle one visible quoted phrase.
+        if character == '"':
+            # An empty start means the user is seeing the opening mark.
+            if straight_double_start is None:
+                straight_double_start = index
+            else:
+                _save_closed_quote(straight_double_start, index)
+                straight_double_start = None
+        # Standalone straight singles are quotes; word-internal singles are apostrophes.
+        elif character == "'" and not _is_word_apostrophe(sentence, index):
+            # An empty start means the user is seeing the opening mark.
+            if straight_single_start is None:
+                straight_single_start = index
+            else:
+                _save_closed_quote(straight_single_start, index)
+                straight_single_start = None
+        # A curly double opener starts the phrase shown to the clinician.
+        elif character == "“":
+            curly_double_start = index
+        # A curly double closer saves the complete phrase, if one was opened.
+        elif character == "”":
+            _save_closed_quote(curly_double_start, index)
+            curly_double_start = None
+        # A curly single opener starts the phrase shown to the clinician.
+        elif character == "‘":
+            curly_single_start = index
+        # A standalone curly closer ends a quote; word-internal marks stay apostrophes.
+        elif character == "’" and not _is_word_apostrophe(sentence, index):
+            _save_closed_quote(curly_single_start, index)
+            curly_single_start = None
+
+    return sorted(quoted_spans, key=lambda quoted_span: quoted_span.start)
+
+
+def _transcript_role_token_sequences(
+    normalized_rows: list[dict[str, str]],
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Build same-speaker word runs from the transcript shown beside the note.
+
+    Use so a genuine quote split across adjacent UI rows still verifies.
+    """
+    role_token_sequences: list[tuple[str, tuple[str, ...]]] = []
+    # No current role exists before the first transcript row is read.
+    current_role: str | None = None
+    current_role_tokens: list[str] = []
+    # Each visible transcript row either extends or closes the current speaker run.
+    for row in normalized_rows:
+        transcript_role = row["role"]
+        # A speaker change prevents a quote from joining two different people.
+        if transcript_role != current_role:
+            # A non-empty completed run becomes searchable evidence for the note.
+            if current_role is not None and current_role_tokens:
+                role_token_sequences.append(
+                    (current_role, tuple(current_role_tokens))
+                )
+            current_role = transcript_role
+            current_role_tokens = []
+        current_role_tokens.extend(_normalized_lexical_tokens(row["text"]))
+    # The final non-empty speaker run has no later role change to flush it.
+    if current_role is not None and current_role_tokens:
+        role_token_sequences.append((current_role, tuple(current_role_tokens)))
+
+    return role_token_sequences
+
+
+def _contains_token_sequence(
+    transcript_tokens: tuple[str, ...], quoted_phrase_tokens: tuple[str, ...]
+) -> bool:
+    """Check whether a displayed quote is one exact transcript word run.
+
+    Use after punctuation/case normalization; an empty quote never verifies.
+    """
+    # An empty or overlong quote cannot be present in this transcript run.
+    if not quoted_phrase_tokens or len(quoted_phrase_tokens) > len(transcript_tokens):
+        return False
+
+    quoted_word_count = len(quoted_phrase_tokens)
+    # Each possible start position is compared with the complete quoted phrase.
+    return any(
+        transcript_tokens[index : index + quoted_word_count] == quoted_phrase_tokens
+        for index in range(len(transcript_tokens) - quoted_word_count + 1)
+    )
+
+
+def _quote_attributed_role(sentence: str, quote_start: int) -> str | None:
+    """Find which speaker the note explicitly credits with a quote.
+
+    Use so the UI cannot present patient words as a clinician quotation, or vice versa.
+    """
+    note_text_before_quote = sentence[:quote_start]
+    role_attributions: list[tuple[int, str]] = []
+    # Patient mentions before the quote are candidate attributions.
+    role_attributions.extend(
+        (match.start(), "PATIENT")
+        for match in _PATIENT_QUOTE_ATTRIBUTION_PATTERN.finditer(note_text_before_quote)
+    )
+    # Clinician mentions before the quote are candidate attributions.
+    role_attributions.extend(
+        (match.start(), "DOCTOR")
+        for match in _DOCTOR_QUOTE_ATTRIBUTION_PATTERN.finditer(note_text_before_quote)
+    )
+    # No named speaker lets the quote match either role in the transcript UI.
+    if not role_attributions:
+        return None
+
+    return max(role_attributions, key=lambda attribution: attribution[0])[1]
+
+
+def _quote_span_supported(
+    span: _QuotedSpan,
+    normalized_rows: list[dict[str, str]],
+    required_role: str | None,
+) -> bool:
+    """Verify one displayed quote against an allowed transcript speaker.
+
+    Use before the browser decides whether that quote needs an unverified marker.
+    """
+    quoted_phrase_tokens = _normalized_lexical_tokens(span.text)
+    # Each same-role transcript run is a possible source for the visible quote.
+    for transcript_role, transcript_tokens in _transcript_role_token_sequences(
+        normalized_rows
+    ):
+        # An attributed quote cannot borrow identical words from the other speaker.
+        if required_role is not None and transcript_role != required_role:
+            continue
+        # One exact run is enough to keep this quote unflagged in the note.
+        if _contains_token_sequence(transcript_tokens, quoted_phrase_tokens):
+            return True
+
+    return False
+
+
+def _has_patient_verbatim_quote(sentence: str, normalized_rows: list[dict[str, str]]) -> bool:
+    """Check whether the note repeats any patient words verbatim.
+
+    Use by the older uncertainty rule through the same quote mechanism the UI now trusts.
+    """
+    # Any exact patient quote preserves the older uncertainty wording safely.
+    return any(
+        _quote_span_supported(span, normalized_rows, "PATIENT")
+        for span in _extract_quoted_spans(sentence)
+    )
+
+
+def _non_verbatim_quote_violation(
+    sentence: str, normalized_rows: list[dict[str, str]]
+) -> tuple[str, str] | None:
+    """Find the first quote the transcript cannot support.
+
+    Use before publishing; any failure makes the full visible sentence unverified.
+    """
+    # Every quote must independently earn its place in the clinician-facing note.
+    for quoted_span in _extract_quoted_spans(sentence):
+        required_role = _quote_attributed_role(sentence, quoted_span.start)
+        # A supported quote needs no visible warning.
+        if _quote_span_supported(quoted_span, normalized_rows, required_role):
+            continue
+
+        # Matching words from the wrong speaker still mislead the clinician.
+        if required_role is not None and _quote_span_supported(
+            quoted_span, normalized_rows, None
+        ):
+            return (
+                "the quoted wording appears in the transcript, but not in the words of the"
+                " speaker this sentence attributes it to",
+                "quote-in-wrong-role",
+            )
+        return (
+            "quotation marks must contain an exact contiguous phrase from the transcript;"
+            " paraphrases and inferred names must remain unquoted",
+            "quote-not-contiguous",
+        )
+
+    # No paired quote failed, so the sentence needs no quotation warning in the UI.
+    return None
+
+
+def _patient_state_kind(match: re.Match[str]) -> str:
+    """Classify the patient state wording found in note or transcript text.
+
+    Use so only the same state family can justify what the clinician reads.
+    """
+    # Each named group represents one distinct claim shown in the note.
+    for patient_state_kind in ("memory", "knowledge", "refusal"):
+        # The first populated group is the state this wording actually claims.
+        if match.group(patient_state_kind) is not None:
+            return patient_state_kind
+    # This signals a developer pattern error, not a user-generated note failure.
+    raise ValueError("patient-state marker match has no named family")
+
+
+def _patient_state_topic(sentence: str, marker: re.Match[str]) -> str:
+    """Extract the clinical topic attached to one displayed patient state.
+
+    Use to prevent uncertainty about one symptom from supporting another.
+    """
+    trailing_clause = _CLAUSE_BOUNDARY_PATTERN.split(sentence[marker.end() :], maxsplit=1)[0]
+    note_text_before_state = sentence[: marker.start()]
+    topic_before_state = re.search(
+        r"\basked\s+about\s+([^,;:.]+)", note_text_before_state, re.IGNORECASE
+    )
+    topic_clause = trailing_clause
+    # A note may name what the clinician asked before saying the patient was uncertain.
+    if topic_before_state is not None:
+        topic_clause = topic_before_state.group(1)
+    # Grammar words are removed so the remaining terms match transcript evidence.
+    clinical_topic_words = [
+        word
+        for word in re.findall(r"[a-z][a-z-]+", topic_clause.lower())
+        if word not in _TOPIC_STOPWORDS and word not in _STATE_TOPIC_STOPWORDS
+    ]
+    # The first bounded topic is enough for local evidence and avoids borrowing
+    # unrelated clinical words later in a long generated sentence.
+    return " ".join(clinical_topic_words[:8])
+
+
+def _state_marker_inside_patient_quote(
+    sentence: str,
+    marker: re.Match[str],
+    normalized_rows: list[dict[str, str]],
+) -> bool:
+    """Check whether the displayed state is inside a verified patient quote.
+
+    Use so a clinician can safely see the patient's exact "I don't know" wording.
+    """
+    # Each visible quote is checked to see whether it contains this state marker.
+    for quoted_span in _extract_quoted_spans(sentence):
+        # A marker inside the paired delimiters inherits that quote's evidence.
+        if quoted_span.start < marker.start() and marker.end() < quoted_span.end:
+            return _quote_span_supported(quoted_span, normalized_rows, "PATIENT")
+
+    return False
+
+
+def _state_marker_local_window(row_text: str, marker: re.Match[str]) -> str:
+    """Keep patient-state evidence close to its transcript wording.
+
+    Use so an unrelated "I don't know" elsewhere in a long UI row cannot verify it.
+    """
+    clause_start = 0
+    clause_end = len(row_text)
+    # Clause boundaries keep distant symptoms from lending evidence to this state.
+    for boundary in _CLAUSE_BOUNDARY_PATTERN.finditer(row_text):
+        # Earlier boundaries move the local evidence start forward.
+        if boundary.end() <= marker.start():
+            clause_start = boundary.end()
+        # The first later boundary closes the local evidence window.
+        elif boundary.start() >= marker.end():
+            clause_end = boundary.start()
+            break
+
+    return row_text[
+        max(clause_start, marker.start() - 80) : min(clause_end, marker.end() + 120)
+    ]
+
+
+def _text_supports_topic(evidence_text: str, clinical_topic: str) -> bool:
+    """Check whether local transcript text names the note's clinical topic.
+
+    Use for patient words and the clinician question immediately above them.
+    """
+    # A generic state claim has no narrower topic to match.
+    if clinical_topic == "":
+        return True
+
+    # One local clinical stem is enough here: state-family and clause/question
+    # gates already prevent an unrelated "I don't know" from lending support.
+    return clinical_topic in evidence_text or _matched_topic_words(
+        evidence_text, clinical_topic
+    ) >= 1
+
+
+def _trailing_question_is_unanswered(
+    clinical_topic: str, normalized_rows: list[dict[str, str]]
+) -> bool:
+    """Find a clinician topic asked after the final patient response.
+
+    Use so a visit ending mid-question never becomes patient uncertainty in the note.
+    """
+    # No extracted topic means there is no specific trailing question to compare.
+    if clinical_topic == "":
+        return False
+    # The last patient row marks where unanswered clinician-only tail text begins.
+    last_patient_index = max(
+        (
+            index
+            for index, row in enumerate(normalized_rows)
+            if row["role"] == "PATIENT"
+        ),
+        default=-1,
+    )
+    # Any matching clinician-only tail means the user never supplied an answer.
+    return any(
+        row["role"] == "DOCTOR"
+        and _text_supports_topic(row["text"], clinical_topic)
+        for row in normalized_rows[last_patient_index + 1 :]
+    )
+
+
+def _recent_clinician_question_context(
+    patient_turn_start: int, normalized_rows: list[dict[str, str]]
+) -> str:
+    """Join bounded clinician fragments leading into the patient's answer.
+
+    Use when the transcript view split one question/answer exchange into rows.
+    """
+    recent_rows = normalized_rows[
+        max(0, patient_turn_start - 12) : patient_turn_start
+    ]
+    # Only clinician words can supply the question inherited by a short answer.
+    return " ".join(
+        row["text"] for row in recent_rows if row["role"] == "DOCTOR"
+    )
+
+
+def _adjacent_patient_state_runs(
+    normalized_rows: list[dict[str, str]],
+) -> list[tuple[int, str]]:
+    """Join adjacent patient rows so one visible answer stays one evidence turn.
+
+    Use when ASR split "I don't know how / effective it's been" across cards.
+    """
+    patient_runs: list[tuple[int, str]] = []
+    # A null start means no patient answer is currently being joined.
+    patient_turn_start: int | None = None
+    patient_turn_text: list[str] = []
+    # Each row either extends the current patient answer or flushes it at a role change.
+    for row_index, row in enumerate(normalized_rows):
+        # Adjacent patient rows render as one answer despite their ASR boundaries.
+        if row["role"] == "PATIENT":
+            # A null start means this is the first row in the visible patient turn.
+            if patient_turn_start is None:
+                patient_turn_start = row_index
+            patient_turn_text.append(row["text"])
+            continue
+        # A non-null start means a speaker change just completed the patient turn.
+        if patient_turn_start is not None:
+            patient_runs.append((patient_turn_start, " ".join(patient_turn_text)))
+            patient_turn_start = None
+            patient_turn_text = []
+    # A non-null final start means the transcript ended on the patient's answer.
+    if patient_turn_start is not None:
+        patient_runs.append((patient_turn_start, " ".join(patient_turn_text)))
+
+    return patient_runs
+
+
+def _patient_state_has_support(
+    patient_state_kind: str,
+    clinical_topic: str,
+    normalized_rows: list[dict[str, str]],
+) -> bool:
+    """Match the note's patient state to the patient's topic-local words.
+
+    Use before deciding whether the clinician sees a warning on that sentence.
+    """
+    # Each visible patient turn is an independent evidence candidate.
+    for patient_turn_start, patient_turn_text in _adjacent_patient_state_runs(
+        normalized_rows
+    ):
+        # One turn may contain several uncertainty or memory phrases.
+        for evidence_marker in _PATIENT_STATE_MARKER_PATTERN.finditer(patient_turn_text):
+            # A memory claim cannot borrow support from a different state family.
+            if _patient_state_kind(evidence_marker) != patient_state_kind:
+                continue
+            local_window = _state_marker_local_window(patient_turn_text, evidence_marker)
+            # Topic words in the same local turn directly verify the displayed state.
+            if _text_supports_topic(local_window, clinical_topic):
+                return True
+            # A fragmented "not that I recall" answer inherits the bounded
+            # clinician question the user sees immediately above that turn.
+            if _text_supports_topic(
+                _recent_clinician_question_context(patient_turn_start, normalized_rows),
+                clinical_topic,
+            ):
                 return True
 
     return False
+
+
+def _state_is_attributed_to_patient(
+    sentence: str, marker: re.Match[str], location: str
+) -> bool:
+    """Identify explicit or Subjective-implied patient state wording.
+
+    Use for the note block the clinician reads; record/clinician wording stays exempt.
+    """
+    note_text_before_state = sentence[: marker.start()]
+    patient_mentions = list(
+        _PATIENT_ATTRIBUTION_PATTERN.finditer(note_text_before_state)
+    )
+    non_patient_mentions = list(
+        _NON_PATIENT_STATE_ATTRIBUTION_PATTERN.finditer(note_text_before_state)
+    )
+    # An explicit patient/pronoun mention attributes the state unless a nearer source replaces it.
+    if patient_mentions:
+        latest_patient = patient_mentions[-1].start()
+        # No non-patient mention means the patient remains the nearest source.
+        latest_non_patient = (
+            non_patient_mentions[-1].start() if non_patient_mentions else -1
+        )
+        return latest_patient > latest_non_patient
+    # Subjective action sentences may omit "patient" while still reading as patient history.
+    if location == "section 'Subjective'":
+        # Naming the record/transcript makes "unable" a capture limitation, not cognition.
+        if _NON_PATIENT_STATE_ATTRIBUTION_PATTERN.search(sentence) is not None:
+            return False
+        return _IMPLICIT_SUBJECTIVE_PATIENT_PATTERN.search(sentence) is not None
+
+    return False
+
+
+def _patient_state_violation(
+    sentence: str,
+    location: str,
+    normalized_rows: list[dict[str, str]],
+) -> tuple[str, str] | None:
+    """Find a displayed patient state unsupported by the patient's words.
+
+    Use before publishing so record gaps receive a visible fidelity warning.
+    """
+    # Every state phrase in the sentence must independently match patient evidence.
+    for marker in _PATIENT_STATE_MARKER_PATTERN.finditer(sentence):
+        # Clinician/record uncertainty is not a claim about the patient.
+        if not _state_is_attributed_to_patient(sentence, marker, location):
+            continue
+        # An exact patient quote is already verified by the shared quote mechanism.
+        if _state_marker_inside_patient_quote(sentence, marker, normalized_rows):
+            continue
+
+        patient_state_kind = _patient_state_kind(marker)
+        clinical_topic = _patient_state_topic(sentence, marker)
+        # A trailing clinician-only question can never establish a patient state.
+        if _trailing_question_is_unanswered(clinical_topic, normalized_rows):
+            return (
+                "the note attributes a patient state to a clinician question that has no"
+                " patient response",
+                "trailing-question-unanswered",
+            )
+        # Missing topic-local patient evidence keeps the sentence visibly unverified.
+        if not _patient_state_has_support(
+            patient_state_kind, clinical_topic, normalized_rows
+        ):
+            return (
+                "the sentence attributes uncertainty, memory failure, lack of knowledge, or"
+                " refusal to the patient without local patient evidence for the same topic",
+                "no-local-patient-state-support",
+            )
+
+    # Every displayed state is supported or record-scoped, so no UI warning is needed.
+    return None
 
 
 def _negative_finding_violation(
@@ -608,6 +1199,7 @@ def _negative_finding_violation(
             "contradicts-unanswered-admission",
         )
 
+    # Every claimed negative finding needs its own patient evidence.
     for topic in topics:
         # Every denied topic needs the patient's own "no" somewhere near it.
         if not _did_patient_deny_topic(topic, normalized_rows):
@@ -617,6 +1209,7 @@ def _negative_finding_violation(
                 "no-local-topic-support",
             )
 
+    # Every claimed denial has evidence, so the note stays unmarked.
     return None
 
 
@@ -634,6 +1227,7 @@ def _claimed_denial_topics(sentence: str) -> list[str]:
         Cleaned topic phrases to verify; empty means the sentence claims no denial.
     """
     match = _NEGATIVE_FINDING_PATTERN.search(sentence)
+    # A standard denial phrase exposes its topic text after the denial verb.
     if match is not None:
         topics = _denied_topics(match.group("topics"))
         # "Denied all" names nothing - the actual topics sit before the verb.
@@ -647,6 +1241,7 @@ def _claimed_denial_topics(sentence: str) -> list[str]:
         listed = parenthetical.group(1) if parenthetical is not None else sentence
         return _denied_topics(listed)
 
+    # No denial shape means the sentence gives the UI no negative topics to verify.
     return []
 
 
@@ -669,6 +1264,7 @@ def _denied_topics(topics_text: str) -> list[str]:
             for word in re.findall(r"[a-z][a-z-]+", raw_topic.lower())
             if word not in _TOPIC_STOPWORDS
         ]
+        # Empty fragments name no symptom and create no warning for the user.
         if words:
             topics.append(" ".join(words))
 
@@ -686,6 +1282,7 @@ def _mask_epistemic_phrases(row_text: str) -> str:
         what to do" keeps no denial token, while "i don't have a rash" does.
     """
     masked = row_text
+    # Each uncertainty phrase is removed before searching for a real denial.
     for phrase in _EPISTEMIC_NON_ANSWER_PHRASES:
         masked = re.sub(rf"\b{re.escape(phrase)}\b", " ", masked)
 
@@ -718,6 +1315,7 @@ def _matched_topic_words(text: str, topic: str) -> int:
         so "breathless" matches the topic word "breathing".
     """
     matched = 0
+    # Each topic word contributes at most one unit of transcript support.
     for word in topic.split():
         stems = _TOPIC_STEM_SYNONYMS.get(word, (word[:6],))
         # Word-start matching keeps short stems from finding phantom support.
@@ -753,8 +1351,10 @@ def _is_short_denial_answer(masked_row_text: str) -> bool:
         free of affirmative content.
     """
     words = re.findall(r"[a-z']+", masked_row_text)
+    # Empty or non-denial openings cannot be the user's short negative answer.
     if not words or words[0] not in _ANSWER_DENIAL_OPENERS:
         return False
+    # Long rows may contain unrelated context, so they cannot inherit a question.
     if len(words) > _SHORT_ANSWER_MAX_WORDS:
         return False
 
@@ -774,7 +1374,9 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         topic just before.
     """
     required_words = _topic_support_requirement(topic)
+    # Each patient row is checked for direct or short-answer denial evidence.
     for row_index, row in enumerate(normalized_rows):
+        # Clinician rows are questions, never the patient's denial.
         if row["role"] != "PATIENT":
             continue
         masked = _mask_epistemic_phrases(row["text"])
@@ -783,8 +1385,10 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         # so a lip mention early in a monologue cannot pair with a "no" at its
         # end (the day3 laundering hole).
         for clause in _denial_evidence_clauses(masked):
+            # A clause without the patient's negative wording proves nothing.
             if _PATIENT_DENIAL_PATTERN.search(clause) is None:
                 continue
+            # The denial and its clinical topic must share this local clause.
             if topic in clause or _matched_topic_words(clause, topic) >= required_words:
                 return True
 
@@ -793,9 +1397,12 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         # one question across several fragment rows.
         if _is_short_denial_answer(masked):
             recent_rows = normalized_rows[max(0, row_index - 6) : row_index]
+            # Each recent row may hold the clinician topic inherited by "No."
             for earlier in recent_rows:
+                # Only clinician words can define the preceding question.
                 if earlier["role"] != "DOCTOR":
                     continue
+                # One sufficiently specific question verifies the short answer.
                 if (
                     topic in earlier["text"]
                     or _matched_topic_words(earlier["text"], topic) >= required_words
@@ -833,6 +1440,7 @@ def _exam_language_violation(
 
     # A transcript row proving a performed exam legitimises the claim.
     for row in normalized_rows:
+        # Only a clinician's performed-exam wording can support exam findings.
         if row["role"] == "DOCTOR" and _EXAM_PERFORMANCE_PATTERN.search(row["text"]) is not None:
             return None
 

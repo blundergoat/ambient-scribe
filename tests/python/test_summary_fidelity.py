@@ -1,10 +1,8 @@
-"""
-Tests for the deterministic note fidelity checks (0.4.0 M07).
+"""Protect clinician-visible notes with deterministic fidelity specimens.
 
-Every specimen sentence below is taken verbatim from the M00 replay campaign
-notes (var/quality/m00-fidelity-replays/), so the checker is pinned against
-the exact fabrications the independent verifier confirmed and the exact honest
-phrasings that must stay unflagged.
+The cases pin real replayed uncertainty, denial, exam, patient-state, and quote
+wording. They prove unsupported sentences receive a visible warning while
+transcript-supported phrasing stays clean when the user reviews the note.
 """
 
 from __future__ import annotations
@@ -25,7 +23,7 @@ C03_ROWS = [
 
 
 def _violation_rules(sections: list[dict], key_points: list[str] | None = None) -> list[str]:
-    """Run the checker and return just the rule ids, in reading order."""
+    """Return UI warning rule IDs in the order the clinician reads them."""
     found = find_fidelity_violations(sections, key_points or [], C03_ROWS)
     return [violation.rule for violation in found]
 
@@ -157,10 +155,23 @@ def test_regeneration_and_flagging_pipeline(monkeypatch) -> None:
     seen_prompts: list[str] = []
 
     class _StubbedResult:
+        """Stand in for one generated note returned by the model.
+
+        The pipeline reads this object before deciding what the user sees.
+        It keeps the test independent of a live model provider.
+        """
+
         structured_output = fabricated
 
     class _StubbedAgent:
+        """Return the same unsupported note for both generation attempts.
+
+        This imitates a model that repeats a defect after the user's summary request.
+        The pipeline must then expose the warning in the visible note.
+        """
+
         def __call__(self, prompt, structured_output_model=None):
+            """Record one prompt and return the note the clinician would receive."""
             seen_prompts.append(prompt)
             return _StubbedResult()
 
@@ -202,10 +213,23 @@ def test_clean_note_ships_without_flag_keys(monkeypatch) -> None:
     calls: list[str] = []
 
     class _StubbedResult:
+        """Stand in for a clean generated note returned by the model.
+
+        The pipeline reads this object before presenting the note to the user.
+        It keeps the clean-path test independent of a live provider.
+        """
+
         structured_output = honest
 
     class _StubbedAgent:
+        """Return one clean note for the user's summary request.
+
+        The test uses it to prove no retry or warning reaches the UI.
+        It also records how often generation was requested.
+        """
+
         def __call__(self, prompt, structured_output_model=None):
+            """Record the prompt and return the clean clinician-facing note."""
             calls.append(prompt)
             return _StubbedResult()
 
@@ -252,10 +276,23 @@ def _stub_agent_returning(monkeypatch, drafts: list) -> list[str]:
     seen_prompts: list[str] = []
 
     class _StubbedAgent:
+        """Return successive note drafts without calling the configured model.
+
+        Tests use it to simulate the first draft and one retry a user may trigger.
+        The prompt log proves which draft the pipeline chose to display.
+        """
+
         def __call__(self, prompt, structured_output_model=None):
+            """Return the next prepared note for this summary-generation attempt."""
             seen_prompts.append(prompt)
 
             class _Result:
+                """Wrap the prepared draft in the model result shape.
+
+                The summary pipeline reads this field before choosing the visible note.
+                Each instance represents one generation attempt.
+                """
+
                 structured_output = drafts[len(seen_prompts) - 1]
 
             return _Result()
@@ -379,7 +416,9 @@ def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> 
         record for record in caplog.records if getattr(record, "violations", None)
     ]
     assert violation_records, "expected structured summary.fidelity_violations records"
+    # Each structured log record must stay useful without exposing note prose.
     for record in violation_records:
+        # Every violation entry follows the same PHI-safe diagnostic contract.
         for entry in record.violations:
             # Useful, non-clinical fields are present...
             assert entry["rule"] == "negative-without-denial"
@@ -585,3 +624,642 @@ def test_short_denial_answer_needs_a_doctor_question_naming_the_topic() -> None:
         ],
     )
     assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+# --- M11 field specimens (sessions 203d1d35 and 0a40e243, 2026-07-08 manual round) ---
+
+DAY5_MEDICATION_ROWS = [
+    {"role": "DOCTOR", "text": "Are you taking any other medication?"},
+    {
+        "role": "PATIENT",
+        "text": "Um, I take one of the antihistamines. I get that from the pharmacy.",
+    },
+]
+
+DAY3_QUOTE_ROWS = [
+    {"role": "PATIENT", "text": "I feel a little weird today, to be honest."},
+    {
+        "role": "PATIENT",
+        "text": "You can still feel it like really pumping blood and it is getting bigger.",
+    },
+    {"role": "PATIENT", "text": "I ordered a prawn soup; just relax while I explain."},
+]
+
+
+def test_patient_unsure_of_unanswered_food_reactions_is_flagged() -> None:
+    """day3 field defect: a trailing clinician question is not patient uncertainty."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient was unsure of prior similar food reactions.",
+            }
+        ],
+        [],
+        DAY3_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["patient-state-without-evidence"]
+
+
+def test_patient_unable_to_recall_medication_specifics_is_flagged() -> None:
+    """day5 field defect: garbled naming cannot become a patient memory failure."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient was unable to recall the medication specifics.",
+            }
+        ],
+        [],
+        DAY5_MEDICATION_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["patient-state-without-evidence"]
+
+
+def test_topic_scoped_uncertainty_answer_after_question_stays_clean() -> None:
+    """A short uncertainty answer inherits the topic from its clinician question."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient was unsure which antihistamine she takes.",
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Which antihistamine do you take?"},
+            {"role": "PATIENT", "text": "I'm not sure which one."},
+        ],
+    )
+    assert found == []
+
+
+def test_patient_memory_claim_needs_local_topic_support() -> None:
+    """An unrelated 'I don't know' elsewhere cannot support a medication memory claim."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "She could not remember the medication name.",
+            }
+        ],
+        [],
+        [
+            {"role": "PATIENT", "text": "I don't know what to do about my lip."},
+            {"role": "DOCTOR", "text": "Which medication do you take?"},
+        ],
+    )
+    assert [violation.rule for violation in found] == ["patient-state-without-evidence"]
+
+
+def test_patient_memory_claim_with_local_evidence_stays_clean() -> None:
+    """The patient's own topic-scoped inability to remember supports the attribution."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "She could not remember the medication name.",
+            }
+        ],
+        [],
+        [
+            {
+                "role": "PATIENT",
+                "text": "I cannot remember the medication name, sorry.",
+            }
+        ],
+    )
+    assert found == []
+
+
+def test_patient_refusal_needs_the_patients_own_words() -> None:
+    """A clinician's unanswered question cannot become a patient refusal."""
+    unsupported = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient declined to name the medication.",
+            }
+        ],
+        [],
+        [{"role": "DOCTOR", "text": "Can you name the medication?"}],
+    )
+    supported = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient declined to name the medication.",
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Can you name the medication?"},
+            {"role": "PATIENT", "text": "I would rather not name the medication."},
+        ],
+    )
+    assert [violation.rule for violation in unsupported] == [
+        "patient-state-without-evidence"
+    ]
+    assert supported == []
+
+
+def test_record_level_not_captured_phrase_is_not_a_patient_state() -> None:
+    """Honest record wording stays exempt because it claims nothing about cognition."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The medication name was not clearly captured in the transcript.",
+            }
+        ],
+        [],
+        DAY5_MEDICATION_ROWS,
+    )
+    assert found == []
+
+
+def test_invented_straight_double_quoted_phrase_is_flagged() -> None:
+    """day3 field defect: 'really pumping a lot' is absent from the transcript."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": 'The patient described the lip as "really pumping a lot".',
+            }
+        ],
+        [],
+        DAY3_QUOTE_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["non-verbatim-quote"]
+
+
+def test_invented_straight_single_quoted_word_is_flagged() -> None:
+    """One quoted word must match a token, not a substring inside 'relax'."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The soup was called 'lax'.",
+            }
+        ],
+        [],
+        DAY3_QUOTE_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["non-verbatim-quote"]
+
+
+def test_straight_and_curly_verbatim_quotes_stay_clean() -> None:
+    """Straight double and curly single spans both preserve transcript words."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": 'The patient felt "a little weird" and called it ‘weird’.',
+            }
+        ],
+        [],
+        DAY3_QUOTE_ROWS,
+    )
+    assert found == []
+
+
+def test_curly_double_non_verbatim_quote_is_flagged() -> None:
+    """Curly double quotation marks carry the same verbatim contract."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient described it as “really pumping a lot”.",
+            }
+        ],
+        [],
+        DAY3_QUOTE_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["non-verbatim-quote"]
+
+
+def test_verbatim_quote_can_span_adjacent_same_role_rows() -> None:
+    """ASR row boundaries do not invalidate one contiguous patient phrase."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": 'The patient felt "a little weird".',
+            }
+        ],
+        [],
+        [
+            {"role": "PATIENT", "text": "I feel a little"},
+            {"role": "PATIENT", "text": "weird today"},
+        ],
+    )
+    assert found == []
+
+
+def test_quote_cannot_span_a_role_change() -> None:
+    """Adjacent doctor and patient rows are not one speaker's verbatim phrase."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": 'The note quotes "a little weird".',
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "a little"},
+            {"role": "PATIENT", "text": "weird"},
+        ],
+    )
+    assert [violation.rule for violation in found] == ["non-verbatim-quote"]
+
+
+def test_explicit_quote_attribution_requires_the_named_role() -> None:
+    """A patient's words cannot be laundered as a clinician quotation."""
+    clinician_claim = find_fidelity_violations(
+        [
+            {
+                "heading": "Plan",
+                "content": 'The clinician said "take the tablet tomorrow".',
+            }
+        ],
+        [],
+        [{"role": "PATIENT", "text": "take the tablet tomorrow"}],
+    )
+    unattributed = find_fidelity_violations(
+        [
+            {
+                "heading": "Plan",
+                "content": 'The phrase "take the tablet tomorrow" was recorded.',
+            }
+        ],
+        [],
+        [{"role": "PATIENT", "text": "take the tablet tomorrow"}],
+    )
+    assert [violation.rule for violation in clinician_claim] == ["non-verbatim-quote"]
+    assert unattributed == []
+
+
+def test_one_valid_quote_cannot_launder_an_invalid_second_span() -> None:
+    """Every span must verify independently, even when one quote is genuine."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    'The patient felt "a little weird" with the lip '
+                    '"really pumping a lot".'
+                ),
+            }
+        ],
+        [],
+        DAY3_QUOTE_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["non-verbatim-quote"]
+
+
+def test_contraction_apostrophes_are_not_quote_spans() -> None:
+    """Possessives and contractions never create accidental one-word quotes."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient's symptoms don't include fever.",
+            }
+        ],
+        [],
+        [{"role": "PATIENT", "text": "my symptoms do not include fever"}],
+    )
+    assert found == []
+
+
+def test_subjective_patient_action_carries_an_implicit_patient_subject() -> None:
+    """Live miss: 'Takes ... but cannot recall' still attributes memory to the patient."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Takes a preventor inhaler daily but cannot recall other medications "
+                    "without checking pharmacy records."
+                ),
+            }
+        ],
+        [],
+        DAY5_MEDICATION_ROWS,
+    )
+    assert [violation.rule for violation in found] == [
+        "patient-state-without-evidence"
+    ]
+
+
+def test_patient_state_evidence_can_span_adjacent_patient_rows() -> None:
+    """Live false flag: one patient answer may be split before its topic words."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Patient has continued attending work but is unsure of effectiveness."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Have you been able to go to work as usual?"},
+            {"role": "PATIENT", "text": "I've been going to work; I don't know how"},
+            {"role": "PATIENT", "text": "effective it's been, but yes."},
+        ],
+    )
+    assert found == []
+
+
+def test_patient_state_topic_can_precede_the_state_marker() -> None:
+    """Live false flag: 'asked about chest ... uncertain' names its topic first."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "When asked about chest tightness, the patient was uncertain, stating "
+                    '"I don\'t know if it\'s the chest, it just generally feels difficult."'
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Do you feel like your chest is tight?"},
+            {"role": "PATIENT", "text": "I don't know if it's the chest"},
+            {"role": "PATIENT", "text": "it just generally feels difficult"},
+        ],
+    )
+    assert found == []
+
+
+def test_memory_answer_uses_the_bounded_clinician_question_context() -> None:
+    """Live false flag: a fragmented bite exchange still supports 'does not recall'."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "The patient does not recall any insect bites.",
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Did you get any insect bites?"},
+            {"role": "PATIENT", "text": "I did quite a lot of walking"},
+            {"role": "PATIENT", "text": "while we were away on holiday"},
+            {"role": "DOCTOR", "text": "Anything that you noticed?"},
+            {"role": "PATIENT", "text": "I don't recall any."},
+        ],
+    )
+    assert found == []
+
+
+def test_exercise_uncertainty_matches_ability_and_motivation_words() -> None:
+    """Live false flag: 'able or lazy' supports ability-or-motivation uncertainty."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Reports exercising less, uncertain whether due to lack of ability "
+                    "or reduced motivation."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Have you been able to exercise okay?"},
+            {"role": "PATIENT", "text": "Not as much. I don't know"},
+            {
+                "role": "PATIENT",
+                "text": "if I haven't been able to or I've just been a bit lazy.",
+            },
+        ],
+    )
+    assert found == []
+
+
+def test_optional_clearly_in_memory_claim_still_flags_unanswered_question() -> None:
+    """Live miss: wording like 'does not clearly recall' is still patient cognition."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "The patient does not clearly recall previous episodes of lip swelling "
+                    "after food."
+                ),
+            }
+        ],
+        [],
+        DAY3_ROWS,
+    )
+    assert [violation.rule for violation in found] == [
+        "patient-state-without-evidence"
+    ]
+
+
+def test_unable_to_specify_or_detail_medication_both_flag() -> None:
+    """Live misses: specify/detail paraphrases cannot turn garble into inability."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "The patient is unable to specify the other medication. "
+                    "Patient is unable to clearly detail current medications."
+                ),
+            }
+        ],
+        [],
+        DAY5_MEDICATION_ROWS,
+    )
+    assert [violation.rule for violation in found] == [
+        "patient-state-without-evidence",
+        "patient-state-without-evidence",
+    ]
+
+
+def test_chest_tightness_uncertainty_matches_clinician_tight_question() -> None:
+    """Live false flag: 'tightness' in the note matches 'tight' in the question."""
+    found = find_fidelity_violations(
+        [],
+        ["Patient uncertain about chest tightness; transcript incomplete"],
+        [
+            {"role": "DOCTOR", "text": "Do you feel like your chest is tight?"},
+            {"role": "PATIENT", "text": "I don't know if it's the chest"},
+            {"role": "PATIENT", "text": "It might be. I'm not sure."},
+        ],
+    )
+    assert found == []
+
+
+def test_subjective_sentence_beginning_unable_has_implicit_patient_subject() -> None:
+    """Live miss: standalone Subjective 'Unable...' wording still means the patient."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": "Unable to clearly specify other medications at consultation.",
+            }
+        ],
+        [],
+        DAY5_MEDICATION_ROWS,
+    )
+    assert [violation.rule for violation in found] == [
+        "patient-state-without-evidence"
+    ]
+
+
+def test_medication_names_cannot_borrow_unrelated_bite_memory() -> None:
+    """Live miss: insect-bite recall cannot support inability to name medication."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Takes additional medications (patient unable to specify names)."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Did you notice any insect bites?"},
+            {"role": "PATIENT", "text": "I don't recall any."},
+        ],
+    )
+    assert [violation.rule for violation in found] == [
+        "patient-state-without-evidence"
+    ]
+
+
+def test_exercise_uncertainty_allows_this_is_inability_wording() -> None:
+    """Live false flag: 'this is inability' still refers to exercise ability."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Has not exercised as much, though uncertain whether this is inability "
+                    "or lack of motivation."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Have you been able to exercise okay?"},
+            {"role": "PATIENT", "text": "Not as much. I don't know"},
+            {
+                "role": "PATIENT",
+                "text": "if I haven't been able to or I've just been lazy.",
+            },
+        ],
+    )
+    assert found == []
+
+
+def test_chest_uncertainty_ignores_specifically_as_topic_grammar() -> None:
+    """Live false flag: 'specifically' does not create a second clinical topic."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "She was unsure whether the sensation is specifically in the chest."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Do you feel like your chest is tight?"},
+            {"role": "PATIENT", "text": "I don't know if it's the chest"},
+            {"role": "PATIENT", "text": "It might be. I'm not sure."},
+        ],
+    )
+    assert found == []
+
+
+def test_state_topic_accepts_one_local_clinical_stem_among_note_prose() -> None:
+    """Live false flags: prose modifiers must not outweigh the shared chest topic."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "She was unsure whether chest involvement was present. "
+                    "Patient does not recall specific insect bites or seeing marks."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Do you feel like your chest is tight?"},
+            {"role": "PATIENT", "text": "I don't know if it's the chest. I'm not sure."},
+            {"role": "DOCTOR", "text": "Did you notice any bites?"},
+            {"role": "PATIENT", "text": "I don't recall any marks."},
+        ],
+    )
+    assert found == []
+
+
+def test_preceding_chest_topic_is_not_confused_by_an_unrelated_tail() -> None:
+    """Live false flag: a later cut-off question cannot replace the stated chest topic."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "When asked about chest tightness, she was uncertain, saying "
+                    '"I don\'t know if it\'s the chest, it\'s just generally feels a little '
+                    'difficult".'
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Do you feel like your chest is tight?"},
+            {"role": "PATIENT", "text": "I don't know if it's the chest, it's just"},
+            {"role": "PATIENT", "text": "generally feels a little difficult"},
+            {"role": "DOCTOR", "text": "Okay, and just a few"},
+        ],
+    )
+    assert found == []
+
+
+def test_exercise_uncertainty_matches_laziness_to_lazy_patient_words() -> None:
+    """Live false flag: note noun 'laziness' matches the patient's adjective 'lazy'."""
+    found = find_fidelity_violations(
+        [
+            {
+                "heading": "Subjective",
+                "content": (
+                    "Patient reports not exercising as much as usual, uncertain whether "
+                    "due to inability or laziness."
+                ),
+            }
+        ],
+        [],
+        [
+            {"role": "DOCTOR", "text": "Have you been able to exercise okay?"},
+            {"role": "PATIENT", "text": "Not as much. I don't know"},
+            {
+                "role": "PATIENT",
+                "text": "if I haven't been able to or I've just been a bit lazy with it.",
+            },
+        ],
+    )
+    assert found == []
+
+
+def test_m11_prompt_rules_name_record_state_and_verbatim_quotes() -> None:
+    """Prompt prevention stays aligned with both deterministic M11 backstops."""
+    from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
+
+    lowered = MEDICAL_SUMMARY_PROMPT.lower()
+    assert "not clearly captured or not documented" in lowered
+    assert "unless the patient's own words" in lowered
+    assert "exact contiguous phrase in the transcript" in lowered
+    assert "paraphrases and inferred names" in lowered

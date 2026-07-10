@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-10
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -341,3 +341,16 @@ flags, confidence tinting, badges) and never of absence. Before claiming anythin
 session's fidelity or correction outcome, grep the agent log for `summary.fidelity_` and
 `correction.` with the session id. Error sweeps over this stack must match loosely
 (`-i "unavailable|failed|cuda"`), not exact phrases or level names.
+
+## Lesson: Field-session fixture replays must preserve the original stop time
+
+**Created:** 2026-07-10
+**What happened:** M11 needed fresh rows for a field note captured 228 seconds into a
+510-second day3 WAV. The first recapture started the full fixture at browser cadence, which
+would have mixed later consultation facts into a replay meant to reproduce the cut-off note;
+it was stopped only after the WAV duration and field cutoff were compared.
+**Evidence:** `.goat-flow/plans/0.4.0/M11-note-phrasing-fidelity.md` (search: "initial
+uncapped replay").
+**Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
+field session's stop time. Pass that stop time explicitly with `--seconds` and verify the
+saved row duration before using the artifact for prompt or fidelity acceptance.

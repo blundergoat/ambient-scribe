@@ -47,6 +47,12 @@ Rules:
   point explicitly as unclear or not established - never resolve it to one side, and never
   infer the answer from surrounding phrasing (a patient answering "I don't know really, it
   just happened" to a sudden-vs-gradual question means onset is UNKNOWN, not sudden).
+- When words, names, or answers are missing, cut off, or unintelligible, say the material was
+  not clearly captured or not documented. Never say the patient was unsure, unable to recall,
+  did not know, or declined to answer unless the patient's own words establish that state.
+  Apply record-limitation wording only to missing material; do not hedge facts that are clear.
+- Reserve straight or typographic single/double quotation marks for an
+  exact contiguous phrase in the transcript. Leave paraphrases and inferred names unquoted.
 - Clinical characteristics (onset, severity, laterality, timing) appear only as the speaker
   stated them, preserving the speaker's own certainty.
 - Record a negative finding only when the patient explicitly denied it or it was examined;
@@ -94,7 +100,9 @@ you may summarise what was discussed without converting it into a diagnosis or p
 
 
 def create_summary_agent():
-    """Create a fresh Strands agent for one summary request.
+    """Create the isolated agent used after the user requests a note.
+
+    Use once per visit so prior consultation text never reaches the next note.
 
     Returns:
         Agent configured for off-GPU summary generation and isolated history.
@@ -105,10 +113,10 @@ def create_summary_agent():
     try:
         from strands import Agent
 
-        model = _create_summary_model()
+        summary_model = _create_summary_model()
 
         return Agent(
-            model=model,
+            model=summary_model,
             tools=[],
             system_prompt=MEDICAL_SUMMARY_PROMPT,
             callback_handler=None,
@@ -116,12 +124,15 @@ def create_summary_agent():
             agent_id="ambient-scribe-summary",
             trace_attributes={"scribe.specialty": "medical"},
         )
-    except Exception as e:
-        raise RuntimeError(f"Failed to create summary agent: {e}") from e
+    # Example: the clinician clicks Summarise while the configured provider is unavailable.
+    except Exception as provider_error:
+        raise RuntimeError(f"Failed to create summary agent: {provider_error}") from provider_error
 
 
 def _create_summary_model():
-    """Create the off-GPU model used for summary generation.
+    """Select the off-GPU model that drafts the clinician-facing note.
+
+    Use while handling a summary request; NeMo remains reserved for transcription.
 
     Returns:
         Bedrock or CPU-only Ollama model; never a GPU-backed local model.
