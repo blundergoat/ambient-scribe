@@ -236,3 +236,352 @@ def test_violation_carries_location_and_reason_for_the_flag() -> None:
     assert violation.location == "section 'Objective'"
     assert violation.sentence == "Patient denies dyspnea."
     assert "no patient denial" in violation.reason
+
+
+def _stub_agent_returning(monkeypatch, drafts: list) -> list[str]:
+    """Stub the summary agent to return each draft in turn; returns the prompt log.
+
+    Args:
+        monkeypatch: pytest fixture.
+        drafts: One SessionSummaryOutput per expected generation call; a test
+            fails loudly if the pipeline asks for more drafts than provided.
+
+    Returns:
+        Live list that accumulates every prompt the pipeline sends.
+    """
+    seen_prompts: list[str] = []
+
+    class _StubbedAgent:
+        def __call__(self, prompt, structured_output_model=None):
+            seen_prompts.append(prompt)
+
+            class _Result:
+                structured_output = drafts[len(seen_prompts) - 1]
+
+            return _Result()
+
+    import agents as agents_module  # noqa: F401 - imported for monkeypatch target
+
+    monkeypatch.setattr("agents.create_summary_agent", lambda: _StubbedAgent())
+    return seen_prompts
+
+
+def test_worse_regeneration_never_replaces_a_better_first_draft(monkeypatch, caplog) -> None:
+    """Field shape: attempt 0 has one violation, attempt 1 has three - attempt 0 ships."""
+    import logging
+
+    from api import summary_generation as generation_module
+    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
+
+    one_violation = SessionSummaryOutput(
+        title="Visit note",
+        sections=[SummarySectionOutput(heading="Objective", content="Patient denies dyspnea.")],
+        key_points=[],
+    )
+    three_violations = SessionSummaryOutput(
+        title="Visit note",
+        sections=[
+            SummarySectionOutput(
+                heading="Objective",
+                content=(
+                    "Patient denies dyspnea. Denies recent head injury. "
+                    "Neurological status normal on examination."
+                ),
+            )
+        ],
+        key_points=[],
+    )
+    _stub_agent_returning(monkeypatch, [one_violation, three_violations])
+
+    with caplog.at_level(logging.INFO, logger="api.summary_generation"):
+        payload = generation_module.run_summary_generation(
+            "00000000-0000-4000-8000-000000000779",
+            "DOCTOR: your breathing is okay.",
+            citation_segments=[],
+            transcript_segments=C03_ROWS,
+        )
+
+    # The one-violation first draft ships, with exactly its one visible flag.
+    assert payload is not None
+    assert payload["sections"][0]["content"] == "Patient denies dyspnea."
+    assert payload["sections"][0]["unverified"] == ["Patient denies dyspnea."]
+
+    # Selection is auditable: which attempt shipped and both violation counts.
+    selection_records = [
+        record for record in caplog.records if getattr(record, "selected_attempt", None) is not None
+    ]
+    assert selection_records, "expected a summary.fidelity_draft_selected log record"
+    selected = selection_records[-1]
+    assert selected.selected_attempt == 0
+    assert selected.attempt_0_count == 1
+    assert selected.attempt_1_count == 3
+
+
+def test_clean_retry_still_ships_and_no_third_generation_runs(monkeypatch) -> None:
+    """Normal improvement shape: attempt 0 violates, attempt 1 is clean - attempt 1 ships."""
+    from api import summary_generation as generation_module
+    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
+
+    fabricated = SessionSummaryOutput(
+        title="Visit note",
+        sections=[SummarySectionOutput(heading="Objective", content="Patient denies dyspnea.")],
+        key_points=[],
+    )
+    honest = SessionSummaryOutput(
+        title="Visit note",
+        sections=[
+            SummarySectionOutput(
+                heading="Objective",
+                content="No physical examination findings are documented in this transcript.",
+            )
+        ],
+        key_points=[],
+    )
+    seen_prompts = _stub_agent_returning(monkeypatch, [fabricated, honest])
+
+    payload = generation_module.run_summary_generation(
+        "00000000-0000-4000-8000-000000000780",
+        "DOCTOR: your breathing is okay.",
+        citation_segments=[],
+        transcript_segments=C03_ROWS,
+    )
+
+    assert len(seen_prompts) == 2
+    assert payload is not None
+    assert payload["sections"][0]["content"].startswith("No physical examination findings")
+    assert "unverified" not in payload["sections"][0]
+
+
+def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> None:
+    """Violation diagnostics identify rule/location/ordinal but never note prose."""
+    import logging
+
+    from api import summary_generation as generation_module
+    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
+
+    fabricated_sentence = "Patient denies dyspnea."
+    fabricated = SessionSummaryOutput(
+        title="Visit note",
+        sections=[SummarySectionOutput(heading="Objective", content=fabricated_sentence)],
+        key_points=[],
+    )
+    _stub_agent_returning(monkeypatch, [fabricated, fabricated])
+
+    with caplog.at_level(logging.DEBUG, logger="api.summary_generation"):
+        generation_module.run_summary_generation(
+            "00000000-0000-4000-8000-000000000781",
+            "DOCTOR: your breathing is okay.",
+            citation_segments=[],
+            transcript_segments=C03_ROWS,
+        )
+
+    violation_records = [
+        record for record in caplog.records if getattr(record, "violations", None)
+    ]
+    assert violation_records, "expected structured summary.fidelity_violations records"
+    for record in violation_records:
+        for entry in record.violations:
+            # Useful, non-clinical fields are present...
+            assert entry["rule"] == "negative-without-denial"
+            assert entry["location"] == "section 'Objective'"
+            assert entry["subtype"]
+            assert entry["sentence_ordinal"] >= 0
+            assert entry["word_count"] > 0
+            # ...and no clinical prose leaks in any shape.
+            assert "sentence" not in entry
+            assert "topic" not in entry
+    # The exact note sentence appears nowhere in any captured log line or field.
+    for record in caplog.records:
+        assert fabricated_sentence not in record.getMessage()
+        assert fabricated_sentence not in str(getattr(record, "violations", ""))
+
+
+# --- M10 field specimens (sessions 203d1d35 and d97a9dbe, 2026-07-08 manual round) ---
+
+# The day3 chief-complaint monologue that laundered any lip-related denial: it
+# mentions lips and contains epistemic "don't know"/"don't think" phrases, but
+# never denies anything.
+DAY3_MONOLOGUE = (
+    "yeah, that is, well, i don't think it wasn't a sandwich, but it was something "
+    "with chron. so basically i sometimes go with my friends to this place called "
+    "fat fuck. we regularly have like usually i have like a normal vegetarian soup "
+    "or something and yeah and then i wanted to try something new so what happened "
+    "was i ordered a prawn soup it's called a luxic soup i ordered a prawn one this "
+    "time and yeah and then my feels like my lips start feeling a little way just "
+    "in the corner so on the left first and then i don't know and then we went back "
+    "we had a little bit of a chat event now i feel that that there is a swelling "
+    "there is like a swelling on my on my upper lip and it's kind of getting bigger "
+    "i don't know what to do"
+)
+
+# The visit ends on the doctor's lip-swelling-history question; no answer exists.
+DAY3_ROWS = [
+    {"role": "PATIENT", "text": "i feel a little weird today to be honest."},
+    {"role": "PATIENT", "text": DAY3_MONOLOGUE},
+    {"role": "DOCTOR", "text": "all right. so when did you have the prawn soup? what time"},
+    {"role": "PATIENT", "text": "well i wasn't really paying attention so it must have been like an half an hour maybe"},
+    {"role": "PATIENT", "text": "i don't know if it's the chest just generally feels a little difficult but yeah it might be i'm not sure"},
+    {"role": "DOCTOR", "text": "have you ever had these any kind of lip swelling in the past without eating any food"},
+]
+
+# The c03 fever/rash screening exchange exactly as the corrected pass stores it -
+# the rash denial row is 41 characters WITH its trailing period.
+C03_SCREENING_ROWS = [
+    {"role": "DOCTOR", "text": "Okay, any temperatures or fevers?"},
+    {"role": "PATIENT", "text": "No, I don't feel feverish."},
+    {"role": "DOCTOR", "text": "Okay, any other funny skin rashes that you may have noticed?"},
+    {"role": "PATIENT", "text": "No, I haven't noticed anything like that."},
+]
+
+
+def test_fabricated_lip_denial_is_caught_despite_the_monologue() -> None:
+    """day3 false negative: the unanswered lip-swelling question is not a denial."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": (
+            "She denies prior history of lip swelling after eating food, "
+            "though the question was not fully answered in the transcript."
+        )}],
+        [],
+        DAY3_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+def test_punctuated_41_char_denial_supports_fever_and_rash() -> None:
+    """c03 false positive: the real denial must not fail on one character of punctuation."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": (
+            "Patient denies fever or feverish sensation and denies any skin rashes."
+        )}],
+        ["Associated nausea with two episodes of vomiting, denies fever or rash"],
+        C03_SCREENING_ROWS,
+    )
+    assert found == []
+
+
+def test_concludes_before_examination_is_honest_absence() -> None:
+    """c03 false positive: honest scribe phrasing needs no literal negation token."""
+    found = find_fidelity_violations(
+        [{"heading": "Objective", "content": (
+            "The consultation concludes before clinical examination is performed."
+        )}],
+        [],
+        C03_SCREENING_ROWS,
+    )
+    assert found == []
+
+
+def test_radiation_denial_matches_the_moving_anywhere_question() -> None:
+    """2026-07-10 c03 replay false positive: 'spreading to other locations' is the
+    note's paraphrase of the clinician's 'moving anywhere else' question."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": (
+            "Patient denies headache spreading to other locations."
+        )}],
+        [],
+        [
+            {"role": "DOCTOR", "text": "And is it moving anywhere else"},
+            {"role": "PATIENT", "text": "No, but it's worse when I move."},
+        ],
+    )
+    assert found == []
+
+
+def test_proposed_examination_with_findings_to_follow_is_not_an_exam_claim() -> None:
+    """2026-07-10 c03 replay false positive: stating the doctor's exam INTENT is honest."""
+    found = find_fidelity_violations(
+        [{"heading": "Plan", "content": (
+            "Doctor proposed taking a full history and performing a physical examination, "
+            "with discussion to follow regarding findings."
+        )}],
+        [],
+        C03_SCREENING_ROWS,
+    )
+    assert found == []
+
+
+def test_positive_exam_claims_still_flag_on_an_exam_free_transcript() -> None:
+    """The absence frames must not exempt claims that an exam actually happened."""
+    found = find_fidelity_violations(
+        [{"heading": "Objective", "content": (
+            "Examination was performed and revealed no abnormalities. "
+            "Neurological status normal on examination."
+        )}],
+        [],
+        C03_SCREENING_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["exam-not-performed", "exam-not-performed"]
+
+
+def test_epistemic_phrases_are_not_denials() -> None:
+    """'I don't know what to do about my upper lip' proves uncertainty, not denial."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": "Denies lip swelling."}],
+        [],
+        [{"role": "PATIENT", "text": "i don't know what to do about my upper lip"}],
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+def test_contrast_clause_keeps_denial_and_symptom_apart() -> None:
+    """'I don't think it was a sandwich, but my lip is swelling' denies no prior swelling."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": "Denies prior lip swelling."}],
+        [],
+        [{"role": "PATIENT", "text": "i don't think it was a sandwich, but my lip is swelling"}],
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+def test_direct_denial_and_coordinated_list_still_pass() -> None:
+    """'I don't have a rash' and 'no fever or rash' are genuine denials of both topics."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": "Denies rash. Patient denies fever or rash."}],
+        [],
+        [
+            {"role": "PATIENT", "text": "i don't have a rash"},
+            {"role": "PATIENT", "text": "no fever or rash"},
+        ],
+    )
+    assert found == []
+
+
+def test_denial_admitting_the_question_was_unanswered_is_flagged() -> None:
+    """A sentence cannot claim a denial while admitting nobody answered the question."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": (
+            "Denies skin rashes, although the question was not fully answered."
+        )}],
+        [],
+        C03_SCREENING_ROWS,
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+def test_long_monologue_starting_with_no_is_not_a_universal_answer() -> None:
+    """A 'No ...' monologue answers nothing beyond eight words; topics need local support."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": "Denies chest pain."}],
+        [],
+        [
+            {"role": "DOCTOR", "text": "any chest pain at all?"},
+            {"role": "PATIENT", "text": (
+                "no well actually my friend said the soup place uses a lot of chilli "
+                "and my chest just feels a bit funny after eating there sometimes"
+            )},
+        ],
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]
+
+
+def test_short_denial_answer_needs_a_doctor_question_naming_the_topic() -> None:
+    """A bare 'No.' after another PATIENT row naming the topic verifies nothing."""
+    found = find_fidelity_violations(
+        [{"heading": "Subjective", "content": "Denies headache."}],
+        [],
+        [
+            {"role": "PATIENT", "text": "my sister gets headaches all the time"},
+            {"role": "PATIENT", "text": "No."},
+        ],
+    )
+    assert [violation.rule for violation in found] == ["negative-without-denial"]

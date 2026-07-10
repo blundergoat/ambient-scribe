@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-10
 ---
 
 # Eval and Metrics Lessons
@@ -158,3 +158,31 @@ phase.
 During M17 channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
 
 **Lesson:** Eval tooling that creates server sessions must either omit session IDs and capture the generated one, or generate valid UUIDs with a run-specific salt. After changing session identity behavior, run the server path that validates the ID rather than only testing local helper formatting.
+
+## Lesson: Persisted fixture commands must use unique slugs (2026-07-10)
+
+**Created:** 2026-07-10
+**What happened:** M02's three-run command used `consultation03`, which had been unique when
+the plan was drafted but matched four WAVs after the local corpus expanded. The resolver
+correctly exited 2, while the outer loop repeated the same failure three times because its
+example omitted `set -e`.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "matched multiple files"),
+`.goat-flow/plans/0.4.0/M02-eval-vs-browser-live-gap.md` (search: "Phase 1 - zero-code
+5-second/1x discriminator").
+**Prevention:** Persist exact fixture slugs or direct paths in plans and handoffs, even when a
+short consultation number is unique today. Put multi-run eval loops under `set -e`, and run
+the resolver once before committing to an expensive GPU batch.
+
+## Lesson: Grace-bound actions run before diagnostic settle sleeps (2026-07-10)
+
+**Created:** 2026-07-10
+**What happened:** Role-timeline instrumentation initially inserted an eight-second settle
+before the corrected-fixture runner requested post-visit correction. The request then hung
+past the documented 120-second budget while reconnect grace expired, even though the live
+replay and timeline were already complete. M02 did not need correction to diagnose roles.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction" and
+"write_role_timeline"), `.goat-flow/plans/0.4.0/M02-eval-vs-browser-live-gap.md` (search:
+"Authoritative settled-role rerun").
+**Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
+fixed diagnostic waits and give its client an explicit timeout. Use the live-only evaluator
+for live-lane diagnostics instead of making unrelated correction success a prerequisite.

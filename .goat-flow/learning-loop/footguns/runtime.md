@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-10
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -160,51 +160,6 @@ last_reviewed: 2026-07-09
 - **Evidence:** 2026-07-06 fake-mic live-stop repro, session `7b627fbb-8c0e-4119-9f8a-03600e290b78`: browser froze at 8 rows while the server stored 11; the quality record and `finalized` event were published to nobody. The replay path never hit this because `enterReplayDrain` (`public/js/scribe-output.js`, search: "enterReplayDrain") already waits for `finalized` with a bounded timeout.
 - **Prevention:** Every stop path must drain, not tear down: close the WebSocket, keep the EventSource open until the `finalized` event or a bounded timeout, then summarize (`stopRecording`/`endLiveStop` mirror the replay drain since M21). Only explicit discard paths (`resetSession`, replay error cleanup) may disconnect immediately. Server-side, summary POSTs merge by `segment_id` (`merge_browser_segments`) instead of replacing history, so even a raced or stale browser can no longer shrink the stored transcript. When adding a new stop/teardown path, classify it drain-wait vs discard-immediate before wiring `disconnectMercureStreams()`.
 
-## Footgun: NeMo cache-aware streaming integration has three silent alignment traps
-
-**Status:** active | **Created:** 2026-07-06 | **Evidence:** ACTUAL_MEASURED
-
-- **What breaks:** Integrating `SpeakerTaggedASR` + `CacheAwareStreamingAudioBuffer` for live audio (M22 streaming engine) fails silently in three distinct ways that all present as "mysteriously bad transcript quality" with zero errors: (1) `append_audio`'s first-stream create branch returns `stream_id=-1`, so passing the returned id back on the next append pads a NEW stream - the batch grows per chunk until the diar streaming state throws a tensor-size mismatch; (2) `drop_extra_pre_encoded` must be `0` on step 0 and `encoder.streaming_cfg.drop_extra_pre_encoded` on every later step - passing 0 forever misaligns encoder outputs and quietly destroys recall (~30% observed); (3) per-instance hypothesis `timestamp` frames count that speaker's own voiced/decoded frames, NOT session time - `offset + ts*0.08` produces row times beyond the audio, and downstream cutoff filters then silently drop the rows.
-- **Evidence:** M22 Phase 2 GPU-contact debugging, 2026-07-06 (`.goat-flow/plans/0.3.0/M22-session-long-streaming-diarization.md`, search: "GPU-contact findings"). Per-step instrumentation dump proved cumulative slot texts with frozen bursts and voiced-frame timestamps.
-- **Prevention:** Pin `stream_id = max(0, returned_id)` after the first append; mirror the reference CLI's per-step `drop_extra_pre_encoded` computation verbatim. When streaming quality looks wrong with clean logs, instrument per-step hypothesis facts (slot, n_words, head/tail, ts0/tsN, offset) before touching emission logic.
-- **Three more traps found at REAL-TIME pacing (2026-07-06, invisible at accelerated eval pacing):** (4) `CacheAwareStreamingAudioBuffer.__iter__` yields PARTIAL chunks near the buffer end and advances the cursor a full shift regardless - at 1x pacing a step loop drains the buffer every feed, truncating AND skipping audio four times per 5s chunk (garbled words, speaker fragmentation). Gate stepping on `frames_available >= full_chunk_frames` and consume partials only at flush. (5) Deriving word times from the decode/step clock is FICTION under decode lag: rows carry compressed times, the time-overlap scorer and the role layer both read garbage, and eval "attribution" numbers become unmeasurable. True times come from inverting the diarizer's own activity stream: per-slot (cumulative voiced frames -> wall seconds) ledger, then map each token timestamp through it. (6) An eager "pin the first N slots to establish" speaker cap folds a genuine voice into another slot when one speaker's audio spans two early cache slots (c03's doctor does) - fold only hallucination-scale marginal slots (share-based) and let substantial slots through; the role mapping labels them anyway.
-- **Verification rule this taught:** accelerated-pacing evals CANNOT stand in for real-time behavior on streaming integrations. Any cache-aware streaming change must pass a 1x browser replay (row order, live cadence, text sanity) in addition to eval gates.
-- **Update (2026-07-07):** pacing is NOT the whole story. `scripts/eval-corrected-fixtures.sh`
-  gained an `EVAL_PACE=1x` mode (real-time cadence, browser-like 250ms chunks) and the paced
-  consult-08 @60s streaming run scored live strict 59.1% vs 59.4% unpaced - while the real
-  browser replay scored 79.3% at the same 60s horizon (pre-M11 history; post-M11 would be
-  higher). The eval's WebSocket feed differs from the browser replay path beyond cadence
-  (candidates: browser WAV-decode/resample pipeline, finalize behavior on abrupt socket close,
-  real callback jitter). Until that residual is explained, browser replays remain the only
-  honest live-lane reference on the streaming engine; eval live numbers are comparable only
-  to other eval runs with the same pace mode.
-- **Update (2026-07-07 evening, 0.4.0 M02 step 0 - all lanes at PINNED 60s cutoffs, current
-  code):** the gap is FIXTURE-DEPENDENT and cadence-SHAPE-shaped, not rate-shaped. c03:
-  browser replay 87.1% = eval unpaced 87.1% (identical row sets) while eval paced-1x
-  COLLAPSES to 56.5%. c08: browser 82.8% vs eval 59.4% unpaced / 57.1% paced (~23pp gap in
-  both pace modes). Candidate WAV-decode/resample is DEAD: the real `decodeWavToPcm` output
-  differs from the fixture's own samples by at most 1 LSB (zero length drift, zero samples
-  beyond 1 LSB - the `floatTo16BitPcm` asymmetric-scaling signature; inaudible). Finalize on
-  abrupt close is DE-PRIORITIZED: the c08 eval-vs-browser row diff diverges across the whole
-  timeline, dominated by role-mapping flips, not tail truncation. Prime suspect now: the
-  eval's UNIFORM 250ms sleep cadence vs the browser's audio-element-driven variable bursts
-  interacting with the cache-aware buffer's step gating. Next experiment: replay the eval
-  with a RECORDED browser chunk-arrival pattern. Artifacts: `var/quality/m02-browser/`,
-  `var/quality/corrected-fixtures/20260707T110444Z-m02-pace1x/`, plan file M02 "Result so
-  far". Browser replays are now SCRIPTABLE (playwright drives the real Demo Audio path and
-  stops at the 60s audio mark) - the "slowest loop in the project" constraint is gone.
-- **Update (2026-07-08 UTC manual round - hold-then-flush quantified in the BROWSER lane):**
-  the step-gating suspect now has direct browser-lane evidence. `nemo_session.window_continuity`
-  ticks arrived every ~5s with zero misses on all three manual sessions, yet `emitted_rows=0`
-  for up to 10 CONSECUTIVE windows during a long single-speaker monologue (day3-consultation01,
-  session `203d1d35`, windows 19-28), after which window 29 released 25 rows at once - some
-  rows landing 50-70s after their audio. Every session shows held roughly 3-4x emitted
-  (`session.quality held_segments/emitted_segments`: 323/109, 479/118, 1018/306). Live-UX
-  symptom: the screen freezes exactly while the patient delivers the key narrative, then dumps.
-  Whatever gates emission is speech-structure-sensitive (long turns starve it) - the same shape
-  as the eval-vs-browser cadence suspect, so M02's recorded-cadence replay should try to explain
-  the monologue hold with the same mechanism.
-
 ## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
 
 **Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
@@ -242,7 +197,7 @@ last_reviewed: 2026-07-09
 
 **Status:** active | **Created:** 2026-07-08 | **Evidence:** OBSERVED
 
-- **Files:** `strands_agents/nemo_pipeline.py` (search: "cuda if torch.cuda.is_available")
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "torch.cuda.is_available()")
 - **Files:** `scripts/eval-corrected-fixtures.sh` (search: "AGENT_HTTP_URL")
 - **What breaks:** WSL2 can lose its GPU adapter mid-session while everything else keeps
   working: `/dev/dxg` still exists, `nvidia-smi` exits 0 while printing NOTHING, `/health`
@@ -276,6 +231,7 @@ last_reviewed: 2026-07-09
 - **Log-grep trap:** the failure is logged at WARNING with the wording "CUDA driver error", so sweeps for `ERROR`, `Traceback`, or the phrase "CUDA error" all miss it. Grep `correction.unavailable` explicitly when auditing a session.
 - **Evidence:** 2026-07-08 (UTC) session `0a40e243-c813-48a5-b87f-e069da4def40`: `correction.unavailable ... duration_ms=12350 detail=Second-pass ASR failed for nvidia/parakeet-tdt-0.6b-v3: CUDA driver error: device not ready`, then `summary.requested source=browser_visible_segments` 14s later. Same evening, sessions `d97a9bde`/`203d1d35` logged `correction.completed` (17.4s / 11.5s) and `summary.requested source=corrected_segments`. Related but distinct root cause with the same downstream fallback: lessons/verification.md (search: "correction smoke tests must stay inside reconnect grace").
 - **Prevention:** 0.4.0 M09 owns retry + fallback visibility. Until then, after every manual or e2e correction run, verify BOTH `correction.completed` AND `summary.requested source=corrected_segments` in the agent log before judging note quality - the existing grace-expiry lesson's check now has two root causes that trip it.
+- **Update (2026-07-10, M08 c03 acceptance):** "a single retry would very likely have succeeded" is now REFUTED for long clips. Full-length c03 (9:04) corrections failed 3/3 today - once as an explicit CUDA OOM ("1.38 GiB ... 247 MiB free"), twice as "device not ready", including once on a freshly restarted agent with 10.6 GiB free - while 3:01-3:48 sessions succeeded on both days. GPU sampling during the clean-state run shows streaming stayed ~5.8 GiB and the correction's own transcribe spiked to 15.7 GiB in ~10s before failing, then stayed cached at 15.7 GiB, so same-lifetime retries inherit near-zero headroom. Treat full-length one-shot second-pass transcribe as over-capacity on this 16 GB card with the streaming stack resident; the failure is deterministic at ~9 min, not a teardown race. Full table and design implications: `.goat-flow/plans/0.4.0/M09-correction-resilience.md` (search: "length-correlated capacity failure").
 
 ## Footgun: Phantom-speaker merging can fold short real interjections into the other speaker's row
 

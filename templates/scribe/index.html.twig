@@ -439,6 +439,17 @@
         }
         .summary-status__retry:hover { background: var(--surface-hover); }
         .summary-status__retry.hidden { display: none; }
+        .summary-status__notice {
+            flex-basis: 100%;
+            padding: 0.625rem 0.75rem;
+            color: var(--text-muted);
+            background: var(--surface-bg-alt);
+            border: 1px solid var(--surface-border);
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+        .summary-status__notice.hidden { display: none; }
         .summary-pending {
             display: flex;
             align-items: flex-start;
@@ -1202,6 +1213,7 @@
                             <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
                                 <span id="summaryStatusBadge" class="summary-status__badge"></span>
                                 <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                                <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
                             <div id="summaryContent"></div>
                         </div>

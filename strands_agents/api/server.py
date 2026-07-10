@@ -1013,19 +1013,21 @@ async def generate_summary(
     summary_context = build_summary_context(session_id, summary_request, sessions)
 
     # No transcript means the user ended a session before usable text was captured.
-    if not summary_context.stored_segments:
+    if not summary_context.selected_segments:
         raise HTTPException(status_code=404, detail="No transcript found for session")
 
     logger.info(
         "summary.requested source=%s segments=%s transcript_chars=%s",
         summary_context.source,
-        len(summary_context.stored_segments),
-        len(summary_context.transcript),
+        len(summary_context.selected_segments),
+        summary_context.kept_transcript_chars,
         extra={
             "session_id": session_id,
             "source": summary_context.source,
-            "segments": len(summary_context.stored_segments),
-            "transcript_chars": len(summary_context.transcript),
+            "segments": len(summary_context.selected_segments),
+            "complete_segments": len(summary_context.complete_segments),
+            "transcript_chars": summary_context.kept_transcript_chars,
+            "transcript_truncated": summary_context.transcript_truncated,
         },
     )
 
@@ -1037,7 +1039,8 @@ async def generate_summary(
         session_id,
         summary_context.transcript,
         summary_context.citation_segments,
-        summary_context.stored_segments,
+        summary_context.selected_segments,
+        summary_context.citation_source_index,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
@@ -1057,6 +1060,16 @@ async def generate_summary(
         raise HTTPException(status_code=502, detail="Summary generation failed")
 
     summary_metric_fields = summary.pop("_agent_metrics", {})
+    # These neutral fields report the actual generation input for both HTTP
+    # and Mercure consumers; they never infer why a preferred source was absent.
+    summary.update(
+        {
+            "transcript_source": summary_context.source,
+            "transcript_truncated": summary_context.transcript_truncated,
+            "original_transcript_chars": summary_context.original_transcript_chars,
+            "kept_transcript_chars": summary_context.kept_transcript_chars,
+        }
+    )
     await publish_summary_outputs(
         session_id,
         summary,

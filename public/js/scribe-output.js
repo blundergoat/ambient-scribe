@@ -626,6 +626,7 @@ function renderSummary(summaryPayload) {
 
     summaryContent.replaceChildren(...renderedBlocks);
     setSummaryStatus('generated');
+    setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.
     hideSystemBanner();
 }
@@ -852,6 +853,7 @@ function setSummaryStatus(summaryState) {
     // The pending placeholder only shows before a summary has been requested.
     summaryPending?.classList.toggle('hidden', summaryState !== 'pending');
     summaryStatusBadge.classList.remove('summary-status__badge--generated', 'summary-status__badge--failed');
+    setSummaryTruncationNotice(null);
 
     if (summaryState === 'generated') {
         summaryStatusBadge.textContent = '✓ Generated';
@@ -872,6 +874,28 @@ function setSummaryStatus(summaryState) {
     // Pending and generating both hide the badge; the pending row or loading row speaks instead.
     summaryStatus.classList.add('hidden');
     summaryRetryButton?.classList.add('hidden');
+}
+
+/**
+ * Keeps transcript-input elision visible beside a successfully generated note.
+ * The notice describes input selection only; it does not imply correction failure.
+ */
+function setSummaryTruncationNotice(summaryPayload) {
+    const summaryTruncationNotice = document.getElementById('summaryTruncationNotice');
+
+    // Older templates and non-truncated notes need no additional provenance notice.
+    if (!summaryTruncationNotice) {
+        return;
+    }
+
+    if (summaryPayload?.transcript_truncated !== true) {
+        summaryTruncationNotice.textContent = '';
+        summaryTruncationNotice.classList.add('hidden');
+        return;
+    }
+
+    summaryTruncationNotice.textContent = 'Selected opening and closing transcript rows were used for this note because the full transcript exceeded the summary input limit. Review the transcript for omitted middle content.';
+    summaryTruncationNotice.classList.remove('hidden');
 }
 
 /**

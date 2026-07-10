@@ -2,7 +2,8 @@
 Tests for the medical session summary agent and endpoint.
 """
 
-from unittest.mock import MagicMock, patch
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from fastapi.testclient import TestClient
@@ -14,11 +15,41 @@ from api.summary_generation import (
     SessionSummaryOutput,
     SummaryCitationOutput,
     SummarySectionOutput,
+    source_index_text,
     summary_generation_prompt,
     summary_with_validated_citations,
 )
+from api.summary_request import (
+    SUMMARY_TRANSCRIPT_ELISION_MARKER,
+    SUMMARY_TRANSCRIPT_MAX_CHARS,
+    SummaryRequest,
+    build_summary_context,
+    select_summary_segments,
+    transcript_text_from_segments,
+)
+from session import SessionStore
 
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000099"
+
+
+def _summary_rows(
+    count: int,
+    *,
+    text_chars: int = 24,
+    id_prefix: str = "seg",
+) -> list[dict]:
+    """Build identified clinical rows for summary budget tests."""
+    return [
+        {
+            "segment_id": f"{id_prefix}-{index:04d}",
+            "speaker_id": "speaker_0" if index % 2 else "speaker_1",
+            "role": "PATIENT" if index % 2 else "DOCTOR",
+            "text": f"clinical row {index} " + ("x" * text_chars),
+            "start": float(index),
+            "end": float(index) + 0.8,
+        }
+        for index in range(1, count + 1)
+    ]
 
 
 # =========================================================================
@@ -117,6 +148,9 @@ class TestSummaryEndpoint:
         assert data["sections"][0]["heading"] == "Subjective"
         assert len(data["key_points"]) == 1
         assert "clinical_hints" not in data
+        assert data["transcript_source"] == "session_store"
+        assert data["transcript_truncated"] is False
+        assert data["original_transcript_chars"] == data["kept_transcript_chars"]
 
     def test_summary_uses_browser_visible_segments_from_request(self):
         """Summaries can use only the transcript rows visible in the browser."""
@@ -210,6 +244,51 @@ class TestSummaryEndpoint:
         assert citation_rows[0]["segment_id"] == "corrected-0001"
         assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "browser preview typo"
 
+    def test_summary_publishes_browser_truncation_metadata_and_selected_rows(self):
+        """HTTP and Mercure report the same real browser-input selection."""
+        rows = _summary_rows(90, text_chars=420)
+        mock_summary = {
+            "title": "Long consultation",
+            "sections": [
+                {"heading": "Plan", "content": "Tail plan remains available."},
+            ],
+            "key_points": [],
+        }
+
+        with (
+            patch(
+                "api.server._run_summary_generation", return_value=mock_summary
+            ) as summary_runner,
+            patch(
+                "api.server.publish_to_mercure",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as publisher,
+        ):
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(
+                f"/session/{TEST_SESSION_ID}/summary",
+                json={"segments": rows},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["transcript_source"] == "browser_visible_segments"
+        assert data["transcript_truncated"] is True
+        assert data["original_transcript_chars"] > data["kept_transcript_chars"]
+        selected_rows = summary_runner.call_args.args[3]
+        assert selected_rows[0]["segment_id"] == "seg-0001"
+        assert selected_rows[-1]["segment_id"] == "seg-0090"
+        assert len(selected_rows) < len(rows)
+        published_payload = publisher.await_args.args[1]
+        for field in (
+            "transcript_source",
+            "transcript_truncated",
+            "original_transcript_chars",
+            "kept_transcript_chars",
+        ):
+            assert published_payload[field] == data[field]
+
     def test_summary_502_on_generation_failure(self):
         sessions.append_segment(
             TEST_SESSION_ID,
@@ -259,6 +338,163 @@ class TestSummaryEndpoint:
         data = response.json()
         assert data["sections"] == []
         assert data["key_points"] == []
+
+class TestSummaryContextSelection:
+    """M08 keeps one whole-row input contract across every summary source."""
+
+    def test_under_budget_selection_preserves_exact_rows_and_text(self) -> None:
+        """Normal consultations keep their pre-M08 ordering and formatting."""
+        rows = _summary_rows(3)
+
+        selection = select_summary_segments(rows, transcript_text_from_segments)
+
+        assert selection.selected_segments == rows
+        assert selection.formatted_text == transcript_text_from_segments(rows)
+        assert selection.original_chars == selection.kept_chars
+        assert selection.original_segments == selection.kept_segments == 3
+        assert selection.truncated is False
+
+    def test_over_budget_selection_keeps_complete_opening_and_tail_rows(self) -> None:
+        """The selector inserts one marker and never slices a clinical row."""
+        rows = _summary_rows(10, text_chars=24)
+        rows[-2]["text"] = "Assessment: suspected Lyme disease."
+        rows[-1]["text"] = "Plan: arrange Lyme blood tests and follow-up."
+
+        selection = select_summary_segments(
+            rows,
+            transcript_text_from_segments,
+            max_chars=240,
+        )
+
+        selected_ids = [row["segment_id"] for row in selection.selected_segments]
+        assert selection.truncated is True
+        assert selection.formatted_text.count(SUMMARY_TRANSCRIPT_ELISION_MARKER) == 1
+        assert len(selection.formatted_text) <= 240
+        assert selected_ids[0] == "seg-0001"
+        assert selected_ids[-1] == "seg-0010"
+        assert len(selected_ids) < len(rows)
+        assert rows[-2]["text"] in selection.formatted_text
+        assert rows[-1]["text"] in selection.formatted_text
+        for row in selection.selected_segments:
+            assert row["text"] in selection.formatted_text
+
+    def test_under_budget_corrected_prompt_is_unchanged_and_fully_aligned(self) -> None:
+        """Citable corrected rows keep the existing full source-index prompt."""
+        backend = SessionStore()
+        rows = _summary_rows(3, id_prefix="corrected")
+        backend.replace_corrected_segments("corrected-under-budget", rows)
+
+        context = build_summary_context("corrected-under-budget", None, backend)
+        prompt_with_selection = summary_generation_prompt(
+            context.transcript,
+            [],
+            citation_segments=context.citation_segments,
+            citation_source_index=context.citation_source_index,
+        )
+        legacy_prompt = summary_generation_prompt(
+            context.transcript,
+            [],
+            citation_segments=rows,
+        )
+
+        assert context.source == "corrected_segments"
+        assert context.complete_segments == rows
+        assert context.selected_segments == rows
+        assert context.citation_segments == rows
+        assert context.citation_source_index == source_index_text(rows)
+        assert context.transcript_truncated is False
+        assert context.original_transcript_chars == context.kept_transcript_chars
+        assert prompt_with_selection == legacy_prompt
+
+    def test_over_budget_corrected_rows_align_prompt_citations_and_fidelity(self) -> None:
+        """The old uncapped citation path cannot reintroduce omitted rows."""
+        backend = SessionStore()
+        rows = _summary_rows(90, text_chars=420, id_prefix="corrected")
+        backend.replace_corrected_segments("corrected-over-budget", rows)
+
+        context = build_summary_context("corrected-over-budget", None, backend)
+
+        selected_ids = [row["segment_id"] for row in context.selected_segments]
+        citation_ids = [row["segment_id"] for row in context.citation_segments]
+        assert context.transcript_truncated is True
+        assert selected_ids == citation_ids
+        assert selected_ids[0] == "corrected-0001"
+        assert selected_ids[-1] == "corrected-0090"
+        assert len(selected_ids) < len(rows)
+        assert context.citation_source_index is not None
+        assert SUMMARY_TRANSCRIPT_ELISION_MARKER in context.citation_source_index
+        assert len(context.citation_source_index) <= SUMMARY_TRANSCRIPT_MAX_CHARS
+        for segment_id in selected_ids:
+            assert f"source:{segment_id} " in context.citation_source_index
+        omitted_ids = {
+            row["segment_id"] for row in rows if row["segment_id"] not in selected_ids
+        }
+        assert omitted_ids
+        assert all(
+            f"source:{segment_id} " not in context.citation_source_index
+            for segment_id in omitted_ids
+        )
+
+    def test_over_budget_browser_and_session_sources_keep_the_tail(self) -> None:
+        """Both uncited lanes use the same whole-row opening/tail selector."""
+        rows = _summary_rows(90, text_chars=420)
+
+        browser_backend = SessionStore()
+        browser_request = SummaryRequest.model_validate({"segments": rows})
+        browser_context = build_summary_context(
+            "browser-over-budget", browser_request, browser_backend
+        )
+
+        stored_backend = SessionStore()
+        for row in rows:
+            stored_backend.append_segment("stored-over-budget", row)
+        stored_context = build_summary_context(
+            "stored-over-budget", None, stored_backend
+        )
+
+        for context, source in (
+            (browser_context, "browser_visible_segments"),
+            (stored_context, "session_store"),
+        ):
+            selected_ids = [row["segment_id"] for row in context.selected_segments]
+            assert context.source == source
+            assert context.transcript_truncated is True
+            assert context.citation_segments == []
+            assert context.citation_source_index is None
+            assert selected_ids[0] == "seg-0001"
+            assert selected_ids[-1] == "seg-0090"
+            assert SUMMARY_TRANSCRIPT_ELISION_MARKER in context.transcript
+            assert context.kept_transcript_chars <= SUMMARY_TRANSCRIPT_MAX_CHARS
+
+    def test_truncation_warning_occurs_only_when_rows_are_omitted(self, caplog) -> None:
+        """The warning is quiet for normal notes and structured for real elision."""
+        backend = SessionStore()
+        backend.append_segment("short-session", _summary_rows(1)[0])
+
+        with caplog.at_level(logging.WARNING, logger="api.summary_request"):
+            build_summary_context("short-session", None, backend)
+        assert "summary.transcript_truncated" not in caplog.text
+
+        long_backend = SessionStore()
+        for row in _summary_rows(90, text_chars=420):
+            long_backend.append_segment("long-session", row)
+        with caplog.at_level(logging.WARNING, logger="api.summary_request"):
+            build_summary_context("long-session", None, long_backend)
+
+        records = [
+            record
+            for record in caplog.records
+            if "summary.transcript_truncated" in record.message
+        ]
+        assert len(records) == 1
+        assert getattr(records[0], "source") == "session_store"
+        assert getattr(records[0], "original_chars") > getattr(
+            records[0], "kept_chars"
+        )
+        assert getattr(records[0], "original_segments") > getattr(
+            records[0], "kept_segments"
+        )
+
 
 class TestRunSummaryGeneration:
     """Tests for the _run_summary_generation helper."""
@@ -337,6 +573,27 @@ class TestRunSummaryGeneration:
         assert "source IDs" in prompt
         assert '{"segment_id": "seg-0001"}' in prompt
         assert "[source:corrected-0001 01:05-01:07 DOCTOR] Please use the cream." in prompt
+
+    def test_summary_prompt_uses_preselected_corrected_source_index(self):
+        """A bounded source index cannot be replaced by the old uncapped formatter."""
+        rows = _summary_rows(3, id_prefix="corrected")
+        selected_source = "\n".join(
+            (
+                source_index_text([rows[0]]),
+                SUMMARY_TRANSCRIPT_ELISION_MARKER,
+                source_index_text([rows[-1]]),
+            )
+        )
+
+        prompt = summary_generation_prompt(
+            transcript_text_from_segments([rows[0], rows[-1]]),
+            [],
+            citation_segments=[rows[0], rows[-1]],
+            citation_source_index=selected_source,
+        )
+
+        assert selected_source in prompt
+        assert "source:corrected-0002 " not in prompt
 
     def test_summary_prompt_falls_back_when_corrected_rows_are_not_citable(self):
         """Unidentified corrected rows still produce an uncited note prompt."""

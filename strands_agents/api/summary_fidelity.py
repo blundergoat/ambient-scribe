@@ -66,6 +66,49 @@ _PATIENT_DENIAL_PATTERN = re.compile(
     r"\b(no|not|nope|never|don'?t|doesn'?t|haven'?t|hasn'?t|none)\b", re.IGNORECASE
 )
 
+# Phrases that voice uncertainty or a non-answer. They contain negation words
+# ("don't know") but prove the patient could NOT answer - never that they denied
+# the topic - so they are masked out before any denial matching (M10).
+_EPISTEMIC_NON_ANSWER_PHRASES = (
+    "don't know",
+    "dont know",
+    "do not know",
+    "not sure",
+    "unsure",
+    "can't remember",
+    "cant remember",
+    "cannot remember",
+    "can not remember",
+    "don't think",
+    "dont think",
+    "do not think",
+    "no idea",
+)
+
+# Local-clause boundaries inside one patient row: sentence punctuation plus the
+# contrast/sequence words live ASR uses instead of punctuation. Commas and bare
+# "and"/"or" deliberately do NOT split, so a coordinated denial list such as
+# "no fever or rash" stays one clause and supports every listed topic.
+_CLAUSE_BOUNDARY_PATTERN = re.compile(
+    r"[.!?;]+|\bbut\b|\band then\b|\bthen\b|\bso\b", re.IGNORECASE
+)
+
+# A note sentence that claims a denial while admitting the question went
+# unanswered contradicts itself; no transcript evidence can rescue it (M10).
+_UNANSWERED_ADMISSION_PATTERN = re.compile(
+    r"\b(not (fully |completely )?answered|unanswered|no answer)\b", re.IGNORECASE
+)
+
+# The short-answer path only trusts an answer that OPENS with a denial word.
+_ANSWER_DENIAL_OPENERS = frozenset({"no", "nope", "not", "never", "none"})
+
+# Affirmative content disqualifies a short "denial" answer outright.
+_AFFIRMATIVE_ANSWER_PATTERN = re.compile(r"\b(yes|yeah|yep)\b", re.IGNORECASE)
+
+# A short denial answer covers at most this many words - beyond that it is a
+# monologue whose topics must earn local clause support instead.
+_SHORT_ANSWER_MAX_WORDS = 8
+
 # Note language that claims an examination happened or produced findings.
 _EXAM_CLAIM_PATTERNS = (
     re.compile(
@@ -82,10 +125,27 @@ _EXAM_CLAIM_PATTERNS = (
 )
 
 # Honest-absence frames stay unflagged - saying no exam happened IS fidelity.
+# Beyond literal negation tokens, scribe-true framings such as "concludes
+# before examination is performed", "prior to examination", and "not yet
+# performed" also assert absence, not findings (M10).
 _EXAM_ABSENCE_PATTERN = re.compile(
     r"\b(no|not|none|without|absent)\b[^.;]*\b(documented|recorded|performed|"
     r"examined|captured|available|obtained|completed)\b"
-    r"|\bnot (fully )?documented\b|\bno (formal )?(physical )?examination\b",
+    r"|\bnot (fully )?documented\b|\bno (formal )?(physical )?examination\b"
+    r"|\b(conclude[sd]?|end(s|ed)?|stop(s|ped)?|finishe[sd])\b[^.;]*\bbefore\b"
+    r"[^.;]*\b(examination|exam)\b"
+    r"|\bprior to\b[^.;]*\b(examination|exam)\b"
+    r"|\b(examination|exam)\b[^.;]*\bnot yet (performed|completed|done|carried out)\b",
+    re.IGNORECASE,
+)
+
+# Note sentences where the examination is only proposed or planned - the exam
+# noun sits under an intent verb, so no findings are being claimed (M10, from
+# the 2026-07-10 c03 replay false positive "Doctor proposed ... examination,
+# with discussion to follow regarding findings").
+_EXAM_INTENT_PATTERN = re.compile(
+    r"\b(propose[sd]?|plan(?:s|ned)?|intend(?:s|ed)?|intention|will|would|"
+    r"agreed|offered|advised|recommend(?:s|ed)?)\b[^.;]*\b(examination|exam|examine)\b",
     re.IGNORECASE,
 )
 
@@ -109,6 +169,15 @@ _TOPIC_STEM_SYNONYMS = {
     "emesis": ("vomit", "sick"),
     "vomiting": ("vomit", "sick"),
     "nausea": ("nause", "sick"),
+    # Headache-radiation paraphrases: notes write "spreading/radiating to other
+    # locations", clinicians ask "is it moving anywhere else".
+    "spreading": ("spread", "mov", "radiat"),
+    "spread": ("spread", "mov", "radiat"),
+    "radiating": ("radiat", "mov", "spread"),
+    "radiation": ("radiat", "mov", "spread"),
+    "moving": ("mov", "spread", "radiat"),
+    "location": ("locat", "anywhere", "elsewhere", "area"),
+    "locations": ("locat", "anywhere", "elsewhere", "area"),
 }
 
 # Words too generic to identify a denied topic on their own.
@@ -116,7 +185,8 @@ _TOPIC_STOPWORDS = frozenset(
     "a an and or of in on at to the any some with for recent formal his her their "
     "difficulty difficulties problem problems issue issues history further other "
     "associated significant when patient screened screening neurological symptoms "
-    "including denied denies negative reports reported states stated".split()
+    "including denied denies negative reports reported states stated "
+    "sensation sensations feeling feelings".split()
 )
 
 # Denial objects that name nothing checkable ("denied all") - the real topics
@@ -146,12 +216,20 @@ class FidelityViolation:
         sentence: The exact sentence to flag; never empty.
         rule: Stable rule id for logs and tests.
         reason: Plain-English explanation used in the regeneration prompt.
+        subtype: Non-clinical failure classification for PHI-safe diagnostics
+            (e.g. "no-local-topic-support"); empty only on legacy constructions.
+        sentence_ordinal: Zero-based sentence position within its location; -1
+            when the caller did not track ordinals.
+        word_count: Lexical word count of the sentence; 0 when untracked.
     """
 
     location: str
     sentence: str
     rule: str
     reason: str
+    subtype: str = ""
+    sentence_ordinal: int = -1
+    word_count: int = 0
 
 
 def regeneration_feedback(violations: list[FidelityViolation]) -> str:
@@ -260,17 +338,25 @@ def find_fidelity_violations(
     # Sections first, key points last - the same order the clinician reads.
     for section in sections:
         heading = str(section.get("heading", ""))
-        for sentence in _sentences(str(section.get("content", ""))):
+        for ordinal, sentence in enumerate(_sentences(str(section.get("content", "")))):
             violations.extend(
                 _sentence_violations(
-                    sentence, f"section '{heading}'", normalized_rows, uncertain_characteristics
+                    sentence,
+                    f"section '{heading}'",
+                    normalized_rows,
+                    uncertain_characteristics,
+                    sentence_ordinal=ordinal,
                 )
             )
     for key_point in key_points:
-        for sentence in _sentences(str(key_point)):
+        for ordinal, sentence in enumerate(_sentences(str(key_point))):
             violations.extend(
                 _sentence_violations(
-                    sentence, "key_points", normalized_rows, uncertain_characteristics
+                    sentence,
+                    "key_points",
+                    normalized_rows,
+                    uncertain_characteristics,
+                    sentence_ordinal=ordinal,
                 )
             )
 
@@ -346,6 +432,7 @@ def _sentence_violations(
     location: str,
     normalized_rows: list[dict[str, str]],
     uncertain_characteristics: set[str],
+    sentence_ordinal: int = -1,
 ) -> list[FidelityViolation]:
     """Run all three fidelity rules over one note sentence.
 
@@ -354,28 +441,41 @@ def _sentence_violations(
         location: Section heading or `key_points`, for the flag the user sees.
         normalized_rows: Lowercased transcript rows the sentence must be supported by.
         uncertain_characteristics: Characteristics the patient answered with "I don't know".
+        sentence_ordinal: Zero-based position within the location, for PHI-safe logs.
 
     Returns:
         Violations for this sentence; empty means the sentence is supported.
     """
     found: list[FidelityViolation] = []
+    word_count = len(re.findall(r"[A-Za-z'][A-Za-z'-]*", sentence))
+
+    def _record(rule: str, reason: str, subtype: str) -> None:
+        found.append(
+            FidelityViolation(
+                location,
+                sentence,
+                rule,
+                reason,
+                subtype=subtype,
+                sentence_ordinal=sentence_ordinal,
+                word_count=word_count,
+            )
+        )
 
     unresolved = _uncertainty_violation(sentence, uncertain_characteristics, normalized_rows)
     # The patient said "I don't know", so a resolved value would mislead the reader.
     if unresolved is not None:
-        found.append(FidelityViolation(location, sentence, "uncertainty-resolved", unresolved))
+        _record("uncertainty-resolved", *unresolved)
 
     unsupported_denial = _negative_finding_violation(sentence, normalized_rows)
     # A denial the patient never gave reads as a cleared symptom to the clinician.
     if unsupported_denial is not None:
-        found.append(
-            FidelityViolation(location, sentence, "negative-without-denial", unsupported_denial)
-        )
+        _record("negative-without-denial", *unsupported_denial)
 
     exam_claim = _exam_language_violation(sentence, normalized_rows)
     # Exam findings that never happened carry the most clinical weight of all.
     if exam_claim is not None:
-        found.append(FidelityViolation(location, sentence, "exam-not-performed", exam_claim))
+        _record("exam-not-performed", *exam_claim)
 
     return found
 
@@ -414,7 +514,7 @@ def _uncertainty_violation(
     sentence: str,
     uncertain_characteristics: set[str],
     normalized_rows: list[dict[str, str]],
-) -> str | None:
+) -> tuple[str, str] | None:
     """Check that an unanswerable characteristic stays unresolved in the note.
 
     Args:
@@ -423,7 +523,7 @@ def _uncertainty_violation(
         normalized_rows: Lowercased transcript rows, used to accept verbatim patient quotes.
 
     Returns:
-        Plain-English reason, or None when the sentence is honest about the uncertainty.
+        (reason, subtype), or None when the sentence is honest about the uncertainty.
     """
     lowered = sentence.lower()
     for characteristic in uncertain_characteristics:
@@ -437,13 +537,15 @@ def _uncertainty_violation(
         if re.search(rf"\b(was|is|appears?|seemed?)\s+({token_pattern})\b", lowered):
             return (
                 f"the patient answered the {characteristic} question with uncertainty, but this"
-                " sentence resolves it to a definitive value"
+                " sentence resolves it to a definitive value",
+                "resolved-to-definitive",
             )
         # "Described as sudden" invents an attribution nobody made.
         if re.search(rf"\bdescribed as\s+({token_pattern})\b", lowered):
             return (
                 f"nobody described the {characteristic} that way - the patient expressed"
-                " uncertainty"
+                " uncertainty",
+                "invented-attribution",
             )
         has_marker = _contains_any_phrase(lowered, _NOTE_UNCERTAINTY_MARKERS)
         quotes_patient = _has_patient_verbatim_quote(sentence, normalized_rows)
@@ -451,7 +553,8 @@ def _uncertainty_violation(
         if not has_marker and not quotes_patient:
             return (
                 f"this sentence discusses {characteristic} without preserving the patient's"
-                " stated uncertainty"
+                " stated uncertainty",
+                "uncertainty-not-preserved",
             )
 
     return None
@@ -480,7 +583,7 @@ def _has_patient_verbatim_quote(sentence: str, normalized_rows: list[dict[str, s
 
 def _negative_finding_violation(
     sentence: str, normalized_rows: list[dict[str, str]]
-) -> str | None:
+) -> tuple[str, str] | None:
     """Check that every denied topic in the sentence has a real patient denial.
 
     Args:
@@ -488,19 +591,30 @@ def _negative_finding_violation(
         normalized_rows: Lowercased transcript rows searched for the patient's denial.
 
     Returns:
-        Plain-English reason naming the unsupported topic, or None when all denials are real.
+        (reason naming the unsupported topic, subtype), or None when all denials are real.
     """
     topics = _claimed_denial_topics(sentence)
     # Sentences with no denial language have nothing to prove.
     if not topics:
         return None
 
+    # A sentence admitting its own question was never answered cannot also
+    # claim the denial - no stem match in the transcript rescues it.
+    if _UNANSWERED_ADMISSION_PATTERN.search(sentence) is not None:
+        return (
+            "the transcript contains no patient denial of this - the sentence itself admits"
+            " the question was not answered, and an unanswered clinician question is not"
+            " a denial",
+            "contradicts-unanswered-admission",
+        )
+
     for topic in topics:
         # Every denied topic needs the patient's own "no" somewhere near it.
         if not _did_patient_deny_topic(topic, normalized_rows):
             return (
                 f"the transcript contains no patient denial of '{topic}' - an unanswered"
-                " clinician question is not a denial"
+                " clinician question is not a denial",
+                "no-local-topic-support",
             )
 
     return None
@@ -561,20 +675,90 @@ def _denied_topics(topics_text: str) -> list[str]:
     return topics
 
 
-def _topic_stems(topic: str) -> list[str]:
-    """Map a denied topic to the stems a patient's own words would contain.
+def _mask_epistemic_phrases(row_text: str) -> str:
+    """Blank out uncertainty phrases so their negation words cannot fake a denial.
 
     Args:
-        topic: Cleaned topic phrase such as "difficulty breathing" -> "breathing".
+        row_text: Lowercased patient row; empty passes through unchanged.
 
     Returns:
-        Match stems, always at least one; unknown words match on their own first six letters.
+        The row with each epistemic phrase replaced by a space - "i don't know
+        what to do" keeps no denial token, while "i don't have a rash" does.
     """
-    stems: list[str] = []
-    for word in topic.split():
-        stems.extend(_TOPIC_STEM_SYNONYMS.get(word, (word[:6],)))
+    masked = row_text
+    for phrase in _EPISTEMIC_NON_ANSWER_PHRASES:
+        masked = re.sub(rf"\b{re.escape(phrase)}\b", " ", masked)
 
-    return stems
+    return masked
+
+
+def _denial_evidence_clauses(masked_row_text: str) -> list[str]:
+    """Split one patient row into the local clauses denial evidence may live in.
+
+    Args:
+        masked_row_text: Patient row with epistemic phrases already masked.
+
+    Returns:
+        Non-empty clauses; a denial and its topic must share one of these, so
+        "my lips are swelling ... but ... no" never assembles into fake support.
+    """
+    clauses = _CLAUSE_BOUNDARY_PATTERN.split(masked_row_text)
+    return [clause.strip() for clause in clauses if clause and clause.strip()]
+
+
+def _matched_topic_words(text: str, topic: str) -> int:
+    """Count how many of a topic's words the text mentions as word starts.
+
+    Args:
+        text: Lowercased clause or clinician row.
+        topic: Cleaned denied-topic phrase such as "skin rashes".
+
+    Returns:
+        Number of topic words with a stem match; synonyms count for their word,
+        so "breathless" matches the topic word "breathing".
+    """
+    matched = 0
+    for word in topic.split():
+        stems = _TOPIC_STEM_SYNONYMS.get(word, (word[:6],))
+        # Word-start matching keeps short stems from finding phantom support.
+        if any(re.search(rf"\b{re.escape(stem)}", text) for stem in stems):
+            matched += 1
+
+    return matched
+
+
+def _topic_support_requirement(topic: str) -> int:
+    """Report how many topic words a clause/question must match to count.
+
+    Args:
+        topic: Cleaned denied-topic phrase.
+
+    Returns:
+        2 for multi-word topics, 1 for single words - one chief-complaint word
+        can never verify a compound claim like "prior lip swelling after food".
+    """
+    return min(2, len(topic.split()))
+
+
+def _is_short_denial_answer(masked_row_text: str) -> bool:
+    """Report whether a patient row is a short answer that opens with a denial.
+
+    Args:
+        masked_row_text: Patient row with epistemic phrases masked, so "no idea"
+            is never a denial answer.
+
+    Returns:
+        True for answers like "No." or "No, I haven't noticed anything like
+        that." - at most eight lexical words, starting with a denial word, and
+        free of affirmative content.
+    """
+    words = re.findall(r"[a-z']+", masked_row_text)
+    if not words or words[0] not in _ANSWER_DENIAL_OPENERS:
+        return False
+    if len(words) > _SHORT_ANSWER_MAX_WORDS:
+        return False
+
+    return _AFFIRMATIVE_ANSWER_PATTERN.search(masked_row_text) is None
 
 
 def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -> bool:
@@ -585,50 +769,45 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         normalized_rows: Lowercased transcript rows in spoken order.
 
     Returns:
-        True when a patient denial row covers the topic - directly, or as a short "No."
-        answering a clinician question that named the topic just before.
+        True when a patient denial covers the topic - inside one local clause,
+        or as a short denial answer to a clinician question that named the
+        topic just before.
     """
-    stems = _topic_stems(topic)
+    required_words = _topic_support_requirement(topic)
     for row_index, row in enumerate(normalized_rows):
-        if row["role"] != "PATIENT" or _PATIENT_DENIAL_PATTERN.search(row["text"]) is None:
+        if row["role"] != "PATIENT":
             continue
-        # The denial names the topic itself, e.g. "no fever".
-        if _does_row_mention_any_stem(row["text"], stems):
-            return True
-        # A bare "No." counts when the clinician named the topic shortly before
-        # it - six rows back, because live transcripts split one question
-        # across several fragment rows.
-        recent_rows = normalized_rows[max(0, row_index - 6) : row_index]
-        if len(row["text"]) <= 40 and any(
-            _does_row_mention_any_stem(earlier["text"], stems) for earlier in recent_rows
-        ):
-            return True
+        masked = _mask_epistemic_phrases(row["text"])
 
-    return False
+        # Direct support: a real denial and the topic inside the SAME clause,
+        # so a lip mention early in a monologue cannot pair with a "no" at its
+        # end (the day3 laundering hole).
+        for clause in _denial_evidence_clauses(masked):
+            if _PATIENT_DENIAL_PATTERN.search(clause) is None:
+                continue
+            if topic in clause or _matched_topic_words(clause, topic) >= required_words:
+                return True
 
-
-def _does_row_mention_any_stem(row_text: str, stems: list[str]) -> bool:
-    """Report whether a transcript row mentions a topic stem as a word start.
-
-    Args:
-        row_text: Lowercased transcript row.
-        stems: Topic stems such as "breath"; matched at word starts only, so
-            "breath" finds "breathless" but "all" never matches inside "actually".
-
-    Returns:
-        True when the row genuinely mentions the topic.
-    """
-    # Word-start matching keeps short stems from finding phantom support.
-    for stem in stems:
-        if re.search(rf"\b{re.escape(stem)}", row_text) is not None:
-            return True
+        # Short-answer support: "No." counts when a CLINICIAN row named the
+        # topic shortly before - six rows back, because live transcripts split
+        # one question across several fragment rows.
+        if _is_short_denial_answer(masked):
+            recent_rows = normalized_rows[max(0, row_index - 6) : row_index]
+            for earlier in recent_rows:
+                if earlier["role"] != "DOCTOR":
+                    continue
+                if (
+                    topic in earlier["text"]
+                    or _matched_topic_words(earlier["text"], topic) >= required_words
+                ):
+                    return True
 
     return False
 
 
 def _exam_language_violation(
     sentence: str, normalized_rows: list[dict[str, str]]
-) -> str | None:
+) -> tuple[str, str] | None:
     """Check that examination-findings language matches a performed examination.
 
     Args:
@@ -636,11 +815,15 @@ def _exam_language_violation(
         normalized_rows: Lowercased transcript rows searched for performed-exam evidence.
 
     Returns:
-        Plain-English reason, or None when the sentence is honest ("no exam documented")
+        (reason, subtype), or None when the sentence is honest ("no exam documented")
         or an examination really happened.
     """
     # Honest absence ("no examination findings documented") is the wanted behavior.
     if _EXAM_ABSENCE_PATTERN.search(sentence) is not None:
+        return None
+
+    # An exam that is only proposed/planned claims no findings either.
+    if _EXAM_INTENT_PATTERN.search(sentence) is not None:
         return None
 
     claims_exam = any(pattern.search(sentence) is not None for pattern in _EXAM_CLAIM_PATTERNS)
@@ -655,5 +838,6 @@ def _exam_language_violation(
 
     return (
         "this sentence uses examination-findings language, but the transcript shows no"
-        " examination was performed - screening answers are history, not exam findings"
+        " examination was performed - screening answers are history, not exam findings",
+        "exam-claim-without-performance",
     )

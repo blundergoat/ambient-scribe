@@ -37,6 +37,12 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  */
 final class ScribeControllerTest extends TestCase
 {
+    /** Full transcript size returned by the mocked FastAPI summary response. */
+    private const int SUMMARY_ORIGINAL_TRANSCRIPT_CHARS = 48_000;
+
+    /** Selected transcript size returned by the mocked FastAPI summary response. */
+    private const int SUMMARY_KEPT_TRANSCRIPT_CHARS = 32_000;
+
     /**
      * Ensures users landing on `/` are sent to the actual scribe workspace.
      *
@@ -271,7 +277,12 @@ final class ScribeControllerTest extends TestCase
         $response = $controller->summary($sessionId, $request);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame('Session Summary', $this->decodeJsonResponse($response)['title']);
+        $responsePayload = $this->decodeJsonResponse($response);
+        self::assertSame('Session Summary', $responsePayload['title']);
+        self::assertSame('browser', $responsePayload['transcript_source']);
+        self::assertTrue($responsePayload['transcript_truncated']);
+        self::assertSame(self::SUMMARY_ORIGINAL_TRANSCRIPT_CHARS, $responsePayload['original_transcript_chars']);
+        self::assertSame(self::SUMMARY_KEPT_TRANSCRIPT_CHARS, $responsePayload['kept_transcript_chars']);
         self::assertCount(1, $seenRequests);
         self::assertSame('POST', $seenRequests[0]['method']);
         self::assertSame("http://agent.test/session/{$sessionId}/summary", $seenRequests[0]['url']);
@@ -704,6 +715,10 @@ final class ScribeControllerTest extends TestCase
                         'session_id' => $sessionId,
                         'title' => 'Session Summary',
                         'sections' => [],
+                        'transcript_source' => 'browser',
+                        'transcript_truncated' => true,
+                        'original_transcript_chars' => self::SUMMARY_ORIGINAL_TRANSCRIPT_CHARS,
+                        'kept_transcript_chars' => self::SUMMARY_KEPT_TRANSCRIPT_CHARS,
                     ], JSON_THROW_ON_ERROR),
                     info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
                 );

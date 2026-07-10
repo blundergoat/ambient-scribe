@@ -197,7 +197,7 @@ class TestRowIdentityThroughSummaryFlow:
         # The note's transcript input uses the corrected role, not the stale
         # one the browser posted - the clinician's fix reaches the summary.
         assert "[PATIENT] row 2" in context.transcript
-        assert context.stored_segments[1]["role"] == "PATIENT"
+        assert context.selected_segments[1]["role"] == "PATIENT"
 
 
 class TestSummaryMergeContract:

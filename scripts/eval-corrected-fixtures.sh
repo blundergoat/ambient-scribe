@@ -24,17 +24,11 @@ SOURCE_CHIP_SCORE_TEXT_PATH="$RUN_DIR/source-chip-score.txt"
 SOURCE_CHIP_SCORE_JSON_PATH="$RUN_DIR/source-chip-score.json"
 SOURCE_CHIP_FAIL_ON_FINDINGS="${CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS:-0}"
 # fast = blast chunks as quickly as the socket accepts (historical baselines);
-# 1x   = real-time pacing with browser-like chunk sizes, for live-lane numbers
-#        that match what a clinician's replay actually produces.
+# 1x   = real-time pacing; the browser and eval both default to 5-second chunks.
 PACE_MODE="${EVAL_PACE:-fast}"
-if [[ "$PACE_MODE" == "1x" && -z "${EVAL_CHUNK_MS:-}" ]]; then
-  # The browser's PCM streamer sends ~256ms chunks; 5s bursts would still be
-  # unrepresentative even when the overall rate is real-time.
-  CHUNK_MS=250
-else
-  CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
-fi
+CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
 ROLE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-8}"
+REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 declare -a FIXTURE_QUERIES=()
 declare -a FIXTURE_PATHS=()
@@ -47,21 +41,23 @@ Usage:
   scripts/eval-corrected-fixtures.sh [--seconds N] --all
 
 Examples:
-  scripts/eval-corrected-fixtures.sh --seconds 60 consultation03
-  scripts/eval-corrected-fixtures.sh --seconds 60 consultation02 consultation03 consultation08
+  scripts/eval-corrected-fixtures.sh --seconds 60 consultation03-i-have-terrible-headache
+  scripts/eval-corrected-fixtures.sh --seconds 60 \
+    consultation03-i-have-terrible-headache consultation08-i-have-dry-itchy-skin
 
 Environment:
   AGENT_HTTP_URL                 default http://localhost:48101
   AGENT_WS_URL                   default ws://localhost:48101
   EVAL_FIXTURE_SECONDS           optional cutoff to stream from each WAV
   CORRECTED_FIXTURE_RUN_DIR      optional artifact directory
+  EVAL_CHUNK_MS                  PCM chunk size in milliseconds, default 5000
   EVAL_ROLE_TIMELINE_SETTLE_SECONDS
-                                  seconds to wait for visible live Doctor/Patient labels; default 8
+                                  seconds to wait for final role decisions; default 8
+  EVAL_REQUIRE_STRUCTURED_LOGS     set 1 to require LOG_FORMAT=json before replay; default 0
   CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS
                                   set 1 to fail the eval when source-chip findings exist; default 0
   EVAL_PACE                      fast (default, historical-baseline blast) or 1x
-                                  (real-time pacing + browser-like 250ms chunks;
-                                  live-lane numbers then reflect real replays)
+                                  (real-time pacing; default chunks match the browser's 5000ms)
 USAGE
 }
 
@@ -147,6 +143,22 @@ require_ready_agent() {
   # A failed health check means replay would not produce scoreable artifacts.
   if ! curl -fsS "$AGENT_HTTP_URL/health" >/dev/null; then
     echo "error: agent health check failed at $AGENT_HTTP_URL/health" >&2
+    exit 2
+  fi
+}
+
+require_structured_agent_logs() {
+  # M02-grade role diagnostics must fail before streaming if JSON events are unavailable.
+  if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" ]]; then
+    return 0
+  fi
+
+  local log_format
+  log_format="$(
+    docker compose exec -T nemo-agent sh -c 'printf "%s" "$LOG_FORMAT"' 2>/dev/null || true
+  )"
+  if [[ "$log_format" != "json" ]]; then
+    echo "error: EVAL_REQUIRE_STRUCTURED_LOGS=1 requires nemo-agent LOG_FORMAT=json" >&2
     exit 2
   fi
 }
@@ -398,6 +410,7 @@ request_correction() {
   local response_path="$3"
 
   curl -fsS \
+    --max-time 120 \
     -H 'Content-Type: application/json' \
     --data-binary "@$request_path" \
     "$AGENT_HTTP_URL/session/$session_id/correction" \
@@ -437,6 +450,33 @@ assert_no_websocket_errors() {
   fi
 }
 
+write_role_timeline() {
+  # Persist the role decisions that produced the history labels scored below.
+  local session_id="$1"
+  local timeline_path="$2"
+  local quality_path="$3"
+
+  # Tail-batch role updates can land after disconnect and the quality snapshot.
+  sleep "$ROLE_SETTLE_SECONDS"
+  docker compose logs nemo-agent --since "$RUN_STARTED_AT" 2>/dev/null \
+    | "$PYTHON_BIN" scripts/role-timeline.py --quality-json "$quality_path" "$session_id" \
+    > "$timeline_path"
+
+  # Console logs discard the structured fields needed to explain visible-role variance.
+  if ! grep -Eq '"event": "(role_inference|role_mapping)\.' "$timeline_path"; then
+    if [[ "$REQUIRE_STRUCTURED_LOGS" == "1" ]]; then
+      echo "error: no structured role events captured for $session_id despite LOG_FORMAT=json" >&2
+      exit 1
+    fi
+    echo "warn: no structured role events captured for $session_id; use EVAL_REQUIRE_STRUCTURED_LOGS=1 for diagnostic gates" >&2
+  fi
+
+  # A mismatch is evidence of post-snapshot decisions, not a reason to discard the timeline.
+  if grep -q '"flip_counts_match": false' "$timeline_path"; then
+    echo "warn: session.quality flip counters disagree with $timeline_path" >&2
+  fi
+}
+
 score_artifact() {
   # Score a live or corrected transcript artifact against TextGrid truth.
   local artifact_path="$1"
@@ -444,8 +484,12 @@ score_artifact() {
   local doctor_grid="$3"
   local patient_grid="$4"
   local score_path="$5"
+  local quality_path="$6"
+  local row_diagnostics_path="$7"
 
   "$PYTHON_BIN" scripts/transcript-quality.py \
+    --quality-json "$quality_path" \
+    --row-diagnostics-json "$row_diagnostics_path" \
     "$artifact_path" \
     "$cutoff_seconds" \
     "$doctor_grid" \
@@ -537,6 +581,9 @@ PY
   local correction_response_path="$fixture_run_dir/correction-response.json"
   local live_score_path="$fixture_run_dir/live-transcript-quality.txt"
   local corrected_score_path="$fixture_run_dir/corrected-transcript-quality.txt"
+  local timeline_path="$fixture_run_dir/role-timeline.jsonl"
+  local live_row_diagnostics_path="$fixture_run_dir/live-row-diagnostics.json"
+  local corrected_row_diagnostics_path="$fixture_run_dir/corrected-row-diagnostics.json"
 
   printf 'corrected eval fixture=%s session_id=%s pace=%s chunk_ms=%s\n' \
     "$fixture_name" "$session_id" "$PACE_MODE" "$CHUNK_MS" >&2
@@ -547,11 +594,18 @@ PY
   write_correction_request "$history_path" "$correction_request_path"
   request_correction "$session_id" "$correction_request_path" "$correction_response_path"
   fetch_json "$AGENT_HTTP_URL/session/$session_id/corrected-transcript" "$corrected_path"
+  write_role_timeline "$session_id" "$timeline_path" "$quality_path"
+  # Re-fetch after the fixed settle window so live scoring uses the timeline's final mapping.
+  fetch_json "$AGENT_HTTP_URL/session/$session_id/history" "$history_path"
 
   local cutoff_seconds
   cutoff_seconds="$(cutoff_seconds_for_history "$history_path" "$wav_path")"
-  score_artifact "$history_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" "$live_score_path"
-  score_artifact "$corrected_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" "$corrected_score_path"
+  score_artifact \
+    "$history_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" \
+    "$live_score_path" "$quality_path" "$live_row_diagnostics_path"
+  score_artifact \
+    "$corrected_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" \
+    "$corrected_score_path" "$quality_path" "$corrected_row_diagnostics_path"
 
   REPORT_ROWS+=(
     "$(
@@ -577,6 +631,7 @@ score_source_chips_for_run() {
 
 resolve_fixtures
 require_ready_agent
+require_structured_agent_logs
 mkdir -p "$RUN_DIR"
 
 # Each selected fixture becomes one saved live/corrected comparison.

@@ -77,6 +77,7 @@ def run_summary_generation(
     transcript: str,
     citation_segments: list[dict[str, Any]] | None = None,
     transcript_segments: list[dict[str, Any]] | None = None,
+    citation_source_index: str | None = None,
 ) -> dict | None:
     """Generate the note the clinician sees after pressing Summarise.
 
@@ -92,6 +93,8 @@ def run_summary_generation(
             legacy uncited summary path.
         transcript_segments: Visit rows (role/text) the fidelity checks verify against; `None` or
             empty skips fidelity checking, so the note ships exactly as generated.
+        citation_source_index: Preformatted selected citation rows; null preserves legacy
+            formatting, while a truncation marker can separate selected opening/tail runs.
 
     Returns:
         Parsed summary payload; `None` means the browser should show a generation failure.
@@ -102,11 +105,11 @@ def run_summary_generation(
             transcript,
             context_snippets,
             citation_segments=citation_segments,
+            citation_source_index=citation_source_index,
         )
 
         violations: list[FidelityViolation] = []
-        validated_summary: SessionSummaryOutput | None = None
-        metric_fields: dict[str, Any] = {}
+        drafts: list[tuple[SessionSummaryOutput, list[FidelityViolation], dict[str, Any]]] = []
         # One clean draft plus at most one fidelity-guided redo keeps the wait
         # after "Summarise" bounded while still fixing most fabrications.
         for attempt in (0, 1):
@@ -127,11 +130,36 @@ def run_summary_generation(
                 list(validated_summary.key_points),
                 transcript_segments or [],
             )
+            drafts.append((validated_summary, violations, metric_fields))
             # A fidelity-clean draft is the note the clinician gets - done.
             if not violations:
                 break
 
             _log_fidelity_violations(session_id, attempt, violations)
+
+        # The redo must never make the note worse: ship whichever draft has
+        # fewer unsupported sentences; a tie keeps the redo, which followed the
+        # named-sentence feedback (M10 field case: a 1-violation first draft
+        # was once replaced by a 3-violation retry).
+        selected_attempt = min(
+            range(len(drafts)), key=lambda index: (len(drafts[index][1]), -index)
+        )
+        validated_summary, violations, metric_fields = drafts[selected_attempt]
+        if len(drafts) > 1:
+            logger.warning(
+                "summary.fidelity_draft_selected session_id=%s selected_attempt=%s"
+                " attempt_0_count=%s attempt_1_count=%s",
+                session_id,
+                selected_attempt,
+                len(drafts[0][1]),
+                len(drafts[1][1]),
+                extra={
+                    "session_id": session_id,
+                    "selected_attempt": selected_attempt,
+                    "attempt_0_count": len(drafts[0][1]),
+                    "attempt_1_count": len(drafts[1][1]),
+                },
+            )
 
         parsed_summary = validated_summary.model_dump()
         # Sentences the redo could not support stay visible but marked, so the
@@ -173,6 +201,19 @@ def _log_fidelity_violations(
         violations: Failures found in this draft; never empty when called.
     """
     rules = sorted({violation.rule for violation in violations})
+    # Each entry identifies where and why WITHOUT clinical prose: note
+    # sentences, topics, and content-derived hashes must never reach logs.
+    violation_fields = [
+        {
+            "ordinal": ordinal,
+            "rule": violation.rule,
+            "subtype": violation.subtype,
+            "location": violation.location,
+            "sentence_ordinal": violation.sentence_ordinal,
+            "word_count": violation.word_count,
+        }
+        for ordinal, violation in enumerate(violations)
+    ]
     logger.warning(
         "summary.fidelity_violations session_id=%s attempt=%s count=%s rules=%s",
         session_id,
@@ -184,6 +225,7 @@ def _log_fidelity_violations(
             "attempt": attempt,
             "count": len(violations),
             "rules": rules,
+            "violations": violation_fields,
         },
     )
 
@@ -248,6 +290,7 @@ def summary_generation_prompt(
     transcript: str,
     context_snippets: list[dict[str, str]],
     citation_segments: list[dict[str, Any]] | None = None,
+    citation_source_index: str | None = None,
 ) -> str:
     """Build the prompt used for the clinician's post-visit summary.
 
@@ -259,6 +302,8 @@ def summary_generation_prompt(
         context_snippets: Retrieved KB snippets; empty means the prompt has no extra documentation reminders.
         citation_segments: Corrected transcript rows available for source citations; `None` or empty means the
             prompt uses the plain transcript and returns no source chips.
+        citation_source_index: Optional preformatted source rows selected by the request layer;
+            null derives the unchanged source index from `citation_segments`.
 
     Returns:
         Prompt text sent to the off-GPU summary model for the clinician's note.
@@ -277,7 +322,11 @@ def summary_generation_prompt(
 
     # Corrected rows are available, so the model gets stable IDs for source-linked note chips.
     if citation_segments:
-        source_index = source_index_text(citation_segments)
+        source_index = (
+            citation_source_index
+            if citation_source_index is not None
+            else source_index_text(citation_segments)
+        )
         # No corrected row had both text and ID, so the clinician still gets an uncited note.
         if source_index == "":
             prompt_parts.append(transcript)

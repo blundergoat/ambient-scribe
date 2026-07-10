@@ -1098,6 +1098,87 @@ test.describe("Summary provenance (M5)", () => {
   });
 });
 
+test.describe("Summary input provenance (M08)", () => {
+  test("HTTP summary keeps a persistent notice when middle transcript rows were omitted", async ({
+    page,
+  }) => {
+    const correctionCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder);
+    await page.route("**/session/*/summary", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "Selected-row summary",
+          sections: [{ heading: "Plan", content: "Review the complete transcript." }],
+          key_points: [],
+          transcript_source: "browser",
+          transcript_truncated: true,
+          original_transcript_chars: 48000,
+          kept_transcript_chars: 32000,
+        }),
+      })
+    );
+    await injectFakeSegments(page, 2);
+
+    await page.evaluate(() => requestSummary());
+
+    const summaryStatus = page.locator("#summaryStatus");
+    const notice = page.locator("#summaryTruncationNotice");
+    await expect(page.locator(".summary-section__content")).toContainText(
+      "Review the complete transcript."
+    );
+    await expect(summaryStatus).toHaveAttribute("role", "status");
+    await expect(summaryStatus).toHaveAttribute("aria-live", "polite");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("opening and closing transcript rows");
+    await expect(notice).toContainText("omitted middle content");
+    await page.waitForTimeout(250);
+    await expect(notice).toBeVisible();
+  });
+
+  test("Mercure metadata shows the same notice and a later complete note clears it", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      handleSummaryEvent({
+        type: "summary",
+        title: "Async selected-row summary",
+        sections: [{ heading: "Plan", content: "First note." }],
+        key_points: [],
+        transcript_source: "corrected",
+        transcript_truncated: true,
+        original_transcript_chars: 50000,
+        kept_transcript_chars: 32700,
+      });
+    });
+
+    const notice = page.locator("#summaryTruncationNotice");
+    await expect(notice).toBeVisible();
+
+    await page.evaluate(() => {
+      handleSummaryEvent({
+        type: "summary",
+        title: "Complete summary",
+        sections: [{ heading: "Plan", content: "Complete note." }],
+        key_points: [],
+        transcript_source: "corrected",
+        transcript_truncated: false,
+        original_transcript_chars: 1200,
+        kept_transcript_chars: 1200,
+      });
+    });
+
+    await expect(page.locator(".summary-section__content")).toContainText("Complete note.");
+    await expect(notice).toBeHidden();
+    await expect(notice).toHaveText("");
+  });
+});
+
 test.describe("Post-visit correction before summary", () => {
   test("runs correction before sending the summary request", async ({ page }) => {
     const correctionCalls = [];

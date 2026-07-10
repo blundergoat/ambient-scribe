@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-10
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -107,11 +107,28 @@ During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` report
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import").
+**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import"), `.goat-flow/plans/0.4.0/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections").
 
 Full pytest caught that the test helper loaded `scripts/analyze-logs.py` with `importlib.util.module_from_spec()` but did not register it in `sys.modules` before executing the module. Python dataclasses resolving postponed annotations then failed during import.
 
+The same mistake recurred in the M08 context-measurement probe when it dynamically loaded a
+module containing dataclasses. This recurrence confirms the registration step belongs in the
+probe template, not only in one test helper.
+
 **Lesson:** When test-loading a hyphenated Python script that defines dataclasses or postponed annotations, insert the module into `sys.modules` before `spec.loader.exec_module(module)`, then rerun the full test gate that found the issue.
+
+## Lesson: Provider probes must modify the SDK-formatted request in place
+
+**Created:** 2026-07-10
+**Evidence:** `.goat-flow/plans/0.4.0/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections"), `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
+
+The first M08 Bedrock token-cap probe passed a new `inferenceConfig` beside the request generated
+by the installed Strands formatter. That formatter had already embedded `inferenceConfig`, so the
+duplicate wrapper made the probe invalid before it could measure the real request.
+
+**Lesson:** Build provider probes through the installed runtime formatter, inspect the resulting
+request shape, and override an existing nested limit such as `inferenceConfig.maxTokens` in place.
+Do not assume the wrapper leaves provider options for the caller to add again.
 
 ## Lesson: GPU image import gates need a local/pending split (2026-07-04)
 
