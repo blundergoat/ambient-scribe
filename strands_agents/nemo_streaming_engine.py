@@ -647,6 +647,27 @@ class StreamingSessionEngine:
         return first_chunk if buffer_idx == 0 else later_chunks
 
     @property
+    def speaker_slot_voiced_frame_counts(self) -> dict[str, int]:
+        """Return PHI-safe voice totals for a wrong-speaker replay investigation.
+
+        Returns:
+            Slot-to-frame totals; empty means the diarizer has not heard voiced audio yet.
+        """
+        voiced_frames_by_speaker_slot: dict[str, int] = {}
+
+        # Each cache slot's final ledger total lets an operator compare voices without words.
+        for speaker_slot_index, voiced_frame_ledger in self._slot_frame_ledgers.items():
+            # A never-voiced slot gives the operator no evidence and stays out of the artifact.
+            if voiced_frame_ledger == []:
+                continue
+
+            voiced_frames_by_speaker_slot[f"speaker_{speaker_slot_index}"] = int(
+                voiced_frame_ledger[-1][0]
+            )
+
+        return voiced_frames_by_speaker_slot
+
+    @property
     def pending_row_count(self) -> int:
         """Slots currently holding unemitted words (the held tail)."""
         unstable_slots = sum(

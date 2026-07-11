@@ -63,6 +63,10 @@ services:
       - NEMO_BUFFER_MAX_DURATION=${NEMO_BUFFER_MAX_DURATION:-900}
       - NEMO_SPEAKER_CAP=${NEMO_SPEAKER_CAP:-2}
       - NEMO_SESSION_ENGINE=${NEMO_SESSION_ENGINE:-windowed}
+      # Off by default; named QA replays log only speaker IDs, counts, shares, and timings.
+      - NEMO_STREAMING_SLOT_EVIDENCE=${NEMO_STREAMING_SLOT_EVIDENCE:-0}
+      # Off by default; measured QA replays can keep sustained voices out of a dominant row.
+      - NEMO_STREAMING_CROSSTALK_GUARD=${NEMO_STREAMING_CROSSTALK_GUARD:-0}
       - MAX_SESSIONS=${MAX_SESSIONS:-100}
       - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-7200}
       - SESSION_STORAGE=${SESSION_STORAGE:-memory}

@@ -1,9 +1,35 @@
 ---
 category: verification
-last_reviewed: 2026-07-11
+last_reviewed: 2026-07-12
 ---
 
 # READ / SCOPE / VERIFY Lessons
+
+## Lesson: Decision evidence must name the branch that changed the outcome
+
+**Created:** 2026-07-12
+**What happened:** M04's first guarded replay correctly kept a dominant speaker visible, but
+reported `keep_sustained_voice` because the diagnostic checked the new acoustic guard before the
+older emitted-duration rule. The behavior was safe; the label falsely credited the new policy,
+so the replay was stopped at 25 seconds and restarted after precedence was pinned.
+**Evidence:**
+`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1-attempt1-label-abort-agent.log`
+(search: `"window_index": 5`) and `phase1-green-after-label-fix.log`.
+**Prevention:** For policy diagnostics, evaluate and test the ordinary decisive branch before a
+fallback/guard branch. Pin one control that already passes the old rule and one specimen whose
+outcome changes only because of the new rule before spending a full replay.
+
+## Lesson: A detached eval is not running until its sentinel path advances
+
+**Created:** 2026-07-12
+**What happened:** M04 Phase 0's first nested `nohup` launch returned without an active replay or
+log progress. No audio ran, but relying on the launch command alone would have left a silent,
+incomplete evidence directory.
+**Evidence:** `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase0-eval.log` and the later
+managed runner's `M04_PHASE0_EVAL_EXIT=0` sentinel show the difference.
+**Prevention:** Put the exit sentinel inside an evidence-owned runner, keep long commands in a
+managed process/session (or a proven new session), and verify the first fixture line plus live
+process state immediately. A successful shell launch is not an eval start signal.
 
 ## Lesson: CSS pseudo-content does not preserve copied or accessible text
 
