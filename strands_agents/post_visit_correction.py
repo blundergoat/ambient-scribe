@@ -10,10 +10,12 @@ can consume without changing live Mercure contracts.
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -55,6 +57,14 @@ DEFAULT_MAX_WORDS_WITHOUT_SCAFFOLD = 18
 _AUDIO_SAMPLE_RATE = 16000
 _MIN_ANCHOR_SCORE = 0.48
 _MIN_SHORT_ANCHOR_SCORE = 0.86
+_ONE_SHOT_MAX_AUDIO_SECONDS = 240.0
+_AUDIO_CHUNK_SECONDS = 180.0
+# A trailing remainder shorter than this rides inside the final chunk. Field
+# evidence 2026-07-11: a 1.56-second tail sliver decoded empty and vetoed an
+# otherwise healthy 9-minute correction, forcing the note onto live rows.
+_MIN_FINAL_CHUNK_SECONDS = 10.0
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 2.0
+_DEVICE_NOT_READY_PATTERN = re.compile(r"\bdevice\s+not\s+ready\b", re.IGNORECASE)
 
 
 class PostVisitCorrectionError(RuntimeError):
@@ -65,6 +75,24 @@ class PostVisitCorrectionError(RuntimeError):
     summarize the live preview, but the user should not be told that a
     corrected transcript exists.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempts: int = 0,
+        retried: bool = False,
+        reason_category: str = "correction_failed",
+    ) -> None:
+        """Keep safe recovery metadata with one unavailable correction.
+
+        Use when the browser must fall back to live rows without seeing raw
+        CUDA details; zero attempts means ASR never started for this visit.
+        """
+        super().__init__(message)
+        self.attempts = attempts
+        self.retried = retried
+        self.reason_category = reason_category
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,12 +109,18 @@ class PostVisitCorrectionResult:
         model_name: ASR model shown in debug/provenance; empty is not emitted by this result.
         word_count: Corrected ASR word total; zero means no useful transcript was created.
         source: Correction lane label used by API responses and summary evidence.
+        attempts: Transcribe attempt count; `2` means one allowlisted retry occurred.
+        retried: True only when the user waited for that one recovery retry.
+        chunk_count: Audio pieces transcribed in order; `1` is the unchanged short-visit path.
     """
 
     segments: list[dict[str, Any]]
     model_name: str
     word_count: int
     source: str = "post_visit_correction"
+    attempts: int = 1
+    retried: bool = False
+    chunk_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,12 +143,59 @@ class AnchorMatch:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class _NemoTranscriptionResult:
+    """Carry recombined NeMo evidence and recovery metadata into correction.
+
+    The user sees its text as corrected rows; attempt and chunk fields explain
+    whether the request used bounded audio or a transient retry. Missing timing
+    or confidence keeps the existing unstyled, unsplit rendering.
+    """
+
+    text: str
+    word_timings: list[dict[str, Any]] | None
+    word_confidences: list[float] | None
+    attempts: int
+    retried: bool
+    chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _AudioChunk:
+    """Describe one ordered WAV submitted to the restored correction model.
+
+    Short visits point at the original retained-audio WAV and keep it. Long
+    visits point at bounded scratch WAVs whose offset restores visit-relative
+    timing and whose cleanup flag prevents temporary-file leaks.
+    """
+
+    path: Path
+    start_seconds: float
+    delete_after_use: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _TranscribeCallResult:
+    """Keep one successful model result and its retry outcome together.
+
+    Use after a chunk or short visit transcribes so the correction response can
+    distinguish a normal call from the single user-visible recovery attempt.
+    """
+
+    hypotheses: list[Any]
+    attempts: int
+    retried: bool
+
+
 def run_post_visit_correction(
     *,
     pcm_audio: bytes,
     live_segments: list[dict[str, Any]],
     model_name: str = DEFAULT_POST_VISIT_ASR_MODEL,
-    transcribe_audio_file: Callable[[str, str], PostVisitTranscription | str] | None = None,
+    transcribe_audio_file: Callable[
+        [str, str], PostVisitTranscription | _NemoTranscriptionResult | str
+    ]
+    | None = None,
 ) -> PostVisitCorrectionResult:
     """Run second-pass ASR and map corrected text onto stored live rows.
 
@@ -141,8 +222,9 @@ def run_post_visit_correction(
     try:
         # Tests can inject a transcriber; the real UI path uses the configured NeMo model.
         transcriber = transcribe_audio_file or transcribe_audio_with_nemo
+        raw_transcription = transcriber(selected_model_name, str(audio_path))
         transcript_text, raw_word_timings, raw_word_confidences = (
-            coerce_post_visit_transcription(transcriber(selected_model_name, str(audio_path)))
+            coerce_post_visit_transcription(raw_transcription)
         )
     finally:
         audio_path.unlink(missing_ok=True)
@@ -169,6 +251,9 @@ def run_post_visit_correction(
             "segments": len(corrected_segments),
             "words": len(words),
             "model": selected_model_name,
+            "attempts": int(getattr(raw_transcription, "attempts", 1)),
+            "retried": bool(getattr(raw_transcription, "retried", False)),
+            "chunk_count": int(getattr(raw_transcription, "chunk_count", 1)),
         },
     )
 
@@ -176,82 +261,437 @@ def run_post_visit_correction(
         segments=corrected_segments,
         model_name=selected_model_name,
         word_count=len(words),
+        attempts=int(getattr(raw_transcription, "attempts", 1)),
+        retried=bool(getattr(raw_transcription, "retried", False)),
+        chunk_count=int(getattr(raw_transcription, "chunk_count", 1)),
     )
 
 
-def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> PostVisitTranscription:
-    """Transcribe one WAV with a lazily loaded NeMo ASR checkpoint.
+def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscriptionResult:
+    """Transcribe retained visit audio on one restored NeMo model.
+
+    Short visits keep the original one-shot call. Capacity-risk visits use
+    sequential chunks, and only the observed device-not-ready family receives
+    one same-model retry before the browser falls back to live rows.
 
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
         audio_path: WAV path written from the stopped browser audio buffer.
 
     Returns:
-        Transcript text plus best-effort word timings; empty text means the
-        correction pass should fall back, None timings disable timing splits.
+        Recombined transcript evidence plus attempts/chunk metadata; empty text
+        means correction cannot replace the user's live transcript.
 
     Raises:
         PostVisitCorrectionError: When NeMo cannot load or transcribe the stopped visit audio.
     """
+    _release_cached_cuda_memory_before_model_restore()
+    asr_model = _load_post_visit_asr_model(model_name)
+    # Confidence is a pure observer of the decode and never changes visible words.
+    try:
+        enable_word_confidence_decoding(asr_model)
+    except Exception as confidence_error:  # pragma: no cover - NeMo-version-specific.
+        # Example: the user requests a note with an older override model that lacks this config.
+        logger.warning(
+            "post_visit_correction.confidence_enable_failed %s",
+            type(confidence_error).__name__,
+        )
+
+    audio_chunks = _build_audio_chunks(Path(audio_path))
+    combined_text_parts: list[str] = []
+    combined_word_timings: list[dict[str, Any]] = []
+    combined_word_confidences: list[float] = []
+    all_chunks_have_timings = True
+    all_chunks_have_confidence = True
+    attempts = 1
+    retried = False
+    try:
+        # Each ordered chunk reuses the same model so only activation memory is bounded.
+        for audio_chunk in audio_chunks:
+            transcribe_call = _transcribe_with_loaded_model(asr_model, str(audio_chunk.path))
+            attempts = max(attempts, transcribe_call.attempts)
+            retried = retried or transcribe_call.retried
+            # An empty chunk would silently remove part of the user's consultation.
+            if transcribe_call.hypotheses == []:
+                raise PostVisitCorrectionError(
+                    "Second-pass ASR returned no transcript for one audio chunk.",
+                    attempts=attempts,
+                    retried=retried,
+                    reason_category="empty_result",
+                )
+
+            chunk_transcription = _transcription_from_hypothesis(
+                transcribe_call.hypotheses[0],
+                str(audio_chunk.path),
+                audio_chunk.start_seconds,
+            )
+            # Empty decoded text is not a complete corrected source for the note.
+            if chunk_transcription.text == "":
+                raise PostVisitCorrectionError(
+                    "Second-pass ASR returned no transcript text for one audio chunk.",
+                    attempts=attempts,
+                    retried=retried,
+                    reason_category="empty_result",
+                )
+            combined_text_parts.append(chunk_transcription.text)
+            # Missing timing on one chunk makes the combined timing stream incomplete.
+            if chunk_transcription.word_timings is None:
+                all_chunks_have_timings = False
+            else:
+                combined_word_timings.extend(chunk_transcription.word_timings)
+            # Missing confidence on one chunk keeps all recombined rows unmeasured.
+            if chunk_transcription.word_confidences is None:
+                all_chunks_have_confidence = False
+            else:
+                combined_word_confidences.extend(chunk_transcription.word_confidences)
+    finally:
+        _remove_scratch_audio_chunks(audio_chunks)
+
+    return _NemoTranscriptionResult(
+        text=" ".join(combined_text_parts),
+        word_timings=combined_word_timings if all_chunks_have_timings else None,
+        word_confidences=(
+            combined_word_confidences if all_chunks_have_confidence else None
+        ),
+        attempts=attempts,
+        retried=retried,
+        chunk_count=len(audio_chunks),
+    )
+
+
+def _release_cached_cuda_memory_before_model_restore() -> None:
+    """Release unreachable correction allocations before restoring the model.
+
+    Use after a user finishes streaming or a prior correction: active live
+    models remain allocated, while stale cache cannot starve this note request.
+    """
+    gc.collect()
+    try:
+        import torch
+    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+        # Example: an unusual agent image reaches Summarise without its GPU runtime import.
+        logger.warning(
+            "post_visit_correction.preload_cache_release_import_failed %s",
+            type(torch_import_error).__name__,
+        )
+        return
+
+    try:
+        torch.cuda.empty_cache()
+    except Exception as cache_release_error:  # pragma: no cover - GPU-state-specific.
+        # Example: a prior visit left the GPU unavailable before this user's model can load.
+        logger.warning(
+            "post_visit_correction.preload_cache_release_failed %s",
+            type(cache_release_error).__name__,
+        )
+
+
+def _load_post_visit_asr_model(model_name: str) -> Any:
+    """Restore the configured correction model once for one user request.
+
+    Use before short or chunked transcription; a failure means no GPU attempt
+    occurred and the browser must continue from the live transcript.
+    """
     try:
         import nemo.collections.asr as nemo_asr
     except Exception as import_error:  # pragma: no cover - depends on NeMo container.
+        # Example: the user requests a summary while the agent image lacks NeMo imports.
         raise PostVisitCorrectionError(
-            "NeMo ASR is unavailable for post-visit correction."
+            "NeMo ASR is unavailable for post-visit correction.",
+            reason_category="model_unavailable",
         ) from import_error
 
     try:
-        asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
-        # Confidence is a pure observer of the decode (probe-proven byte-identical
-        # output); enabling it lets corrected rows carry per-row confidence.
-        try:
-            enable_word_confidence_decoding(asr_model)
-        except Exception:  # pragma: no cover - depends on NeMo decoding internals.
-            # A model that cannot take the config still corrects text; its rows
-            # simply render without confidence styling.
-            logger.warning("post_visit_correction.confidence_enable_failed", exc_info=True)
-        try:
-            result = asr_model.transcribe(
-                [audio_path],
-                return_hypotheses=True,
-                timestamps=True,
-            )
-        except TypeError:
-            # An overridden POST_VISIT_ASR_MODEL may predate the timestamps flag; the
-            # corrected note still renders from text alone, just without timing splits.
-            result = asr_model.transcribe([audio_path], return_hypotheses=True)
-    except Exception as transcribe_error:  # pragma: no cover - depends on GPU/model.
+        return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
+    except Exception as model_load_error:  # pragma: no cover - GPU/model-specific.
+        # Example: the clinician clicks Summarise while the configured checkpoint cannot load.
         raise PostVisitCorrectionError(
-            f"Second-pass ASR failed for {model_name}: {transcribe_error}"
-        ) from transcribe_error
+            f"Second-pass ASR model failed to load: {type(model_load_error).__name__}",
+            reason_category="model_load_failed",
+        ) from model_load_error
 
-    # No result means the model accepted audio but produced no reviewable text.
-    if not result:
-        return PostVisitTranscription(text="", word_timings=None)
 
-    hypothesis = result[0]
+def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
+    """Keep short audio whole or split a capacity-risk visit into bounded WAVs.
+
+    Use after Stop: offsets let recombined word timings still point at the
+    original consultation. Returned scratch chunks are owned by the caller.
+    A trailing remainder under `_MIN_FINAL_CHUNK_SECONDS` joins the final
+    chunk so a silence-length sliver cannot void the corrected transcript.
+    """
+    audio_duration_seconds = wav_duration_seconds(str(audio_path))
+    # The measured short-visit envelope preserves the original one-shot call exactly.
+    if audio_duration_seconds <= _ONE_SHOT_MAX_AUDIO_SECONDS:
+        return [_AudioChunk(audio_path, 0.0, False)]
+
+    scratch_chunks: list[_AudioChunk] = []
+    try:
+        audio_samples, sample_rate = soundfile.read(
+            audio_path,
+            dtype="float32",
+            always_2d=False,
+        )
+        # Browser-retained correction audio is mono; another shape is not safe to recombine.
+        if not isinstance(audio_samples, np.ndarray) or audio_samples.ndim != 1:
+            raise PostVisitCorrectionError(
+                "Retained correction audio is not mono.",
+                reason_category="invalid_audio",
+            )
+        chunk_sample_count = max(1, int(float(sample_rate) * _AUDIO_CHUNK_SECONDS))
+        min_final_sample_count = int(float(sample_rate) * _MIN_FINAL_CHUNK_SECONDS)
+        slice_starts = list(range(0, len(audio_samples), chunk_sample_count))
+        # A near-silent tail sliver must not become its own failable chunk and
+        # cost the user an otherwise healthy corrected note.
+        if (
+            len(slice_starts) > 1
+            and len(audio_samples) - slice_starts[-1] < min_final_sample_count
+        ):
+            slice_starts.pop()
+        # Each fixed-size slice bounds model activation memory and keeps spoken order.
+        for slice_index, start_sample in enumerate(slice_starts):
+            # The final slice absorbs any sub-threshold remainder of the visit.
+            is_final_slice = slice_index == len(slice_starts) - 1
+            end_sample = (
+                len(audio_samples)
+                if is_final_slice
+                else min(len(audio_samples), start_sample + chunk_sample_count)
+            )
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav",
+                prefix="post_visit_correction_chunk_",
+                delete=False,
+            ) as scratch_file:
+                chunk_path = Path(scratch_file.name)
+            soundfile.write(chunk_path, audio_samples[start_sample:end_sample], sample_rate)
+            scratch_chunks.append(
+                _AudioChunk(
+                    path=chunk_path,
+                    start_seconds=start_sample / float(sample_rate),
+                    delete_after_use=True,
+                )
+            )
+    except PostVisitCorrectionError:
+        _remove_scratch_audio_chunks(scratch_chunks)
+        raise
+    except Exception as chunk_error:
+        # Example: a stopped visit cannot create its temporary bounded WAVs on disk.
+        _remove_scratch_audio_chunks(scratch_chunks)
+        raise PostVisitCorrectionError(
+            f"Could not prepare retained audio for correction: {type(chunk_error).__name__}",
+            reason_category="audio_preparation_failed",
+        ) from chunk_error
+
+    return scratch_chunks
+
+
+def _remove_scratch_audio_chunks(audio_chunks: list[_AudioChunk]) -> None:
+    """Delete only the bounded scratch WAVs created for a long visit.
+
+    Use after success or failure; the original short-visit WAV remains owned by
+    `run_post_visit_correction` and is removed by its existing finally block.
+    """
+    # Every owned chunk must disappear so repeated summaries do not fill local storage.
+    for audio_chunk in audio_chunks:
+        # The original retained-audio WAV has a separate owner and must remain here.
+        if not audio_chunk.delete_after_use:
+            continue
+        audio_chunk.path.unlink(missing_ok=True)
+
+
+def _transcribe_with_loaded_model(asr_model: Any, audio_path: str) -> _TranscribeCallResult:
+    """Run one audio path with at most one allowlisted same-model retry.
+
+    Use for the original short WAV or each long-visit chunk. Fatal failures
+    return immediately so the user is not kept waiting on a hopeless retry.
+    """
+    try:
+        hypotheses = _transcribe_loaded_model_once(asr_model, audio_path)
+    except Exception as first_transcribe_error:
+        # Only the exact field-observed device-not-ready family earns another wait.
+        if not _is_device_not_ready_error(first_transcribe_error):
+            raise PostVisitCorrectionError(
+                (
+                    "Second-pass ASR failed: "
+                    f"{type(first_transcribe_error).__name__}: {first_transcribe_error}"
+                ),
+                attempts=1,
+                retried=False,
+                reason_category=_transcribe_failure_category(first_transcribe_error),
+            ) from first_transcribe_error
+
+        _reclaim_cuda_memory()
+        time.sleep(_TRANSIENT_RETRY_BACKOFF_SECONDS)
+        try:
+            hypotheses = _transcribe_loaded_model_once(asr_model, audio_path)
+        except Exception as second_transcribe_error:
+            # Example: the clinician waited for recovery, but the same GPU call failed again.
+            raise PostVisitCorrectionError(
+                (
+                    "Second-pass ASR failed after one retry: "
+                    f"{type(second_transcribe_error).__name__}: {second_transcribe_error}"
+                ),
+                attempts=2,
+                retried=True,
+                reason_category=_transcribe_failure_category(second_transcribe_error),
+            ) from second_transcribe_error
+
+        return _TranscribeCallResult(hypotheses, attempts=2, retried=True)
+
+    return _TranscribeCallResult(hypotheses, attempts=1, retried=False)
+
+
+def _transcribe_loaded_model_once(asr_model: Any, audio_path: str) -> list[Any]:
+    """Call the restored model once while preserving timestamp compatibility.
+
+    Use inside the retry wrapper; older override models fall back to text-only
+    decoding without counting that signature adjustment as another attempt.
+    """
+    try:
+        return asr_model.transcribe(
+            [audio_path],
+            return_hypotheses=True,
+            timestamps=True,
+        )
+    except TypeError:
+        # Example: a local override model predates the timestamp option used by the note UI.
+        return asr_model.transcribe([audio_path], return_hypotheses=True)
+
+
+def _is_device_not_ready_error(transcribe_error: Exception) -> bool:
+    """Recognize only the observed transient across an exception/cause chain.
+
+    Use before making the user wait for a retry; all other CUDA text is fatal.
+    """
+    return _DEVICE_NOT_READY_PATTERN.search(_exception_chain_text(transcribe_error)) is not None
+
+
+def _exception_chain_text(error: BaseException) -> str:
+    """Join safe exception type/message text for retry classification.
+
+    Use for GPU error signatures only; this text is never returned to the browser.
+    """
+    chain_parts: list[str] = []
+    seen_errors: set[int] = set()
+    current_error: BaseException | None = error
+    # Each unseen cause/context may carry the CUDA signature hidden by a wrapper.
+    while current_error is not None and id(current_error) not in seen_errors:
+        seen_errors.add(id(current_error))
+        chain_parts.append(f"{type(current_error).__name__}: {current_error}")
+        current_error = current_error.__cause__ or current_error.__context__
+
+    return " | ".join(chain_parts)
+
+
+def _transcribe_failure_category(transcribe_error: Exception) -> str:
+    """Map a model failure to a sanitized browser/support category.
+
+    Use when correction becomes unavailable; categories contain no clinical or
+    raw CUDA prose and let the UI show one neutral fallback explanation.
+    """
+    error_text = _exception_chain_text(transcribe_error).casefold()
+    # The one allowlisted transient exhausted its retry.
+    if _DEVICE_NOT_READY_PATTERN.search(error_text) is not None:
+        return "gpu_transient"
+    # OOM means this request exceeded available correction capacity.
+    if "out of memory" in error_text or "cuda oom" in error_text:
+        return "gpu_capacity"
+    # Corrupted-device failures are fatal and must never be retried in-process.
+    if "illegal memory access" in error_text or "device-side assert" in error_text:
+        return "gpu_fatal"
+
+    return "transcribe_failed"
+
+
+def _reclaim_cuda_memory() -> None:
+    """Best-effort synchronize and release cached allocations before one retry.
+
+    Use only after device-not-ready. Failure here remains non-fatal because the
+    user still receives the promised second model call and then a live fallback.
+    """
+    try:
+        import torch
+    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+        # Example: an unusual agent image cannot prepare the GPU before the user's retry.
+        logger.warning(
+            "post_visit_correction.cuda_reclaim_import_failed %s",
+            type(torch_import_error).__name__,
+        )
+        return
+
+    try:
+        torch.cuda.synchronize()
+    except Exception as synchronize_error:  # pragma: no cover - GPU-state-specific.
+        # Example: the user's first failed kernel leaves synchronization unavailable.
+        logger.warning(
+            "post_visit_correction.cuda_synchronize_failed %s",
+            type(synchronize_error).__name__,
+        )
+    try:
+        torch.cuda.empty_cache()
+    except Exception as cache_error:  # pragma: no cover - GPU-state-specific.
+        # Example: cached allocations cannot be released before the user's one retry.
+        logger.warning(
+            "post_visit_correction.cuda_empty_cache_failed %s",
+            type(cache_error).__name__,
+        )
+
+
+def _transcription_from_hypothesis(
+    hypothesis: Any,
+    audio_path: str,
+    start_seconds: float,
+) -> PostVisitTranscription:
+    """Extract one chunk's text and shift evidence onto the full visit timeline.
+
+    Use after a successful model call; absent timing/confidence remains honest
+    optional evidence and never blocks the corrected note by itself.
+    """
+    transcript_text = normalise_transcript_text(hypothesis)
     word_timings: list[dict[str, Any]] | None = None
     try:
-        word_timings = word_timings_from_hypothesis(
+        chunk_word_timings = word_timings_from_hypothesis(
             hypothesis,
             wav_duration_seconds(audio_path),
-        ) or None
-    except Exception:  # pragma: no cover - depends on NeMo hypothesis internals.
-        # Timing is best-effort evidence; the corrected note must still render without it.
-        logger.warning("post_visit_correction.word_timing_extraction_failed", exc_info=True)
+        )
+        # Each timing row moves from chunk-relative to consultation-relative seconds.
+        if chunk_word_timings:
+            word_timings = [
+                {
+                    **timing,
+                    "start": float(timing["start"]) + start_seconds,
+                    "end": float(timing["end"]) + start_seconds,
+                }
+                for timing in chunk_word_timings
+            ]
+    except Exception as timing_error:  # pragma: no cover - NeMo-hypothesis-specific.
+        # Example: the user gets corrected text even when this model omits usable word times.
+        logger.warning(
+            "post_visit_correction.word_timing_extraction_failed %s",
+            type(timing_error).__name__,
+        )
 
-    transcript_text = normalise_transcript_text(hypothesis)
+    word_confidences: list[float] | None = None
+    try:
+        word_confidences = word_confidences_for_display_words(
+            hypothesis,
+            split_words(transcript_text),
+        )
+    except Exception as confidence_error:  # pragma: no cover - hypothesis-specific.
+        # Example: the corrected note renders without confidence styling for this model.
+        logger.warning(
+            "post_visit_correction.word_confidence_extraction_failed %s",
+            type(confidence_error).__name__,
+        )
+
     return PostVisitTranscription(
         text=transcript_text,
         word_timings=word_timings,
-        word_confidences=word_confidences_for_display_words(
-            hypothesis, split_words(transcript_text)
-        ),
+        word_confidences=word_confidences,
     )
 
 
 def coerce_post_visit_transcription(
-    transcription: PostVisitTranscription | str,
+    transcription: PostVisitTranscription | _NemoTranscriptionResult | str,
 ) -> tuple[str, list[dict[str, Any]] | None, list[float] | None]:
     """Normalise rich or plain transcriber output into text plus optional evidence.
 
@@ -263,7 +703,7 @@ def coerce_post_visit_transcription(
         split can run, None confidences leave corrected rows unmeasured.
     """
     # Evidence-aware transcribers return the richer shape with timing and confidence.
-    if isinstance(transcription, PostVisitTranscription):
+    if isinstance(transcription, (PostVisitTranscription, _NemoTranscriptionResult)):
         return (
             transcription.text,
             transcription.word_timings,

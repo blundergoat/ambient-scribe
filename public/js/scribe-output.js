@@ -10,10 +10,10 @@
 // session id (not a boolean) lets a reset visit request its own summary while
 // the previous visit's request is still running.
 let summaryRequestSessionId = null;
-// Correction runs once before summary so the final note can use better rows.
+// Correction runs once before summary, and its safe outcome explains note provenance.
 let correctionRequestPromise = null;
 let correctionSessionId = null;
-let hasCorrectionReadyForSession = false;
+let correctionOutcomeForVisibleSession = null;
 
 /**
  * Decodes a WAV file, plays it locally, and streams its PCM to live transcription.
@@ -477,7 +477,8 @@ async function requestSummary() {
 function resetPostVisitCorrectionState() {
     correctionRequestPromise = null;
     correctionSessionId = null;
-    hasCorrectionReadyForSession = false;
+    correctionOutcomeForVisibleSession = null;
+    setSummarySourceNotice(null);
 
     // The Transcript tab caches corrected rows per session; test pages load without it.
     if (typeof resetSummaryTabsState === 'function') {
@@ -492,7 +493,10 @@ function resetPostVisitCorrectionState() {
  */
 async function ensureCorrectedTranscriptReady() {
     // A corrected artifact already exists for this browser session.
-    if (hasCorrectionReadyForSession && correctionSessionId === CONFIG.sessionId) {
+    if (
+        correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+        && correctionOutcomeForVisibleSession.status === 'ready'
+    ) {
         return;
     }
 
@@ -502,18 +506,32 @@ async function ensureCorrectedTranscriptReady() {
         return;
     }
 
-    correctionSessionId = CONFIG.sessionId;
-    correctionRequestPromise = requestTranscriptCorrection();
+    const correctionRequestedSessionId = CONFIG.sessionId;
+    correctionSessionId = correctionRequestedSessionId;
+    const correctionRequestForThisSession = requestTranscriptCorrection(
+        correctionRequestedSessionId,
+    );
+    correctionRequestPromise = correctionRequestForThisSession;
 
     try {
-        const correctionPayload = await correctionRequestPromise;
+        const correctionPayload = await correctionRequestForThisSession;
 
-        // Ready means the summary endpoint will now prefer corrected rows.
-        if (correctionPayload?.status === 'ready') {
-            hasCorrectionReadyForSession = true;
+        // A reset can finish while the old visit's correction request is still returning.
+        if (CONFIG.sessionId === correctionRequestedSessionId) {
+            correctionOutcomeForVisibleSession = {
+                sessionId: correctionRequestedSessionId,
+                status: correctionPayload?.status === 'ready' ? 'ready' : 'unavailable',
+                reasonCategory: typeof correctionPayload?.reason_category === 'string'
+                    ? correctionPayload.reason_category
+                    : null,
+                attempted: correctionPayload?.attempted === true,
+            };
         }
     } finally {
-        correctionRequestPromise = null;
+        // A prior visit finishing late must not clear a newer visit's pending correction.
+        if (correctionRequestPromise === correctionRequestForThisSession) {
+            correctionRequestPromise = null;
+        }
     }
 }
 
@@ -521,10 +539,13 @@ async function ensureCorrectedTranscriptReady() {
  * Calls the same-origin correction proxy with the current visible transcript.
  * Use before summary generation; failures are logged and converted into a live
  * transcript fallback so the user still receives a note.
+ *
+ * @param {string} requestedSessionId - Visible visit UUID; empty cannot map to retained audio.
+ * @returns {Promise<object>} Safe correction outcome; unavailable means use visible live rows.
  */
-async function requestTranscriptCorrection() {
+async function requestTranscriptCorrection(requestedSessionId = CONFIG.sessionId) {
     try {
-        const response = await fetch(`/session/${CONFIG.sessionId}/correction`, {
+        const response = await fetch(`/session/${requestedSessionId}/correction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ segments: readVisibleTranscriptSegments() }),
@@ -534,13 +555,25 @@ async function requestTranscriptCorrection() {
         // Non-OK proxy responses mean the live transcript remains the summary source.
         if (!response.ok || correctionPayload.isFallbackPayload) {
             console.warn('Transcript correction unavailable:', correctionPayload.detail ?? response.status);
-            return { status: 'unavailable' };
+            return {
+                ...correctionPayload,
+                status: 'unavailable',
+                attempted: correctionPayload.attempted === true,
+                reason_category: typeof correctionPayload.reason_category === 'string'
+                    ? correctionPayload.reason_category
+                    : 'request_unavailable',
+            };
         }
 
         return correctionPayload;
     } catch (correctionError) {
+        // Example: the user stops a visit just as the same-origin correction proxy disconnects.
         console.warn('Transcript correction failed:', correctionError);
-        return { status: 'unavailable' };
+        return {
+            status: 'unavailable',
+            attempted: false,
+            reason_category: 'request_failed',
+        };
     }
 }
 
@@ -626,6 +659,7 @@ function renderSummary(summaryPayload) {
 
     summaryContent.replaceChildren(...renderedBlocks);
     setSummaryStatus('generated');
+    setSummarySourceNotice(summaryPayload);
     setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.
     hideSystemBanner();
@@ -853,6 +887,7 @@ function setSummaryStatus(summaryState) {
     // The pending placeholder only shows before a summary has been requested.
     summaryPending?.classList.toggle('hidden', summaryState !== 'pending');
     summaryStatusBadge.classList.remove('summary-status__badge--generated', 'summary-status__badge--failed');
+    setSummarySourceNotice(null);
     setSummaryTruncationNotice(null);
 
     if (summaryState === 'generated') {
@@ -874,6 +909,50 @@ function setSummaryStatus(summaryState) {
     // Pending and generating both hide the badge; the pending row or loading row speaks instead.
     summaryStatus.classList.add('hidden');
     summaryRetryButton?.classList.add('hidden');
+}
+
+/**
+ * Shows which transcript actually built the note without inventing a failure.
+ * Use after HTTP or Mercure summary delivery; null clears prior-visit wording.
+ *
+ * @param {object|null} summaryPayload - Summary metadata; null or missing source hides the notice.
+ * @returns {void} Updates persistent source wording beside the generated status.
+ */
+function setSummarySourceNotice(summaryPayload) {
+    const summarySourceNotice = document.getElementById('summarySourceNotice');
+
+    // Older templates have no source row, so generated notes still render normally.
+    if (!summarySourceNotice) {
+        return;
+    }
+
+    const actualTranscriptSource = summaryPayload?.transcript_source;
+    const isCorrectedTranscriptSource = [
+        'corrected_segments',
+        'corrected',
+    ].includes(actualTranscriptSource);
+    const isLiveTranscriptSource = [
+        'browser_visible_segments',
+        'session_store',
+        'live_segments',
+        'browser',
+    ].includes(actualTranscriptSource);
+
+    // Corrected or unknown sources must not carry a stale live-fallback notice.
+    if (isCorrectedTranscriptSource || !isLiveTranscriptSource) {
+        summarySourceNotice.textContent = '';
+        summarySourceNotice.classList.add('hidden');
+        return;
+    }
+
+    const didThisBrowserObserveUnavailableCorrection = (
+        correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+        && correctionOutcomeForVisibleSession.status === 'unavailable'
+    );
+    summarySourceNotice.textContent = didThisBrowserObserveUnavailableCorrection
+        ? 'Built from the live transcript; post-visit correction was unavailable.'
+        : 'Built from the live transcript.';
+    summarySourceNotice.classList.remove('hidden');
 }
 
 /**

@@ -290,29 +290,68 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Proxies post-stop correction requests before the summary is generated.
-     *
-     * @return void No payload; failure means the browser cannot create corrected transcript rows.
+     * Safe recovery metadata a recovered correction reports to the note UI.
+     * One retry over three audio chunks; the browser shows provenance from these
+     * exact fields, so the proxy must not rename, drop, or retype any of them.
      */
-    public function testCorrectionProxyForwardsToAgent(): void
+    private const CORRECTION_RECOVERY_METADATA = [
+        'attempted' => true,
+        'attempts' => 2,
+        'retried' => true,
+        'chunk_count' => 3,
+        'reason_category' => 'gpu_transient',
+    ];
+
+    /**
+     * Proxies post-stop correction and returns the agent's recovery metadata unchanged.
+     *
+     * @return void No payload; failure means the note UI would lose retry/chunk provenance.
+     */
+    public function testCorrectionProxyReturnsRecoveryMetadataUnchanged(): void
     {
         $sessionId = '00000000-0000-4000-8000-000000000299';
         $seenRequests = [];
-        $httpClient = $this->createJsonAgentStub($seenRequests, [
-            'session_id' => $sessionId,
-            'status' => 'ready',
-            'segments' => 2,
-        ]);
+        $httpClient = $this->createJsonAgentStub(
+            $seenRequests,
+            ['session_id' => $sessionId, 'status' => 'ready', 'segments' => 2]
+                + self::CORRECTION_RECOVERY_METADATA,
+        );
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
         $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
-            'segments' => [
-                ['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT'],
-            ],
+            'segments' => [['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT']],
         ]);
+
         $response = $controller->correction($sessionId, $request);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame('ready', $this->decodeJsonResponse($response)['status']);
+        $correctionPayload = $this->decodeJsonResponse($response);
+        self::assertSame('ready', $correctionPayload['status']);
+        // Every recovery field must survive the proxy for the browser's source notice.
+        foreach (self::CORRECTION_RECOVERY_METADATA as $field => $expectedValue) {
+            self::assertSame($expectedValue, $correctionPayload[$field], "correction field: {$field}");
+        }
+    }
+
+    /**
+     * Sends the browser's visible rows to the agent correction endpoint exactly once.
+     *
+     * @return void No payload; failure means corrected rows would lose the user's live context.
+     */
+    public function testCorrectionProxySendsVisibleRowsToAgentOnce(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000299';
+        $seenRequests = [];
+        $httpClient = $this->createJsonAgentStub(
+            $seenRequests,
+            ['session_id' => $sessionId, 'status' => 'ready', 'segments' => 2],
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
+            'segments' => [['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT']],
+        ]);
+
+        $controller->correction($sessionId, $request);
+
         self::assertCount(1, $seenRequests);
         self::assertSame('POST', $seenRequests[0]['method']);
         self::assertSame("http://agent.test/session/{$sessionId}/correction", $seenRequests[0]['url']);

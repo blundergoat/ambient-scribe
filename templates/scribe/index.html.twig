@@ -1,3 +1,9 @@
+{#
+  Ambient Scribe's browser workspace for recording, transcript review, and generated notes.
+  Clinicians reach this page to start or replay a consultation, correct speaker labels,
+  and review note/source notices after Stop. JavaScript modules own behavior; this file
+  provides the accessible structure and shared visual states they update.
+#}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1213,6 +1219,7 @@
                             <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
                                 <span id="summaryStatusBadge" class="summary-status__badge"></span>
                                 <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                                <span id="summarySourceNotice" class="summary-status__notice hidden"></span>
                                 <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
                             <div id="summaryContent"></div>

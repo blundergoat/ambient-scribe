@@ -179,6 +179,10 @@ NEMO_MAX_WORKERS = int(os.environ.get("NEMO_MAX_WORKERS", "2"))
 nemo_executor = ThreadPoolExecutor(
     max_workers=NEMO_MAX_WORKERS, thread_name_prefix="nemo"
 )
+# Only one stopped visit may restore/run the correction model at a time.
+# Live streaming keeps using the shared executor independently, so users can
+# continue recording while another clinician's correction is queued.
+correction_single_flight = asyncio.Semaphore(1)
 
 _inference_queues = role_inference_queues
 _inference_workers = role_inference_workers
@@ -532,6 +536,10 @@ async def correct_session_transcript(
             "segments": len(existing_corrected_segments),
             "model": existing_corrected_segments[0].get("source_model", ""),
             "reused": True,
+            "attempted": False,
+            "attempts": 0,
+            "retried": False,
+            "chunk_count": 0,
         }
 
     browser_visible_segments = browser_visible_segments_from_summary(correction_request)
@@ -555,6 +563,7 @@ async def correct_session_transcript(
             session_id,
             "Session audio is no longer available for correction.",
             live_segments,
+            reason_category="audio_expired",
         )
 
     # A trimmed buffer holds only the visit's tail; aligning tail-only ASR against
@@ -565,6 +574,7 @@ async def correct_session_transcript(
             session_id,
             "Visit audio exceeded the retention window; the live transcript is used as-is.",
             live_segments,
+            reason_category="retention_window",
         )
 
     retained_audio = active_session.buffer.full_audio()
@@ -574,51 +584,96 @@ async def correct_session_transcript(
             session_id,
             "No retained audio is available for correction.",
             live_segments,
+            reason_category="empty_audio",
         )
 
     loop = asyncio.get_running_loop()
     started_at = time.time()
-    try:
-        correction_result = await loop.run_in_executor(
-            nemo_executor,
-            partial(
-                run_post_visit_correction,
-                pcm_audio=retained_audio,
-                live_segments=live_segments,
-                model_name=DEFAULT_POST_VISIT_ASR_MODEL,
-            ),
-        )
-    except PostVisitCorrectionError as correction_error:
-        duration_ms = int((time.time() - started_at) * 1000)
-        logger.warning(
-            "correction.unavailable session_id=%s duration_ms=%s detail=%s",
-            session_id,
-            duration_ms,
-            str(correction_error),
-            extra={"session_id": session_id, "duration_ms": duration_ms},
-        )
-        return _correction_unavailable_response(
-            session_id,
-            str(correction_error),
-            live_segments,
-        )
+    # A queued correction waits on the event loop and consumes no GPU worker yet.
+    async with correction_single_flight:
+        corrected_while_waiting = sessions.get_corrected_segments(session_id)
+        # A duplicate click can reuse the result that completed while it waited.
+        if corrected_while_waiting and not force_requested:
+            return {
+                "session_id": session_id,
+                "status": "ready",
+                "source": "corrected_segments",
+                "segments": len(corrected_while_waiting),
+                "model": corrected_while_waiting[0].get("source_model", ""),
+                "reused": True,
+                "attempted": False,
+                "attempts": 0,
+                "retried": False,
+                "chunk_count": 0,
+            }
 
-    sessions.replace_corrected_segments(session_id, correction_result.segments)
-    duration_ms = int((time.time() - started_at) * 1000)
-    logger.info(
-        "correction.completed session_id=%s segments=%s words=%s duration_ms=%s",
-        session_id,
-        len(correction_result.segments),
-        correction_result.word_count,
-        duration_ms,
-        extra={
-            "session_id": session_id,
-            "segments": len(correction_result.segments),
-            "words": correction_result.word_count,
-            "duration_ms": duration_ms,
-            "model": correction_result.model_name,
-        },
-    )
+        try:
+            correction_result = await loop.run_in_executor(
+                nemo_executor,
+                partial(
+                    run_post_visit_correction,
+                    pcm_audio=retained_audio,
+                    live_segments=live_segments,
+                    model_name=DEFAULT_POST_VISIT_ASR_MODEL,
+                ),
+            )
+        except PostVisitCorrectionError as correction_error:
+            # Example: the user clicks Summarise after the GPU rejects the retained audio.
+            duration_ms = int((time.time() - started_at) * 1000)
+            logger.warning(
+                (
+                    "correction.unavailable session_id=%s duration_ms=%s "
+                    "attempts=%s retried=%s reason_category=%s error_type=%s"
+                ),
+                session_id,
+                duration_ms,
+                correction_error.attempts,
+                correction_error.retried,
+                correction_error.reason_category,
+                type(correction_error).__name__,
+                extra={
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "attempts": correction_error.attempts,
+                    "retried": correction_error.retried,
+                    "reason_category": correction_error.reason_category,
+                    "error_type": type(correction_error).__name__,
+                },
+            )
+            return _correction_unavailable_response(
+                session_id,
+                "Correction was unavailable; the live transcript will be used.",
+                live_segments,
+                attempts=correction_error.attempts,
+                retried=correction_error.retried,
+                reason_category=correction_error.reason_category,
+            )
+
+        sessions.replace_corrected_segments(session_id, correction_result.segments)
+        duration_ms = int((time.time() - started_at) * 1000)
+        logger.info(
+            (
+                "correction.completed session_id=%s segments=%s words=%s "
+                "duration_ms=%s attempts=%s retried=%s chunk_count=%s"
+            ),
+            session_id,
+            len(correction_result.segments),
+            correction_result.word_count,
+            duration_ms,
+            correction_result.attempts,
+            correction_result.retried,
+            correction_result.chunk_count,
+            extra={
+                "session_id": session_id,
+                "segments": len(correction_result.segments),
+                "words": correction_result.word_count,
+                "duration_ms": duration_ms,
+                "model": correction_result.model_name,
+                "attempts": correction_result.attempts,
+                "retried": correction_result.retried,
+                "chunk_count": correction_result.chunk_count,
+            },
+        )
 
     return {
         "session_id": session_id,
@@ -628,6 +683,10 @@ async def correct_session_transcript(
         "word_count": correction_result.word_count,
         "model": correction_result.model_name,
         "reused": False,
+        "attempted": True,
+        "attempts": correction_result.attempts,
+        "retried": correction_result.retried,
+        "chunk_count": correction_result.chunk_count,
     }
 
 
@@ -635,6 +694,10 @@ def _correction_unavailable_response(
     session_id: str,
     detail: str,
     live_segments: list[dict[str, Any]],
+    *,
+    reason_category: str,
+    attempts: int = 0,
+    retried: bool = False,
 ) -> dict:
     """Build a non-fatal correction response for live-preview fallback.
 
@@ -642,9 +705,13 @@ def _correction_unavailable_response(
         session_id: Browser session UUID the user tried to correct.
         detail: Plain-English reason shown to developers/support; empty gives no context.
         live_segments: Stored live rows; empty means summary may still return 404.
+        reason_category: Safe failure label for browser provenance; empty loses user context.
+        attempts: Model transcribe calls made; zero means correction never reached ASR.
+        retried: True when the user waited for the single transient recovery attempt.
 
     Returns:
-        JSON payload telling the browser to continue with the live preview.
+        JSON payload telling the browser to continue with the live preview;
+        empty rows mean summary generation may still have no source.
     """
     return {
         "session_id": session_id,
@@ -652,6 +719,10 @@ def _correction_unavailable_response(
         "source": "live_segments",
         "segments": len(live_segments),
         "detail": detail,
+        "attempted": attempts > 0,
+        "attempts": attempts,
+        "retried": retried,
+        "reason_category": reason_category,
     }
 
 

@@ -1219,6 +1219,138 @@ test.describe("Post-visit correction before summary", () => {
     expect(requestOrder).toEqual(["correction", "summary"]);
     expect(summaryCalls[0].segments[0].segment_id).toBe("seg-0001");
   });
+
+  test("HTTP summary persistently explains a known correction fallback", async ({
+    page,
+  }) => {
+    const correctionCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder, {
+      body: {
+        status: "unavailable",
+        source: "live_segments",
+        attempted: true,
+        attempts: 2,
+        retried: true,
+        reason_category: "gpu_transient",
+      },
+    });
+    await page.route("**/session/*/summary", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "Live-source summary",
+          sections: [{ heading: "Plan", content: "Review live transcript." }],
+          key_points: [],
+          transcript_source: "browser_visible_segments",
+          transcript_truncated: false,
+        }),
+      })
+    );
+    await injectFakeSegments(page, 1);
+
+    await page.evaluate(() => requestSummary());
+
+    const sourceNotice = page.locator("#summarySourceNotice");
+    await expect(sourceNotice).toBeVisible();
+    await expect(sourceNotice).toHaveText(
+      "Built from the live transcript; post-visit correction was unavailable."
+    );
+    const persistedCorrectionOutcome = await page.evaluate(() =>
+      correctionOutcomeForVisibleSession
+    );
+    expect(persistedCorrectionOutcome).toMatchObject({
+      status: "unavailable",
+      reasonCategory: "gpu_transient",
+      attempted: true,
+    });
+    await page.waitForTimeout(250);
+    await expect(sourceNotice).toBeVisible();
+    await expect(sourceNotice).not.toContainText("CUDA");
+
+    // New Session clears both the safe outcome and its persistent notice.
+    await page.evaluate(() => resetPostVisitCorrectionState());
+    expect(
+      await page.evaluate(() => correctionOutcomeForVisibleSession)
+    ).toBeNull();
+    await expect(sourceNotice).toBeHidden();
+  });
+
+  test("Mercure uses the same fallback notice and actual corrected source clears it", async ({
+    page,
+  }) => {
+    const correctionCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder, {
+      body: {
+        status: "unavailable",
+        source: "live_segments",
+        attempted: true,
+        attempts: 1,
+        retried: false,
+        reason_category: "gpu_capacity",
+      },
+    });
+    await injectFakeSegments(page, 1);
+    await page.evaluate(() => ensureCorrectedTranscriptReady());
+
+    await page.evaluate(() => {
+      handleSummaryEvent({
+        type: "summary",
+        title: "Async live-source summary",
+        sections: [{ heading: "Plan", content: "First note." }],
+        key_points: [],
+        transcript_source: "session_store",
+        transcript_truncated: false,
+      });
+    });
+
+    const sourceNotice = page.locator("#summarySourceNotice");
+    await expect(sourceNotice).toHaveText(
+      "Built from the live transcript; post-visit correction was unavailable."
+    );
+    await expect(sourceNotice).toBeVisible();
+
+    await page.evaluate(() => {
+      handleSummaryEvent({
+        type: "summary",
+        title: "Async corrected summary",
+        sections: [{ heading: "Plan", content: "Corrected note." }],
+        key_points: [],
+        transcript_source: "corrected_segments",
+        transcript_truncated: false,
+      });
+    });
+
+    await expect(sourceNotice).toBeHidden();
+    await expect(sourceNotice).toHaveText("");
+  });
+
+  test("direct live-source summary uses neutral provenance without inventing failure", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    await page.evaluate(() => {
+      renderSummary({
+        type: "summary",
+        title: "Stored summary",
+        sections: [{ heading: "Plan", content: "Stored note." }],
+        key_points: [],
+        transcript_source: "session_store",
+        transcript_truncated: false,
+      });
+    });
+
+    const sourceNotice = page.locator("#summarySourceNotice");
+    await expect(sourceNotice).toBeVisible();
+    await expect(sourceNotice).toHaveText("Built from the live transcript.");
+    await expect(sourceNotice).not.toContainText("unavailable");
+    await expect(sourceNotice).not.toContainText("failed");
+  });
 });
 
 test.describe("Live-stop finalize drain (M21)", () => {

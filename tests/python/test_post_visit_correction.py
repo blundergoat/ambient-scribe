@@ -1,16 +1,29 @@
-"""Tests for post-stop transcript correction before summary generation."""
+"""Protect the corrected transcript used for the clinician's final note.
+
+These tests cover second-pass ASR, row alignment, GPU failure recovery, and
+the correction API. They keep healthy visits unchanged while ensuring a failed
+correction falls back visibly instead of blocking the user's summary.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import logging
+from pathlib import Path
+import threading
+import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+import numpy as np
 import pytest
+import soundfile
 from fastapi.testclient import TestClient
 
 import api.server as api_server
+import post_visit_correction as correction_module
 from api.server import app, lifecycle, sessions
 from corrected_role_cues import infer_role_from_corrected_text
 from nemo_pipeline import NemoPipeline
@@ -18,12 +31,64 @@ from nemo_session import TranscriptionSession
 from corrected_role_cues import prepare_corrected_source_segments
 from post_visit_correction import (
     PostVisitCorrectionError,
+    PostVisitCorrectionResult,
     PostVisitTranscription,
     build_corrected_segments,
     run_post_visit_correction,
 )
 
 TEST_SESSION_ID = "00000000-0000-4000-8000-000000000301"
+
+
+class StubPostVisitAsrModel:
+    """Return prepared ASR results without loading NeMo or using the GPU.
+
+    Tests use this model to reproduce what happens after the user stops a
+    visit. Recorded paths prove whether the correction stayed one-shot or was
+    divided into bounded chunks.
+    """
+
+    def __init__(self, prepared_results: list[object]) -> None:
+        """Store one result or exception for each expected transcribe call."""
+        self.prepared_results = list(prepared_results)
+        self.transcribed_audio_paths: list[str] = []
+
+    def transcribe(self, audio_paths: list[str], **_options: object) -> list[object]:
+        """Return the next prepared result for the audio path shown to the model."""
+        self.transcribed_audio_paths.append(audio_paths[0])
+        prepared_result = self.prepared_results.pop(0)
+        # A prepared exception represents the GPU/model failure seen by the user.
+        if isinstance(prepared_result, Exception):
+            raise prepared_result
+
+        return [SimpleNamespace(text=str(prepared_result))]
+
+
+def _write_silent_test_wav(audio_path: Path, duration_seconds: float) -> None:
+    """Write a small 16 kHz WAV that follows the browser's retained-audio contract."""
+    sample_count = int(16000 * duration_seconds)
+    soundfile.write(audio_path, np.zeros(sample_count, dtype=np.float32), 16000)
+
+
+def _stub_post_visit_model_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    asr_model: StubPostVisitAsrModel,
+) -> None:
+    """Route correction through the prepared model and deterministic evidence."""
+    monkeypatch.setattr(correction_module, "_load_post_visit_asr_model", lambda _name: asr_model)
+    monkeypatch.setattr(correction_module, "enable_word_confidence_decoding", lambda _model: None)
+    monkeypatch.setattr(
+        correction_module,
+        "word_timings_from_hypothesis",
+        lambda hypothesis, _duration: [
+            {"word": hypothesis.text, "start": 0.1, "end": 0.2}
+        ],
+    )
+    monkeypatch.setattr(
+        correction_module,
+        "word_confidences_for_display_words",
+        lambda _hypothesis, words: [0.9] * len(words),
+    )
 
 
 def identity_echo_live_rows() -> list[dict[str, object]]:
@@ -91,9 +156,15 @@ def identity_echo_words_and_timings(
 @pytest.fixture(autouse=True)
 def clear_correction_state():
     """Keep correction endpoint tests isolated from other browser sessions."""
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-correction")
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-correction")
     original_executor = api_server.nemo_executor
+    original_correction_single_flight = getattr(
+        api_server,
+        "correction_single_flight",
+        None,
+    )
     api_server.nemo_executor = executor
+    api_server.correction_single_flight = asyncio.Semaphore(1)
     sessions._sessions.clear()
     lifecycle.clear()
     api_server._mercure_event_ids.clear()
@@ -108,6 +179,11 @@ def clear_correction_state():
     api_server._mercure_event_ids.clear()
     executor.shutdown(wait=False, cancel_futures=True)
     api_server.nemo_executor = original_executor
+    # Older server code has no correction guard, so the failing test restores that shape.
+    if original_correction_single_flight is None:
+        del api_server.correction_single_flight
+    else:
+        api_server.correction_single_flight = original_correction_single_flight
 
 
 def test_build_corrected_segments_uses_live_rows_as_role_scaffold() -> None:
@@ -910,6 +986,343 @@ def test_run_post_visit_correction_drops_misaligned_word_timings() -> None:
     ]
 
 
+def test_short_visit_uses_the_original_audio_path_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A normal short visit keeps the exact one-shot model path used before M09."""
+    audio_path = tmp_path / "short-visit.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(["short"])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+
+    transcription = correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert transcription.text == "short"
+    assert transcription.attempts == 1
+    assert transcription.retried is False
+    assert transcription.chunk_count == 1
+    assert asr_model.transcribed_audio_paths == [str(audio_path)]
+    assert audio_path.exists()
+
+
+def test_long_visit_uses_ordered_chunks_on_one_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A capacity-risk visit is recombined in order without retaining scratch WAVs."""
+    audio_path = tmp_path / "long-visit.wav"
+    # A whole-multiple duration keeps three full chunks with no trailing sliver.
+    _write_silent_test_wav(audio_path, 3.0)
+    asr_model = StubPostVisitAsrModel(["first", "second", "third"])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_AUDIO_CHUNK_SECONDS", 1.0)
+    # Scale the sliver-fold threshold with the 1.0s test chunks so slicing stays exact.
+    monkeypatch.setattr(correction_module, "_MIN_FINAL_CHUNK_SECONDS", 0.6)
+
+    transcription = correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert transcription.text == "first second third"
+    assert transcription.word_timings == [
+        {"word": "first", "start": 0.1, "end": 0.2},
+        {"word": "second", "start": 1.1, "end": 1.2},
+        {"word": "third", "start": 2.1, "end": 2.2},
+    ]
+    assert transcription.word_confidences == [0.9, 0.9, 0.9]
+    assert transcription.chunk_count == 3
+    assert len(asr_model.transcribed_audio_paths) == 3
+    assert all(Path(chunk_path) != audio_path for chunk_path in asr_model.transcribed_audio_paths)
+    assert all(not Path(chunk_path).exists() for chunk_path in asr_model.transcribed_audio_paths)
+
+
+def test_long_visit_removes_scratch_chunks_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed long correction leaves no temporary patient audio on disk."""
+    audio_path = tmp_path / "long-failed-visit.wav"
+    # A whole-multiple duration keeps full chunks so the failure is not sliver-related.
+    _write_silent_test_wav(audio_path, 3.0)
+    asr_model = StubPostVisitAsrModel(["first", RuntimeError("CUDA out of memory")])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_AUDIO_CHUNK_SECONDS", 1.0)
+    # Scale the sliver-fold threshold with the 1.0s test chunks so slicing stays exact.
+    monkeypatch.setattr(correction_module, "_MIN_FINAL_CHUNK_SECONDS", 0.6)
+
+    with pytest.raises(PostVisitCorrectionError):
+        correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert all(not Path(chunk_path).exists() for chunk_path in asr_model.transcribed_audio_paths)
+    assert audio_path.exists()
+
+
+class _ChunkSizeRecordingAsrModel(StubPostVisitAsrModel):
+    """Record each chunk WAV's sample count before its scratch file is deleted.
+
+    Sliver-fold tests use this to prove the trailing seconds of a visit ride
+    inside the previous chunk rather than becoming a separately failable file.
+    """
+
+    def __init__(self, prepared_results: list[object]) -> None:
+        """Track chunk sizes alongside the prepared per-chunk results."""
+        super().__init__(prepared_results)
+        self.transcribed_frame_counts: list[int] = []
+
+    def transcribe(self, audio_paths: list[str], **options: object) -> list[object]:
+        """Measure the chunk the user's note is built from, then delegate."""
+        self.transcribed_frame_counts.append(soundfile.info(audio_paths[0]).frames)
+        return super().transcribe(audio_paths, **options)
+
+
+def test_tiny_final_sliver_folds_into_previous_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A sub-threshold trailing sliver must not become its own failable chunk.
+
+    Field failure 2026-07-11: a 541.56s visit chunked as 180/180/180/1.56s and
+    the 1.56s tail decoded empty, discarding an otherwise healthy correction.
+    """
+    audio_path = tmp_path / "sliver-tail-visit.wav"
+    # 2.5s with 1.0s chunks reproduces the field shape 180/180/180/1.56 at test scale.
+    _write_silent_test_wav(audio_path, 2.5)
+    asr_model = _ChunkSizeRecordingAsrModel(["first", "second tail", "unused spare"])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_AUDIO_CHUNK_SECONDS", 1.0)
+    # raising=False keeps this red test runnable before the fold constant exists.
+    monkeypatch.setattr(correction_module, "_MIN_FINAL_CHUNK_SECONDS", 0.6, raising=False)
+
+    transcription = correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    # The 0.5s remainder rides with the second chunk instead of risking an empty veto.
+    assert transcription.chunk_count == 2
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert asr_model.transcribed_frame_counts == [16000, 24000]
+    assert transcription.text == "first second tail"
+
+
+def test_full_chunk_empty_decode_still_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A full-size chunk decoding empty still fails loudly to the live transcript."""
+    audio_path = tmp_path / "empty-middle-visit.wav"
+    _write_silent_test_wav(audio_path, 3.0)
+    asr_model = StubPostVisitAsrModel(["first", "", "third"])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_AUDIO_CHUNK_SECONDS", 1.0)
+    # Scale the sliver-fold threshold with the 1.0s test chunks so slicing stays exact.
+    monkeypatch.setattr(correction_module, "_MIN_FINAL_CHUNK_SECONDS", 0.6)
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    # The user keeps the live-transcript fallback with the safe category, never partial rows.
+    assert raised_error.value.reason_category == "empty_result"
+
+
+def test_device_not_ready_retries_once_on_the_same_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The observed transient gets one reclaimed retry without reloading the model."""
+    audio_path = tmp_path / "transient-visit.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [RuntimeError("CUDA driver error: device not ready"), "recovered"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    reclaimed_attempts: list[bool] = []
+    backoffs: list[float] = []
+    monkeypatch.setattr(
+        correction_module,
+        "_reclaim_cuda_memory",
+        lambda: reclaimed_attempts.append(True),
+    )
+    monkeypatch.setattr(correction_module.time, "sleep", backoffs.append)
+
+    transcription = correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert transcription.text == "recovered"
+    assert transcription.attempts == 2
+    assert transcription.retried is True
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert reclaimed_attempts == [True]
+    assert backoffs == [correction_module._TRANSIENT_RETRY_BACKOFF_SECONDS]
+
+
+@pytest.mark.parametrize(
+    "fatal_error",
+    [
+        RuntimeError("CUDA out of memory"),
+        RuntimeError("CUDA error: an illegal memory access was encountered"),
+    ],
+)
+def test_fatal_cuda_failure_never_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fatal_error: RuntimeError,
+) -> None:
+    """Capacity and corrupted-device failures fall back after one model call."""
+    audio_path = tmp_path / "fatal-visit.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel([fatal_error])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    reclaimed_attempts: list[bool] = []
+    monkeypatch.setattr(
+        correction_module,
+        "_reclaim_cuda_memory",
+        lambda: reclaimed_attempts.append(True),
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert raised_error.value.attempts == 1
+    assert raised_error.value.retried is False
+    assert len(asr_model.transcribed_audio_paths) == 1
+    assert reclaimed_attempts == []
+
+
+def test_second_device_not_ready_returns_two_attempt_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Two transient failures stop after the promised retry and explain the fallback."""
+    audio_path = tmp_path / "repeated-transient.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [
+            RuntimeError("CUDA driver error: device not ready"),
+            RuntimeError("cuda DRIVER error: DEVICE NOT READY"),
+        ]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_reclaim_cuda_memory", lambda: None)
+    monkeypatch.setattr(correction_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert raised_error.value.attempts == 2
+    assert raised_error.value.retried is True
+    assert raised_error.value.reason_category == "gpu_transient"
+    assert len(asr_model.transcribed_audio_paths) == 2
+
+
+def test_model_restore_failure_never_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A model that cannot load falls back before the user waits for a retry."""
+    audio_path = tmp_path / "model-load-failure.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    reclaimed_attempts: list[bool] = []
+
+    def fail_model_restore(_model_name: str) -> object:
+        """Reproduce a correction checkpoint that cannot be restored for this visit."""
+        raise PostVisitCorrectionError(
+            "Correction model could not load.",
+            reason_category="model_load_failed",
+        )
+
+    monkeypatch.setattr(correction_module, "_load_post_visit_asr_model", fail_model_restore)
+    monkeypatch.setattr(
+        correction_module,
+        "_reclaim_cuda_memory",
+        lambda: reclaimed_attempts.append(True),
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert raised_error.value.attempts == 0
+    assert raised_error.value.retried is False
+    assert raised_error.value.reason_category == "model_load_failed"
+    assert reclaimed_attempts == []
+
+
+def test_cached_cuda_memory_is_released_before_model_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A long streamed visit clears stale correction cache before loading its model."""
+    audio_path = tmp_path / "post-stream-visit.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(["corrected text"])
+    model_restore_steps: list[str] = []
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+
+    def load_model_after_cache_release(_model_name: str) -> StubPostVisitAsrModel:
+        """Record when the correction checkpoint begins loading for the user's note."""
+        model_restore_steps.append("load_model")
+        return asr_model
+
+    monkeypatch.setattr(
+        correction_module,
+        "_release_cached_cuda_memory_before_model_restore",
+        lambda: model_restore_steps.append("release_cache"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        correction_module,
+        "_load_post_visit_asr_model",
+        load_model_after_cache_release,
+    )
+
+    correction_module.transcribe_audio_with_nemo("test-model", str(audio_path))
+
+    assert model_restore_steps == ["release_cache", "load_model"]
+
+
+def test_healthy_short_correction_keeps_pre_m09_rows_byte_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy short visit produces the same stored rows users received before M09."""
+    retained_audio = b"\0\0" * 160
+    live_segments = [
+        {
+            "speaker_id": "speaker_0",
+            "role": "PATIENT",
+            "text": "preview typo",
+            "start": 0.0,
+            "end": 1.0,
+            "segment_id": "live-0001",
+        }
+    ]
+    baseline_result = run_post_visit_correction(
+        pcm_audio=retained_audio,
+        live_segments=live_segments,
+        model_name="test-model",
+        transcribe_audio_file=lambda _model, _path: "corrected patient text",
+    )
+    asr_model = StubPostVisitAsrModel(["corrected patient text"])
+    monkeypatch.setattr(correction_module, "_load_post_visit_asr_model", lambda _name: asr_model)
+    monkeypatch.setattr(correction_module, "enable_word_confidence_decoding", lambda _model: None)
+    monkeypatch.setattr(correction_module, "word_timings_from_hypothesis", lambda *_args: None)
+    monkeypatch.setattr(
+        correction_module,
+        "word_confidences_for_display_words",
+        lambda *_args: None,
+    )
+
+    current_result = run_post_visit_correction(
+        pcm_audio=retained_audio,
+        live_segments=live_segments,
+        model_name="test-model",
+    )
+
+    assert current_result.segments == baseline_result.segments
+    assert current_result.word_count == baseline_result.word_count
+    assert len(asr_model.transcribed_audio_paths) == 1
+
+
 def test_correction_endpoint_stores_corrected_rows_and_summary_prefers_them() -> None:
     """A post-stop correction artifact becomes the source for summaries."""
     _seed_stopped_session_with_audio()
@@ -942,6 +1355,10 @@ def test_correction_endpoint_stores_corrected_rows_and_summary_prefers_them() ->
     assert correction_response.status_code == 200
     correction_payload = correction_response.json()
     assert correction_payload["status"] == "ready"
+    assert correction_payload["attempted"] is True
+    assert correction_payload["attempts"] == 1
+    assert correction_payload["retried"] is False
+    assert correction_payload["chunk_count"] == 1
     corrected_rows = sessions.get_corrected_segments(TEST_SESSION_ID)
     assert corrected_rows[0]["text"] == "corrected doctor text"
 
@@ -979,6 +1396,9 @@ def test_correction_endpoint_reuses_existing_corrected_rows() -> None:
     assert response.status_code == 200
     assert response.json()["reused"] is True
     assert response.json()["model"] == "test-model"
+    assert response.json()["attempted"] is False
+    assert response.json()["attempts"] == 0
+    assert response.json()["retried"] is False
 
 
 def test_corrected_transcript_endpoint_returns_scoreable_rows() -> None:
@@ -1042,6 +1462,9 @@ def test_correction_endpoint_falls_back_when_audio_is_missing() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["source"] == "live_segments"
+    assert response.json()["attempted"] is False
+    assert response.json()["attempts"] == 0
+    assert response.json()["reason_category"] == "audio_expired"
     assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
 
 
@@ -1075,16 +1498,225 @@ def test_correction_endpoint_falls_back_when_buffer_trimmed() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["source"] == "live_segments"
+    assert response.json()["reason_category"] == "retention_window"
     assert "retention window" in response.json()["detail"]
     assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
 
 
-def _seed_stopped_session_with_audio() -> None:
+def test_correction_endpoint_sanitizes_gpu_failure_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed correction explains fallback without showing CUDA internals in the UI."""
+    _seed_stopped_session_with_audio()
+    sessions.append_segment(
+        TEST_SESSION_ID,
+        {
+            "speaker_id": "speaker_0",
+            "role": "PATIENT",
+            "text": "live text remains usable",
+            "start": 0.0,
+            "end": 1.0,
+            "segment_id": "live-0001",
+        },
+    )
+    raw_gpu_error = "CUDA driver error: device not ready while decoding secret text"
+    caplog.set_level(logging.WARNING, logger="api.server")
+
+    with patch(
+        "api.server.run_post_visit_correction",
+        side_effect=PostVisitCorrectionError(
+            raw_gpu_error,
+            attempts=2,
+            retried=True,
+            reason_category="gpu_transient",
+        ),
+    ):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(f"/session/{TEST_SESSION_ID}/correction")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unavailable"
+    assert payload["attempted"] is True
+    assert payload["attempts"] == 2
+    assert payload["retried"] is True
+    assert payload["reason_category"] == "gpu_transient"
+    assert raw_gpu_error not in response.text
+    assert "live transcript" in payload["detail"].lower()
+    unavailable_log = next(
+        record for record in caplog.records if "correction.unavailable" in record.message
+    )
+    assert unavailable_log.attempts == 2
+    assert unavailable_log.retried is True
+    assert unavailable_log.reason_category == "gpu_transient"
+    assert raw_gpu_error not in unavailable_log.message
+
+
+def test_recovered_transient_stores_rows_and_attempt_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user whose first GPU call recovers receives corrected rows after one retry."""
+    _seed_stopped_session_with_audio()
+    sessions.append_segment(
+        TEST_SESSION_ID,
+        {
+            "speaker_id": "speaker_0",
+            "role": "PATIENT",
+            "text": "preview text",
+            "start": 0.0,
+            "end": 1.0,
+            "segment_id": "live-0001",
+        },
+    )
+    asr_model = StubPostVisitAsrModel(
+        [RuntimeError("CUDA driver error: device not ready"), "corrected text"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    reclaimed_attempts: list[bool] = []
+    monkeypatch.setattr(
+        correction_module,
+        "_reclaim_cuda_memory",
+        lambda: reclaimed_attempts.append(True),
+    )
+    monkeypatch.setattr(correction_module.time, "sleep", lambda _seconds: None)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(f"/session/{TEST_SESSION_ID}/correction")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["attempts"] == 2
+    assert payload["retried"] is True
+    assert sessions.get_corrected_segments(TEST_SESSION_ID)[0]["text"] == "corrected text"
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert reclaimed_attempts == [True]
+
+
+def test_duplicate_correction_clicks_execute_one_correction() -> None:
+    """Two quick Summarise clicks share one corrected artifact for the same visit."""
+    _seed_stopped_session_with_audio()
+    correction_call_count = 0
+    correction_started = threading.Event()
+    allow_correction_to_finish = threading.Event()
+
+    def delayed_correction(**_correction_inputs: object) -> PostVisitCorrectionResult:
+        """Hold the first correction long enough for a duplicate browser click to queue."""
+        nonlocal correction_call_count
+        correction_call_count += 1
+        correction_started.set()
+        allow_correction_to_finish.wait(timeout=2.0)
+        return _stub_correction_result("one shared correction")
+
+    async def request_correction_twice() -> list[dict]:
+        """Submit the same post-stop browser action twice on one event loop."""
+        first_request = asyncio.create_task(
+            api_server.correct_session_transcript(TEST_SESSION_ID)
+        )
+        await asyncio.to_thread(correction_started.wait, 2.0)
+        second_request = asyncio.create_task(
+            api_server.correct_session_transcript(TEST_SESSION_ID)
+        )
+        await asyncio.sleep(0.02)
+        allow_correction_to_finish.set()
+        return await asyncio.gather(first_request, second_request)
+
+    with patch("api.server.run_post_visit_correction", side_effect=delayed_correction):
+        responses = asyncio.run(request_correction_twice())
+
+    assert correction_call_count == 1
+    assert [response["status"] for response in responses] == ["ready", "ready"]
+    assert sorted(response["reused"] for response in responses) == [False, True]
+
+
+def test_force_correction_reruns_after_waiting_for_existing_work() -> None:
+    """An explicit QA force request replaces existing rows instead of reusing them."""
+    _seed_stopped_session_with_audio()
+    sessions.replace_corrected_segments(
+        TEST_SESSION_ID,
+        _stub_correction_result("previous correction").segments,
+    )
+
+    with patch(
+        "api.server.run_post_visit_correction",
+        return_value=_stub_correction_result("forced correction"),
+    ) as correction_runner:
+        response = asyncio.run(
+            api_server.correct_session_transcript(
+                TEST_SESSION_ID,
+                api_server.CorrectionRequest(force=True),
+            )
+        )
+
+    assert response["status"] == "ready"
+    assert response["reused"] is False
+    assert correction_runner.call_count == 1
+    assert sessions.get_corrected_segments(TEST_SESSION_ID)[0]["text"] == "forced correction"
+
+
+def test_corrections_for_different_sessions_are_single_flight() -> None:
+    """Two clinicians can queue corrections without both GPU workers restoring a model."""
+    other_session_id = "00000000-0000-4000-8000-000000000302"
+    _seed_stopped_session_with_audio(TEST_SESSION_ID)
+    _seed_stopped_session_with_audio(other_session_id)
+    active_correction_count = 0
+    maximum_active_corrections = 0
+    correction_count_lock = threading.Lock()
+
+    def measured_correction(**_correction_inputs: object) -> PostVisitCorrectionResult:
+        """Measure whether two user corrections enter the GPU lane together."""
+        nonlocal active_correction_count, maximum_active_corrections
+        with correction_count_lock:
+            active_correction_count += 1
+            maximum_active_corrections = max(
+                maximum_active_corrections,
+                active_correction_count,
+            )
+        time.sleep(0.05)
+        with correction_count_lock:
+            active_correction_count -= 1
+        return _stub_correction_result("serialized correction")
+
+    async def request_both_sessions() -> list[dict]:
+        """Represent two users clicking Summarise at nearly the same time."""
+        return await asyncio.gather(
+            api_server.correct_session_transcript(TEST_SESSION_ID),
+            api_server.correct_session_transcript(other_session_id),
+        )
+
+    with patch("api.server.run_post_visit_correction", side_effect=measured_correction):
+        responses = asyncio.run(request_both_sessions())
+
+    assert [response["status"] for response in responses] == ["ready", "ready"]
+    assert maximum_active_corrections == 1
+
+
+def _stub_correction_result(corrected_text: str) -> PostVisitCorrectionResult:
+    """Build the corrected row a user would receive after a successful test request."""
+    return PostVisitCorrectionResult(
+        segments=[
+            {
+                "speaker_id": "speaker_0",
+                "role": "PATIENT",
+                "text": corrected_text,
+                "start": 0.0,
+                "end": 1.0,
+                "segment_id": "corrected-0001",
+                "source": "post_visit_correction",
+                "source_model": "test-model",
+            }
+        ],
+        model_name="test-model",
+        word_count=len(corrected_text.split()),
+    )
+
+
+def _seed_stopped_session_with_audio(session_id: str = TEST_SESSION_ID) -> None:
     """Register a session with retained PCM like the post-finalize grace window."""
     transcription_session = TranscriptionSession(
-        TEST_SESSION_ID,
+        session_id,
         pipeline=NemoPipeline(),
         input_format="pcm",
     )
     transcription_session.buffer.append(b"\0\0" * 160)
-    asyncio.run(lifecycle.register(TEST_SESSION_ID, transcription_session))
+    asyncio.run(lifecycle.register(session_id, transcription_session))
