@@ -1610,7 +1610,7 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
 });
 
 test.describe("Row confidence passthrough (M06)", () => {
-  test("a measured row renders like any other, keeps its value, and echoes it in the summary snapshot", async ({
+  test("a measured row keeps its value, review cue, and summary snapshot", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -1636,11 +1636,13 @@ test.describe("Row confidence passthrough (M06)", () => {
       });
     });
 
-    // Both rows render as plain transcript text - no confidence styling yet.
+    // Both rows keep safe text rendering; only the low measured row gains the additive review cue.
     const rows = page.locator(".segment__text");
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toHaveText("I have terrible headaches");
     await expect(rows.nth(1)).toHaveText("How long has that been going on?");
+    await expect(rows.nth(0)).toHaveClass(/transcript-wording--review/);
+    await expect(rows.nth(1)).not.toHaveClass(/transcript-wording--review/);
 
     // The measured row carries its value; the unmeasured row stays bare.
     await expect(rows.nth(0)).toHaveAttribute("data-confidence", "0.71");

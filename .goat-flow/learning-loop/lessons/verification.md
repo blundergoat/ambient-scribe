@@ -5,6 +5,58 @@ last_reviewed: 2026-07-11
 
 # READ / SCOPE / VERIFY Lessons
 
+## Lesson: CSS pseudo-content does not preserve copied or accessible text
+
+**Created:** 2026-07-11
+**What happened:** M03 split corrected stitched utterances into row-local confidence spans and
+used `::before { content: ' ' }` to separate them visually. The full Playwright lane failed
+two provenance contracts because DOM text concatenated adjacent rows (`twicedaily`,
+`red.Itches`) even though the browser looked spaced correctly.
+**Evidence:**
+`var/quality/m03-confidence-styling-20260711T100804Z/full-playwright-first-failure.log`
+records 46/48 passing and both exact text mismatches.
+**Prevention:** When a separator belongs to copied, searched, or screen-reader text, insert a
+real text node. Use pseudo-content only for decoration, and keep an assertion over the owning
+component's combined DOM text whenever display rows are split into local spans.
+
+## Lesson: Register dynamic modules before executing dataclass definitions
+
+**Created:** 2026-07-11
+**What happened:** M03's corpus-mining tool loaded `scripts/transcript-quality.py` through
+`importlib`, but executed it before adding the module to `sys.modules`. Python's dataclass
+annotation lookup then dereferenced a missing module and the first evidence run failed.
+**Evidence:** `var/quality/m03-confidence-styling-phase0-20260711T093609Z/mining-run-first-failure.log`
+(search: "AttributeError: 'NoneType' object has no attribute '__dict__'").
+**Prevention:** After `module_from_spec`, assign the module under `spec.name` in `sys.modules`
+before `exec_module` whenever dynamically loaded code defines dataclasses or resolves annotations.
+
+## Lesson: Capture a UI mock's normal and interaction states separately
+
+**Created:** 2026-07-11
+**What happened:** M03's first component capture forced its confidence tooltip open, which
+covered the adjacent `Review wording` chip and made the recommended default state impossible
+to judge even though both elements rendered correctly.
+**Evidence:** `var/quality/m03-confidence-styling-phase0-20260711T093609Z/light-theme-component-before-tooltip-fix.png`
+shows the overlap; the final `light-theme-component.png` and `light-theme-tooltip-focus.png`
+separate the default and keyboard-focused states.
+**Prevention:** Capture the untouched component first, then trigger hover/focus and save a
+second image; an interaction overlay must never replace evidence of the default UI hierarchy.
+**Follow-up (M03 product):** A focus assertion sampled the first frame of a 140ms tooltip
+transition and read opacity 0, then a locator screenshot clipped the tooltip outside the row's
+box even after opacity reached 1. Poll the settled pseudo-element style and use a padded page
+clip when the interaction overlay extends beyond the captured element.
+
+## Lesson: Give browser-use screenshots an absolute evidence path
+
+**Created:** 2026-07-11
+**What happened:** M03 invoked `browser-use screenshot` with a relative filename from an
+evidence-directory shell, but the persistent browser daemon resolved it at the repository root.
+The final status gate caught the untracked PNG before the design handoff.
+**Evidence:** `var/quality/m03-confidence-styling-phase0-20260711T093609Z/browser-use-path-routing.log`
+records the requested, observed, and corrected paths.
+**Prevention:** Pass an absolute evidence path to `browser-use screenshot`; do not assume the
+daemon shares the invoking shell's working directory, and always finish with `git status`.
+
 ## Lesson: Re-run formatting after the last regression pin
 
 **Created:** 2026-07-11
@@ -14,6 +66,9 @@ but the final Ruff format gate still found one test file requiring mechanical fo
 first recorded `Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
 **Prevention:** Treat formatting as a final-code gate: rerun it after the last test edit, then
 rerun affected tests so the formatted file—not the pre-format version—is the verified artifact.
+**Follow-up (M03):** A final exception-comment audit again left three otherwise green Python files
+needing Ruff formatting. The formatter and all 130 affected summary/fidelity tests were rerun
+before the broad suite, confirming the final edited bytes rather than the earlier focused pass.
 
 ## Lesson: Verification wrappers must preserve the producer's exit status
 
@@ -224,6 +279,10 @@ While testing the Demo Audio picker, a Playwright smoke loaded the page on `http
 During the 0.3.0 mockup refresh, an empty-state screenshot made the new workspace layout look clean, but a populated transcript/summary browser smoke exposed that direct transcript events could leave the start prompt visible above real rows.
 
 **Lesson:** For transcript, summary, or hidden-panel layout changes, capture both empty and populated browser states. Include DOM assertions for card count, empty-state visibility, overlap, and removed controls so visual verification covers the state users actually review.
+**Follow-up (M03 product):** The first quiet `Review wording` chip increased an otherwise
+identical transcript card by 3.33px. Compare equal-content marked/unmarked card bounding boxes;
+keeping the chip within the existing header line-height removed the shift while preserving the
+visible label.
 
 ## Lesson: Delivery-race claims need receiver-side evidence (2026-07-06)
 

@@ -62,6 +62,7 @@ function selectSummaryTab(tabName) {
     if (!isNoteActive) {
         transcriptRenderPromise = renderSummaryTranscriptView();
         transcriptRenderPromise.catch((transcriptError) => {
+            // Example: the clinician opens Transcript as its corrected-row response becomes invalid.
             console.warn('Transcript tab render failed:', transcriptError);
         });
     }
@@ -82,7 +83,7 @@ async function openTranscriptDeepLink(citedSegmentIds) {
     try {
         await transcriptRenderPromise;
     } catch (renderError) {
-        // The render failure is reported here; the miss notice below covers the user.
+        // Example: the clinician opens a source link while corrected-transcript rendering fails.
         console.warn('Transcript render unavailable for deep link:', renderError);
     }
 
@@ -242,7 +243,12 @@ async function renderSummaryTranscriptView() {
             : 'No transcript rows yet.';
     }
 
-    transcriptContainer.replaceChildren(...createSummaryTranscriptBlocks(transcriptRows));
+    const visibleTranscriptLane = isCorrectedAvailable
+        ? CORRECTED_TRANSCRIPT_LANE
+        : LIVE_TRANSCRIPT_LANE;
+    transcriptContainer.replaceChildren(
+        ...createSummaryTranscriptBlocks(transcriptRows, visibleTranscriptLane)
+    );
 }
 
 /**
@@ -278,6 +284,7 @@ async function fetchCorrectedTranscriptRows() {
         correctedTranscriptCacheSessionId = CONFIG.sessionId;
         return correctedRows;
     } catch (fetchError) {
+        // Example: the clinician opens Transcript while the corrected artifact request disconnects.
         console.warn('Corrected transcript fetch failed:', fetchError);
         return null;
     }
@@ -287,33 +294,124 @@ async function fetchCorrectedTranscriptRows() {
  * Builds stitched utterance blocks for the Transcript tab.
  * Use with corrected rows or live fallback rows; blocks keep constituent
  * segment IDs in a data attribute so later milestones can deep-link to them.
+ * Individual row spans preserve confidence styling inside a stitched block.
  *
  * @param {Array<object>} transcriptRows - transcript rows in storage shape; empty renders no blocks.
+ * @param {string} transcriptLane - corrected or live view; empty/unknown keeps rows unstyled.
  * @returns {HTMLElement[]} one element per stitched utterance block.
  */
-function createSummaryTranscriptBlocks(transcriptRows) {
+function createSummaryTranscriptBlocks(
+    transcriptRows,
+    transcriptLane = CORRECTED_TRANSCRIPT_LANE,
+) {
     // Test pages without the stitching script show nothing rather than throwing.
     if (typeof stitchTranscriptSegments !== 'function') {
         return [];
     }
 
-    return stitchTranscriptSegments(transcriptRows).map((utteranceBlock) => createElement('div', {
-        className: 'summary-transcript__block',
-        dataset: { segmentIds: utteranceBlock.segmentIds.join(' ') },
-    }, [
-        createElement('span', {
-            className: 'summary-transcript__time',
-            text: Number.isFinite(utteranceBlock.start) ? formatTime(utteranceBlock.start) : '',
-        }),
-        createElement('span', {
-            className: 'summary-transcript__role',
-            text: utteranceBlock.role,
-        }),
-        createElement('span', {
-            className: 'summary-transcript__text',
-            text: utteranceBlock.text,
-        }),
-    ]));
+    const transcriptRowsBySegmentId = new Map();
+    // Stable row IDs reconnect each stitched phrase to its local confidence value.
+    for (const transcriptRow of transcriptRows ?? []) {
+        const segmentId = String(transcriptRow.segment_id ?? '').trim();
+
+        // Rows without identity still render through the stitched-text fallback.
+        if (segmentId !== '') {
+            transcriptRowsBySegmentId.set(segmentId, transcriptRow);
+        }
+    }
+
+    // Each stitched utterance keeps the existing block layout and gains row-local text spans.
+    return stitchTranscriptSegments(transcriptRows).map((utteranceBlock) => {
+        const transcriptWording = createSummaryTranscriptWording(
+            utteranceBlock,
+            transcriptRowsBySegmentId,
+            transcriptLane,
+        );
+
+        return createElement('div', {
+            className: 'summary-transcript__block',
+            dataset: { segmentIds: utteranceBlock.segmentIds.join(' ') },
+        }, [
+            createElement('span', {
+                className: 'summary-transcript__time',
+                text: Number.isFinite(utteranceBlock.start) ? formatTime(utteranceBlock.start) : '',
+            }),
+            createElement('span', {
+                className: 'summary-transcript__role',
+                text: utteranceBlock.role,
+            }),
+            transcriptWording,
+        ]);
+    });
+}
+
+/**
+ * Builds row-local wording inside one corrected or live-fallback transcript block.
+ * Use after stitching so only the uncertain row is marked, not the whole utterance.
+ *
+ * @param {object} utteranceBlock - stitched display block; empty IDs use its plain text fallback.
+ * @param {Map<string, object>} transcriptRowsBySegmentId - source rows; empty leaves the block plain.
+ * @param {string} transcriptLane - corrected or live view; unknown leaves every row plain.
+ * @returns {HTMLElement} text container with exact row spans or unchanged stitched text.
+ */
+function createSummaryTranscriptWording(
+    utteranceBlock,
+    transcriptRowsBySegmentId,
+    transcriptLane,
+) {
+    const transcriptWording = createElement('span', {
+        className: 'summary-transcript__text',
+    });
+    // Every stitched ID must resolve before the UI can safely split the displayed wording.
+    const sourceRows = utteranceBlock.segmentIds.map(
+        (segmentId) => transcriptRowsBySegmentId.get(segmentId)
+    );
+
+    // Missing row identity keeps the established stitched text instead of risking word loss.
+    if (sourceRows.length === 0 || sourceRows.some((sourceRow) => !sourceRow)) {
+        transcriptWording.textContent = utteranceBlock.text;
+        return transcriptWording;
+    }
+
+    let hasWordingToReview = false;
+    // One inline span per source row keeps the uncertain wording locally scoped.
+    for (const sourceRow of sourceRows) {
+        // Real spaces preserve copied and assistive text between rows, not only visual separation.
+        if (transcriptWording.childNodes.length > 0) {
+            transcriptWording.appendChild(document.createTextNode(' '));
+        }
+
+        const sourceRowWording = createElement('span', {
+            className: 'summary-transcript__row',
+            text: String(sourceRow.text ?? '').trim(),
+        });
+
+        // Measured corrected rows keep their value for inspection and browser tests.
+        if (Number.isFinite(sourceRow.confidence)) {
+            sourceRowWording.dataset.confidence = sourceRow.confidence;
+
+            // The shared classifier applies the lane-specific threshold and accessibility cue.
+            if (typeof markTranscriptWordingForReview === 'function') {
+                hasWordingToReview = markTranscriptWordingForReview(
+                    sourceRowWording,
+                    sourceRow.confidence,
+                    transcriptLane,
+                ) || hasWordingToReview;
+            }
+        }
+
+        transcriptWording.appendChild(sourceRowWording);
+    }
+
+    // Corrected blocks explain the dotted wording without adding another grid column.
+    if (hasWordingToReview && typeof createReviewWordingChip === 'function') {
+        transcriptWording.prepend(document.createTextNode(' '));
+        transcriptWording.prepend(
+            createReviewWordingChip('confidence-review-chip--inline')
+        );
+    }
+
+    return transcriptWording;
 }
 
 /**

@@ -188,6 +188,11 @@ function refreshSpeakerCardDisplay(segmentBlock) {
     if (avatarElement) {
         avatarElement.textContent = displayState.avatar;
     }
+
+    // Card splits or inserts can move the final uncertain row, so its header cue is refreshed too.
+    if (typeof syncTranscriptCardReviewChip === 'function') {
+        syncTranscriptCardReviewChip(segmentBlock);
+    }
 }
 
 /**
@@ -527,10 +532,14 @@ function createRowTextSpan(segment) {
         dataset: { start: segment.start, end: segment.end },
     });
 
-    // Rows keep their heard-confidence so summary round-trips and the later
-    // low-confidence styling read the same value; unmeasured rows stay bare.
+    // Measured rows keep the same value for summary round-trips and the visible review cue.
     if (Number.isFinite(segment.confidence)) {
         rowSpan.dataset.confidence = segment.confidence;
+
+        // The live lane marks only wording below its corpus-derived threshold.
+        if (typeof markTranscriptWordingForReview === 'function') {
+            markTranscriptWordingForReview(rowSpan, segment.confidence, LIVE_TRANSCRIPT_LANE);
+        }
     }
 
     // Rows without a server row ID (older histories) cannot be corrected individually.
@@ -624,6 +633,7 @@ async function sendRowRoleOverride(segmentId, role) {
             console.warn('Row role override save failed:', response.status);
         }
     } catch (overrideError) {
+        // Example: the clinician corrects one row while the same-origin save proxy disconnects.
         console.warn('Row role override failed:', overrideError);
     }
 }
@@ -706,6 +716,7 @@ async function sendRoleOverride(speakerId, role) {
             console.warn('Role override save failed:', response.status);
         }
     } catch (overrideError) {
+        // Example: the clinician changes a speaker label while the save request loses connection.
         console.warn('Role override failed:', overrideError);
     }
 }

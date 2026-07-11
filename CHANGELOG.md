@@ -34,6 +34,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   five-generation c03 campaign audited 16 denial claims with zero unsupported denials, zero false
   denial flags, and zero unflagged fabricated denials.
 
+- **Low-confidence wording is visibly reviewable without rewriting the note (0.4.1 M03)** -
+  corpus-derived strict thresholds now mark live rows below `0.76` and corrected rows below `0.78`
+  with the user-approved quiet `Review wording` chip, local dotted tint, keyboard focus, and an
+  accessible explanation in both themes; absent and exact-boundary confidence stay plain, role
+  cards keep their labels and height, and corrected stitched utterances preserve row-local cues.
+  Generated prose remains byte-identical: after citation validation, a deterministic additive
+  `sections[].low_confidence` field marks only sentences whose conservatively linked, measured
+  corrected rows are predominantly sub-threshold, with tooltip `Low-confidence transcription`.
+  The retained day5 calf/carp sentence is now visibly flagged; no citation/overlap, unmeasured
+  rows, and low/high ties remain unmarked. A zero-token A/B selected this deterministic flag over
+  prompt-side text hedging. Product re-renders matched stored threshold counts across the
+  worst-liveBad, typical, and day5 fixtures (10.3-24.1% marked; no warning wall), while focused
+  fidelity/summary tests remained green.
+
 ## [0.4.0] - unreleased
 
 ### Added

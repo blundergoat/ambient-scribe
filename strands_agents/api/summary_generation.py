@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from api.agent_observability import agent_metric_fields as _agent_metric_fields
+from api.summary_confidence import add_low_confidence_note_flags
 from api.summary_fidelity import (
     FidelityViolation,
     find_fidelity_violations,
@@ -109,7 +110,9 @@ def run_summary_generation(
         )
 
         violations: list[FidelityViolation] = []
-        drafts: list[tuple[SessionSummaryOutput, list[FidelityViolation], dict[str, Any]]] = []
+        drafts: list[
+            tuple[SessionSummaryOutput, list[FidelityViolation], dict[str, Any]]
+        ] = []
         # One clean draft plus at most one fidelity-guided redo keeps the wait
         # after "Summarise" bounded while still fixing most fabrications.
         for attempt in (0, 1):
@@ -172,9 +175,30 @@ def run_summary_generation(
                 len(violations),
                 extra={"session_id": session_id, "flagged": len(violations)},
             )
+
+        # Corrected-row citations can now expose uncertain wording without changing note text.
+        parsed_summary = add_low_confidence_note_flags(
+            parsed_summary,
+            citation_segments or [],
+        )
+        # Every marked sentence contributes one PHI-safe count to summary observability.
+        confidence_flag_count = sum(
+            len(section.get("low_confidence", []))
+            for section in parsed_summary.get("sections", [])
+            if isinstance(section, dict)
+        )
+        # Counts only keep the confidence decision observable without logging clinical prose.
+        if confidence_flag_count:
+            logger.info(
+                "summary.low_confidence_flagged session_id=%s flagged=%s",
+                session_id,
+                confidence_flag_count,
+                extra={"session_id": session_id, "flagged": confidence_flag_count},
+            )
         parsed_summary["_agent_metrics"] = metric_fields
         return parsed_summary
     except Exception as exc:
+        # Example: the clinician presses Summarise while provider output fails schema validation.
         logger.error(
             "summary.agent_failed session_id=%s %s: %s",
             session_id,
@@ -334,7 +358,7 @@ def summary_generation_prompt(
             # At least one corrected row is citable, so the model can attach source chips.
             prompt_parts.append(
                 "Use only these source IDs in section citations. Put citations in each "
-                "section's `citations` array as objects like {\"segment_id\": \"seg-0001\"}. "
+                'section\'s `citations` array as objects like {"segment_id": "seg-0001"}. '
                 "Do not cite IDs that are not listed here."
             )
             prompt_parts.append(source_index)
@@ -593,6 +617,7 @@ def _float_or_none(value: Any) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
+        # Example: an older corrected row stores an empty timestamp, so its chip omits the clock.
         return None
 
 
