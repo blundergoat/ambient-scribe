@@ -83,16 +83,29 @@ class PostVisitCorrectionError(RuntimeError):
         attempts: int = 0,
         retried: bool = False,
         reason_category: str = "correction_failed",
+        failed_chunk_index: int | None = None,
+        chunk_count_planned: int = 0,
     ) -> None:
         """Keep safe recovery metadata with one unavailable correction.
 
         Use when the browser must fall back to live rows without seeing raw
-        CUDA details; zero attempts means ASR never started for this visit.
+        CUDA details. Zero attempts means ASR never started; a null failed
+        chunk means the request failed before an ordered audio piece ran.
+
+        Args:
+            message: Internal diagnostic text; callers must not return it to the browser.
+            attempts: Model calls made for the failed chunk; zero means ASR never started.
+            retried: True when the failed chunk consumed the one recovery retry.
+            reason_category: PHI-safe failure label for browser/support provenance.
+            failed_chunk_index: One-based failed audio piece; null means no chunk ran.
+            chunk_count_planned: Total ordered pieces planned; zero means none were built.
         """
         super().__init__(message)
         self.attempts = attempts
         self.retried = retried
         self.reason_category = reason_category
+        self.failed_chunk_index = failed_chunk_index
+        self.chunk_count_planned = chunk_count_planned
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,8 +320,22 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
     retried = False
     try:
         # Each ordered chunk reuses the same model so only activation memory is bounded.
-        for audio_chunk in audio_chunks:
-            transcribe_call = _transcribe_with_loaded_model(asr_model, str(audio_chunk.path))
+        for failed_chunk_index, audio_chunk in enumerate(audio_chunks, start=1):
+            try:
+                transcribe_call = _transcribe_with_loaded_model(
+                    asr_model,
+                    str(audio_chunk.path),
+                )
+            except PostVisitCorrectionError as correction_error:
+                # Support needs the exact failed piece without receiving audio or CUDA prose.
+                raise PostVisitCorrectionError(
+                    str(correction_error),
+                    attempts=correction_error.attempts,
+                    retried=correction_error.retried,
+                    reason_category=correction_error.reason_category,
+                    failed_chunk_index=failed_chunk_index,
+                    chunk_count_planned=len(audio_chunks),
+                ) from correction_error
             attempts = max(attempts, transcribe_call.attempts)
             retried = retried or transcribe_call.retried
             # An empty chunk would silently remove part of the user's consultation.
@@ -318,6 +345,8 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
                     attempts=attempts,
                     retried=retried,
                     reason_category="empty_result",
+                    failed_chunk_index=failed_chunk_index,
+                    chunk_count_planned=len(audio_chunks),
                 )
 
             chunk_transcription = _transcription_from_hypothesis(
@@ -332,6 +361,8 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
                     attempts=attempts,
                     retried=retried,
                     reason_category="empty_result",
+                    failed_chunk_index=failed_chunk_index,
+                    chunk_count_planned=len(audio_chunks),
                 )
             combined_text_parts.append(chunk_transcription.text)
             # Missing timing on one chunk makes the combined timing stream incomplete.

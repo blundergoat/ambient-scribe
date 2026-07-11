@@ -4,6 +4,21 @@ All notable changes to Ambient Scribe are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] - unreleased
+
+### Added
+
+- **Corpus and evidence harness hardening (0.4.1 M01)** - corrected-fixture `--all` and
+  multi-fixture runs now preserve an explicit unavailable correction as PHI-safe fixture/run
+  failure artifacts, show `FAILED` corrected metrics plus the safe reason in the final table,
+  continue through later fixtures, and end with a stable `fixtures=N ok=N failed=N` sentinel;
+  named single-fixture gates remain fail-fast. Correction failures now report the one-based failed
+  chunk and planned chunk count through exception metadata, the API response, and structured logs.
+  The isolated browser runner uses parallel PHP workers plus a test-only static-asset router, with
+  two consecutive 43-test Playwright passes replacing the asset-drop-prone single-server lane.
+  Long eval guidance now requires capturing correction/instrumentation lines during the run, and
+  the roadmap points at the completed 20-fixture baseline and active 0.4.1 order.
+
 ## [0.4.0] - unreleased
 
 ### Added

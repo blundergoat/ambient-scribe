@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-11
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -164,3 +164,14 @@ fixture runner.
 **Lesson:** Treat model-card recommendations as candidates, not implementation facts.
 Before planning product wiring for a newer ASR checkpoint, run it inside the exact pinned
 Docker runtime and record a fixture score or a precise compatibility failure.
+
+## Lesson: Gruff PHP file intent must precede the strict-types declaration
+
+**Created:** 2026-07-11
+**What happened:** M01 added a documented test-only PHP router, but its file docblock followed
+`declare(strict_types=1)`. PHP lint, PHP-CS-Fixer, and PHPStan all passed while preflight failed
+`docs.missing-file-phpdoc`; gruff recognizes the intent only at the file header.
+**Evidence:** `scripts/e2e-router.php` (search: "Route isolated browser tests") now places the
+3-8-line intent block immediately after `<?php`, before the strict-types declaration.
+**Prevention:** For every new PHP file, put the file-intent docblock directly after `<?php` and
+before `declare(strict_types=1)`, then run the direct gruff-php gate as well as PHP lint/style.

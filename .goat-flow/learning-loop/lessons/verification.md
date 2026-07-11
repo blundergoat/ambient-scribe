@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-11
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -354,3 +354,28 @@ uncapped replay").
 **Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
 field session's stop time. Pass that stop time explicitly with `--seconds` and verify the
 saved row duration before using the artifact for prompt or fidelity acceptance.
+
+## Lesson: Long evals must capture rotating service logs during the run
+
+**Created:** 2026-07-11
+**What happened:** The first 20-fixture full-corpus sweep waited until the end to inspect Docker
+logs, but rotation had already discarded 13 of 15 early `correction.completed` lines. The
+operator's live ledger was the only surviving duration/chunk evidence for those fixtures.
+**Evidence:** `var/quality/full-corpus-20260710T2328Z/run-manifest.md` (search:
+"Correction-health ledger") records the rotation loss and the operator-captured replacement.
+**Prevention:** For long detached evals, append `correction.completed`,
+`correction.unavailable`, and milestone instrumentation lines to the run directory while each
+fixture executes. Do not treat an end-of-run `docker compose logs` read as durable evidence.
+
+## Lesson: Source-based shell smokes need the main guard before the first run
+
+**Created:** 2026-07-11
+**What happened:** M01's first GPU-free corpus smoke sourced the existing eval runner before a
+library guard existed, so sourcing immediately entered the real fixture main path. The run was
+terminated, health/CUDA/error checks stayed clean, and the smoke was rerun only after the guard.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "fixture_summary_line") and
+`tests/eval-corrected-fixtures-smoke.sh` (search: "append_failed_report_row") pin the
+corrected order.
+**Prevention:** When a shell smoke will source an executable runner, land and syntax-check the
+`BASH_SOURCE[0] == $0` main guard before the first source attempt; then add the source-based red
+assertion. Never assume an executable script is already library-safe.

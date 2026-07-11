@@ -1125,6 +1125,8 @@ def test_full_chunk_empty_decode_still_falls_back(
 
     # The user keeps the live-transcript fallback with the safe category, never partial rows.
     assert raised_error.value.reason_category == "empty_result"
+    assert raised_error.value.failed_chunk_index == 2
+    assert raised_error.value.chunk_count_planned == 3
 
 
 def test_device_not_ready_retries_once_on_the_same_model(
@@ -1529,6 +1531,8 @@ def test_correction_endpoint_sanitizes_gpu_failure_metadata(
             attempts=2,
             retried=True,
             reason_category="gpu_transient",
+            failed_chunk_index=2,
+            chunk_count_planned=3,
         ),
     ):
         client = TestClient(app, raise_server_exceptions=False)
@@ -1541,6 +1545,8 @@ def test_correction_endpoint_sanitizes_gpu_failure_metadata(
     assert payload["attempts"] == 2
     assert payload["retried"] is True
     assert payload["reason_category"] == "gpu_transient"
+    assert payload["failed_chunk_index"] == 2
+    assert payload["chunk_count_planned"] == 3
     assert raw_gpu_error not in response.text
     assert "live transcript" in payload["detail"].lower()
     unavailable_log = next(
@@ -1549,6 +1555,8 @@ def test_correction_endpoint_sanitizes_gpu_failure_metadata(
     assert unavailable_log.attempts == 2
     assert unavailable_log.retried is True
     assert unavailable_log.reason_category == "gpu_transient"
+    assert unavailable_log.failed_chunk_index == 2
+    assert unavailable_log.chunk_count_planned == 3
     assert raw_gpu_error not in unavailable_log.message
 
 

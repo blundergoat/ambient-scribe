@@ -52,7 +52,6 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 DIM='\033[2m'
-BOLD='\033[1m'
 RESET='\033[0m'
 
 log()  { echo -e "${DIM}[e2e]${RESET} $*"; }
@@ -156,9 +155,11 @@ cors_origins http://localhost:${APP_PORT}" \
     # ── PHP App ───────────────────────────────────────────────────────
     if [[ "$INCLUDE_PHP" == "true" ]]; then
         log "Starting PHP app on port ${APP_PORT}..."
+        # Parallel PHP workers keep Playwright page asset requests from starving each other.
         APP_ENV=dev \
         APP_DEBUG=1 \
         APP_SECRET=e2e-test-secret \
+        PHP_CLI_SERVER_WORKERS="${PHP_CLI_SERVER_WORKERS:-8}" \
         AGENT_ENDPOINT="http://localhost:${AGENT_PORT}" \
         NEMO_WEBSOCKET_URL="ws://localhost:${AGENT_PORT}" \
         MERCURE_URL="http://localhost:${MERCURE_PORT}/.well-known/mercure" \
@@ -169,7 +170,7 @@ cors_origins http://localhost:${APP_PORT}" \
             -d post_max_size=128M \
             -d memory_limit=512M \
             -S "0.0.0.0:${APP_PORT}" -t "${REPO_ROOT}/public" \
-            "${REPO_ROOT}/public/index.php" \
+            "${REPO_ROOT}/scripts/e2e-router.php" \
             >"${LOG_DIR}/php.log" 2>&1 &
         PIDS+=($!)
 

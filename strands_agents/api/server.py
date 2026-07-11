@@ -623,13 +623,16 @@ async def correct_session_transcript(
             logger.warning(
                 (
                     "correction.unavailable session_id=%s duration_ms=%s "
-                    "attempts=%s retried=%s reason_category=%s error_type=%s"
+                    "attempts=%s retried=%s reason_category=%s "
+                    "failed_chunk_index=%s chunk_count_planned=%s error_type=%s"
                 ),
                 session_id,
                 duration_ms,
                 correction_error.attempts,
                 correction_error.retried,
                 correction_error.reason_category,
+                correction_error.failed_chunk_index,
+                correction_error.chunk_count_planned,
                 type(correction_error).__name__,
                 extra={
                     "session_id": session_id,
@@ -637,6 +640,8 @@ async def correct_session_transcript(
                     "attempts": correction_error.attempts,
                     "retried": correction_error.retried,
                     "reason_category": correction_error.reason_category,
+                    "failed_chunk_index": correction_error.failed_chunk_index,
+                    "chunk_count_planned": correction_error.chunk_count_planned,
                     "error_type": type(correction_error).__name__,
                 },
             )
@@ -647,6 +652,8 @@ async def correct_session_transcript(
                 attempts=correction_error.attempts,
                 retried=correction_error.retried,
                 reason_category=correction_error.reason_category,
+                failed_chunk_index=correction_error.failed_chunk_index,
+                chunk_count_planned=correction_error.chunk_count_planned,
             )
 
         sessions.replace_corrected_segments(session_id, correction_result.segments)
@@ -698,6 +705,8 @@ def _correction_unavailable_response(
     reason_category: str,
     attempts: int = 0,
     retried: bool = False,
+    failed_chunk_index: int | None = None,
+    chunk_count_planned: int = 0,
 ) -> dict:
     """Build a non-fatal correction response for live-preview fallback.
 
@@ -708,6 +717,8 @@ def _correction_unavailable_response(
         reason_category: Safe failure label for browser provenance; empty loses user context.
         attempts: Model transcribe calls made; zero means correction never reached ASR.
         retried: True when the user waited for the single transient recovery attempt.
+        failed_chunk_index: One-based failed audio piece; null means no chunk ran.
+        chunk_count_planned: Total ordered audio pieces; zero means none were built.
 
     Returns:
         JSON payload telling the browser to continue with the live preview;
@@ -723,6 +734,8 @@ def _correction_unavailable_response(
         "attempts": attempts,
         "retried": retried,
         "reason_category": reason_category,
+        "failed_chunk_index": failed_chunk_index,
+        "chunk_count_planned": chunk_count_planned,
     }
 
 
