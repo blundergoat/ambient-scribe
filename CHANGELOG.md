@@ -19,6 +19,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Long eval guidance now requires capturing correction/instrumentation lines during the run, and
   the roadmap points at the completed 20-fixture baseline and active 0.4.1 order.
 
+- **Composite denial checks follow the user's complete screening answer (0.4.1 M02)** -
+  generated-note fidelity checks now join bounded clinician question fragments before judging a
+  short patient denial, so one composite sentence can verify each independently answered topic
+  across corrected-row splits. The checker also recognizes the retained `that's all fine`
+  screening response, narrowly recovers a leading patient `No` folded onto the next clinician
+  row, preserves the topic when a patient repeats a question and answers `No` in the same row,
+  and stops denial scope before a contrasting reported symptom. The c03 neurological and mood
+  false warnings plus retained respiratory, GI/urinary, and joint-swelling families now pass while
+  unanswered questions, clinician-only negatives, long answers, and the equivocal weight-change
+  claim remain protected. Older question fragments can complete a compound topic only when the
+  immediate follow-up overlaps it, so a later `No` cannot overwrite an earlier affirmative
+  answer. The fidelity suite now has 80 passing tests; a clean
+  five-generation c03 campaign audited 16 denial claims with zero unsupported denials, zero false
+  denial flags, and zero unflagged fabricated denials.
+
 ## [0.4.0] - unreleased
 
 ### Added

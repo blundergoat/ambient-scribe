@@ -121,7 +121,16 @@ _CHARACTERISTIC_ASSERTION_TOKENS = {
 # Note phrasings that claim a negative finding the clinician can act on.
 _NEGATIVE_FINDING_PATTERN = re.compile(
     r"\b(denies|denied|reports? no|no complaints? of|negative for|not experiencing|"
-    r"does not report|without any|no history of)\b\s+(?P<topics>[^.;:]{3,120})",
+    r"does not report|without any|no history of)\b\s+(?P<topics>[^.;:]{3,240})",
+    re.IGNORECASE,
+)
+
+# Contrast wording ends the denied list. The social-history form also stops at
+# "and lives alone" so the user's home situation never becomes a denied topic.
+_DENIAL_TOPIC_SCOPE_BOUNDARY_PATTERN = re.compile(
+    r"\b(?:but|however|though|although|while)\b"
+    r"|\band\s+(?:(?:the patient|patient|she|he|they)\s+)?"
+    r"lives?\b",
     re.IGNORECASE,
 )
 
@@ -172,6 +181,37 @@ _AFFIRMATIVE_ANSWER_PATTERN = re.compile(r"\b(yes|yeah|yep)\b", re.IGNORECASE)
 # A short denial answer covers at most this many words - beyond that it is a
 # monologue whose topics must earn local clause support instead.
 _SHORT_ANSWER_MAX_WORDS = 8
+
+# A user may answer a multi-part normal-screen question with a short "all fine"
+# rather than "no". The bounded wording inherits only the nearby question.
+_SHORT_NORMAL_SCREEN_ANSWER_PATTERN = re.compile(
+    r"^(?:(?:that'?s|that is|it'?s|it is|they(?:'re| are))\s+)?"
+    r"(?:all\s+)?(?:fine|normal)[.!?,\s]*$",
+    re.IGNORECASE,
+)
+
+# Corrected diarization can fold a short patient "No." onto the next clinician
+# row. Only a new question or acknowledgement after the punctuation proves that shape.
+_FOLDED_PATIENT_DENIAL_PATTERN = re.compile(
+    r"^\s*(?P<answer>no|nope|none)\s*[,.!?]\s*(?P<continuation>.+)$",
+    re.IGNORECASE,
+)
+_FOLDED_CLINICIAN_CONTINUATION_PATTERN = re.compile(
+    r"^(?:okay|ok|all right|right|fine|any|do|did|does|have|has|is|are|can|"
+    r"could|would|what|when|where|why|how)\b",
+    re.IGNORECASE,
+)
+
+# The opposite row merge can put the clinician's question tail and the patient's
+# short answer together, for example `history of that? No.` in c03.
+_PATIENT_ROW_QUESTION_TAIL_DENIAL_PATTERN = re.compile(
+    r"^(?P<question>.+\?)\s*(?P<answer>no|nope|none)[.!?,\s]*$",
+    re.IGNORECASE,
+)
+
+# The M10 locality window is six clinician fragments. Counting clinician rows,
+# not every ASR card, keeps one split question together for the user's answer.
+_RECENT_DENIAL_QUESTION_ROWS = 6
 
 # Note language that claims an examination happened or produced findings.
 _EXAM_CLAIM_PATTERNS = (
@@ -227,8 +267,12 @@ _TOPIC_STEM_SYNONYMS = {
     "breathing": ("breath",),
     "breathless": ("breath",),
     "breathlessness": ("breath",),
+    "depressed": ("depress", "down"),
+    "diagnosis": ("diagnos", "told"),
     "fever": ("fever", "temperature", "hot"),
     "fevers": ("fever", "temperature", "hot"),
+    "falls": ("fall",),
+    "injury": ("injur",),
     "pyrexia": ("fever", "temperature"),
     "emesis": ("vomit", "sick"),
     "vomiting": ("vomit", "sick"),
@@ -237,22 +281,27 @@ _TOPIC_STEM_SYNONYMS = {
     # locations", clinicians ask "is it moving anywhere else".
     "spreading": ("spread", "mov", "radiat"),
     "spread": ("spread", "mov", "radiat"),
+    "smoking": ("smok",),
     "radiating": ("radiat", "mov", "spread"),
     "radiation": ("radiat", "mov", "spread"),
     "moving": ("mov", "spread", "radiat"),
     "location": ("locat", "anywhere", "elsewhere", "area"),
     "locations": ("locat", "anywhere", "elsewhere", "area"),
+    "reflux": ("reflux", "throat"),
+    "urinary": ("urinar", "urine"),
     "ability": ("abil", "able", "unable"),
     "laziness": ("lazy", "motivat"),
     "motivation": ("motivat", "lazy"),
     "tightness": ("tight",),
+    "tobacco": ("tobacco", "smok"),
 }
 
 # Words too generic to identify a denied topic on their own.
 _TOPIC_STOPWORDS = frozenset(
     "a an and or of in on at to the any some with for recent formal his her their "
+    "do does did not "
     "difficulty difficulties problem problems issue issues history further other "
-    "associated significant when patient screened screening neurological symptoms "
+    "associated significant when patient own regular use screened screening neurological symptoms "
     "including denied denies negative reports reported states stated "
     "sensation sensations feeling feelings".split()
 )
@@ -314,11 +363,9 @@ class _QuotedSpan:
 
 
 def regeneration_feedback(violations: list[FidelityViolation]) -> str:
-    """Build the correction block appended to the prompt for the one retry.
+    """Build the correction block for the user's one allowed note retry.
 
-    Use when the first draft failed fidelity checks: the model gets each exact
-    sentence and the reason, so the redo fixes the fabrication instead of
-    guessing what was wrong.
+    Each visible failure is named so the regenerated note addresses it directly.
 
     Args:
         violations: Failures from the first draft; never empty when a retry runs.
@@ -333,7 +380,9 @@ def regeneration_feedback(violations: list[FidelityViolation]) -> str:
     ]
     # Each violation names the exact sentence so the redo cannot miss it.
     for violation in violations:
-        lines.append(f'- In {violation.location}: "{violation.sentence}" - {violation.reason}.')
+        lines.append(
+            f'- In {violation.location}: "{violation.sentence}" - {violation.reason}.'
+        )
 
     return "\n".join(lines)
 
@@ -341,12 +390,9 @@ def regeneration_feedback(violations: list[FidelityViolation]) -> str:
 def summary_with_unverified_flags(
     parsed_summary: dict[str, Any], violations: list[FidelityViolation]
 ) -> dict[str, Any]:
-    """Mark the sentences that survived regeneration as unverified.
+    """Mark sentences that still fail after the user's one note retry.
 
-    Use after the single retry still failed: the sentence stays in the note the
-    clinician reads, and the browser renders it with an "unverified against
-    transcript" marker instead of silently removing it (ADR'd user decision,
-    M07).
+    The browser keeps each sentence visible with the M07 unverified marker.
 
     Args:
         parsed_summary: Dumped summary payload about to be published; mutated copy is returned.
@@ -379,7 +425,9 @@ def summary_with_unverified_flags(
             for key_point in parsed_summary.get("key_points", []):
                 # A matching key point needs the same warning as section prose.
                 if violation.sentence in str(key_point):
-                    flagged_points = parsed_summary.setdefault("unverified_key_points", [])
+                    flagged_points = parsed_summary.setdefault(
+                        "unverified_key_points", []
+                    )
                     # A duplicate rule must not create duplicate UI markers.
                     if key_point not in flagged_points:
                         flagged_points.append(key_point)
@@ -392,11 +440,9 @@ def find_fidelity_violations(
     key_points: list[str],
     transcript_rows: list[dict[str, Any]],
 ) -> list[FidelityViolation]:
-    """Check every note sentence against the visit transcript.
+    """Check every generated note sentence against the visit transcript.
 
-    Use after citation validation, before the note reaches the browser: the
-    result decides whether the note ships clean, regenerates, or renders with
-    visible unverified markers.
+    After citation validation, results choose clean display, one retry, or a visible warning.
 
     Args:
         sections: Generated SOAP sections (heading/content); empty means a sparse note with nothing to check.
@@ -418,7 +464,9 @@ def find_fidelity_violations(
         }
         for row in transcript_rows
     ]
-    uncertain_characteristics = _characteristics_answered_with_uncertainty(normalized_rows)
+    uncertain_characteristics = _characteristics_answered_with_uncertainty(
+        normalized_rows
+    )
 
     violations: list[FidelityViolation] = []
     # Sections first, key points last - the same order the clinician reads.
@@ -557,7 +605,9 @@ def _sentence_violations(
             )
         )
 
-    unresolved = _uncertainty_violation(sentence, uncertain_characteristics, normalized_rows)
+    unresolved = _uncertainty_violation(
+        sentence, uncertain_characteristics, normalized_rows
+    )
     # The patient said "I don't know", so a resolved value would mislead the reader.
     if unresolved is not None:
         _add_visible_violation("uncertainty-resolved", *unresolved)
@@ -771,9 +821,7 @@ def _transcript_role_token_sequences(
         if transcript_role != current_role:
             # A non-empty completed run becomes searchable evidence for the note.
             if current_role is not None and current_role_tokens:
-                role_token_sequences.append(
-                    (current_role, tuple(current_role_tokens))
-                )
+                role_token_sequences.append((current_role, tuple(current_role_tokens)))
             current_role = transcript_role
             current_role_tokens = []
         current_role_tokens.extend(_normalized_lexical_tokens(row["text"]))
@@ -851,7 +899,9 @@ def _quote_span_supported(
     return False
 
 
-def _has_patient_verbatim_quote(sentence: str, normalized_rows: list[dict[str, str]]) -> bool:
+def _has_patient_verbatim_quote(
+    sentence: str, normalized_rows: list[dict[str, str]]
+) -> bool:
     """Check whether the note repeats any patient words verbatim.
 
     Use by the older uncertainty rule through the same quote mechanism the UI now trusts.
@@ -915,7 +965,9 @@ def _patient_state_topic(sentence: str, marker: re.Match[str]) -> str:
 
     Use to prevent uncertainty about one symptom from supporting another.
     """
-    trailing_clause = _CLAUSE_BOUNDARY_PATTERN.split(sentence[marker.end() :], maxsplit=1)[0]
+    trailing_clause = _CLAUSE_BOUNDARY_PATTERN.split(
+        sentence[marker.end() :], maxsplit=1
+    )[0]
     note_text_before_state = sentence[: marker.start()]
     topic_before_state = re.search(
         r"\basked\s+about\s+([^,;:.]+)", note_text_before_state, re.IGNORECASE
@@ -986,9 +1038,10 @@ def _text_supports_topic(evidence_text: str, clinical_topic: str) -> bool:
 
     # One local clinical stem is enough here: state-family and clause/question
     # gates already prevent an unrelated "I don't know" from lending support.
-    return clinical_topic in evidence_text or _matched_topic_words(
-        evidence_text, clinical_topic
-    ) >= 1
+    return (
+        clinical_topic in evidence_text
+        or _matched_topic_words(evidence_text, clinical_topic) >= 1
+    )
 
 
 def _trailing_question_is_unanswered(
@@ -1012,8 +1065,7 @@ def _trailing_question_is_unanswered(
     )
     # Any matching clinician-only tail means the user never supplied an answer.
     return any(
-        row["role"] == "DOCTOR"
-        and _text_supports_topic(row["text"], clinical_topic)
+        row["role"] == "DOCTOR" and _text_supports_topic(row["text"], clinical_topic)
         for row in normalized_rows[last_patient_index + 1 :]
     )
 
@@ -1025,13 +1077,9 @@ def _recent_clinician_question_context(
 
     Use when the transcript view split one question/answer exchange into rows.
     """
-    recent_rows = normalized_rows[
-        max(0, patient_turn_start - 12) : patient_turn_start
-    ]
+    recent_rows = normalized_rows[max(0, patient_turn_start - 12) : patient_turn_start]
     # Only clinician words can supply the question inherited by a short answer.
-    return " ".join(
-        row["text"] for row in recent_rows if row["role"] == "DOCTOR"
-    )
+    return " ".join(row["text"] for row in recent_rows if row["role"] == "DOCTOR")
 
 
 def _adjacent_patient_state_runs(
@@ -1080,11 +1128,15 @@ def _patient_state_has_support(
         normalized_rows
     ):
         # One turn may contain several uncertainty or memory phrases.
-        for evidence_marker in _PATIENT_STATE_MARKER_PATTERN.finditer(patient_turn_text):
+        for evidence_marker in _PATIENT_STATE_MARKER_PATTERN.finditer(
+            patient_turn_text
+        ):
             # A memory claim cannot borrow support from a different state family.
             if _patient_state_kind(evidence_marker) != patient_state_kind:
                 continue
-            local_window = _state_marker_local_window(patient_turn_text, evidence_marker)
+            local_window = _state_marker_local_window(
+                patient_turn_text, evidence_marker
+            )
             # Topic words in the same local turn directly verify the displayed state.
             if _text_supports_topic(local_window, clinical_topic):
                 return True
@@ -1214,11 +1266,9 @@ def _negative_finding_violation(
 
 
 def _claimed_denial_topics(sentence: str) -> list[str]:
-    """Extract every topic a note sentence claims the patient denied.
+    """Extract every topic a generated note claims the patient denied.
 
-    Handles the three phrasings notes use: "denies X, Y", "screened for X and Y,
-    the patient denied all" (topics before the verb), and "screening (X, Y)
-    negative" (parenthetical list).
+    Covers standard lists, `denied all`, and parenthetical negative screening text.
 
     Args:
         sentence: Note sentence under review.
@@ -1229,7 +1279,12 @@ def _claimed_denial_topics(sentence: str) -> list[str]:
     match = _NEGATIVE_FINDING_PATTERN.search(sentence)
     # A standard denial phrase exposes its topic text after the denial verb.
     if match is not None:
-        topics = _denied_topics(match.group("topics"))
+        denied_topic_text = match.group("topics")
+        scope_boundary = _DENIAL_TOPIC_SCOPE_BOUNDARY_PATTERN.search(denied_topic_text)
+        # Reported symptoms after "but" remain positive facts in the visible note.
+        if scope_boundary is not None:
+            denied_topic_text = denied_topic_text[: scope_boundary.start()]
+        topics = _denied_topics(denied_topic_text)
         # "Denied all" names nothing - the actual topics sit before the verb.
         if topics and not all(topic in _VACUOUS_TOPIC_WORDS for topic in topics):
             return topics
@@ -1361,6 +1416,181 @@ def _is_short_denial_answer(masked_row_text: str) -> bool:
     return _AFFIRMATIVE_ANSWER_PATTERN.search(masked_row_text) is None
 
 
+def _is_short_normal_screen_answer(masked_row_text: str) -> bool:
+    """Recognize a brief normal answer to the clinician's screening list.
+
+    Args:
+        masked_row_text: Patient answer after uncertainty phrases are removed;
+            empty means the user supplied no usable screening response.
+
+    Returns:
+        True only for at-most-eight-word answers such as "that's all fine";
+        False keeps the generated denial visibly unverified.
+    """
+    words = re.findall(r"[a-z']+", masked_row_text)
+    # Empty or long replies cannot inherit the clinician's whole question list.
+    if not words or len(words) > _SHORT_ANSWER_MAX_WORDS:
+        return False
+
+    return (
+        _SHORT_NORMAL_SCREEN_ANSWER_PATTERN.fullmatch(masked_row_text.strip())
+        is not None
+    )
+
+
+def _folded_patient_denial_answer(
+    clinician_row_text: str,
+) -> tuple[str, str] | None:
+    """Recover a short patient answer folded onto the next clinician UI row.
+
+    Args:
+        clinician_row_text: One DOCTOR-labelled corrected row; empty means no folded answer.
+
+    Returns:
+        The leading denial and clinician continuation when both are present;
+        None keeps ordinary clinician wording out of patient evidence.
+    """
+    folded_answer = _FOLDED_PATIENT_DENIAL_PATTERN.fullmatch(clinician_row_text)
+    # A clinician row without a punctuated leading "No" has no mixed answer to recover.
+    if folded_answer is None:
+        return None
+    continuation = folded_answer.group("continuation").strip()
+    # Explanatory clinician prose is not a patient answer, even if it starts after "No."
+    if _FOLDED_CLINICIAN_CONTINUATION_PATTERN.match(continuation) is None:
+        return None
+
+    return folded_answer.group("answer").lower(), continuation
+
+
+def _immediate_denial_question_context(
+    answer_row_index: int, normalized_rows: list[dict[str, str]]
+) -> str:
+    """Join the clinician question immediately answered by one short response.
+
+    Args:
+        answer_row_index: Row containing the user's answer; zero has no question context.
+        normalized_rows: One visit's ordered rows; empty means no answer pairing exists.
+
+    Returns:
+        Clinician fragments since the prior patient/folded answer; empty means the short
+        response cannot verify a generated denial.
+    """
+    clinician_fragments: list[str] = []
+    # Walk backward only through the question attached to this answer.
+    for earlier_row in reversed(normalized_rows[:answer_row_index]):
+        # A prior patient turn closes the question/answer exchange shown in the UI.
+        if earlier_row["role"] == "PATIENT":
+            break
+        # Unknown/system rows also prevent an answer from borrowing older questions.
+        if earlier_row["role"] != "DOCTOR":
+            break
+        folded_answer = _folded_patient_denial_answer(earlier_row["text"])
+        # A prior folded answer closes its question; its continuation starts this one.
+        if folded_answer is not None:
+            clinician_fragments.append(folded_answer[1])
+            break
+        clinician_fragments.append(earlier_row["text"])
+
+    return " ".join(reversed(clinician_fragments))
+
+
+def _same_patient_row_question_denial_context(
+    answer_row_index: int,
+    patient_row_text: str,
+    normalized_rows: list[dict[str, str]],
+) -> str | None:
+    """Recover a question tail and short answer merged into one patient UI row.
+
+    Args:
+        answer_row_index: PATIENT row containing both the question tail and answer.
+        patient_row_text: Lowercased row text; empty means no recoverable exchange.
+        normalized_rows: One visit's ordered rows; empty supplies no earlier question.
+
+    Returns:
+        Complete local question context when the row ends in `? No.`;
+        None keeps ordinary patient questions out of denial evidence.
+    """
+    same_row_exchange = _PATIENT_ROW_QUESTION_TAIL_DENIAL_PATTERN.fullmatch(
+        patient_row_text
+    )
+    # A normal patient row has no clinician question tail to recover.
+    if same_row_exchange is None:
+        return None
+    preceding_question_context = _immediate_denial_question_context(
+        answer_row_index, normalized_rows
+    )
+
+    return f"{preceding_question_context} {same_row_exchange.group('question')}".strip()
+
+
+def _recent_denial_question_context(
+    answer_row_index: int, normalized_rows: list[dict[str, str]]
+) -> str:
+    """Join the bounded clinician fragments that one short answer responds to.
+
+    Args:
+        answer_row_index: Row containing the user's short answer; zero has no question context.
+        normalized_rows: One visit's ordered rows; empty means no question can be inherited.
+
+    Returns:
+        Up to six preceding clinician fragments in spoken order; empty means the answer
+        cannot verify any topic in the generated note.
+    """
+    clinician_fragments: list[str] = []
+    # Walk backward so ASR cards between question fragments do not consume locality.
+    for earlier_row in reversed(normalized_rows[:answer_row_index]):
+        # Only clinician words define the question inherited by a short patient answer.
+        if earlier_row["role"] != "DOCTOR":
+            continue
+        clinician_fragments.append(earlier_row["text"])
+        # Six clinician fragments is the existing M10 question-locality boundary.
+        if len(clinician_fragments) == _RECENT_DENIAL_QUESTION_ROWS:
+            break
+
+    return " ".join(reversed(clinician_fragments))
+
+
+def _question_context_supports_denied_topic(
+    answer_row_index: int,
+    normalized_rows: list[dict[str, str]],
+    topic: str,
+    required_words: int,
+) -> bool:
+    """Check whether the nearby clinician question names one denied topic.
+
+    Args:
+        answer_row_index: Row containing the user's bounded negative/normal answer.
+        normalized_rows: One visit's ordered rows; empty supports nothing.
+        topic: Cleaned topic displayed in the note; empty supports nothing.
+        required_words: Minimum distinct topic words required for safe matching.
+
+    Returns:
+        True when the immediate question supports the topic, or overlaps it before a
+        bounded earlier fragment completes the compound wording.
+    """
+    immediate_question_context = _immediate_denial_question_context(
+        answer_row_index, normalized_rows
+    )
+    immediate_topic_word_count = _matched_topic_words(immediate_question_context, topic)
+    # A complete match in the answer's own question needs no earlier context.
+    if (
+        topic in immediate_question_context
+        or immediate_topic_word_count >= required_words
+    ):
+        return True
+    # Zero overlap means this answer belongs to a different clinician question.
+    if immediate_topic_word_count == 0:
+        return False
+    recent_question_context = _recent_denial_question_context(
+        answer_row_index, normalized_rows
+    )
+
+    return (
+        topic in recent_question_context
+        or _matched_topic_words(recent_question_context, topic) >= required_words
+    )
+
+
 def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -> bool:
     """Report whether the patient actually denied one topic.
 
@@ -1369,16 +1599,37 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         normalized_rows: Lowercased transcript rows in spoken order.
 
     Returns:
-        True when a patient denial covers the topic - inside one local clause,
-        or as a short denial answer to a clinician question that named the
-        topic just before.
+        True when patient wording covers the topic in one clause or a bounded
+        short answer whose immediate clinician question overlaps that topic.
     """
     required_words = _topic_support_requirement(topic)
-    # Each patient row is checked for direct or short-answer denial evidence.
+    # Each visit row is checked for direct, short, or tightly recovered denial evidence.
     for row_index, row in enumerate(normalized_rows):
-        # Clinician rows are questions, never the patient's denial.
+        # A corrected row may begin with a patient "No." folded onto clinician follow-up.
+        if row["role"] == "DOCTOR":
+            folded_answer = _folded_patient_denial_answer(row["text"])
+            # Ordinary clinician prose never becomes patient evidence.
+            if folded_answer is None:
+                continue
+            # The recovered answer verifies only its bounded preceding question.
+            if _question_context_supports_denied_topic(
+                row_index, normalized_rows, topic, required_words
+            ):
+                return True
+            continue
+
+        # Unknown/system rows cannot establish what the patient denied.
         if row["role"] != "PATIENT":
             continue
+        same_row_question_context = _same_patient_row_question_denial_context(
+            row_index, row["text"], normalized_rows
+        )
+        # A merged `question? No.` verifies only the topic in that complete local question.
+        if same_row_question_context is not None and (
+            topic in same_row_question_context
+            or _matched_topic_words(same_row_question_context, topic) >= required_words
+        ):
+            return True
         masked = _mask_epistemic_phrases(row["text"])
 
         # Direct support: a real denial and the topic inside the SAME clause,
@@ -1395,19 +1646,16 @@ def _did_patient_deny_topic(topic: str, normalized_rows: list[dict[str, str]]) -
         # Short-answer support: "No." counts when a CLINICIAN row named the
         # topic shortly before - six rows back, because live transcripts split
         # one question across several fragment rows.
-        if _is_short_denial_answer(masked):
-            recent_rows = normalized_rows[max(0, row_index - 6) : row_index]
-            # Each recent row may hold the clinician topic inherited by "No."
-            for earlier in recent_rows:
-                # Only clinician words can define the preceding question.
-                if earlier["role"] != "DOCTOR":
-                    continue
-                # One sufficiently specific question verifies the short answer.
-                if (
-                    topic in earlier["text"]
-                    or _matched_topic_words(earlier["text"], topic) >= required_words
-                ):
-                    return True
+        inherits_question = _is_short_denial_answer(
+            masked
+        ) or _is_short_normal_screen_answer(masked)
+        # A short negative/normal answer can inherit its fragmented clinician question.
+        if inherits_question:
+            # Joined fragments verify compound topics such as "shortness of breath".
+            if _question_context_supports_denied_topic(
+                row_index, normalized_rows, topic, required_words
+            ):
+                return True
 
     return False
 
@@ -1433,7 +1681,9 @@ def _exam_language_violation(
     if _EXAM_INTENT_PATTERN.search(sentence) is not None:
         return None
 
-    claims_exam = any(pattern.search(sentence) is not None for pattern in _EXAM_CLAIM_PATTERNS)
+    claims_exam = any(
+        pattern.search(sentence) is not None for pattern in _EXAM_CLAIM_PATTERNS
+    )
     # Sentences without exam language have nothing to prove.
     if not claims_exam:
         return None
@@ -1441,7 +1691,10 @@ def _exam_language_violation(
     # A transcript row proving a performed exam legitimises the claim.
     for row in normalized_rows:
         # Only a clinician's performed-exam wording can support exam findings.
-        if row["role"] == "DOCTOR" and _EXAM_PERFORMANCE_PATTERN.search(row["text"]) is not None:
+        if (
+            row["role"] == "DOCTOR"
+            and _EXAM_PERFORMANCE_PATTERN.search(row["text"]) is not None
+        ):
             return None
 
     return (

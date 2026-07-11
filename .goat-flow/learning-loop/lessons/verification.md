@@ -5,6 +5,51 @@ last_reviewed: 2026-07-11
 
 # READ / SCOPE / VERIFY Lessons
 
+## Lesson: Re-run formatting after the last regression pin
+
+**Created:** 2026-07-11
+**What happened:** M02's late same-row denial regression passed focused and full Python tests,
+but the final Ruff format gate still found one test file requiring mechanical formatting.
+**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/ruff-format-check.log`
+first recorded `Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
+**Prevention:** Treat formatting as a final-code gate: rerun it after the last test edit, then
+rerun affected tests so the formatted file—not the pre-format version—is the verified artifact.
+
+## Lesson: Verification wrappers must preserve the producer's exit status
+
+**Created:** 2026-07-11
+**What happened:** M02's first focused pytest run printed `2 failed, 6 passed`, but a trailing
+`sed` made the shell command exit 0. The first clean-campaign resume then crashed after saving
+generation 1, while `python ... | tee ...` again returned 0 because pipefail was absent. The
+final Playwright monitor also kept waiting after all 43 tests passed because its `pgrep -f`
+pattern matched the polling shell itself.
+**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/phase1-focused-first-green.log`
+(search: "2 failed, 6 passed") and
+`var/quality/m02-fidelity-denial-precision-20260711T083957Z/c03-campaign-final-resume.log`
+(search: "requests_remaining=4"), and
+`var/quality/m02-fidelity-denial-precision-20260711T083957Z/playwright.log`
+(search: "43 passed") - literal output and saved responses exposed each masked or stale
+wrapper status.
+**Prevention:** Capture the producer status before any display command (`status=$?; sed ...;
+exit "$status"`), and use `set -o pipefail` whenever `tee` records a test/eval run. Read the
+pass/fail line even when the wrapper reports success. Poll a captured PID, or use a bracketed
+process pattern such as `[p]laywright test`, so the monitor cannot match its own command line.
+
+## Lesson: A compound-question repro needs the complete bounded exchange
+
+**Created:** 2026-07-11
+**What happened:** The first day5 respiratory fixture copied `cold symptoms` onward but
+omitted the earlier retained fragment `health, any persistent`. VERIFY correctly stayed red,
+but the missing test evidence briefly looked like a checker failure.
+**Evidence:** `tests/python/test_summary_fidelity.py` (search:
+"DAY5_SPLIT_SCREENING_ROWS") - the fixture now includes the full clinician context before
+the patient's short `no`.
+**Prevention:** Before changing row-shape logic, compare the unit fixture with the persisted
+row IDs and retain the complete locality window. A summary sentence's compound adjective may
+live several UI cards before the final question mark. When older fragments complete a
+compound topic, require the immediate follow-up question to overlap that same topic first;
+otherwise a later `No` can overwrite an earlier affirmative answer.
+
 ## Lesson: Post-visit correction smoke tests must stay inside reconnect grace
 
 **Created:** 2026-07-06

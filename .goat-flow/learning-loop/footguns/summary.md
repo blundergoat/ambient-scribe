@@ -21,6 +21,20 @@ last_reviewed: 2026-07-10
 - **Prevention:** Treat denial flags as candidates until they are checked against the exact persisted rows. In particular, inspect whether a clinician list was split across several rows before a short patient `no`; `_did_patient_deny_topic` checks each prior clinician row independently, so a multi-word topic distributed across rows can flag a true denial. Persisted-row verification remains the release gate (patterns/verification.md, search: "persisted rows fetched from the agent API").
 - **Partial resolution (2026-07-10, M10):** the original three mechanisms are fixed and pinned. (1) Denial evidence is clause-scoped with epistemic phrases masked first (`summary_fidelity.py`, search: "_denial_evidence_clauses" and "_mask_epistemic_phrases"); multi-word topics need two matched words in ONE clause, and a note sentence admitting its question went unanswered fails outright (search: "_UNANSWERED_ADMISSION_PATTERN"). The day3 fabricated denial now flags with the monologue present. (2) The 40-character gate is replaced by an eight-lexical-word answer that must OPEN with a denial word after a DOCTOR question naming the topic (search: "_is_short_denial_answer") - the 41-character corrected rash denial verifies, and "...but no no" mid-row negations no longer do. (3) Honest absence/intent frames ("concludes before examination", "prior to examination", "not yet performed", "proposed ... examination") are exempt while performed-exam claims still flag (search: "_EXAM_INTENT_PATTERN"). Worse-retry selection ships the fewer-violations draft (`summary_generation.py`, search: "fidelity_draft_selected").
 - **Reopened (2026-07-10, M11 replay audit):** the five-generation day5 audit found false denial flags for explicit answers whose clinician topics were fragmented across rows (cold/respiratory, GI/urinary, and joint swelling), plus an accurate `no recall of infections` phrase classified as a denial. Evidence is recorded in `.goat-flow/plans/0.4.0/M11-note-phrasing-fidelity.md` (search: "unrelated `negative-without-denial`"). M11 intentionally did not change M10 denial logic.
+- **Partial resolution (2026-07-11, 0.4.1 M02):** split-question aggregation is resolved.
+  The checker joins at most six clinician fragments per bounded answer
+  (`strands_agents/api/summary_fidelity.py`, search:
+  "_recent_denial_question_context") only when the immediate follow-up already overlaps the
+  same topic (search: "_immediate_denial_question_context"), narrowly recovers a patient
+  `No` folded onto the next clinician row (search: "_folded_patient_denial_answer"), and
+  stops denial scope at a contrasting reported fact (search:
+  "_DENIAL_TOPIC_SCOPE_BOUNDARY_PATTERN"). The exact two
+  c03 warnings clear; all 21 retained day5 split-question occurrences are covered by three
+  pinned families; a clean five-generation c03 audit found 16 supported denials, zero false
+  denial flags, and zero unflagged fabricated denials. Evidence:
+  `var/quality/m02-fidelity-denial-precision-20260711T083957Z/` (search:
+  "c03-campaign-clean-audit.md"). The separate accurate `reports no recall of infections`
+  classification remains open, so this footgun stays active.
 
 ## Resolved Entries
 
