@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCORER_PATH = REPO_ROOT / "scripts/duplicate-transcript-score.py"
@@ -33,6 +35,23 @@ def write_live_history(
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(
         json.dumps({"session_id": session_id, "segments": visible_rows}),
+        encoding="utf-8",
+    )
+
+
+def write_row_diagnostics(
+    artifact_path: Path,
+    diagnostic_rows: list[dict],
+) -> None:
+    """Write TextGrid-derived row ownership without copying consultation wording.
+
+    Args:
+        artifact_path: Destination JSON path; missing parents are created for the operator.
+        diagnostic_rows: Safe row metadata; empty means the visit has no rows to ground.
+    """
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps({"schema_version": 1, "rows": diagnostic_rows}),
         encoding="utf-8",
     )
 
@@ -231,4 +250,217 @@ def test_scorer_rejects_malformed_history_without_echoing_words(tmp_path: Path) 
     assert completed_process.stdout == ""
     assert "segments must be a list" in completed_process.stderr
     assert str(malformed_path) in completed_process.stderr
+    assert "private" not in completed_process.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    ("first_decoder_wording", "later_decoder_wording", "vocabulary_match"),
+    [
+        (
+            "the feeling is really tired but run down",
+            "the feeling is really tired and run down",
+            "and_but_substitution",
+        ),
+        (
+            "the feeling is really tired and run down",
+            "the feeling is really tired and down run",
+            "equal_multiset",
+        ),
+    ],
+    ids=["and-but-connector", "equal-word-multiset"],
+)
+def test_grounded_scorer_reports_decoder_variant_without_exposing_words(
+    tmp_path: Path,
+    first_decoder_wording: str,
+    later_decoder_wording: str,
+    vocabulary_match: str,
+) -> None:
+    """Measure safe decoder variants without exposing the words a clinician would reread."""
+    history_path = tmp_path / "fixture" / "live-history.json"
+    diagnostics_path = history_path.with_name("live-row-diagnostics.json")
+    write_live_history(
+        history_path,
+        "grounded-session",
+        [
+            {
+                "segment_id": "seg-0019",
+                "speaker_id": "speaker_0",
+                "role": "PATIENT",
+                "start": 44.24,
+                "end": 46.24,
+                "text": first_decoder_wording,
+            },
+            {
+                "segment_id": "seg-0020",
+                "speaker_id": "speaker_3",
+                "role": "PATIENT",
+                "start": 44.48,
+                "end": 46.48,
+                "text": later_decoder_wording,
+            },
+        ],
+    )
+    write_row_diagnostics(
+        diagnostics_path,
+        [
+            {
+                "row_index": 0,
+                "speaker_id": "speaker_0",
+                "start": 44.24,
+                "end": 46.24,
+                "expected_role": "PATIENT",
+                "in_overlap": False,
+            },
+            {
+                "row_index": 1,
+                "speaker_id": "speaker_3",
+                "start": 44.48,
+                "end": 46.48,
+                "expected_role": "PATIENT",
+                "in_overlap": False,
+            },
+        ],
+    )
+
+    first_run = run_duplicate_scorer(history_path)
+    second_run = run_duplicate_scorer(history_path)
+
+    assert first_run.returncode == 0, first_run.stderr
+    assert second_run.returncode == 0, second_run.stderr
+    first_report = json.loads(first_run.stdout)
+    second_report = json.loads(second_run.stdout)
+    assert first_report["summary"]["duplicate_pair_count"] == 0
+    assert first_report["grounded_decoder_repeats"] == {
+        "affected_artifact_count": 1,
+        "pair_count": 1,
+        "scored_artifact_count": 1,
+        "unavailable_artifact_count": 0,
+    }
+    grounded_artifact = first_report["artifacts"][0]["grounded_decoder_repeats"]
+    assert grounded_artifact["status"] == "scored"
+    assert grounded_artifact["diagnostics_path"] == str(diagnostics_path.resolve())
+    assert grounded_artifact["pair_count"] == 1
+    decoder_repeat = grounded_artifact["pairs"][0]
+    assert decoder_repeat == {
+        "decoder_repeat_pair_id": decoder_repeat["decoder_repeat_pair_id"],
+        "expected_role": "PATIENT",
+        "left_segment_id": "seg-0019",
+        "left_speaker_id": "speaker_0",
+        "left_start_seconds": 44.24,
+        "left_word_count": 8,
+        "right_segment_id": "seg-0020",
+        "right_speaker_id": "speaker_3",
+        "right_start_seconds": 44.48,
+        "right_word_count": 8,
+        "sequence_similarity": 0.875,
+        "shared_phrase_word_count": 4,
+        "spoken_start_offset_seconds": 0.24,
+        "vocabulary_match": vocabulary_match,
+    }
+    assert decoder_repeat["decoder_repeat_pair_id"].startswith("decoder-repeat-")
+    assert (
+        decoder_repeat["decoder_repeat_pair_id"]
+        == second_report["artifacts"][0]["grounded_decoder_repeats"]["pairs"][0][
+            "decoder_repeat_pair_id"
+        ]
+    )
+    assert "text" not in decoder_repeat
+    assert "feeling" not in first_run.stdout.lower()
+    assert "tired" not in first_run.stdout.lower()
+
+
+def test_grounded_scorer_excludes_unsafe_or_unproven_pairs(tmp_path: Path) -> None:
+    """Keep true cross-talk, different people, and distinct clinical wording out of the metric."""
+    history_path = tmp_path / "fixture" / "live-history.json"
+    diagnostics_path = history_path.with_name("live-row-diagnostics.json")
+    common_rows = [
+        {
+            "segment_id": f"seg-{row_index + 1:04d}",
+            "speaker_id": f"speaker_{row_index % 2}",
+            "role": "PATIENT",
+            "start": float(row_index * 10),
+            "end": float(row_index * 10 + 2),
+            "text": "the same four private words appear here",
+        }
+        for row_index in range(10)
+    ]
+    common_rows[1]["start"] = 0.2
+    common_rows[1]["end"] = 2.2
+    common_rows[3]["start"] = 20.2
+    common_rows[3]["end"] = 22.2
+    common_rows[5]["start"] = 40.2
+    common_rows[5]["end"] = 42.2
+    common_rows[5]["text"] = "the same four private words replace symptom"
+    common_rows[6]["text"] = "the feeling is really tired and run down"
+    common_rows[7]["start"] = 60.2
+    common_rows[7]["end"] = 62.2
+    common_rows[7]["text"] = "the feeling is really tired or run down"
+    common_rows[8]["text"] = "the feeling is really tired and and run down"
+    common_rows[9]["start"] = 80.2
+    common_rows[9]["end"] = 82.2
+    common_rows[9]["text"] = "the feeling is really tired but run down"
+    write_live_history(history_path, "excluded-session", common_rows)
+    write_row_diagnostics(
+        diagnostics_path,
+        [
+            {
+                "row_index": row_index,
+                "speaker_id": row["speaker_id"],
+                "start": row["start"],
+                "end": row["end"],
+                "expected_role": ("DOCTOR" if row_index == 3 else "PATIENT"),
+                "in_overlap": row_index in {0, 1},
+            }
+            for row_index, row in enumerate(common_rows)
+        ],
+    )
+
+    completed_process = run_duplicate_scorer(history_path)
+
+    assert completed_process.returncode == 0, completed_process.stderr
+    report = json.loads(completed_process.stdout)
+    assert report["grounded_decoder_repeats"]["pair_count"] == 0
+    assert report["artifacts"][0]["grounded_decoder_repeats"]["pairs"] == []
+    assert "private" not in completed_process.stdout.lower()
+
+
+def test_grounded_scorer_rejects_misaligned_diagnostics_without_words(
+    tmp_path: Path,
+) -> None:
+    """Reject stale TextGrid ownership so an operator cannot accept the wrong replay rows."""
+    history_path = tmp_path / "renamed-live-history.json"
+    diagnostics_path = tmp_path / "renamed-row-diagnostics.json"
+    write_live_history(
+        history_path,
+        "misaligned-session",
+        [
+            {
+                "segment_id": "seg-0001",
+                "speaker_id": "speaker_0",
+                "role": "PATIENT",
+                "start": 1.0,
+                "end": 2.0,
+                "text": "private consultation wording",
+            }
+        ],
+    )
+    write_row_diagnostics(
+        diagnostics_path,
+        [
+            {
+                "row_index": 0,
+                "speaker_id": "speaker_3",
+                "start": 1.0,
+                "end": 2.0,
+                "expected_role": "PATIENT",
+                "in_overlap": False,
+            }
+        ],
+    )
+
+    completed_process = run_duplicate_scorer(history_path)
+
+    assert completed_process.returncode == 2
+    assert completed_process.stdout == ""
+    assert "speaker_id does not match history" in completed_process.stderr
     assert "private" not in completed_process.stderr.lower()

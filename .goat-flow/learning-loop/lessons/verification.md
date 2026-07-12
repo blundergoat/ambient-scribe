@@ -478,12 +478,18 @@ session's fidelity or correction outcome, grep the agent log for `summary.fideli
 **What happened:** M11 needed fresh rows for a field note captured 228 seconds into a
 510-second day3 WAV. The first recapture started the full fixture at browser cadence, which
 would have mixed later consultation facts into a replay meant to reproduce the cut-off note;
-it was stopped only after the WAV duration and field cutoff were compared.
+it was stopped only after the WAV duration and field cutoff were compared. M05 repeated the
+cutoff error through headless UI timing: a 132.8-second target reached 215.6 seconds while tool
+polls lagged the faster audio clock, and the first stale control click hit hidden microphone Start
+instead of replay Stop. The eventual Stop also triggered one automatic 6,401-token summary.
 **Evidence:** `.goat-flow/plans/0.4.0/M11-note-phrasing-fidelity.md` (search: "initial
-uncapped replay").
+uncapped replay") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/instrumented-browser-20260712T081246Z/mechanism-verdict.md`.
 **Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
 field session's stop time. Pass that stop time explicitly with `--seconds` and verify the
-saved row duration before using the artifact for prompt or fidelity acceptance.
+saved row duration before using the artifact for prompt or fidelity acceptance. For UI-driven
+replays, poll the audio timer at one-second cadence near cutoff and use Escape rather than a stale
+element index. Count the Stop flow's automatic correction/summary generation in approval and cost.
 
 ## Lesson: Long evals must capture rotating service logs during the run
 

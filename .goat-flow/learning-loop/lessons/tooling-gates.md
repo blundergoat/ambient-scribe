@@ -44,6 +44,57 @@ merge count was also rejected as causal evidence.
 field. Record a missing field as unavailable, never zero, and reject fixes unsupported by the
 user-visible acceptance metric.
 
+## Lesson: A correction timeout cannot be interpreted as byte drift
+
+**Created:** 2026-07-12
+**What happened:** M05's flag-OFF c02 stream finalized with zero quality errors, but the correction
+HTTP call timed out after 120 seconds before producing the artifact needed for canonical hashing.
+Health and CUDA stayed live, so neither a matching nor mismatching byte result existed.
+**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search: "120.002 seconds").
+**Prevention:** Separate correction availability from byte comparison: retain the timeout timeline,
+health/CUDA proof, and partial artifacts, then stop before retrying or labeling the result drift.
+
+## Lesson: Keep evidence grounding separate from wording classification
+
+**Created:** 2026-07-12
+**What happened:** M05's connector refinement passed 39/39 behavior contracts, but combining
+TextGrid ownership gates with the word matcher raised Gruff Halstead volume to 407 and lowered its
+maintainability index to 63.2. Separating reference grounding from decoder-word classification
+restored both scorer and runtime Gruff to A/100 without changing the focused result.
+**Evidence:** `scripts/duplicate-transcript-score.py` (search: "grounded_decoder_repeat_match") and
+`scripts/duplicate-transcript-score.py` (search: "decoder_variant_word_match").
+**Prevention:** Keep oracle/reference ownership checks separate from process-local wording rules;
+run their shared end-to-end contract after refactoring so evidence semantics cannot drift.
+
+## Lesson: Exact decoder wording cannot close duplicate-identity acceptance
+
+**Created:** 2026-07-12
+**What happened:** M05 closed no-fix after its scorer found zero exact pairs in a 1x replay. The
+user's next browser check exposed a minimal two-row case with different IDs, one TextGrid Patient,
+0.29 seconds overlap, and no genuine overlap; small decoder wording differences kept the scorer at
+zero.
+**Evidence:** `scripts/duplicate-transcript-score.py` (search: "rows_by_normalized_text") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/manual-3c092379-minimal-exact-report.json`.
+**Prevention:** Treat exact wording as a high-precision signal, not the acceptance boundary. Before
+closing duplicate identity, include controlled decoder-variant matching grounded by overlapping
+time, different IDs, and one TextGrid speaker, then require a manual browser check.
+
+## Lesson: Run every safety predicate against the retained target
+
+**Created:** 2026-07-12
+**What happened:** M05's planning probe incorrectly reported equal vocabulary for the manual
+decoder-variant pair because a nested jq expression shadowed the word being compared. The first
+real scorer run then returned zero: role, overlap, timing, a shared four-word phrase, and 0.875
+word-LCS all passed, but the two eight-word rows had different vocabulary. The same faulty probe
+also labeled two canonical candidates safe; the tested classifier later proved each contained
+distinct non-connector words and the accepted 20 scored zero, not the planned two.
+**Evidence:**
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/d3-implementation-20260712T085346Z/diagnose-grounded-threshold-connector.json`
+and `diagnose-canonical-grounded-pairs.json` beside it.
+**Prevention:** Before implementing a safety filter, run its complete predicate against the retained
+target and save one PHI-safe boolean/count record per condition. Treat ad-hoc jq joins as planning
+signals only, especially when nested `.` scopes can change which operand `index()` receives.
+
 ## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
 
 **Created:** 2026-07-06

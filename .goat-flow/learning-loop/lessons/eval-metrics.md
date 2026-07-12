@@ -200,3 +200,14 @@ incorrect-confident by 1.645 points, with large failures on two non-target c07 f
 **Prevention:** Treat named causal fixtures as mechanism proof, not release coverage. A visit-long
 speaker policy must still pass the full corpus quality/identity gates even when targeted deltas
 and default-OFF compatibility are exact.
+
+## Lesson: A zero target count needs a causal guard event
+
+**Created:** 2026-07-12
+**What happened:** M05's exact guard-ON replay scored zero safe repeats, but logged no withheld row;
+the retained 67-row/3-phantom target instead became 63 rows/10 phantoms and its original pair was
+not reproduced. The zero could not be attributed to the guard or prove no word loss.
+**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search:
+"duplicate_row_withheld event").
+**Prevention:** Require the causal guard event plus a matched before/after target. A zero detector
+count alone is not improvement when the input behavior or adjacent identity metrics changed.

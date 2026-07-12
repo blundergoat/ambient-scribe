@@ -73,10 +73,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   canonical 20-fixture baseline contains zero candidates across 6,072 live rows, while the retained
   M08 browser replacement reproduces one candidate across 306 rows and canonical day5-c09 remains
   zero across 296. A fresh instrumented 1x day5-c09 replay also found zero candidates across 296
-  final server rows despite 10 phantom merges and 10 folded spans / 17 words. That replay did not
-  reproduce the reported mechanism, so speculative engine, adapter, publication, and browser fixes
-  are rejected. M05 was explicitly closed as diagnostic-only / no-fix: no runtime behavior, feature
-  flag, byte-identity baseline, or corpus baseline changed.
+  final server rows despite 10 phantom merges and 10 folded spans / 17 words. A subsequent
+  132.8-second browser check reproduced one ground-truth Patient across overlapping speaker_0 and
+  speaker_3 rows while the exact scorer still reported zero. A JSON/slot-evidence browser replay
+  then located the mechanism before adapter folding: both raw slots clear the substantial-voice
+  threshold, so the adapter preserves the engine's split identity and the browser receives both.
+  A planning-only D3 pass selected a narrow default-OFF adapter candidate: withhold a later
+  cross-slot row only when it shares four consecutive words within a 0.5-second start gap and at
+  least 0.80 word-LCS similarity, with equal normalized vocabulary so no distinct clinical term is
+  lost; a TextGrid-grounded scorer must reproduce target=1 and canonical corpus=2 first. M05 is
+  locally implemented behind the off flag with 35 focused tests green, but the first retained-
+  artifact score rejected the equal-vocabulary assumption: the target shares seven of eight ordered
+  words (0.875 similarity) while differing by one connector. The approved refinement accepts equal
+  word multisets or exactly one `and`/`but` substitution and no other differing word. Its red proof
+  produced exactly four intended failures with 35 existing/anti-target contracts passing. The shared
+  Counter-based scorer/runtime rule now passes all 39 focused contracts; Ruff, Compose, and both
+  Gruff lanes are clean. Retained manual/instrumented artifacts now score 1/1, but the exact accepted
+  canonical 20 scores 0 rather than the planned 2 because both planning candidates contain distinct
+  non-connector words. The corrected baseline is approved: safe canonical repeats remain 0, both
+  near-matches are anti-targets that stay visible, and the retained connector target must improve
+  1 -> 0. The first flag-OFF c02 byte-gate attempt finalized streaming cleanly but its correction
+  request timed out after 120 seconds before a corrected artifact or hash existed; c03/c08 were not
+  started. One clean isolated c02 retry is approved; the candidate remains unaccepted/off and a
+  repeated timeout stops the gate before c03/c08. The retry completed in 50.821 seconds and matched
+  the retained c02 canonical hash exactly; c03/c08 then completed in 11.636/11.823 seconds. The
+  flag-OFF trio passes `HASH_MATCHES=3/3`, strict 100.0/96.8/93.8, zero source-chip findings, and
+  clean runtime health. The exact guard-ON target then scored zero pairs without a withheld-row
+  event; it emitted 63 vs 67 baseline rows and changed phantom merges 3 -> 10 because the target
+  pair was not reproduced. The runtime/config/guard-test candidate was therefore rejected before
+  browser/corpus promotion and removed exactly; no duplicate guard or user default ships. The
+  retained PHI-safe scorer and contracts reproduce manual/instrumented/canonical counts 1/1/0 and
+  pass 7 focused tests, Ruff, and scorer Gruff A/100. Full closure passes Python 608, PHPUnit
+  37/159, Playwright 48, PHPStan, PHP-CS, all 12 enabled preflight checks, learning index/stats,
+  context validation, PHI/symbol scans, and `git diff --check`. M05 closes diagnostic/no-fix with
+  its rejection evidence preserved and no runtime behavior change.
 
 ## [0.4.0] - unreleased
 
