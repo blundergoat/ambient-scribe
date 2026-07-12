@@ -19,6 +19,31 @@ as changed scope even though no behavior remained.
 **Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
 but do not widen a debt-heavy symbol to chase formatter debt outside scope.
 
+## Lesson: Evidence CLI documentation is part of its gate
+
+**Created:** 2026-07-12
+**What happened:** M04 tests/Ruff passed before Gruff found eight missing docs. M05 repeated the
+sequence: its duplicate scorer was behaviorally green before Gruff found undocumented public
+evidence fields whose null/empty meanings operators need to interpret the report.
+**Evidence:** `scripts/fold-attribution-score.py` (search: "def build_report") and
+`scripts/duplicate-transcript-score.py` (search: "class VisibleHistoryRow") now document empty,
+UNKNOWN, legacy-ID, and absent-arrival meanings.
+**Prevention:** Run direct Gruff immediately after the first behavioral green. Do not tick an
+evidence CLI until every public field and empty/null outcome has operator-facing documentation.
+
+## Lesson: Diagnostic state is unavailable until the retained artifact proves it
+
+**Created:** 2026-07-12
+**What happened:** M05 stored `late_slot_births` and `revision_resyncs` in session continuity,
+but its logger and extractor omitted both fields. The 1x replay therefore could not recover them.
+The same replay and accepted baseline each had 10 phantom merges but zero duplicate pairs, so the
+merge count was also rejected as causal evidence.
+**Evidence:** `strands_agents/nemo_session.py` (search: "continuity_log_fields") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/phase0-mechanism-verdict.md`.
+**Prevention:** Before relying on instrumentation, prove the exact retained artifact contains the
+field. Record a missing field as unavailable, never zero, and reject fixes unsupported by the
+user-visible acceptance metric.
+
 ## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
 
 **Created:** 2026-07-06

@@ -5,16 +5,6 @@ last_reviewed: 2026-07-12
 
 # READ / SCOPE / VERIFY Lessons
 
-## Lesson: Evidence CLI documentation is part of its gate
-**Created:** 2026-07-12
-**What happened:** M04 tests/Ruff passed before Gruff found eight missing docs; the first alias
-green test also expected a separate row although same-chip wording is stitched for the user.
-**Evidence:** `scripts/fold-attribution-score.py` (search: "def build_report") now explains empty
-artifacts; `.goat-flow/plans/0.4.1/M04-crosstalk-bleed-mechanism.md` (search:
-"phase1b-alias-gruff-final.log") retains the alias-test/Gruff evidence after candidate rollback.
-**Prevention:** Run strict Gruff before ticking an evidence CLI and assert routed wording after the
-display merge, not against an assumed raw-row boundary.
-
 ## Lesson: Decision evidence must name the branch that changed the outcome
 
 **Created:** 2026-07-12

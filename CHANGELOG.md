@@ -65,6 +65,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   kill. The diagnostic guard remains `0`, release fold behavior is unchanged, and the retained
   scorer, ADR-008, footgun, and corpus artifacts preserve the evidence for future work.
 
+- **Dual-identity duplicate prevalence is measurable without exposing transcript wording
+  (0.4.1 M05 Phase 0)** - a deterministic offline scorer finds rows with identical normalized
+  non-empty text, positive spoken-time overlap, and different visible speaker IDs. It compares
+  wording only in memory and reports safe session/segment IDs, roles, timing, overlap, word count,
+  and a metadata-derived pair ID; malformed and empty histories have explicit outcomes. The exact
+  canonical 20-fixture baseline contains zero candidates across 6,072 live rows, while the retained
+  M08 browser replacement reproduces one candidate across 306 rows and canonical day5-c09 remains
+  zero across 296. A fresh instrumented 1x day5-c09 replay also found zero candidates across 296
+  final server rows despite 10 phantom merges and 10 folded spans / 17 words. That replay did not
+  reproduce the reported mechanism, so speculative engine, adapter, publication, and browser fixes
+  are rejected. M05 was explicitly closed as diagnostic-only / no-fix: no runtime behavior, feature
+  flag, byte-identity baseline, or corpus baseline changed.
+
 ## [0.4.0] - unreleased
 
 ### Added
