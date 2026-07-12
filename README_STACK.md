@@ -6,7 +6,7 @@ developer or reviewer needs to understand before running or changing the app.
 The focus is the user-visible transcription flow: record a consultation, see
 speaker-labelled transcript cards, and review a SOAP summary.
 
-Last checked: 2026-07-07 against the local repo.
+Last checked: 2026-07-13 against the local repo.
 
 ## Short Version
 
@@ -38,11 +38,12 @@ Role inference, summaries, clinical context retrieval, and medical term correcti
 | --- | --- | --- | --- | --- |
 | Speaker diarization | `nvidia/diar_streaming_sortformer_4spk-v2.1` via `SortformerEncLabelModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Streaming Sortformer v2.1. The Dockerfile pre-downloads `diar_streaming_sortformer_4spk-v2.1.nemo`. |
 | Automatic speech recognition | `nvidia/multitalker-parakeet-streaming-0.6b-v1` via `EncDecMultiTalkerRNNTBPEModel` | NeMo container, NVIDIA GPU | `NEMO_MODEL_PROVIDER=local` | Multitalker Parakeet 0.6B. The Dockerfile pre-downloads `multitalker-parakeet-streaming-0.6b-v1.nemo`. |
-| Post-visit transcript correction | `nvidia/parakeet-tdt-0.6b-v3` second-pass ASR via `strands_agents/post_visit_correction.py` | NeMo container, NVIDIA GPU (runs in the NeMo executor after Stop) | `POST_VISIT_ASR_MODEL` (code default; not listed in `.env.example`) | Re-transcribes retained session audio into corrected rows stored beside the live transcript. Summaries prefer corrected rows and cite their `segment_id` values as source chips. |
+| Post-visit transcript correction | `nvidia/parakeet-tdt-0.6b-v3` second-pass ASR via `strands_agents/post_visit_correction.py` | NeMo container, NVIDIA GPU (runs in the NeMo executor after Stop) | `POST_VISIT_ASR_MODEL` code default and fixture-eval default | Re-transcribes retained session audio into corrected rows stored beside the live transcript. Unified Parakeet remains an explicit `--model` experiment because it failed model construction in the pinned runtime. |
 | Role inference | Strands Agent with `assign_roles` tool | AWS Bedrock or CPU-only Ollama | `.env.example` and agent code default to `ROLE_AGENT_MODEL_PROVIDER=bedrock`; bare Compose falls back to `ollama` only when no env overrides it | Maps raw `spk_0`/`spk_1` labels to DOCTOR/PATIENT. Raw transcript still appears if this fails. |
-| Local role/summary model | `qwen3.5:9b` through Ollama | CPU and system RAM | `ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b` | Recommended local model in `.env.example`; `qwen2.5:7b` is documented as faster but lower quality. |
-| Bedrock role/summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` in `.env.example` and agent code defaults | AWS Bedrock | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | Used when cloud credentials are provided. Compose still has a no-`.env` fallback of `us.anthropic.claude-sonnet-4-20250514-v1:0`; normal local setup copies `.env.example`. |
-| Summary generation | Same Strands provider/model as role inference | AWS Bedrock or CPU-only Ollama | Same `ROLE_AGENT_*` env vars | Generates JSON SOAP-style sections and key points after the visit. Max tokens default to 4096 (`SUMMARY_AGENT_MAX_TOKENS`). |
+| Local role/summary model | `qwen3.5:9b` through Ollama | CPU and system RAM; zero VRAM | `ROLE_AGENT_OLLAMA_MODEL` and `SUMMARY_AGENT_OLLAMA_MODEL` | Exact local tag for both user flows. Compose and `scripts/install-ollama.sh` hide NVIDIA, ROCm, and Vulkan GPUs so NeMo keeps the only GPU. |
+| Bedrock role model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | AWS Bedrock in `ap-southeast-2` | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | `.env.example`, Compose, Python, and production Terraform agree on AU Haiku 4.5. |
+| Bedrock summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | AWS Bedrock in `ap-southeast-2` | `SUMMARY_AGENT_MODEL_ID`; provider normally inherits the role provider | Haiku 4.5 is retained deliberately for lower note-generation cost. Sonnet is deferred rather than silently selected by a fallback. |
+| Summary generation | Independent Strands summary agent | AWS Bedrock or CPU-only Ollama | `SUMMARY_AGENT_*`, with provider/model inheritance from effective `ROLE_AGENT_*` values | Generates JSON SOAP-style sections and key points after the visit. Max tokens default to 4096 (`SUMMARY_AGENT_MAX_TOKENS`). |
 | Clinical summary grounding | Project-authored `strands_agents/data/clinical_knowledge.json` | CPU keyword retrieval | Always available to summary prompt when snippets match | Not an LLM or external RAG service. It adds short documentation reminders to the summary prompt. |
 | Medical term correction | `strands_agents/data/medical_lexicon.txt` | CPU post-ASR text normaliser | `MEDICAL_BOOST_ENABLED=0` by default | Exact word-boundary replacement only. NeMo decode-time phrase boosting remains GPU-pending. |
 | Role fallback | Keyword heuristics in `strands_agents/api/role_heuristics.py` | CPU | Automatic after agent failure | Gives low-confidence labels when the configured Strands model is unavailable. |
@@ -92,12 +93,16 @@ There are two Strands agents:
 | Role inference | `strands_agents/agents/transcription_agent.py` | Decide which raw speaker is DOCTOR/PATIENT | `assign_roles` | 2048 (`ROLE_AGENT_MAX_TOKENS`) |
 | Summary | `strands_agents/agents/summary_agent.py` | Produce the post-visit SOAP note JSON | none | 4096 (`SUMMARY_AGENT_MAX_TOKENS`) |
 
-Both agents use the same provider selector:
+Role and summary settings resolve independently, while the summary normally inherits the role
+provider and model:
 
 ```text
 ROLE_AGENT_MODEL_PROVIDER=ollama|bedrock
 ROLE_AGENT_OLLAMA_MODEL=qwen3.5:9b
 ROLE_AGENT_MODEL_ID=au.anthropic.claude-haiku-4-5-20251001-v1:0
+SUMMARY_AGENT_MODEL_PROVIDER=<optional; inherits role provider>
+SUMMARY_AGENT_OLLAMA_MODEL=qwen3.5:9b
+SUMMARY_AGENT_MODEL_ID=au.anthropic.claude-haiku-4-5-20251001-v1:0
 AWS_DEFAULT_REGION=ap-southeast-2
 OLLAMA_HOST=http://ollama:11434
 ```
@@ -113,6 +118,11 @@ no-env fallback. Offline local development uses Ollama by setting
 docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
+`scripts/install-ollama.sh` is the host-side setup path. It defaults to `qwen3.5:9b`, never edits
+`.env`, starts new servers with GPU visibility disabled, and requires `/api/ps` to report
+`size_vram == 0` after its one-token smoke. An already-running GPU-backed Ollama is reported with
+manual CPU-only restart guidance and is never killed automatically.
+
 Inside Compose, `OLLAMA_HOST` is pinned to `http://ollama:11434` in
 `docker-compose.yml` and deliberately cannot be overridden from `.env`
 (`host.docker.internal` is unreachable from the agent container on some
@@ -121,8 +131,16 @@ A host-installed Ollama is only reachable when running FastAPI outside
 Docker, where the `OLLAMA_HOST` env var applies normally.
 
 Bedrock requires credentials. Keep `ROLE_AGENT_MODEL_PROVIDER=bedrock`, provide
-`ROLE_AGENT_MODEL_ID`, and inject AWS credentials or an AWS profile outside the
-repo. Do not commit credentials into `.env`.
+`ROLE_AGENT_MODEL_ID`, and inject AWS credentials or an AWS profile outside the repo. Summary
+configuration normally inherits that provider; `SUMMARY_AGENT_MODEL_PROVIDER` is available only
+when an operator deliberately separates the note provider. Production Terraform emits these
+canonical role/summary keys directly and defaults the region to `ap-southeast-2`. Do not commit
+credentials into `.env`.
+
+The fixture-only `scripts/eval-second-pass.sh` also defaults to TDT v3. Unified remains available
+only through an explicit `--model nvidia/parakeet-unified-en-0.6b` override; revisit it after a
+checkpoint revision or pinned NeMo runtime change, because the recorded current-runtime attempt
+failed during model construction.
 
 ## Browser And Event Flow
 

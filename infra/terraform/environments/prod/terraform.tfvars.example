@@ -13,7 +13,7 @@
 # Core Settings
 # -----------------------------------------------------------------------------
 
-aws_region   = "us-east-1"
+aws_region   = "ap-southeast-2"
 environment  = "prod"
 project_name = "ambient-scribe"
 
@@ -53,8 +53,11 @@ hosted_zone_id = ""
 # Agent Settings
 # -----------------------------------------------------------------------------
 
-# Bedrock model to use
-model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Bedrock model used to identify Doctor and Patient transcript rows.
+model_id = "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Bedrock model used to draft the lower-cost post-visit note.
+summary_model_id = "au.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # Docker image tag (use a unique tag when ECR is immutable)
 agent_image_tag = "latest"

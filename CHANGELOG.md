@@ -108,6 +108,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   context validation, PHI/symbol scans, and `git diff --check`. M05 closes diagnostic/no-fix with
   its rejection evidence preserved and no runtime behavior change.
 
+### Changed
+
+- **Effective model defaults now agree across local and production setup (0.4.1 M00)** - production
+  Terraform emits canonical role and summary provider/model variables, using AU Haiku 4.5 in
+  `ap-southeast-2` for both user flows. Bare Compose keeps CPU Ollama/Qwen local-first while its
+  Bedrock fallback and optional summary inheritance resolve to the same Haiku profile; summary
+  remains on Haiku deliberately for lower note-generation cost. The model checker validates every
+  distinct role/summary pair once, and the Ollama installer no longer edits `.env` or exposes a
+  GPU: it exact-matches model tags and requires zero VRAM after a one-token smoke. Fixture-only
+  second-pass evaluation now defaults to the pinned-runtime TDT v3 model; Unified remains an
+  explicit experiment after its recorded construction failure. No selected model was upgraded.
+
 ## [0.4.0] - unreleased
 
 ### Added

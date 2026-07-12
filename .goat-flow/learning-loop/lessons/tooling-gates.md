@@ -1,12 +1,34 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-12
+last_reviewed: 2026-07-13
 ---
 
 # Tooling and Quality-Gate Lessons
 
 Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
+
+## Lesson: Placement proofs must not default missing telemetry to zero
+
+**Created:** 2026-07-13
+**What happened:** M00's first CPU-only Ollama verifier converted an absent `/api/ps`
+`size_vram` field to zero. A changed or incomplete API response could therefore certify that
+the user's local model left the GPU to NeMo without reporting any placement measurement.
+**Evidence:** `scripts/install-ollama.sh` (search: "missing VRAM measurement").
+**Prevention:** Treat absent device-placement fields as invalid evidence. Accept CPU-only model
+placement only when the exact loaded model explicitly reports zero VRAM; fail closed otherwise.
+
+## Lesson: Whole-file patch replacement can drop executable mode
+
+**Created:** 2026-07-13
+**What happened:** M00 replaced `scripts/check-ai-model.sh` through a delete/add patch. Bash syntax
+and ShellCheck were clean, but `stat` showed the operator command had changed from executable to
+mode `0644`, so direct use would have failed before any model check ran.
+**Evidence:** `scripts/check-ai-model.sh` (search: "Diagnose the off-GPU models") and
+`var/quality/m00-default-models-infra-20260712T201108Z/` (focused static evidence).
+**Prevention:** After replacing any executable script as a whole, compare `stat -c '%a %n'` with
+HEAD, restore the original executable mode before behavioral tests, and include mode in staging
+review. Prefer in-place hunks when a full replacement is unnecessary.
 
 ## Lesson: Formatter-only churn can inherit class-wide Gruff debt
 

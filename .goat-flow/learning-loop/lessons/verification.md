@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-12
+last_reviewed: 2026-07-13
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -282,7 +282,7 @@ During M12, the clinical KB loader handled missing files and invalid shapes but 
 ## Lesson: Model stack docs need env, Compose, and code defaults checked together (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `README_STACK.md` (search: "Compose still has a no-"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=ollama"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
+**Evidence:** `README_STACK.md` (search: "bare Compose falls back to"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=bedrock"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
 
 While creating the stack inventory, the root README still described Bedrock as the role-inference default, `.env.example` described Ollama as the local default, Compose passed Ollama by default, and the Python agent retained Bedrock defaults for missing env vars. Reading only one source would have produced another stale model summary.
 
