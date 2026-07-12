@@ -1,12 +1,23 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-11
+last_reviewed: 2026-07-12
 ---
 
 # Tooling and Quality-Gate Lessons
 
 Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
+
+## Lesson: Formatter-only churn can inherit class-wide Gruff debt
+
+**Created:** 2026-07-12
+**What happened:** M04 retained two Ruff-only line wraps in `TranscriptionSession` after removing
+the rejected behavior. The changed-symbol hook then surfaced the class's pre-existing size debt
+as changed scope even though no behavior remained.
+**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope") and
+`.goat-flow/plans/0.4.1/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
+**Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
+but do not widen a debt-heavy symbol to chase formatter debt outside scope.
 
 ## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
 
@@ -175,3 +186,17 @@ Docker runtime and record a fixture score or a precise compatibility failure.
 3-8-line intent block immediately after `<?php`, before the strict-types declaration.
 **Prevention:** For every new PHP file, put the file-intent docblock directly after `<?php` and
 before `declare(strict_types=1)`, then run the direct gruff-php gate as well as PHP lint/style.
+
+## Lesson: Structured fixture gates require the running JSON log mode
+
+**Created:** 2026-07-12
+**What happened:** An M04 flag-OFF trio stopped in preflight because the restored normal agent
+used `LOG_FORMAT=console` while `EVAL_REQUIRE_STRUCTURED_LOGS=1` required JSON. No fixture ran.
+**Evidence:** `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-flag-off-trio-eval.log`.
+**Prevention:** Before a structured fixture run, verify `LOG_FORMAT=json` in the running agent as
+well as feature flags and CUDA; restore normal log mode after the evidence run.
+
+The same session found that a bare `nohup ... &` child launched by a one-shot command runner was
+reaped immediately with empty logs. For long evals, verify both the saved child PID and the first
+fixture line; when the runner reaps descendants, keep a managed parent session waiting on the
+`nohup` child while a separate monitor records health and progress.

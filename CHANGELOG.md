@@ -48,28 +48,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   worst-liveBad, typical, and day5 fixtures (10.3-24.1% marked; no warning wall), while focused
   fidelity/summary tests remained green.
 
-- **Wrong-speaker folds are guarded by sustained voice evidence (0.4.1 M04)** - an OFF-by-default
-  streaming diagnostic now records each cache slot's per-window and cumulative voiced-frame
-  counts, acoustic and stable-word shares, the exact fold threshold/decision, and folded timing
-  spans with word counts. It never logs consultation wording and leaves normal visit log shapes
-  unchanged. JSON eval artifacts preserve the evidence so a visible Doctor/Patient mix-up can be
-  aligned with the window that folded it before any speaker threshold changes. Two controlled 1x
-  replays confirmed the mechanism: day3 window 15 and day2 windows 98/101 folded short,
-  Patient-owned speech from a marginal third slot into the visible Doctor stream. The same joins
-  also exposed the source-chip heuristic's low precision on these specimens, so the shipped
-  corpus gate remains intact while TextGrid-aligned harmful and benign folds provide the targeted
-  behavior check for the Phase 1 policy. An independently OFF-by-default cross-talk guard now
-  keeps a marginal slot under its own source chip only after at least 50 cumulative voiced frames
-  and 1.5% of visit voice activity; weaker decoder blips retain the existing dominant-speaker
-  fold, and leaving the guard off preserves release behavior. ADR-008 records why delayed folding
-  and correction/API origin metadata were rejected within this milestone's boundary. In 1x
-  guard-on acceptance, harmful folds fell 3 -> 2 on day3 and 10 -> 0 on day2, strict attribution
-  improved 0.4 points on each, incorrect-confident fell 0.4 and 3.4 points respectively, and both
-  phantom counts stayed unchanged. Day3's consent answer is now visibly Patient-owned; day2's
-  analogous span becomes honestly UNKNOWN instead of confidently Doctor-owned, leaving its
-  separate role-map headroom to M07 rather than guessing a role in the streaming layer. With the
-  guard off, the corrected c02/c03/c08 @60s trio reproduced strict 100.0/96.8/93.8, zero chip
-  findings, and all three canonical `text,start,end,speaker_id` SHA-256 values byte-for-byte.
+- **Cross-talk fold mechanism confirmed; guarded policies rejected (0.4.1 M04)** -
+  OFF-by-default, PHI-safe streaming evidence now records cache-slot frame counts, acoustic
+  and stable-word shares, fold decisions, and timing/word-count spans without consultation
+  wording. Two controlled 1x replays confirmed that marginal third slots can fold short
+  Patient speech into the visible Doctor stream. A reusable TextGrid-grounded scorer now
+  classifies those spans as correct, wrong, or unresolved and compares candidate attribution
+  with the same Phase 0 timing.
+
+  Neither guarded policy is accepted for user visits. Keeping every acoustically sustained
+  origin visible improved the named fixtures but regressed corpus phantom identities 10 -> 18.
+  A visit-long stable alias then passed the two targeted attribution-delta gates (9 improved,
+  zero worsened, zero newly confident wrong) and reproduced all three flag-OFF hashes, but the
+  final 20-fixture corpus regressed corrected strict 88.985% -> 87.695% and raised incorrect-
+  confident 10.595% -> 12.240%. The stable-alias product/test delta was removed after that
+  kill. The diagnostic guard remains `0`, release fold behavior is unchanged, and the retained
+  scorer, ADR-008, footgun, and corpus artifacts preserve the evidence for future work.
 
 ## [0.4.0] - unreleased
 

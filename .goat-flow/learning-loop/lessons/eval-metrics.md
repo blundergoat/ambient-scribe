@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-12
 ---
 
 # Eval and Metrics Lessons
@@ -186,3 +186,17 @@ replay and timeline were already complete. M02 did not need correction to diagno
 **Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
 fixed diagnostic waits and give its client an explicit timeout. Use the live-only evaluator
 for live-lane diagnostics instead of making unrelated correction success a prerequisite.
+
+## Lesson: Targeted attribution deltas do not replace corpus-wide quality gates
+
+**Created:** 2026-07-12
+**What happened:** M04's stable two-identity alias passed two named same-span gates with nine
+improvements, zero worsened spans, and no new identities, then reproduced all three flag-OFF
+hashes. The canonical 20-fixture run still regressed corrected strict by 1.290 points and raised
+incorrect-confident by 1.645 points, with large failures on two non-target c07 fixtures.
+**Evidence:** `.goat-flow/plans/0.4.1/M04-crosstalk-bleed-mechanism.md` (search:
+"Stable-alias candidate rejected and removed") and
+`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-full-corpus-gate-verdict.md`.
+**Prevention:** Treat named causal fixtures as mechanism proof, not release coverage. A visit-long
+speaker policy must still pass the full corpus quality/identity gates even when targeted deltas
+and default-OFF compatibility are exact.

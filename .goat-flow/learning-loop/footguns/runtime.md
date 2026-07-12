@@ -246,8 +246,8 @@ last_reviewed: 2026-07-10
 
 - **Files:** `strands_agents/nemo_session.py` (search: "phantom_speaker_merged")
 - **What breaks:** The streaming engine folds window-local marginal speaker slots into a canonical speaker (the hallucination-scale guard from the cache-aware integration entry above). When a real patient interjection is short enough to look marginal inside one window, the fold assigns those words to the OTHER speaker's canonical stream, and they render inside that speaker's row - the cross-talk bleed family seen in every manual acceptance run.
-- **Evidence:** OBSERVED correlation, not yet a confirmed mechanism: 2026-07-08 (UTC) session `203d1d35` (day3-consultation01) logged six `phantom_speaker_merged window_speaker_id=speaker_2 canonical_speaker_id=speaker_0` events at exactly the wall-clock timestamps where the patient's consent answer ("I think I am. Yeah,") rendered inside the doctor's secure-location row. Same family, other direction observed in day5-consultation09: only 3 phantom merges while the patient's audio ran under TWO kept identities (speaker_0 + speaker_3) that both emitted text for the same spans - whole utterances duplicated, both mapped PATIENT.
-- **Prevention:** Before touching the fold threshold, confirm the mechanism: replay a bleed fixture with per-window slot shares logged and check whether the bled words' window slot was folded. Any threshold change is streaming-engine territory (Ask First: `strands_agents/nemo_session.py`) and must pass the M01-style byte-identity gates plus a bleed-specific fixture check.
+- **Evidence:** CONFIRMED 2026-07-12 in `phase0-verdict.md`. Keeping origins exposed 8 new identities; stable aliasing then counted 14 harmful day3 folds, though all 14 wrong roles pre-existed (`phase1b-targeted-gate-verdict.md`).
+- **Prevention:** Keep `NEMO_STREAMING_CROSSTALK_GUARD=0`. A cache slot is not a visit-long person: neither expose it nor pin it globally. Any replacement remains Ask First and must pass grounded target, flag-off hash, no-new-identity, and corpus quality gates.
 
 ## Resolved Entries
 
