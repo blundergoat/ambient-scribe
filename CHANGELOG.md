@@ -167,6 +167,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   second-pass evaluation now defaults to the pinned-runtime TDT v3 model; Unified remains an
   explicit experiment after its recorded construction failure. No selected model was upgraded.
 
+### Fixed
+
+- **Delayed same-speaker wording stays in one transcript card** - when a stable row arrives after
+  a later speaker turn, the browser now inserts it into the preceding card for the same raw speaker
+  instead of showing a second adjacent Doctor or Patient entry. Spoken order, correctable row IDs,
+  and the later speaker's separate turn remain intact for both review and summary input.
+
 ## [0.4.0] - unreleased
 
 ### Added

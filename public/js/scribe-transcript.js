@@ -313,11 +313,17 @@ function appendSegment(segment, role) {
  * Inserts one late-arriving row where its spoken time belongs.
  * Use when a segment starts earlier than the newest visible card, which the
  * streaming engine's dormant-slot drain can legitimately produce.
+ *
+ * @param {object} segment - transcript event; missing row ID means the row cannot be corrected.
+ * @param {string} role - visible speaker role; `UNKNOWN` means the UI must not guess a label.
+ * @param {HTMLElement} transcriptContainer - transcript list; empty means this row starts the visit.
+ * @returns {void} Places the row chronologically without changing its speaker identity.
  */
 function insertSegmentChronologically(segment, role, transcriptContainer) {
     const segmentBlock = createSegmentBlock(segment, role);
     const nextRow = findFirstTranscriptRowAfter(transcriptContainer, segment.start);
 
+    // With no later wording on screen, this delayed row belongs at the end.
     if (!nextRow) {
         transcriptContainer.appendChild(segmentBlock);
         trackSpeakerSegment(segment.speaker_id, segmentBlock);
@@ -327,9 +333,27 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
         return;
     }
 
+    // A visible row should own a card; null remains a safe fallback for malformed DOM state.
     const nextCard = nextRow.closest('.segment');
     const firstRowInCard = nextCard?.querySelector('.segment__text');
+    // Only a real preceding transcript card can absorb delayed wording; the empty-state node cannot.
+    const precedingElement = nextCard?.previousElementSibling;
+    const precedingSpeakerCard = precedingElement?.classList.contains('segment')
+        ? precedingElement
+        : null;
 
+    // A delayed continuation before the next turn stays in the same speaker card the user was reading.
+    if (
+        nextRow === firstRowInCard
+        && precedingSpeakerCard?.dataset.speakerId === segment.speaker_id
+    ) {
+        insertRowIntoCard(segment, precedingSpeakerCard);
+        trackSpeakerSegment(segment.speaker_id, precedingSpeakerCard);
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    // A different speaker at a card boundary still starts a separate visible turn.
     if (!nextCard || nextRow === firstRowInCard) {
         transcriptContainer.insertBefore(segmentBlock, nextCard);
         trackSpeakerSegment(segment.speaker_id, segmentBlock);
@@ -337,6 +361,7 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
         return;
     }
 
+    // Delayed wording inside its own existing card joins that card in spoken order.
     if (nextCard.dataset.speakerId === segment.speaker_id) {
         insertRowIntoCard(segment, nextCard, nextRow);
         trackSpeakerSegment(segment.speaker_id, nextCard);

@@ -1551,6 +1551,74 @@ test.describe("Replay auto-summary", () => {
 });
 
 test.describe("Chronological transcript insertion (M22 refinements)", () => {
+  test("a late same-speaker continuation stays in the preceding card", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+        confidence: 0.9,
+      });
+
+      const arrivalOrderedRows = [
+        {
+          speaker_id: "spk_0",
+          text: "all over my arms",
+          start: 43.12,
+          end: 44.8,
+          segment_id: "seg-patient-1",
+        },
+        {
+          speaker_id: "spk_1",
+          text: "Okay, and is this something you've had before?",
+          start: 47.2,
+          end: 50.0,
+          segment_id: "seg-doctor-1",
+        },
+        {
+          speaker_id: "spk_0",
+          text: "and my hands mainly.",
+          start: 45.2,
+          end: 46.0,
+          segment_id: "seg-patient-2",
+        },
+      ];
+
+      // Deliver the delayed Patient continuation after the Doctor event, as happened in consult 1.8.
+      arrivalOrderedRows.forEach((row) =>
+        handleRawSegment({ type: "segment", ...row })
+      );
+    });
+
+    const transcriptCards = page.locator("#transcript .segment");
+    await expect(transcriptCards).toHaveCount(2);
+    await expect(transcriptCards.nth(0)).toHaveAttribute(
+      "data-speaker-id",
+      "spk_0"
+    );
+    await expect(transcriptCards.nth(1)).toHaveAttribute(
+      "data-speaker-id",
+      "spk_1"
+    );
+
+    const patientRowIds = await transcriptCards
+      .nth(0)
+      .locator(".segment__text")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.segmentId));
+    expect(patientRowIds).toEqual(["seg-patient-1", "seg-patient-2"]);
+
+    const summaryRows = await page.evaluate(() =>
+      readVisibleTranscriptSegments()
+    );
+    expect(summaryRows.map((row) => row.segment_id)).toEqual([
+      "seg-patient-1",
+      "seg-patient-2",
+      "seg-doctor-1",
+    ]);
+  });
+
   test("a late-arriving old row inserts at its spoken position", async ({ page }) => {
     await loadScribePage(page);
     await page.evaluate(() => {
