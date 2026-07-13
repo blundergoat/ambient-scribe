@@ -2,8 +2,8 @@
 // Ambient Scribe wording-confidence presentation for transcripts and notes.
 // Clinicians see a quiet review cue only when acoustic evidence falls below
 // the corpus-derived lane threshold. This module keeps threshold decisions,
-// accessible row markers, and the shared "Review wording" chip consistent
-// across the live transcript, corrected transcript, source views, and note.
+// accessible local row markers, and note review cues consistent across the
+// live transcript, corrected transcript, source views, and generated note.
 // =========================================================================
 
 // Empirical threshold: `<0.76` marks 18.3% of live rows and limits correct-row cues to 9.9%.
@@ -13,7 +13,6 @@ const CORRECTED_TRANSCRIPT_REVIEW_THRESHOLD = 0.78;
 const LIVE_TRANSCRIPT_LANE = 'live';
 const CORRECTED_TRANSCRIPT_LANE = 'corrected';
 const REVIEW_WORDING_CLASS = 'transcript-wording--review';
-const REVIEW_WORDING_CHIP_CLASS = 'confidence-review-chip';
 const REVIEW_WORDING_HELP_ID = 'confidenceWordingHelp';
 const REVIEW_WORDING_MESSAGE = 'Lower-confidence transcription — check wording against audio.';
 
@@ -78,60 +77,6 @@ function markTranscriptWordingForReview(rowElement, rowConfidence, transcriptLan
     rowElement.setAttribute('aria-describedby', REVIEW_WORDING_HELP_ID);
     rowElement.dataset.confidenceTooltip = REVIEW_WORDING_MESSAGE;
     return true;
-}
-
-/**
- * Builds the quiet chip that tells the clinician why local wording is dotted.
- * Use in a live card header or corrected block; empty placement uses the card-header layout.
- *
- * @param {string} placementClass - optional layout class; empty keeps the standard header chip.
- * @returns {HTMLElement} visible, non-interactive "Review wording" chip.
- */
-function createReviewWordingChip(placementClass = '') {
-    const reviewWordingChip = document.createElement('span');
-    reviewWordingChip.className = REVIEW_WORDING_CHIP_CLASS;
-
-    // Corrected blocks add an inline modifier while live cards keep the standard header position.
-    if (placementClass !== '') {
-        reviewWordingChip.classList.add(placementClass);
-    }
-
-    reviewWordingChip.textContent = 'Review wording';
-    return reviewWordingChip;
-}
-
-/**
- * Keeps a live card's review chip aligned with the rows currently inside it.
- * Use after insert, split, or relabel so moved rows never leave a stale header cue.
- *
- * @param {HTMLElement|null} transcriptCard - live transcript card; null means nothing is on screen.
- * @returns {void} Adds one chip for marked wording, or removes a stale chip when none remains.
- */
-function syncTranscriptCardReviewChip(transcriptCard) {
-    // Detached or partial test cards cannot show a header cue.
-    if (!transcriptCard) {
-        return;
-    }
-
-    const cardHeader = transcriptCard.querySelector('.segment__header');
-    const existingReviewChip = cardHeader?.querySelector(`.${REVIEW_WORDING_CHIP_CLASS}`) ?? null;
-    const hasWordingToReview = transcriptCard.querySelector(`.${REVIEW_WORDING_CLASS}`) !== null;
-
-    // A partial card without its header still leaves the row marker useful and accessible.
-    if (!cardHeader) {
-        return;
-    }
-
-    // The first uncertain row adds one quiet explanation to the card header.
-    if (hasWordingToReview && !existingReviewChip) {
-        cardHeader.appendChild(createReviewWordingChip());
-        return;
-    }
-
-    // Moving the final uncertain row out of a card removes its now-misleading chip.
-    if (!hasWordingToReview && existingReviewChip) {
-        existingReviewChip.remove();
-    }
 }
 
 /**

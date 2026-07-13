@@ -2,7 +2,7 @@
  * Browser acceptance coverage for clinician-facing wording-confidence cues.
  * These tests render live and corrected rows through the production page,
  * proving strict thresholds, absent-confidence behavior, accessible wording,
- * quiet review chips, and unchanged role-card geometry.
+ * label-free local review styling, and unchanged role-card geometry.
  */
 
 const { test, expect } = require('@playwright/test');
@@ -71,8 +71,7 @@ test('live rows use the strict live threshold without changing card roles or hei
 
     const transcriptCards = page.locator('#transcript .segment');
     await expect(transcriptCards).toHaveCount(3);
-    await expect(transcriptCards.nth(0).locator('.confidence-review-chip')).toHaveText('Review wording');
-    await expect(transcriptCards.nth(1).locator('.confidence-review-chip')).toHaveCount(0);
+    await expect(page.locator('#transcript .confidence-review-chip')).toHaveCount(0);
     await expect(transcriptCards.nth(0)).toHaveClass(/segment--UNKNOWN/);
     await expect(transcriptCards.nth(1)).toHaveClass(/segment--UNKNOWN/);
 
@@ -139,12 +138,12 @@ test('corrected transcript keeps review styling local inside a stitched utteranc
     await expect(correctedRows.nth(0)).toHaveAttribute('data-confidence', '0.77');
     await expect(correctedRows.nth(1)).not.toHaveClass(/transcript-wording--review/);
     await expect(correctedRows.nth(2)).not.toHaveClass(/transcript-wording--review/);
-    await expect(correctedBlock.locator('.confidence-review-chip')).toHaveText('Review wording');
+    await expect(correctedBlock.locator('.confidence-review-chip')).toHaveCount(0);
     await expect(correctedBlock).toContainText('The rash was on the back of my carp.');
     await expect(correctedBlock).toContainText('My wife noticed it.');
 });
 
-test('review wording remains non-colour-only and keyboard visible in both themes', async ({ page }) => {
+test('local confidence cue remains non-colour-only and keyboard visible without a label', async ({ page }) => {
     await openConsultationWorkspace(page);
     await page.evaluate(() => {
         handleRawSegment({
@@ -159,10 +158,9 @@ test('review wording remains non-colour-only and keyboard visible in both themes
     });
 
     const reviewWording = page.locator('#transcript .transcript-wording--review');
-    const reviewChip = page.locator('#transcript .confidence-review-chip');
     await reviewWording.focus();
     await expect(reviewWording).toBeFocused();
-    await expect(reviewChip).toHaveText('Review wording');
+    await expect(page.locator('#transcript .confidence-review-chip')).toHaveCount(0);
 
     const lightThemeStyles = await reviewWording.evaluate((wording) => ({
         background: getComputedStyle(wording).backgroundColor,

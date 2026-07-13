@@ -189,10 +189,6 @@ function refreshSpeakerCardDisplay(segmentBlock) {
         avatarElement.textContent = displayState.avatar;
     }
 
-    // Card splits or inserts can move the final uncertain row, so its header cue is refreshed too.
-    if (typeof syncTranscriptCardReviewChip === 'function') {
-        syncTranscriptCardReviewChip(segmentBlock);
-    }
 }
 
 /**

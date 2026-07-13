@@ -373,7 +373,6 @@ function createSummaryTranscriptWording(
         return transcriptWording;
     }
 
-    let hasWordingToReview = false;
     // One inline span per source row keeps the uncertain wording locally scoped.
     for (const sourceRow of sourceRows) {
         // Real spaces preserve copied and assistive text between rows, not only visual separation.
@@ -392,23 +391,15 @@ function createSummaryTranscriptWording(
 
             // The shared classifier applies the lane-specific threshold and accessibility cue.
             if (typeof markTranscriptWordingForReview === 'function') {
-                hasWordingToReview = markTranscriptWordingForReview(
+                markTranscriptWordingForReview(
                     sourceRowWording,
                     sourceRow.confidence,
                     transcriptLane,
-                ) || hasWordingToReview;
+                );
             }
         }
 
         transcriptWording.appendChild(sourceRowWording);
-    }
-
-    // Corrected blocks explain the dotted wording without adding another grid column.
-    if (hasWordingToReview && typeof createReviewWordingChip === 'function') {
-        transcriptWording.prepend(document.createTextNode(' '));
-        transcriptWording.prepend(
-            createReviewWordingChip('confidence-review-chip--inline')
-        );
     }
 
     return transcriptWording;

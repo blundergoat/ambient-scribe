@@ -304,6 +304,10 @@ fixture line; when the runner reaps descendants, keep a managed parent session w
 explicitly interrupted assistant turn can also end that managed process group mid-fixture without
 an application sentinel. Put multi-hour eval, log capture, and health polling in independent OS
 sessions, then verify their session IDs differ from the launching command before relying on them.
+The M06 live-only gate reconfirmed the check: three saved background PIDs vanished with an empty
+run log and no fixture directory, while named `tmux` sessions immediately produced the first
+fixture UUID and completed. Treat an empty log after the launch check as no run, never as a gate
+failure or pass.
 
 ## Lesson: Run changed-symbol Gruff before a hot-path module crosses its size gate
 
@@ -317,3 +321,9 @@ failure, and the module had been below the file threshold before the diagnostic 
 **Prevention:** On a near-threshold hot-path module, run changed-symbol Gruff after each substantive
 diagnostic or policy slice. Extract a named policy before the release method crosses 100 lines,
 then tighten comments and contracts while checking the file remains below its configured limit.
+
+The cadence refinement first stored the fixed browser tick as another per-session engine
+attribute. Focused tests passed, but Gruff exposed the extra state on a class already carrying 21
+attributes. Replacing it with a module policy constant kept the file at 999 lines and a
+`--diff HEAD` hook scan reported zero new findings. Prefer a constant for a fixed application
+contract; use Gruff's new-only diff to distinguish introduced findings from inherited symbol debt.

@@ -117,6 +117,8 @@ class _WordEntry:
 _MUTABLE_TAIL_WORDS = 10
 # Trail the step clock so rows from different voices normally render in spoken order.
 _BURST_LOOKBACK_SECONDS = 5.0
+# Browser audio arrives every five seconds, which fixes the next visible release decision.
+_BROWSER_RELEASE_TICK_SECONDS = 5.0
 # Drain a quiet voice after NeMo's normal revision window so it cannot freeze the UI.
 _DORMANT_SLOT_SECONDS = 12.0
 # Keep a quiet voice's extreme tail because it revises first if the user speaks again.
@@ -268,9 +270,9 @@ class StreamingSessionEngine:
             Rows stabilized by this chunk's steps (one-step hysteresis per
             speaker); empty while text is still inside the mutable window.
         """
+        # An empty browser chunk has no audio or future release cadence to evaluate.
         if pcm_audio == b"":
             return []
-
         import numpy as np
 
         audio = np.frombuffer(pcm_audio, dtype=np.int16).astype(np.float32) / 32768.0
@@ -279,7 +281,6 @@ class StreamingSessionEngine:
         # keeps later appends extending THIS stream instead of padding a new
         # one per chunk (which grows the batch and breaks the diar state).
         self._stream_id = int(stream_id) if int(stream_id) >= 0 else 0
-
         return self._run_ready_steps(final=False)
 
     def flush(self) -> list[EngineRow]:
@@ -836,17 +837,17 @@ class StreamingSessionEngine:
         stability_hold_seconds: float | None,
         stability_blocked_row_count: int,
     ) -> bool:
-        """Return whether stable hidden rows have reached the operator's delivery limit.
-
-        Zero or absent timing keeps normal visits on strict spoken-order release.
-        """
+        """Release stable rows now if the next browser audio tick would exceed the limit."""
         # No positive limit means the user's visit keeps the existing unbounded policy.
         if self._max_transcript_hold_seconds <= 0.0:
             return False
         # No blocked row or measurable hold means there is nothing useful to reveal early.
         if stability_blocked_row_count == 0 or stability_hold_seconds is None:
             return False
-        return stability_hold_seconds >= self._max_transcript_hold_seconds
+        return stability_hold_seconds >= self._max_transcript_hold_seconds or (
+            stability_hold_seconds + _BROWSER_RELEASE_TICK_SECONDS
+            > self._max_transcript_hold_seconds
+        )
 
     def _record_emission_decision(
         self,

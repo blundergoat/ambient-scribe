@@ -36,9 +36,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Low-confidence wording is visibly reviewable without rewriting the note (0.4.1 M03)** -
   corpus-derived strict thresholds now mark live rows below `0.76` and corrected rows below `0.78`
-  with the user-approved quiet `Review wording` chip, local dotted tint, keyboard focus, and an
-  accessible explanation in both themes; absent and exact-boundary confidence stay plain, role
-  cards keep their labels and height, and corrected stitched utterances preserve row-local cues.
+  with local dotted tint, keyboard focus, and an accessible explanation in both themes, without
+  adding a persistent confidence label to live cards or corrected blocks; absent and exact-boundary
+  confidence stay plain, role cards keep their labels and height, and corrected stitched utterances
+  preserve row-local cues.
   Generated prose remains byte-identical: after citation validation, a deterministic additive
   `sections[].low_confidence` field marks only sentences whose conservatively linked, measured
   corrected rows are predominantly sub-threshold, with tooltip `Low-confidence transcription`.
@@ -133,6 +134,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   corrections completed and corpus quality means moved by at most 0.405 points on the declared
   WER/strict/incorrect-confident measures, four fixtures still had 20-25-second startup batch
   gaps. The candidate therefore remains default-OFF pending a separately approved refinement.
+  That refinement is now approved and in progress: the release decision may account for the next
+  browser-audio tick only when stable clock-ready rows are already waiting; startup silence with
+  no stable wording remains untouched. Direct contracts pass and the first causal target now
+  emits at 15 rather than 20 seconds, but its full-length post-stop correction timed out before a
+  corrected artifact existed. A live-only alternate gate is approved: retained c03 plus fresh
+  c06/c08/day3-c05 runs measure causal delivery and live quality without invoking correction.
+  That gate passes: stable-ready/no-emission waits are 0/5/5/5 seconds, four-fixture live WER
+  moves only +0.025 points, strict and incorrect-confident means are flat, and all quality,
+  health, CUDA, and fatal-log checks are clean. The runtime is restored default-OFF; promotion
+  remains pending the second full corpus. A subsequent 31.988-second c08 browser smoke emits its
+  first three rows at 20 seconds and continues at every remaining decision with zero errors;
+  visual confirmation remains pending and the test runtime is again default-OFF.
 
 ### Changed
 

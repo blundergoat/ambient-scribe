@@ -445,6 +445,45 @@ class TestBoundedTranscriptRelease:
         assert evidence["max_transcript_hold_seconds"] == 10.0
         assert evidence["bounded_release_applied"] is True
 
+    def test_next_browser_tick_releases_stable_rows_before_overshoot(self) -> None:
+        """Show ready wording now when the next browser audio tick would exceed the bound."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[
+                EngineRow("speaker_1", "stable ready row", 20.0, 21.0),
+                EngineRow("speaker_1", "future stable row", 28.0, 29.0),
+            ],
+            unstable_word_starts_by_slot={0: [15.2, 16.0]},
+            last_activity_by_slot={0: 29.0},
+            max_transcript_hold_seconds=10.0,
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert [row.start for row in released_rows] == [20.0]
+        assert [row.start for row in engine._ordered_pending] == [28.0]
+        evidence = engine.emission_decision_evidence
+        assert evidence["stability_hold_seconds"] == 9.8
+        assert evidence["bounded_release_applied"] is True
+
+    def test_next_browser_tick_cannot_release_without_stable_wording(self) -> None:
+        """Keep startup silent when the user has spoken but every heard word is revisable."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[],
+            unstable_word_starts_by_slot={0: [15.2, 16.0]},
+            last_activity_by_slot={0: 29.0},
+            max_transcript_hold_seconds=10.0,
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert released_rows == []
+        evidence = engine.emission_decision_evidence
+        assert evidence["decision"] == "hold_mutable_tail"
+        assert evidence["clock_ready_rows"] == 0
+        assert evidence["bounded_release_applied"] is False
+
     def test_recent_frontier_still_protects_spoken_order(self) -> None:
         """Keep a stable row waiting while its older wording is still within the bound."""
         engine = make_release_evidence_engine(
