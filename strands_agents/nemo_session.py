@@ -68,7 +68,9 @@ def _streaming_crosstalk_guard_enabled() -> bool:
     Operators enable it for measured replays; an unset or empty value preserves release behavior.
     """
     # An unset or empty flag keeps the current fold policy for ordinary clinician visits.
-    configured_value = os.environ.get(_STREAMING_CROSSTALK_GUARD_FLAG, "").strip().lower()
+    configured_value = (
+        os.environ.get(_STREAMING_CROSSTALK_GUARD_FLAG, "").strip().lower()
+    )
     return configured_value in {"1", "true", "yes", "on"}
 
 
@@ -478,8 +480,7 @@ class TranscriptionSession:
             buffer_end_seconds = self.buffer.end_seconds
             while (
                 fresh_segments
-                and fresh_segments[-1].end
-                > buffer_end_seconds - _UNSTABLE_TAIL_SECONDS
+                and fresh_segments[-1].end > buffer_end_seconds - _UNSTABLE_TAIL_SECONDS
             ):
                 fresh_segments.pop()
                 held_segment_count += 1
@@ -510,7 +511,9 @@ class TranscriptionSession:
 
         return fresh_segments
 
-    def _emit_engine_rows(self, engine_rows: list, *, is_finalize: bool) -> list[Segment]:
+    def _emit_engine_rows(
+        self, engine_rows: list, *, is_finalize: bool
+    ) -> list[Segment]:
         """Turn streaming-engine rows into emitted transcript segments (M22).
 
         Engine rows arrive with session-absolute times and cache-stable
@@ -582,6 +585,10 @@ class TranscriptionSession:
             )
             self._last_window_continuity["folded_word_spans"] = list(
                 self._latest_folded_word_spans
+            )
+            # The engine's count/time-only reason explains a named replay's visible pause.
+            self._last_window_continuity["emission_decision_evidence"] = dict(
+                getattr(engine, "emission_decision_evidence", {}) or {}
             )
         self._log_window_continuity(
             window_start_seconds=emitted_from_seconds,
@@ -1090,6 +1097,10 @@ class TranscriptionSession:
                 "folded_word_spans",
                 [],
             )
+            continuity_log_fields["emission_decision_evidence"] = continuity.get(
+                "emission_decision_evidence",
+                {},
+            )
 
         logger.info(
             "nemo_session.window_continuity session_id=%s window_index=%s phase=%s emitted_rows=%s",
@@ -1174,7 +1185,10 @@ class TranscriptionSession:
             reverse=True,
         ):
             # Already-used IDs would create one-to-many visible speaker mappings.
-            if window_speaker_id in used_window_ids or known_speaker_id in used_known_ids:
+            if (
+                window_speaker_id in used_window_ids
+                or known_speaker_id in used_known_ids
+            ):
                 continue
 
             speaker_id_map[window_speaker_id] = known_speaker_id

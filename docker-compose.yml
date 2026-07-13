@@ -40,6 +40,8 @@ services:
       - NEMO_SESSION_ENGINE=${NEMO_SESSION_ENGINE:-windowed}
       # Off by default; named QA replays log only speaker IDs, counts, shares, and timings.
       - NEMO_STREAMING_SLOT_EVIDENCE=${NEMO_STREAMING_SLOT_EVIDENCE:-0}
+      # Zero keeps strict spoken order; a measured positive value bounds stable-row delivery.
+      - NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS=${NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS:-0}
       # Keep the rejected QA guard off; guarded corpus attribution regressed.
       - NEMO_STREAMING_CROSSTALK_GUARD=${NEMO_STREAMING_CROSSTALK_GUARD:-0}
       - MAX_SESSIONS=${MAX_SESSIONS:-100}

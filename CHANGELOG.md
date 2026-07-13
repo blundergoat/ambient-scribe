@@ -108,6 +108,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   context validation, PHI/symbol scans, and `git diff --check`. M05 closes diagnostic/no-fix with
   its rejection evidence preserved and no runtime behavior change.
 
+- **Long-turn transcript freezes now have a PHI-safe causal signal (0.4.1 M06 Phase 0)** -
+  operator-only streaming evidence records why stable rows released or remained held using only
+  clock/frontier times, row counts, and speaker-slot activity counts. Fresh 1x c01 and c03 replays
+  prove the global stability frontier is the starvation mechanism: c01 held 8 -> 44 rows across a
+  50-second zero-emission span before a 25-row browser burst; c03 reached 25 seconds without rows
+  and a 30-second batch interval. Both had stable clock-ready rows waiting, which rejects decoder
+  finality, speaker-turn boundaries, and the browser adapter as causes. Captured evidence selects a
+  default-off 10-second bounded-release candidate. When explicitly enabled, it releases only
+  already-stable rows that an obsolete frontier has hidden past the limit; mutable wording, future
+  rows, honest timestamps, cadence, and speaker policy stay unchanged. Ordinary visits retain the
+  prior release policy at the default `0`. The first flag-off c02 compatibility stream finalized
+  cleanly, but post-visit correction timed out before a corrected hash existed; later byte, target,
+  corpus, and browser gates remained pending rather than being misreported as regressions. One
+  approved clean retry completed in 50.013 seconds and reproduced the exact retained c02 hash;
+  c03/c08 then completed and the compatibility gate passed `HASH_MATCHES=3/3`. A c08 strict-score
+  wobble is confined to post-ASR role labels; canonical transcript bytes remain exact. With the
+  10-second bound enabled, c01 improves from 50 to 10 seconds without rows, 55 to 15 seconds
+  between batches, and a 25- to 9-row largest burst; WER, strict attribution, and seams remain
+  within the declared noise band. A real browser replay reproduces the 10/15-second delivery and
+  six screenshots through the long Patient turn show the visible transcript growing from 14 to
+  89 rows instead of freezing and appending a wall near 02:25. The first full-corpus promotion
+  gate is retained as rejection evidence rather than enabling the policy: although all 20
+  corrections completed and corpus quality means moved by at most 0.405 points on the declared
+  WER/strict/incorrect-confident measures, four fixtures still had 20-25-second startup batch
+  gaps. The candidate therefore remains default-OFF pending a separately approved refinement.
+
 ### Changed
 
 - **Effective model defaults now agree across local and production setup (0.4.1 M00)** - production

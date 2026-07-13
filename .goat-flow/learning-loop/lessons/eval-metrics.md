@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-12
+last_reviewed: 2026-07-13
 ---
 
 # Eval and Metrics Lessons
@@ -211,3 +211,30 @@ not reproduced. The zero could not be attributed to the guard or prove no word l
 "duplicate_row_withheld event").
 **Prevention:** Require the causal guard event plus a matched before/after target. A zero detector
 count alone is not improvement when the input behavior or adjacent identity metrics changed.
+
+## Lesson: Mixed JSONL metrics need exact event and phase filters
+
+**Created:** 2026-07-13
+**What happened:** M06's first delivery aggregation treated every JSONL object's `emitted_rows`
+as a per-window count. The file also contained `window_continuity.summary`, whose 274-row session
+total was then misreported as the largest browser burst; the real c01 maximum was 25 rows.
+**Evidence:** `var/quality/m06-emission-starvation-20260712T211015Z/retained-delivery-and-density-baseline.log`
+keeps the failed aggregation, while `retained-delivery-baseline-corrected.log` filters exact
+`nemo_session.window_continuity` events with `phase=chunk`.
+**Prevention:** Before reducing a mixed JSONL artifact, inspect its first and last object shapes
+and filter the exact owning event plus phase. Exclude finalize and summary totals from per-window
+delivery metrics unless the metric explicitly includes them.
+
+## Lesson: Cadence-quantized bounds need startup corpus coverage
+
+**Created:** 2026-07-13
+**What happened:** M06 selected a 10-second stability hold from two long-turn fixtures and both
+projected at or below a 15-second browser batch interval. The target and browser gates passed,
+but the 20-fixture run found four 20-25-second first-batch intervals. The worst window had five
+stable clock-ready rows yet only 9.8 seconds of measured hold, so a strict 10-second comparison
+waited for the next five-second evaluation step.
+**Evidence:** `var/quality/full-corpus-20260712T233933Z/m06-delivery-violation-details.txt` and
+`.goat-flow/plans/0.4.1/M06-emission-starvation.md` (search: "CORPUS GATE REGRESSION").
+**Prevention:** When a policy is evaluated only on a fixed cadence, project and test boundary
+values just below the threshold as well as long established holds. Include time-to-first-row in
+the corpus delivery gate; mid-consultation target fixtures do not cover startup quantization.

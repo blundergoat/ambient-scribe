@@ -7,12 +7,15 @@ windowed default staying untouched - are pinned without GPU or NeMo imports.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from nemo_session import TranscriptionSession
 from nemo_streaming_engine import (
     EngineRow,
     StreamingSessionEngine,
+    configured_max_transcript_hold_seconds,
     streaming_engine_enabled,
 )
 
@@ -29,6 +32,7 @@ class FakeStreamingEngine:
         self._feed_batches = list(feed_batches)
         self._flush_rows = list(flush_rows or [])
         self.pending_row_count = 1 if self._flush_rows else 0
+        self.emission_decision_evidence: dict = {}
         self.speaker_slot_voiced_frame_counts: dict[str, int] = {}
         self.diagnostics = type(
             "Diag", (), {"late_slot_births": 0, "revision_resyncs": 0, "steps": 0}
@@ -100,6 +104,38 @@ class TestEngineSelection:
 
         with pytest.raises(RuntimeError):
             NemoPipeline().create_streaming_engine("s1")
+
+    @pytest.mark.parametrize(
+        ("configured_seconds", "expected_seconds"),
+        [
+            (None, 0.0),
+            ("", 0.0),
+            ("0", 0.0),
+            ("-5", 0.0),
+            ("nan", 0.0),
+            ("10", 10.0),
+            ("10.5", 10.5),
+        ],
+    )
+    def test_transcript_hold_bound_is_positive_or_safely_off(
+        self,
+        monkeypatch,
+        configured_seconds,
+        expected_seconds,
+    ) -> None:
+        """Accept a positive operator limit and keep missing or unsafe values off."""
+        # An absent setting represents an ordinary visit using strict chronological release.
+        if configured_seconds is None:
+            monkeypatch.delenv(
+                "NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS", raising=False
+            )
+        else:
+            monkeypatch.setenv(
+                "NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS",
+                configured_seconds,
+            )
+
+        assert configured_max_transcript_hold_seconds() == expected_seconds
 
 
 class TestEngineRowEmission:
@@ -220,6 +256,214 @@ class TestEngineRowEmission:
         assert session._streaming_engine is None
 
 
+def make_release_evidence_engine(
+    *,
+    step_clock_seconds: float,
+    pending_rows: list[EngineRow],
+    unstable_word_starts_by_slot: dict[int, list[float]],
+    last_activity_by_slot: dict[int, float],
+    max_transcript_hold_seconds: float = 0.0,
+) -> StreamingSessionEngine:
+    """Build only the release state used to explain a clinician-visible transcript pause.
+
+    Tests use this CPU-only engine when they need real frontier decisions without loading NeMo.
+
+    Args:
+        max_transcript_hold_seconds: Operator-selected release bound; zero keeps the user-visible
+            transcript on the unbounded release policy.
+    """
+    engine = StreamingSessionEngine.__new__(StreamingSessionEngine)
+    engine._streamer = SimpleNamespace(_offset_chunk_start_time=step_clock_seconds)
+    engine._ordered_pending = list(pending_rows)
+    engine._word_logs = {
+        slot_index: [SimpleNamespace(start=word_start) for word_start in word_starts]
+        for slot_index, word_starts in unstable_word_starts_by_slot.items()
+    }
+    engine._emitted_word_counts = {
+        slot_index: 0 for slot_index in unstable_word_starts_by_slot
+    }
+    engine._slot_last_burst_end = dict(last_activity_by_slot)
+    engine._max_transcript_hold_seconds = max_transcript_hold_seconds
+    from nemo_streaming_engine import EngineDiagnostics
+
+    engine.diagnostics = EngineDiagnostics()
+    return engine
+
+
+class TestEngineEmissionDecisionEvidence:
+    """Explain why stable rows reached the browser now or remained held.
+
+    These contracts keep diagnostics PHI-safe and pin the active-vs-dormant frontier decision.
+    """
+
+    def test_active_unstable_slot_names_the_frontier_hold(self) -> None:
+        """Show an operator when an active slot blocks a clock-ready transcript row."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[EngineRow("speaker_1", "private wording", 10.0, 11.0)],
+            unstable_word_starts_by_slot={0: [5.0, 6.0]},
+            last_activity_by_slot={0: 28.0},
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert released_rows == []
+        assert engine.emission_decision_evidence == {
+            "decision": "hold_stability_frontier",
+            "step_clock_seconds": 30.0,
+            "clock_horizon_seconds": 25.0,
+            "stability_frontier_seconds": 5.0,
+            "release_horizon_seconds": 5.0,
+            "stability_hold_seconds": 20.0,
+            "max_transcript_hold_seconds": 0.0,
+            "bounded_release_applied": False,
+            "pending_rows_before": 1,
+            "clock_ready_rows": 1,
+            "released_rows": 0,
+            "pending_rows_after": 1,
+            "unstable_slots": [
+                {
+                    "speaker_slot": "speaker_0",
+                    "unemitted_words": 2,
+                    "oldest_unstable_start_seconds": 5.0,
+                    "last_activity_seconds": 28.0,
+                    "inactive_seconds": 2.0,
+                    "excluded_as_dormant": False,
+                }
+            ],
+        }
+        assert "private wording" not in str(engine.emission_decision_evidence)
+
+    def test_active_mutable_tail_names_why_no_stable_row_exists(self) -> None:
+        """Show an operator when every heard word is still revisable and no row exists."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[],
+            unstable_word_starts_by_slot={0: [24.0, 25.0]},
+            last_activity_by_slot={0: 29.0},
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert released_rows == []
+        evidence = engine.emission_decision_evidence
+        assert evidence["decision"] == "hold_mutable_tail"
+        assert evidence["pending_rows_before"] == 0
+        assert evidence["clock_ready_rows"] == 0
+        assert evidence["unstable_slots"][0]["unemitted_words"] == 2
+
+    def test_dormant_small_tail_stops_pinning_visible_rows(self) -> None:
+        """Release a ready row once the only older unstable tail is safely dormant."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[EngineRow("speaker_1", "private wording", 10.0, 11.0)],
+            unstable_word_starts_by_slot={0: [5.0, 6.0]},
+            last_activity_by_slot={0: 10.0},
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert [row.start for row in released_rows] == [10.0]
+        evidence = engine.emission_decision_evidence
+        assert evidence["decision"] == "release_ready_rows"
+        assert evidence["stability_frontier_seconds"] is None
+        assert evidence["released_rows"] == 1
+        assert evidence["pending_rows_after"] == 0
+        assert evidence["unstable_slots"][0]["excluded_as_dormant"] is True
+
+    def test_enabled_adapter_log_carries_only_emission_counts_and_times(
+        self,
+        caplog,
+        monkeypatch,
+    ) -> None:
+        """Expose one release decision for a named replay without logging consultation words."""
+        monkeypatch.setenv("NEMO_STREAMING_SLOT_EVIDENCE", "1")
+        caplog.set_level("INFO", logger="nemo_session")
+        engine = FakeStreamingEngine(feed_batches=[])
+        engine.emission_decision_evidence = {
+            "decision": "hold_stability_frontier",
+            "pending_rows_before": 7,
+            "released_rows": 0,
+        }
+        session = make_session(engine)
+
+        session.process_chunk(PCM_CHUNK)
+
+        evidence_record = streaming_continuity_records(caplog)[-1]
+        assert evidence_record.emission_decision_evidence == {
+            "decision": "hold_stability_frontier",
+            "pending_rows_before": 7,
+            "released_rows": 0,
+        }
+        assert "private wording" not in str(evidence_record.emission_decision_evidence)
+
+
+class TestBoundedTranscriptRelease:
+    """Keep long-turn transcript delivery bounded without exposing mutable wording.
+
+    These CPU contracts represent a clinician watching stable rows arrive during a long answer.
+    The normal off state retains strict chronological release for ordinary user visits.
+    """
+
+    def test_default_off_keeps_clock_ready_rows_behind_the_frontier(self) -> None:
+        """Keep existing visible ordering when the operator has not enabled a hold bound."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[EngineRow("speaker_1", "stable later row", 10.0, 11.0)],
+            unstable_word_starts_by_slot={0: [5.0, 6.0]},
+            last_activity_by_slot={0: 28.0},
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert released_rows == []
+        assert (
+            engine.emission_decision_evidence["decision"] == "hold_stability_frontier"
+        )
+
+    def test_elapsed_bound_releases_only_stable_clock_ready_rows(self) -> None:
+        """Show stable wording after ten seconds while a newer future row still waits."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[
+                EngineRow("speaker_1", "stable ready row", 10.0, 11.0),
+                EngineRow("speaker_1", "future stable row", 28.0, 29.0),
+            ],
+            unstable_word_starts_by_slot={0: [5.0, 6.0]},
+            last_activity_by_slot={0: 28.0},
+            max_transcript_hold_seconds=10.0,
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert [row.start for row in released_rows] == [10.0]
+        assert [row.start for row in engine._ordered_pending] == [28.0]
+        assert engine._emitted_word_counts == {0: 0}
+        evidence = engine.emission_decision_evidence
+        assert evidence["decision"] == "release_bounded_stability_frontier"
+        assert evidence["stability_hold_seconds"] == 20.0
+        assert evidence["max_transcript_hold_seconds"] == 10.0
+        assert evidence["bounded_release_applied"] is True
+
+    def test_recent_frontier_still_protects_spoken_order(self) -> None:
+        """Keep a stable row waiting while its older wording is still within the bound."""
+        engine = make_release_evidence_engine(
+            step_clock_seconds=30.0,
+            pending_rows=[EngineRow("speaker_1", "stable later row", 21.0, 22.0)],
+            unstable_word_starts_by_slot={0: [20.0, 21.0]},
+            last_activity_by_slot={0: 29.0},
+            max_transcript_hold_seconds=10.0,
+        )
+
+        released_rows = engine._release_ordered_rows(final=False)
+
+        assert released_rows == []
+        evidence = engine.emission_decision_evidence
+        assert evidence["decision"] == "hold_stability_frontier"
+        assert evidence["stability_hold_seconds"] == 5.0
+        assert evidence["bounded_release_applied"] is False
+
+
 class TestEngineSlotEvidence:
     """Keep fold diagnostics useful without exposing consultation wording.
 
@@ -313,6 +557,7 @@ class TestEngineSlotEvidence:
         ordinary_record = streaming_continuity_records(caplog)[-1]
         assert not hasattr(ordinary_record, "slot_share_evidence")
         assert not hasattr(ordinary_record, "folded_word_spans")
+        assert not hasattr(ordinary_record, "emission_decision_evidence")
 
 
 class TestEngineCrosstalkGuard:

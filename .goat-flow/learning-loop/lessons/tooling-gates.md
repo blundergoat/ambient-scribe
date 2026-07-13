@@ -72,7 +72,10 @@ user-visible acceptance metric.
 **What happened:** M05's flag-OFF c02 stream finalized with zero quality errors, but the correction
 HTTP call timed out after 120 seconds before producing the artifact needed for canonical hashing.
 Health and CUDA stayed live, so neither a matching nor mismatching byte result existed.
-**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search: "120.002 seconds").
+**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search: "120.002 seconds")
+and `.goat-flow/plans/0.4.1/M06-emission-starvation.md` (search: "120.001 seconds"). M06 repeated
+the boundary with max-hold behavior explicitly off, confirming it is not a byte or release-policy
+result.
 **Prevention:** Separate correction availability from byte comparison: retain the timeout timeline,
 health/CUDA proof, and partial artifacts, then stop before retrying or labeling the result drift.
 
@@ -297,4 +300,20 @@ well as feature flags and CUDA; restore normal log mode after the evidence run.
 The same session found that a bare `nohup ... &` child launched by a one-shot command runner was
 reaped immediately with empty logs. For long evals, verify both the saved child PID and the first
 fixture line; when the runner reaps descendants, keep a managed parent session waiting on the
-`nohup` child while a separate monitor records health and progress.
+`nohup` child while a separate monitor records health and progress. M06 later showed that an
+explicitly interrupted assistant turn can also end that managed process group mid-fixture without
+an application sentinel. Put multi-hour eval, log capture, and health polling in independent OS
+sessions, then verify their session IDs differ from the launching command before relying on them.
+
+## Lesson: Run changed-symbol Gruff before a hot-path module crosses its size gate
+
+**Created:** 2026-07-13
+**What happened:** M06's Phase 1 release branch passed its CPU behavior tests and Ruff, but direct
+changed-symbol Gruff found the edited release method at 124 lines / 64.6 maintainability and then
+found the module at 1,031 lines after the method was extracted. Neither issue was a runtime test
+failure, and the module had been below the file threshold before the diagnostic additions.
+**Evidence:** `var/quality/m06-emission-starvation-20260712T211015Z/phase1-gruff-direct.log` and
+`strands_agents/nemo_streaming_engine.py` (search: "class _ReleasePolicy").
+**Prevention:** On a near-threshold hot-path module, run changed-symbol Gruff after each substantive
+diagnostic or policy slice. Extract a named policy before the release method crosses 100 lines,
+then tighten comments and contracts while checking the file remains below its configured limit.
