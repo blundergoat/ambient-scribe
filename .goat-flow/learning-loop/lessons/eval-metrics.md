@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-13
+last_reviewed: 2026-07-14
 ---
 
 # Eval and Metrics Lessons
@@ -39,6 +39,15 @@ sleep, so the scored labels depended on a fetch-vs-flip race, not on the change 
 test. Reordering the eval to fetch history after the role-timeline settle made the gate
 deterministic (55.0/55.0/55.0). Churn can still straddle any fixed settle window, so
 median-of-3 remains mandatory.
+
+M07 reproduced both sides of this lesson. An 8-second settle sampled c08 3.427 seconds before its
+complete correct tail map; a 20-second settle then produced five identical 84.4% good-mode scores.
+Its later c07 spot score moved -0.4pp, but canonical rows changed and the best-dyadic audio/identity
+ceiling moved -0.5pp while the final role map stayed correct. The non-regression stop was still
+honoured, but the evidence prevents misattributing an audio-row draw to the role-tool candidate.
+One approved unchanged c07 retry then reproduced the exact failed canonical hash and 86.8% score;
+that repeat is a decision result, not permission to keep retrying a literal non-regression gate.
+The candidate was subsequently rolled back and retained only as rejection evidence.
 
 **Lesson:** when a gate metric moves right after a change that cannot mechanically
 affect it, first check the gate's own sampling timing against asynchronous state
