@@ -1,6 +1,6 @@
 ---
 category: streaming
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-14
 ---
 
 # Streaming Footguns
@@ -33,3 +33,13 @@ last_reviewed: 2026-07-10
   25-row flush at window 29. Since the hold survives the generic schedule that closes the
   role-free browser gap, investigate the streaming emission gate separately; recorded browser
   cadence and role-agent changes do not explain it.
+- **M06 bounded-release result (2026-07-14):** a repeatedly refreshed mutable tail can pin the
+  global stability frontier behind rows whose wording and clock horizon are already stable. The
+  default-off `NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS` policy may release only those stable,
+  clock-ready rows before the next fixed five-second browser tick would overshoot the configured
+  hold; it must never release mutable or future wording. The second 20-fixture 1x corpus had zero
+  causal violations, at most one tick of stable-ready wait, and quality movement inside the prior
+  noise envelope. Keep ordinary visits at `0` until a separate promotion decision. A tracked
+  Compose fallback does not prove the effective value because protected `.env` interpolation can
+  override it; after every evidence run, verify the non-secret flag with container `printenv`
+  alongside health/CUDA instead of reading or inferring the local environment file.

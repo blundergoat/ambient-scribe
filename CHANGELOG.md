@@ -143,9 +143,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   That gate passes: stable-ready/no-emission waits are 0/5/5/5 seconds, four-fixture live WER
   moves only +0.025 points, strict and incorrect-confident means are flat, and all quality,
   health, CUDA, and fatal-log checks are clean. The runtime is restored default-OFF; promotion
-  remains pending the second full corpus. A subsequent 31.988-second c08 browser smoke emits its
-  first three rows at 20 seconds and continues at every remaining decision with zero errors;
-  visual confirmation remains pending and the test runtime is again default-OFF.
+  remains pending the second full corpus. A final c08 browser replay visually confirms first rows
+  at 20 seconds versus 25-26 seconds default-off, followed by continuous delivery; it finalizes
+  106 rows / zero errors and correction completes without retry. The refined second full corpus
+  passes 20/20 corrections with zero causal violations or runtime errors: stable-ready wait is at
+  most 5 seconds, corrected WER/strict/incorrect-confident move only +0.345/-0.250/+0.195 points,
+  and source-chip findings improve 62 -> 61. The user-assisted restore passes with effective
+  streaming/max-hold/evidence/log values `streaming/0/0/console`, loaded models, CUDA, and clean
+  fatal logs; the protected local environment file remains unread and unedited. Final verification
+  passes Python 624, PHPUnit 37/159, Playwright 48, JavaScript 15, PHPStan, PHP-CS, Ruff, all 12
+  enabled preflight checks, context validation, learning index/stats, and `git diff --check`.
+  M06 closes with the bounded policy available for explicit use and ordinary visits still at `0`.
 
 ### Changed
 

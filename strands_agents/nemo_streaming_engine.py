@@ -238,16 +238,12 @@ class StreamingSessionEngine:
         self._buffer_iter: Any = None
         self._stream_id: int = -1
         self._step_index: int = 0
-        self._pre_encode_drop: int = 0
         self._word_logs: dict[int, list[_WordEntry]] = {}
         self._emitted_word_counts: dict[int, int] = {}
         self._slot_last_burst_end: dict[int, float] = {}
         self._ordered_pending: list[EngineRow] = []
         self._max_transcript_hold_seconds = configured_max_transcript_hold_seconds()
-        # Per-slot (cumulative voiced frames -> wall seconds) samples from the
-        # diarizer's activity stream. A word's token timestamp counts its
-        # instance's voiced frames, so inverting this curve recovers the
-        # word's true spoken time instead of its (lagged) decode time.
+        # Map each voice's frames to visit time so transcript words show honest timestamps.
         self._slot_frame_ledgers: dict[int, list[tuple[int, float]]] = {}
         self._diar_frames_seen: int = 0
         self._slot_token_counts: dict[int, int] = {}
@@ -938,14 +934,18 @@ class StreamingSessionEngine:
         return int(buffer_tensor.size(-1)) - int(self._buffer.buffer_idx)
 
     def _full_chunk_frames_needed(self) -> int:
-        """Feature frames one full streaming chunk needs at the current cursor."""
+        """Return the frames needed before the next live transcript update.
+
+        The guard keeps a partial browser-audio chunk buffered until NeMo can process it safely.
+        """
         chunk_size = self._asr_model.encoder.streaming_cfg.chunk_size
+        # NeMo may configure different frame counts for the first and later browser chunks.
         if isinstance(chunk_size, (list, tuple)):
             first_chunk, later_chunks = int(chunk_size[0]), int(chunk_size[1])
         else:
             first_chunk = later_chunks = int(chunk_size)
-        buffer_idx = int(getattr(self._buffer, "buffer_idx", 0) or 0)
-        return first_chunk if buffer_idx == 0 else later_chunks
+        current_buffer_position = int(getattr(self._buffer, "buffer_idx", 0) or 0)
+        return first_chunk if current_buffer_position == 0 else later_chunks
 
     @property
     def emission_decision_evidence(self) -> dict[str, Any]:
