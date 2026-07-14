@@ -247,3 +247,22 @@ waited for the next five-second evaluation step.
 **Prevention:** When a policy is evaluated only on a fixed cadence, project and test boundary
 values just below the threshold as well as long established holds. Include time-to-first-row in
 the corpus delivery gate; mid-consultation target fixtures do not cover startup quantization.
+
+## Lesson: Regional WER interpretation needs cutoff parity and marker sensitivity
+
+**Created:** 2026-07-14
+**What happened:** M09 first recomputed overlap WER with rounded
+`corrected-transcript.json.duration_seconds`. Raw parity stopped on day5-c04: the report used the
+row diagnostic's 541.33-second cutoff, while 541.3 moved one final word outside overlap (expected
+hyp=63, recomputed 62). After exact parity, qualitative reading also rejected treating raw WER as
+literal word loss: `tokens()` counts TextGrid `<UNIN/>`, `<UNSURE>` wrappers, and
+`<INAUDIBLE_SPEECH/>` as reference words. They contributed 637/3,611 overlap tokens (17.6%); a
+tag-clean sensitivity still scored corrected overlap at 82.6%, but two simultaneous reference
+channels remain aligned to one mixed-mono stream.
+**Evidence:** `var/quality/overlap-speech-assessment-20260714T021304Z/overlap-sensitivity.json`
+reproduces all 20 accepted raw reports before stripping markers; `specimen-source.json` uses the
+same report-owned cutoffs.
+**Prevention:** Before interpreting a regional scorer as user loss, reproduce every raw S/I/D,
+reference, and hypothesis count with the exact diagnostic cutoff. Then disclose annotation-token,
+word-timing, and multi-reference/single-stream sensitivity; do not turn raw WER directly into a
+clinical-word-loss claim.

@@ -169,6 +169,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PHPUnit 37/159, Playwright 49, JavaScript 15, PHPStan, PHP-CS, canonical Ruff lint, all 12
   enabled preflight checks, context validation, learning index/statistics, and final health/CUDA.
 
+- **Overlap speech now has a corpus decision baseline (0.4.1 M09)** - analysis of the accepted
+  20-fixture corpus finds 672.2/11,174.9 seconds (6.0%) and 2,974/31,186 known reference words
+  (9.5%) associated with simultaneous speech. Corrected known-word overlap WER remains 82.6%,
+  while visible overlap-row attribution is 84.2% (433/514). A TextGrid audit of all 248 overlap
+  spans in the three heaviest fixtures confirms privacy-confirmation, symptom-denial, medication,
+  and safety-net wording or attribution defects, without finding a complete dosage-instruction
+  loss. The user selected model-lane escalation: 0.5.0-M02 now requires a tag-clean, speaker-aware
+  overlap benchmark and candidate non-regression gate. No runtime, model, prompt, UI, or API
+  behavior changed. Closure passes Python 624, PHPUnit 37/159, Playwright 49, JavaScript 15,
+  PHPStan, PHP-CS, Ruff, all 12 enabled preflight checks, context validation, learning statistics,
+  and final health/CUDA.
+
 ### Changed
 
 - **Effective model defaults now agree across local and production setup (0.4.1 M00)** - production
