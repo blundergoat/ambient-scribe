@@ -515,3 +515,22 @@ corrected order.
 **Prevention:** When a shell smoke will source an executable runner, land and syntax-check the
 `BASH_SOURCE[0] == $0` main guard before the first source attempt; then add the source-based red
 assertion. Never assume an executable script is already library-safe.
+
+## Lesson: Guard both ends of long-running work, not just its entry
+
+**Created:** 2026-07-15
+**What happened:** M02's stale-role gate checked `_closed_role_revisions` only at the TOP of
+`_infer_and_publish_role_update`. A role inference already inside the executor when settlement
+froze the visit (`failed_frozen`) still applied its mapping and published after closure — the
+exact kill-criterion behavior ("a role result silently changes an already rendered/copied
+artifact"). The automated suite passed because its late-result test started the worker AFTER
+closure (hits the entry gate); nothing covered in-flight-at-closure. The gap was found while
+designing the acceptance round's slow-provider injection, before running it.
+**Evidence:** `strands_agents/api/role_inference_queue.py` (search: "landing now is just as
+stale") and `tests/python/test_terminal_source_integrity.py` (search:
+"in_flight_at_close_cannot_relabel") — the test was red against commit `890c7e1`, green after
+the post-executor recheck.
+**Prevention:** Any revoke/close/freeze flag raced by long-running work (executor calls, provider
+awaits) must be rechecked AFTER the work returns, immediately before applying results — an entry
+gate alone only rejects work that has not started. When writing the "late result rejected" test,
+always add the sibling case where the result is already in flight when the door closes.

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -456,4 +457,66 @@ def test_role_settlement_freezes_when_queued_work_cannot_drain() -> None:
         assert role_queue._closed_role_revisions[session_id] == 0
     finally:
         role_queue.role_inference_queues.pop(session_id, None)
+        _cleanup(session_id)
+
+
+def test_role_result_in_flight_at_close_cannot_relabel_the_frozen_visit() -> None:
+    """A role model still running when settlement freezes must not relabel rows.
+
+    Example: the clinician stops the visit while one role batch is mid-inference
+    on a slow provider. Settlement times out at its bound, the note source
+    freezes as failed_frozen, and the provider answers a minute later - that
+    late answer must be rejected, not painted over an already copied draft.
+    """
+    session_id = "00000000-0000-4000-8000-0000000000ab"
+
+    async def _drive() -> tuple[str, list[dict]]:
+        _visit_rows(session_id)
+        release_provider = threading.Event()
+
+        def _slow_role_inference(*_args: object) -> dict:
+            # Holds the worker "busy" until settlement has already frozen the visit.
+            release_provider.wait(timeout=5.0)
+            return {
+                "path": "mapping",
+                "mapping": {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"},
+            }
+
+        def _must_not_publish(*_args: object, **_kwargs: object) -> bool:
+            raise AssertionError(
+                "a stale role result was published after settlement froze the visit"
+            )
+
+        services = role_queue.RoleInferenceServices(
+            sessions=sessions,
+            lifecycle=lifecycle,
+            publish_to_mercure=_must_not_publish,
+            run_role_inference=_slow_role_inference,
+            mercure_event_ids={},
+        )
+        worker = asyncio.create_task(
+            role_queue._infer_and_publish_role_update(
+                session_id,
+                [{"speaker_id": "speaker_0", "text": "how can I help you"}],
+                services,
+            )
+        )
+        # The freeze must land while the provider call is genuinely in flight.
+        while session_id not in role_queue._busy_role_sessions:
+            await asyncio.sleep(0.01)
+        settlement = await role_queue.wait_for_role_settlement(
+            session_id, timeout_seconds=0.2
+        )
+        release_provider.set()
+        await worker
+        return settlement, sessions.get_segments(session_id)
+
+    try:
+        settlement, rows_after = asyncio.run(_drive())
+        assert settlement == "failed_frozen"
+        # The frozen visit keeps its raw speaker labels and its closed revision;
+        # the late mapping must change neither the rows nor the lineage.
+        assert all(not row.get("role") for row in rows_after)
+        assert role_queue.current_role_revision(session_id) == 0
+    finally:
         _cleanup(session_id)

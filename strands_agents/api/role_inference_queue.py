@@ -494,6 +494,24 @@ async def _infer_and_publish_role_update(
         _busy_role_sessions.discard(session_id)
     duration_ms = int((time.time() - started_at) * 1000)
 
+    # The visit can freeze while this inference is still in flight (example:
+    # the clinician stops recording and the role model outlives the 15 s
+    # settlement bound, so the note source froze as failed_frozen). A result
+    # landing now is just as stale as one that started after close - it must
+    # not relabel rows or repaint a draft the clinician may have copied.
+    if session_id in _closed_role_revisions:
+        logger.info(
+            "role_result_stale_rejected session_id=%s closed_revision=%s",
+            session_id,
+            _closed_role_revisions[session_id],
+            extra={
+                "session_id": session_id,
+                "closed_revision": _closed_role_revisions[session_id],
+                "duration_ms": duration_ms,
+            },
+        )
+        return
+
     # A model that is unreachable should warn the browser once, even if the
     # heuristic still produced degraded labels or produced nothing at all.
     if result and result.get("provider_unreachable"):
