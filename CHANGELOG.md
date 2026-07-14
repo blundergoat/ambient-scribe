@@ -155,6 +155,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   enabled preflight checks, context validation, learning index/stats, and `git diff --check`.
   M06 closes with the bounded policy available for explicit use and ordinary visits still at `0`.
 
+- **Generated-note quality now has a six-visit corpus baseline (0.4.1 M08)** - six fresh,
+  full-length corrected replays produced the approved six final notes at the twelve-generation
+  Bedrock cap, followed by sentence-level adversarial review against corrected rows and
+  Doctor/Patient TextGrids. The audit records 203/203 resolved citations, but fails release
+  quality: only 1/6 notes is content-clean and 21/209 substantive claims are unsupported and
+  unflagged. Fidelity warnings are 1 true / 7 false (12.5% precision); low-confidence wording
+  warnings are 3 true / 12 false (20.0% precision), with two true warnings linked to unrelated
+  rows. One 33,922-character visit is honestly retained as a truncation failure at the 32,768-
+  character selection cap. The baseline and ISSUE route reopened M02/M03 coverage and precision,
+  the input-cap debt, and seven novel unsupported shapes; no prompt, checker, UI, API, model, or
+  runtime behavior changed during this evaluation-only milestone. Closure passes Python 624,
+  PHPUnit 37/159, Playwright 49, JavaScript 15, PHPStan, PHP-CS, canonical Ruff lint, all 12
+  enabled preflight checks, context validation, learning index/statistics, and final health/CUDA.
+
 ### Changed
 
 - **Effective model defaults now agree across local and production setup (0.4.1 M00)** - production
