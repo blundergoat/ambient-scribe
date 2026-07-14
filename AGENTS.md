@@ -113,4 +113,4 @@ Every hot-path instruction line must be a behavioural rule, scope boundary, exac
 | Shared guidance | `.github/instructions/`, `docs/domain-reference.md`, `docs/guidelines-ownership-split.md` |
 | Commit guidance | `docs/coding-standards/git-commit.md` |
 | Session state | `.goat-flow/logs/sessions/`, `.goat-flow/plans/`, `.goat-flow/scratchpad/` |
-| Peer agent instructions | `CLAUDE.md`, `public/js/GEMINI.md`, `strands_agents/GEMINI.md` |
+| Peer agent instructions | `CLAUDE.md`, `public/js/GEMINI.md`, `strands_agents/CLAUDE.md` |

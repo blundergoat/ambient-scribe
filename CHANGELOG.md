@@ -2,239 +2,439 @@
 
 ## v0.4.0 - unreleased
 
-0.4.0 was delivered in two plan slices: slice 1 (eval trust, fresh baselines, post-UX polish; `.goat-flow/plans/0.4.0-slice-1/`) and slice 2 (corpus-driven quality and first readiness steps; `.goat-flow/plans/0.4.0-slice-2/`). Each entry names its slice and milestone.
+Improves transcript reliability, note safety, confidence cues, long-visit handling, and local
+setup.
 
-- **Corpus and evidence harness hardening (slice 2 M01)** - corrected-fixture `--all` and multi-fixture runs record an unavailable correction as PHI-safe failure artifacts, show `FAILED` corrected metrics plus the safe reason in the final table, continue through later fixtures, and end with a stable `fixtures=N ok=N failed=N` sentinel; named single-fixture gates remain fail-fast. Correction failures report the failed chunk and planned chunk count through exception metadata, the API response, and structured logs. The isolated browser runner uses parallel PHP workers plus a test-only static-asset router, replacing the asset-drop-prone single-server lane.
-- **Composite denial checks follow the user's complete screening answer (slice 2 M02)** - generated-note fidelity checks join bounded clinician question fragments before judging a short patient denial, so one composite sentence can verify each independently answered topic across corrected-row splits. A leading patient `No` folded onto the next clinician row is recovered, denial scope stops before a contrasting reported symptom, and a later `No` cannot overwrite an earlier affirmative answer. The known c03 false warnings now pass while unanswered questions, clinician-only negatives, and the equivocal weight-change claim stay protected; a five-generation c03 campaign audited 16 denial claims with zero unsupported denials, zero false flags, and zero missed fabrications (fidelity suite: 80 tests).
-- **Low-confidence wording is visibly reviewable without rewriting the note (slice 2 M03)** - corpus-derived strict thresholds mark live rows below `0.76` and corrected rows below `0.78` with a local dotted tint, keyboard focus, and an accessible explanation in both themes; absent and exact-boundary confidence stay plain. Generated prose remains byte-identical: an additive `sections[].low_confidence` field marks only sentences whose linked, measured corrected rows are predominantly sub-threshold (tooltip `Low-confidence transcription`). A zero-token A/B selected this deterministic flag over prompt-side hedging; re-renders across worst, typical, and day5 fixtures marked 10.3-24.1% of rows with no warning wall.
-- **Cross-talk fold mechanism confirmed; guarded policies rejected (slice 2 M04)** - default-OFF, PHI-safe streaming evidence (cache-slot frame counts, acoustic and stable-word shares, fold decisions, and timing spans - never consultation wording) plus two controlled replays confirmed that marginal third slots can fold short Patient speech into the visible Doctor stream. Both guarded policies failed corpus gates: keeping every sustained origin visible regressed phantom identities 10 -> 18, and a visit-long stable alias regressed corrected strict attribution 88.985% -> 87.695% while raising incorrect-confident rows 10.595% -> 12.240%. Release fold behavior is unchanged; the reusable TextGrid-grounded scorer, ADR-008, and the corpus evidence are retained.
-- **Dual-identity duplicate speakers closed diagnostic/no-fix (slice 2 M05)** - a deterministic PHI-safe scorer measures duplicate-speaker prevalence (wording compared only in memory; safe IDs, roles, timing, and counts reported): zero candidates across the 6,072-row canonical corpus, one reproduced in the retained browser artifact. Slot-evidence replays located the mechanism before adapter folding - both raw cache slots clear the substantial-voice threshold, so the adapter preserves the engine's split identity. The narrow default-OFF withhold guard built for that target failed causal acceptance (the target pair was not reproduced; rows dropped 67 -> 63 and phantom merges changed 3 -> 10) and was removed exactly. No runtime behavior changed; the scorer, its contracts, and the rejection evidence are retained.
-- **Long-turn transcript freezes diagnosed; a bounded release ships opt-in (slice 2 M06)** - PHI-safe evidence (clock/frontier times, row and slot-activity counts only) proved a repeatedly refreshed mutable tail can pin the global stability frontier behind stable clock-ready rows: c01 held rows across a 50-second zero-emission span before a 25-row browser burst. An opt-in bounded release (default `0` keeps prior behavior) frees only already-stable rows an obsolete frontier has hidden past the limit, leaving wording, timestamps, cadence, and speaker policy untouched. With a 10-second bound and its cadence-aware refinement, c01 improves to at most 10 seconds without rows, 15 seconds between batches, and a 9-row largest burst - reproduced in a real browser replay where the visible transcript grows 14 -> 89 rows through the long Patient turn instead of freezing. The refined full corpus passed 20/20 corrections with WER/strict/incorrect-confident deltas of +0.345/-0.250/+0.195 points and source-chip findings 62 -> 61.
-- **Generated-note quality now has a six-visit corpus baseline (slice 2 M08)** - six full-length corrected replays and sentence-level adversarial review against corrected rows and Doctor/Patient TextGrids record 203/203 resolved citations but fail release quality: 1/6 notes is content-clean, 21/209 substantive claims are unsupported and unflagged, fidelity-warning precision is 12.5%, wording-warning precision is 20.0%, and one 33,922-character visit is truncated at the 32,768-character selection cap. The baseline routes reopened coverage and precision debts plus seven novel unsupported-claim shapes; no product behavior changed in this evaluation-only milestone.
-- **Overlap speech now has a corpus decision baseline (slice 2 M09)** - 6.0% of corpus time and 9.5% of known reference words sit in overlapped speech; corrected known-word overlap WER remains 82.6% and visible overlap-row attribution 84.2%. A TextGrid audit of all 248 overlap spans in the three heaviest fixtures confirms privacy-confirmation, symptom-denial, medication, and safety-net wording or attribution defects. The user selected model-lane escalation: 0.6.0-M02 now requires a tag-clean, speaker-aware overlap benchmark and candidate non-regression gate. No product behavior changed.
-- **Long post-visit corrections stay inside the single-GPU capacity envelope (slice 1 M09)** - capacity-risk recordings are transcribed as ordered three-minute chunks through one restored NeMo model with visit-relative timings and confidence recombined; short visits keep the one-shot call, and sub-ten-second remainders ride inside the final chunk after a 1.56-second tail sliver decoded empty and vetoed a whole correction. The observed `device not ready` failure gets one same-model retry after CUDA cache reclamation; OOM, illegal-memory, model-load, malformed-audio, and empty-result failures remain immediate fallbacks. Corrections are globally single-flight, duplicate Summarise clicks reuse the completed artifact, and PHI-safe metadata reports attempts, retry, chunk count, and a sanitized reason without raw CUDA details. The browser pairs every note with its actual source: corrected notes show no degradation notice, while a known fallback persistently says the note was built from the live transcript. GPU acceptance: the c02/c03/c08 trio stayed byte-identical, and the previously three-for-three-failing full-length c03 passed on a deliberately dirty GPU (bounded 11.5/16.3 GiB peak vs the fatal 15.7 GiB one-shot spike).
-- **Generated notes preserve who was uncertain and quote only transcript words (slice 1 M11)** - summary instructions describe missing or unintelligible material as a limitation of the record, never as patient uncertainty, failed recall, or refusal unless the patient's own words establish that state. The deterministic verifier adds `patient-state-without-evidence` (topic-local patient evidence) and `non-verbatim-quote` (straight/curly quote parsing, exact token-sequence matching, same-role row joins, explicit attribution); one-redo and fewer-violations draft selection apply unchanged. The fidelity suite grew 32 -> 64 tests; the closing audit reopened the split-question denial precision debt that slice 2 M02 later closed.
-- **The note fidelity checker catches the fabricated denial it was built for and stops flagging true sentences (slice 1 M10)** - denial evidence is clause-scoped: uncertainty phrases are masked so they never impersonate a denial, a denial and its topic must share one local clause, and a sentence claiming a denial while admitting the question went unanswered fails outright - the day3 fabrication now flags with the patient's monologue present. An eight-word bare-answer rule replaces the 40-character gate, so the real 41-character rash denial verifies while "...but no no" mid-row negations no longer launder anything. Honest exam-absence phrasing stays exempt; performed-exam claims still flag. Regeneration can no longer ship a worse note: the fewer-violations draft ships, with per-violation diagnostics (never clinical prose) in structured logs. Fidelity suite 17 -> 32 tests; replay audits: c03 3/3 generations zero false flags, day5's single flag audited true.
-- **Long consultations keep their closing Assessment and Plan in generated notes (slice 1 M08)** - corrected, browser-visible, and stored summary inputs share one 32,768-character whole-row selection contract instead of silently taking the first 8,000 characters. A visit exceeding the cap keeps complete opening and closing rows, uses exactly that selected set for the prompt, citations, retrieval, and fidelity checks, emits a structured warning, and returns neutral elision metadata through HTTP and Mercure; the note panel shows a persistent accessible notice when middle rows were omitted.
-- **Every transcript row carries how clearly it was heard (slice 1 M06 phase 2)** - live, windowed, and corrected rows gain an additive `confidence` value (0-1, the row's weakest word), persisted through memory and SQLite (in-place column upgrade), published over Mercure, stamped on each row as `data-confidence`, and echoed through the summary round-trip. Absent stays absent: unmeasured rows omit the key and render exactly as before. No-harm evidence: a paired control-vs-confidence probe emitted byte-identical rows (1514/1514 steps word-aligned), and the GPU trio gate re-run stayed byte-identical with 100% live-row and 93% corrected-row coverage.
-- **Every generated note is verified against the transcript before the clinician sees it (slice 1 M07)** - a deterministic fidelity checker catches the three fabrication families prompt rules alone could not reliably prevent: patient uncertainty resolved to a definitive value, negative findings the patient never gave, and screening answers dressed up as examination findings. A failing draft gets one regeneration naming the exact rejected sentences; still-failing sentences ship visibly marked with an amber "Unverified against transcript" underline rather than silently stripped - nothing is ever removed. Across four five-generation replay campaigns the checker caught first-draft fabrications in every flagged run, and an independent adversarial audit of the final campaign passed all five notes.
-- **Word-confidence GPU spike: GO (slice 1 M06 phase 1)** - a fixture-only probe proves both pinned NeMo models yield real word/token confidence by enabling `confidence_cfg` in the decoding config (word-confidence minimums 0.61-0.73, no all-1.0 degeneracy, zero CUDA instability), and a follow-up eval reproduced the canonical baseline byte-for-byte.
-- **Demo audio fixture expansion and day-qualified labels (slice 1)** - the local fixture set grew to 20 full-length PriMock57 consultations (13 added), each with doctor/patient TextGrid ground truth, broadening replay coverage from ENT through cardiac red flags, stroke-like symptoms, allergy/anaphylaxis, and anxiety presentations. The Demo Audio picker labels each row with a compact day-qualified ID like `consult 1.2`, and the fixture transcript downloader discovers TextGrid URLs from local PriMock filenames.
-- **Effective model defaults now agree across local and production setup (slice 2 M00)** - production Terraform emits canonical role and summary provider/model variables, using AU Haiku 4.5 in `ap-southeast-2` for both user flows; bare Compose keeps CPU Ollama/Qwen local-first while its Bedrock fallback resolves to the same Haiku profile (summary stays on Haiku for lower note-generation cost). The model checker validates every distinct role/summary pair once, the Ollama installer no longer edits `.env` or exposes a GPU, and fixture-only second-pass evaluation defaults to the pinned-runtime TDT v3 model. No selected model was upgraded.
-- **Delayed same-speaker wording stays in one transcript card (slice 2)** - a stable row arriving after a later speaker turn is inserted into the preceding card for the same raw speaker instead of showing a second adjacent Doctor or Patient entry; spoken order, correctable row IDs, and the later speaker's separate turn stay intact for review and summary input.
-- **Dev startup catches a silently dropped WSL2 GPU (slice 1)** - `scripts/start-dev.sh` showed `nvidia-smi ✔` even when WSL2 had lost the GPU adapter (the binary exits 0 with empty output), letting startup continue to a cryptic container failure. Detection now requires a named adapter, and both failure points print the remedy: quit Docker Desktop, `wsl --shutdown` from Windows, restart Docker Desktop, re-run.
+- **More reliable correction checks** - Batch checks now continue after safe failures, report clear
+  totals, and use a more reliable browser test server.
+- **Better denial checks** - Note checks now consider the clinician's full question and the
+  patient's full answer, reducing false warnings without accepting unsupported denials.
+- **Visible low-confidence wording** - Unclear transcript rows and note sentences are marked for
+  review without changing the generated wording.
+- **Cross-talk behaviour reviewed** - Testing confirmed that short patient speech can be folded
+  into the doctor stream. Alternative policies made attribution worse, so they were not shipped.
+- **Duplicate speaker checks added** - Privacy-safe checks can identify one voice appearing under
+  two speaker labels. A proposed guard made transcripts worse and was removed.
+- **Fewer long transcript freezes** - An optional release limit reduces long pauses and large
+  catch-up bursts while leaving existing behaviour as the default.
+- **Broader note-quality baseline** - Full-length visits now expose unsupported claims, weak
+  warnings, and input truncation more consistently during evaluation.
+- **Overlapping speech measured** - Testing confirmed that overlapping speech still causes wording
+  and speaker errors, so a future model change remains necessary.
+- **Safer long-visit correction** - Long recordings are corrected in ordered chunks, one temporary
+  GPU failure is retried, and fallback notes clearly identify their source.
+- **Uncertainty and quotes stay faithful** - Notes describe unclear audio as a recording limitation
+  and only quote words found in the matching speaker's transcript.
+- **More precise fidelity checks** - Denial checks use nearby sentence context, ignore misleading
+  uncertainty phrases, and keep the better draft after regeneration.
+- **Complete endings in long notes** - When a visit exceeds the input limit, the note keeps the
+  opening and closing rows and warns when middle content was omitted.
+- **Confidence on every measured row** - Live and corrected transcript rows can carry a stored
+  confidence score that follows them through the interface and summary flow.
+- **Notes checked before display** - Each note is checked for unsupported certainty, denials, and
+  examination claims. Remaining concerns are visibly marked after one retry.
+- **Word confidence validated** - Both supported speech models produced useful word-level
+  confidence without changing transcript output or destabilising the GPU.
+- **Larger demo set** - The demo library now includes 20 full-length consultations with clearer
+  day-based labels and matching speaker references.
+- **Consistent model defaults** - Production uses the same regional model settings for roles and
+  summaries, while local development keeps its lightweight local model.
+- **Late rows stay in the right card** - Delayed wording is inserted into the correct earlier
+  speaker card without changing spoken order or later turns.
+- **Clearer WSL2 GPU failure** - Startup now detects an empty GPU response and prints the steps
+  needed to restart WSL2 and Docker Desktop.
 
 ## v0.3.0 - 2026-07-07
 
-- **Post-visit role requests no longer resurrect role state (0.4.0 M04)** - the speaker-scope role override and the roles snapshot endpoint now peek at role state for finished visits instead of creating it, closing the remaining two callers behind the badge-wipe footgun. A finished visit's speaker relabel still persists everywhere it should: the clinician's explicit label is applied to stored rows AND the corrected artifact (so a retried summary cites the new label) and broadcast as a partial mapping with no fabricated confidence, while the auto-row re-judge is skipped rather than run against a one-speaker mapping. Live visits are liveness-gated, so a label clicked before the role worker's first update still pins against later agent proposals. Three new regressions plus the badge e2e suite (7/7) cover both paths.
-- **Summary notes preserve patient uncertainty and stay scribe-true (0.4.0 M00, ADR-007)** - the note generator's shared rules now forbid asserting clinical facts the transcript does not support: explicit patient uncertainty ("I don't know") is documented as unclear rather than resolved to one side, clinical characteristics (onset, severity, laterality, timing) appear only as the speaker stated them, and negative findings require an explicit denial or examination. The Assessment section is restricted to clinician-stated diagnoses per ADR-007 (Option B: scribe, not assistant) - AI-inferred diagnoses and unstated rule-outs are barred, and an absent assessment is reported as not documented. The Objective section takes only clinician-performed examination content, keeping patient-reported symptoms in Subjective (closes the c08 acceptance-run mislabeling, M03 item a). Prompt-rule regressions pin all three rule families.
-- **Chip scorer no longer flags the doctor's question preamble (0.4.0 M03b)** - the corrected source-chip QA scorer treats consultation-structure preambles ("I'm just gonna ask" / "I'm just going to ask") as doctor-owned wording instead of patient first-person symptom talk, removing the false positive the c03 acceptance run surfaced (corrected-0146). Reporting-layer change only: the shared runtime cue lexicon that drives real row decisions is untouched. A before/after sweep across all 59 saved corrected artifacts shows exactly one finding change - the false positive disappearing - with every historical true positive still firing.
-- **Citation deep links into the Transcript tab (summary UX M6)** - "Open in transcript" in a provenance popover now lands the clinician on the evidence: the Transcript tab opens, the first cited utterance scrolls into view, and every cited block holds a temporary accent highlight that fades after about three seconds. Citations resolve against stitched blocks through their constituent segment IDs, so a citation still matches after its row was merged into a longer utterance. If none of the cited rows exist in the transcript view, a small self-hiding notice appears instead of a crash or a silent no-op. Two new browser e2e tests cover the highlight-and-fade and miss-notice paths (35 total, all green).
-- **Per-section provenance popovers replace citation chips (summary UX M5)** - each cited section of the generated note now ends with a small superscript count (screen-reader label "View source, N utterances"). Clicking it opens a keyboard-accessible popover (Escape or an outside click dismisses; focus returns to the toggle) showing the cited utterances in the same stitched block form as the Transcript tab, ordered by spoken time, with an "Open in transcript" action that switches tabs (the M6 deep link will add scroll and highlight). Sections without citations render no affordance, so empty popovers cannot appear. The old always-visible chip rows and their live-preview jump were deleted outright, and the browser e2e citation suite was migrated to the popover behaviour (33 tests total, all green).
-- **Note/Transcript tabs in the summary panel (summary UX M4)** - the post-visit summary panel now has two views: the Note tab keeps the generated note with the TL;DR key points strip moved above the SOAP sections, and a new Transcript tab shows the full consultation as stitched utterance blocks (M3 transform) built from the corrected transcript - the rows the note was actually generated from - fetched through a new same-origin proxy (`GET /session/{sessionId}/corrected-transcript`). When no corrected artifact exists the tab falls back to the visible live rows with an explanatory line and upgrades automatically once correction runs. Tabs follow the ARIA pattern (roving tabindex, arrow keys), work in light and dark themes, and change no existing element IDs, so all 31 browser e2e tests pass unchanged. Layout only: provenance popovers and transcript deep links arrive in later milestones.
-- **Dropped summary citations are now logged PHI-safe (summary UX M2)** - citation validation (already strictly citation-driven; the browser renders chips only from validated per-section citations) no longer silently strips bad model citations. One WARNING per summary reports blank, duplicate, and unresolved counts plus a capped sample of unresolved IDs, gated by the synthetic `corrected-`/`seg-` pattern so model-fabricated free text can never echo transcript content into logs. New tests pin the payload invariants: storage-truth hydration, per-section dedup with cross-section reuse preserved, and the no-drop path staying silent.
-- **Transcript stitching display transform (summary UX M3)** - new pure function `stitchTranscriptSegments` (`public/js/scribe-stitch.js`) merges adjacent same-speaker corrected rows into utterance blocks when the gap is at or below `STITCH_GAP_SECONDS` (2.0s), keeping constituent segment IDs and span timestamps so citations still resolve against stitched output. Display-only and not yet wired into any page; the M4 Transcript tab and M5 provenance popovers consume it. Ships with a dependency-free node test suite (`npm run test:js`).
-- **Medical term correction is now on by default** - the curated lookup that fixes commonly misheard drug and condition names (`strands_agents/data/medical_lexicon.txt`, CPU-only post-ASR pass) now runs unless a deployment opts out with `MEDICAL_BOOST_ENABLED=0`. Defaults flipped in the code toggle (`nemo_pipeline.py`, unset/blank now means enabled), `.env.example`, and the docker-compose fallback; explicit `0` still disables. New regressions pin both the default-on and the opt-out behaviour.
-- **Inline reference markers no longer appear in summary prose (summary UX M1)** - summary section text and key points are cleaned by a deterministic post-processing step after citation validation (`strip_inline_reference_text` in `strands_agents/api/summary_generation.py`), removing `[MM:SS-MM:SS]` style references, legacy `[corrected-XXXX to corrected-YYYY]` leakage, and hybrid forms while leaving bracketed clinical wording untouched. Provenance is unaffected: the structured per-section citations array (already validated server-side) is the audit trail, and both delivery paths (HTTP response and Mercure) receive the same clean prose. Strip events are logged as counts only.
-- **Scaffold-aware corrected-row cue cleanup (M12)** - the post-visit cue cleanup no longer degrades strong live transcripts. Weak-tier flips (bare "okay"/"and I" cues and borrowed neighbor evidence) now apply only when the visit shows a weak-scaffold signal: enough strong-cue flips that the live labels clearly disagree with what was said (strong cues never contradicted a good scaffold across four gated sessions). Strong cues, the tiny-answer rule, and cross-row phrase completions ("How can I help" + "this afternoon") keep their historical behavior everywhere. Measured on the four gated sessions: +6.6pp and +11.1pp corrected strict attribution on the two consult-08 scaffolds, ties on the rest, and the windowed weak-scaffold rescue (+31.6pp worth of cleanup) fully preserved.
-- **Real-time pacing mode for the corrected fixture eval** - `scripts/eval-corrected-fixtures.sh` accepts `EVAL_PACE=1x` to stream fixtures at real-time cadence with browser-like 250ms chunks (default stays the historical unpaced blast so existing baselines remain comparable; each fixture line now prints its pace and chunk size). The first paced run also produced a finding worth its own entry: pacing does NOT explain the streaming engine's eval-vs-browser live gap (paced 59.1% vs unpaced 59.4% vs the real browser replay's 79.3% at the same 60s horizon) - the eval's WebSocket feed differs from the browser path beyond cadence, so browser replays remain the only honest live-lane reference on the streaming engine. Recorded in the runtime footgun.
-- **Word-echo corrected-row splits (M10)** - the post-visit echo splitter now also separates a clinician's word echo from the patient's answer ("I vomited twice. **Twice, okay.**"), not just the digit/age echo, using the same native-timestamp guard set shipped in M08/M09. Two safety constraints from the gate: the duplicate must be a content word (duplicated fillers and bare agreements never split), and the patient part must carry its own decisive cue - the splitter never guesses. On the consult-03 @165s specimen this lifts corrected strict attribution 63.2% to 65.8% and resolves the flagged patient-under-DOCTOR source chip (findings 2 to 1). Cue lexicon gained "i vomited".
-- **Orphan-speaker row role relabeling (M11)** - the live role lane now fixes rows belonging to "orphan" speaker identities the streaming engine mints before its voice cache settles (a speaker whose mapped role a strictly higher-row-count speaker already holds). Orphan rows are judged with the corrected-lane cue lexicon after reassembling fragments with their immediate same-speaker neighbors only - joining across a turn is forbidden because that produced the gate's single false flip (a patient's "yes" inheriting the doctor's question cues). Runs as a fill-only pass inside the existing M20 row-exception mechanism: M20 and clinician row corrections keep precedence, payload shape is unchanged, and two-speaker sessions are structurally untouched. On the 2026-07-07 streaming manual run this lifts live strict attribution from 89.7% to 95.6% and halves-plus the confident-error rate (10.3% to 4.4%) with zero wrong flips. Cue lexicon gained the identity-confirmation opener ("can I confirm your name").
-- **Local-dev engine default flipped to streaming in `.env.example`** - `NEMO_SESSION_ENGINE=streaming` is now the template default so compose-based local runs match `scripts/start-dev.sh`, after 2026-07-07 real-time replay evidence showed the windowed engine at 40.0% live strict attribution vs the streaming engine's 85-90% band. CI and fresh checkouts without a `.env` keep `windowed` via the `docker-compose.yml` fallback; rollback stays an env flip plus nemo-agent restart.
-- **Native word timestamps for post-visit correction (M09)** - the second-pass ASR call now requests NeMo's own word-level timestamps (`timestamps=True`, with a compatibility retry for overridden models) and prefers them over the token-proportional estimate, which container probes showed drifting ~1.6s at 60s while native times stay within ~40ms of TextGrid truth and stable across clip lengths. The fixture gate re-run with native times strictly dominates the estimate-based candidate (same with-overlap attribution gain 90.6% to 90.9%, WER buckets byte-identical to baseline), eval runs reproduce the guarded M08 numbers exactly, and correction latency stayed in the warm range (8.7-10.6s) with zero timing-validation warnings. The M08 drift guards remain as defense in depth.
-- **Identity/echo corrected-row split on word timing (M08)** - the post-stop correction pass now extracts best-effort per-word timings from the second-pass ASR (`return_hypotheses=True`, probe-proven token-proportional derivation in the new `strands_agents/post_visit_word_timing.py`) and `strands_agents/corrected_role_cues.py` splits a patient identity row from a clinician's echoed-age acknowledgement (`... I'm 26. 26, okay.`) only when every guard holds: digit echo pinned by duplicate text, identity cue present, positive timing gap, no next-row collision, and a tail-coherence check requiring the timed echo end to reach the live row end - added after the first eval run showed full-clip proportional estimates drift (~1.6s on a 60s clip), which had placed the echo chip inside patient-only speech and cost 4.4pp strict attribution vs the no-split counterfactual (83.3% -> 78.9%); with the guard the split contributes zero marginal regression and fires only on coherent timing. Timings that disagree with the display words are dropped entirely, plain-text transcriber seams keep working, and no browser/API payload shapes changed.
-- **Word-timing boundary-split gate (M07)** - scored a fixture-only split of the consult-08 identity/echo corrected row (`PATIENT "My name's Python and I'm 26. 26, okay."`) using post-visit probe word timings, against the m04-final baseline at the same cutoff. Every gate axis held or improved: strict attribution 90.6% and incorrect-confident 9.4% unchanged (the probe-timed echo row straddles the TextGrid cross-talk window, which strict scoring excludes), source-chip findings 0, non-overlap WER 33.5% with identical error totals, seam re-reads 3, and with-overlap attribution improved 90.6% to 90.9% - unlike the earlier text-proportional split that regressed consult-08 to 81.8% by placing the echo in patient-only time. Verdict: promote word timing for narrow echo-boundary splits only (M08, pending approval); global word-timing realignment stays rejected. Evidence under `var/quality/post-visit-timestamps/20260707T-m07/`.
-- **Corrected source-chip scorer** - added a fixture-only QA scorer for corrected transcript artifacts. It reads corrected transcript JSON files or run directories, reports Doctor/Patient source-chip rows whose text cues contradict the assigned role, and can emit JSON for saved QA evidence without importing FastAPI, NeMo, or browser code. Initial runs found 4 clear cue contradictions across the saved consult-02/03/08 corrected artifacts and one contextual consult-03 browser warning for the standalone `Yeah.` row after a doctor question.
-- **Offline diarization benchmark plan** - added a fixture-only plan to benchmark post-stop full-audio diarization before changing runtime correction. The first inventory keeps current Sortformer v2.1 as the immediately runnable local candidate, records pyannote Community-1 as dependency/token-gated, and requires both an oracle diarization ceiling and a non-oracle Doctor/Patient labeling variant before any promotion beyond QA artifacts.
-- **Post-visit word timestamp probe** - added fixture-only timestamp QA scripts for the corrected transcript path. `scripts/probe-post-visit-timestamps.py` confirmed the pinned `nvidia/parakeet-tdt-0.6b-v3` post-visit ASR result exposes token timestamps with `return_hypotheses=True` without enabling the known-crashy live multitalker timestamp mode, and `scripts/report-post-visit-word-alignment.py` maps those estimated word timings back to live transcript rows. Consult-03 @60s shows the "let's try and get you" seam repeat appears twice in ASR words, so the repeat is not just row allocation.
-- **Corrected transcript fixture eval runner** - added `scripts/eval-corrected-fixtures.sh` so local QA can stream named PriMock57 WAV fixtures through the live WebSocket path, fetch post-stop corrected transcript artifacts, score live vs corrected rows side by side, and save replay evidence per fixture before changing alignment or model choices. The first consult-02/03/08 @60s smoke improved corrected strict attribution and WER on all three fixtures, with remaining seam repeats localized to consult-03.
-- **Post-stop transcript correction before summary** - added a same-origin `/session/{id}/correction` flow that runs before summary generation, uses retained session audio to create corrected transcript rows, and stores them in the corrected-transcript lane that summaries already prefer. The browser now shows correction progress as part of the summary loading flow, reuses existing corrected rows on retry, and falls back to live-preview rows when correction is unavailable instead of blocking the note.
-- **Corrected transcript QA endpoint** - added FastAPI `GET /session/{id}/corrected-transcript` so local testing can fetch the post-stop corrected rows and score the exact transcript artifact used by summaries.
-- **Second-pass ASR evaluation and evidence-linked summaries** - added a fixture-only second-pass ASR runner for testing newer English Parakeet candidates after recording, separate corrected-transcript storage for memory and SQLite backends, and source-linked summary citations. Summaries now prefer corrected rows when present, validate citation IDs against stored corrected segments, and render optional source chips in the browser without changing the existing summary route or Mercure topic.
-- **Session-long streaming transcription engine (M22, experimental; dev default via start-dev.sh)** - a new `NEMO_SESSION_ENGINE=streaming` engine wraps NVIDIA's SpeakerTaggedASR composite so one Sortformer speaker cache owns speaker identity for the whole visit, replacing per-window re-diarization and stitching (the mechanism behind mid-visit Doctor/Patient inversions). Hardened for real-time pacing after live browser testing exposed four defects invisible to accelerated evals (partial-chunk stepping, decode-clock word times, unordered emission, eager speaker-cap pinning); word times now come from inverting the diarizer's own activity stream. Final full-corpus result on honest timestamps: strict attribution avg 86.9% vs 61.6% windowed (uniform 85-90 band, every fixture +4 to +36pp), recall 87.5-92.7% (above windowed), incorrect-confident rows 10-15% vs 18-48%, zero errors. `scripts/start-dev.sh` now defaults to the streaming engine (banner shows the active engine); compose/CI keep `windowed` until Phase 4 flips the project default. Rollback is an env flip plus agent restart.
-- **Stop-time finalize drain for live recordings (M21)** - pressing Stop on a live-microphone visit now mirrors the demo-replay drain: the WebSocket closes (triggering the server's final NeMo pass) while the Mercure stream stays open until the backend `finalized` event arrives (15s bounded timeout), so the held-back tail utterances render and the summary is generated from the complete transcript. Pre-fix, stop tore the stream down immediately and the finalize flush published to nobody (reproduced: 8 browser rows vs 11 server rows); post-fix the same procedure shows 11/11. New Session still tears down immediately. The dev panel State tab shows `segmentsReceivedVsStored` so delivery gaps are visible at a glance.
-- **Post-finalize role-churn artifact (M21)** - role flips landing after the `session.quality` record closes (the tail settle window) are now reported: `role_inference.completed` logs carry a `post_finalize` flag, and when tail churn actually happened the role worker persists one additive `quality_tail` JSONL row (`tail_role_flips_accepted`/`suppressed` plus final counters) beside the session's quality record. Existing `session.quality` fields and cardinality are unchanged.
-- **Per-row speaker correction (M20 Phase 2)** - clinicians can now click any transcript line to correct who said exactly that line (Doctor -> Patient -> Unknown), without relabeling the speaker's other rows. Every emitted row carries a stable server-minted `segment_id`; corrections are stored row-scoped (separate from speaker-level confirmed overrides), survive later automatic role updates, the finalize history rebuild, and summary generation, and sync to other open tabs via a backwards-compatible `row_overrides` field on the roles topic. Corrected rows show a small "Dr/Pt ✓" chip. This is an explicit correction feature for rows where mixed audio makes automatic attribution wrong - marking a row Unknown is a valid answer and counts as uncertain in quality metrics.
-- **Session quality records** - finalized WebSocket sessions now emit a `session.quality` log/event with chunk counts, window and inference percentiles, held/emitted segment counts, role confidence/flip counters, error count, and speaker-stability counters; the same JSON row is appended under the agent's gitignored `var/quality/sessions.jsonl`, and the dev State tab exposes the latest record.
-- **Fixture eval runner** - added `scripts/eval-fixtures.sh` to stream PriMock57 WAV fixtures through the live WebSocket path, pull history and `session.quality`, run `scripts/transcript-quality.py`, append `var/quality/trend.jsonl`, and print a compact current-vs-previous report for M16/M17/M19 verification.
-- **Transcript attribution scoring** - extended `scripts/transcript-quality.py` and the fixture trend rows with TextGrid-based speaker attribution, non-overlap attribution, residual phantom-speaker counts, and role-flip counts for diarization quality decisions.
-- **Role attribution diagnostics** - added speaker oracle accuracy, role-mapping gap metrics, and per-session role timeline artifacts so fixture runs show whether wrong transcript labels come from diarization identity mixing, role mapping, fallback, or suppressed flips.
-- **Honest role-mapping ceiling and flip-counter cross-check** - `scripts/transcript-quality.py` now reports the best valid one-DOCTOR/one-PATIENT mapping accuracy and the real `role mapping headroom` (the free-role oracle overstates recoverable accuracy when diarization mixes one voice across both speaker IDs), and `scripts/role-timeline.py --quality-json` appends a `role_timeline.quality_check` row because `session.quality` flip counters are snapshotted at disconnect while late role decisions land only in the logs; `scripts/eval-fixtures.sh` records both and warns on counter mismatch.
-- **Transcript word-level quality metrics** - `scripts/transcript-quality.py` now reports WER with substitution/insertion/deletion counts, clean-vs-overlap WER, segment density, fragment rates, and seam re-read counts; `scripts/eval-fixtures.sh` records those metrics in trend rows so M17 accuracy/readability changes can be accepted or reverted by corpus numbers.
-- **PriMock57 ground-truth transcripts** - added `scripts/download-primock57-transcripts.sh` to fetch the CC BY 4.0 Praat TextGrid transcripts paired by name with each demo consultation WAV, enabling transcription-quality measurement against a reference.
-- **Summary failure guidance** - when summary generation fails, the panel now shows an actionable fix note and a page-level warning banner ("AI model unavailable … See README_STACK.md") pointing at Ollama/Bedrock reachability, instead of a bare "Summary generation failed" message; the banner clears once a summary renders.
-- **Live model-unavailable warning** - when the role/summary model is unreachable, the agent publishes a one-time `system_error` on the session roles topic so the browser shows the warning banner during the consultation, not only at summary time; it clears once a summary renders.
-- **Pre-flight AI-model gate** - a consultation no longer starts (recording or replay) when the off-GPU role/summary model is unreachable. The browser checks a new `GET /agent/model-health` endpoint first and, if unavailable, shows an actionable banner and aborts instead of transcribing with no roles/summary. Added `scripts/check-ai-model.sh` (referenced by the UI) to diagnose and pull the model, replacing the unhelpful "See README_STACK.md" copy.
-- **Dev Panel connection indicator** - the Dev Panel header shows a green "● connected" / "○ disconnected" state reflecting the live Mercure feed, matching the 0.3.0 mockup.
-- **Settled speaker-confidence badge** - the "Identifying speakers…" badge no longer pulses indefinitely; once inference returns it shows a settled state ("Roles identified" / "Low confidence" / "Speakers unclear (N%)") with no flashing.
-- **Log analysis and eval tooling** - added `scripts/analyze-logs.py` for process-quality reports and `scripts/eval-role-heuristic.py` for GPU-free scenario role-attribution evaluation.
-- **Stack inventory documentation** - added `README_STACK.md` with the current model, service, runtime, topic, and dependency inventory for the medical scribe stack.
-- **Clinical intelligence documentation** - added `README_CLINICAL_INTELLIGENCE.md` to explain the medical phrase normalisation and clinical RAG/hints layers, including toggles, safety boundaries, benefits, and pending GPU/SSE proof.
-- **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
-- **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
-- **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.
-- **Corrected fixture source-chip reports** - `scripts/eval-corrected-fixtures.sh` now saves corrected source-chip QA reports beside every corrected fixture run (`source-chip-score.txt` and `source-chip-score.json`) and prints the scorer summary line in the final eval output. Findings warn by default; `CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS=1` opts into failing the eval after the evidence is saved.
-- **Stop-triggered corrected summaries** - Stop/finalized now starts the existing correction-before-summary path automatically for demo replay as well as live recording, keeping retained audio inside the grace window and removing the main Summarise button. The summary panel still exposes retry after a failed note.
-- **Corrected mixed source-chip cleanup** - corrected transcript cleanup now splits high-confidence Doctor prompt + Patient answer rows into separate source chips and keeps short clinician prompt fragments like `age, please?` and `is it affected?` Doctor-owned. Identity rows with echoed age acknowledgements remain unsplit until word-level timing is promoted, because splitting them created a timed attribution regression. Final fixture gates: consult-02/03/08 @60s scored 100.0% / 96.8% / 90.6% corrected strict attribution with `findings=0`; consult-03 @165s scored 97.8% corrected strict attribution with `findings=0`.
-- **Corrected source-chip role cleanup** - corrected transcript rows now use a focused Doctor/Patient cue helper to relabel clear patient first-person or body-location rows that inherited Doctor scaffolds, and to treat tiny answers after Doctor questions as patient-owned when context supports it. Fresh consult-02/03/08 @60s corrected artifacts score `findings=0` in the source-chip scorer, down from 4 saved fixture errors; consult-03 @165s also scores `findings=0`, with the 02:40 `Yeah.` row now Patient.
-- **Corrected source-chip alignment** - post-visit correction now preserves full-session text anchors when a consumed one-word row would previously abort anchoring and fall back to proportional allocation. This keeps consult-03 corrected source chips from shifting patient answers into doctor rows or doctor questions into patient rows after short utterances like "oh".
-- **Transcript card role safety** - mixed or row-corrected transcript cards now derive their visible header from row-level Doctor/Patient evidence. A card with disagreeing row roles shows `Review labels` instead of a confident stale speaker-level label, while summary requests still send the row-resolved roles.
-- **Clinical hints feature removed** - removed the clinical hints sidebar, `CLINICAL_HINTS_ENABLED` flag, `scribe/session/{id}/hints` topic, `clinical_hints` summary payload, and rule-based hint generator. The project-authored clinical KB remains as CPU-only summary grounding via `strands_agents/clinical_context.py`.
-- **Offline diarization promotion rejected** - kept the live preview and post-stop correction runtime unchanged after the offline diarization benchmark. Sortformer full-audio failed the strict Doctor/Patient attribution gate, and pyannote Community-1 is blocked pending explicit dependency/token approval, so no FastAPI, browser, storage, Docker, or model-loading integration milestone is opened.
-- **Pyannote Community-1 benchmark gated** - checked pyannote availability without installing dependencies or using tokens. The host venv has no pyannote packages, `nemo-agent` lacks `pyannote.audio`, and no Hugging Face or pyannote token wiring is configured, so the pyannote benchmark remains blocked until dependency and access approval is explicit.
-- **Rejected Sortformer full-audio diarization candidate** - added a fixture-only Sortformer v2.1 full-audio diarization probe and scorer adapter, then rejected consult-03 @60s before smoke fixtures. The candidate improved non-overlap WER from 22.6% to 19.0% and removed seam re-reads, but emitted 4 speaker IDs for a dyadic consult; constrained strict attribution fell from 96.8% to 0.0%, and the diagnostic free oracle reached only 87.5%, so it remains QA evidence only.
-- **Rejected post-visit word-timed alignment candidate** - added a fixture-only builder for scoring post-visit ASR word timings against live speaker rows, then rejected the naive word-center assignment on consult-03 @60s. It improved non-overlap WER from 22.6% to 19.0% and removed seam re-reads, but strict attribution fell from 96.8% to 85.2% and incorrect-confident rows rose from 3.2% to 14.8%, so it remains QA evidence only and is not wired into runtime correction.
-- **Rejected corrected seam-prefix trim** - tested a local corrected-row cleanup for the consult-03 "let's try and get you" seam repeat. The real replay reduced seam re-reads from 3 to 0 but raised corrected non-overlap WER from 22.6% to 25.0%, so the change was reverted and seam cleanup is deferred to a future word-level alignment pass.
-- **Post-stop corrected transcript alignment** - corrected rows now use live-text anchors instead of proportional word spreading, preserve live rows when second-pass ASR drops a visible utterance, and apply cue-order role cleanup only inside the corrected artifact. On consult-03 @60s manual replay, live strict attribution was 87.1% with 36.6% non-overlap WER; corrected output scored 96.8% strict attribution with 26.8% non-overlap WER.
-- **Summary requests merge instead of replacing history (M21)** - a summary POST can no longer shrink the server-stored transcript: browser rows are merged by `segment_id` (roles update only rows no correction or automatic exception owns), rows the browser missed or filtered stay stored and still reach the note, rows the server never emitted are skipped, and an empty store falls back to the old restore-from-browser behavior for reconnects. Blank-text rows remain excluded from the note text at read time.
-- **Finalize flush window logging (M21)** - `nemo_session.window_continuity` console lines now include the existing `phase` field (`chunk`/`finalize`), so the finalize flush re-logging the last window index is distinguishable outside JSON mode.
-- **Rejected held-tail speaker-anchor spike (M20 Phase 5)** - tested the one seam mechanism exposed by the Phase 0 window artifacts: using the prior window's canonicalized held rows as extra overlap-vote evidence without widening NeMo audio, enabling timestamps, or adding a GPU model. The mechanism passed focused unit checks but failed the c03 @83s median gate (65.0/65.0/65.0 strict vs the accepted 70.0), so it was reverted; a restore smoke returned c03 @83s strict attribution to 70.0. No Phase 5 speaker-identity runtime change remains.
-- **Role-agent establishment hardening (M20 Phase 4)** - role inference no longer sends the current automatic mapping or mapping history back into the Strands prompt, so an early wrong UI label cannot anchor later decisions. Bounded role evidence now refreshes representative utterances from cue-rich rows, includes opener-derived doctor/patient cue counts and first-seen position, and caps each evidence row at 120 chars. High-precision clinician self-introduction / consultation-opener cues produce an `establishment_hint`; if the model returns the exact two-speaker inverse and no clinician override exists, the server keeps the opener-derived mapping and logs `role_inference.establishment_hint_guard`. Final gates: c03 @83s strict 70.0 across 3/3 runs, c02 strict 82.4 across 3/3 runs, full-corpus strict avg 61.6 with zero truncations.
-- **Automatic row-level role exceptions (M20 Phase 3)** - after every speaker-mapping update, a CPU-only cue lane re-judges each identified transcript row against cheap, explainable wording cues (clinician questions, second-person body references, first-person symptom reports) and either relabels a row that contradicts its speaker's mapped role or marks it explicitly uncertain; blended question+answer rows and quoted/echoed symptom wording go uncertain rather than confidently wrong. Exceptions ride the roles topic as an additive `row_exceptions` field, render as tentative dashed chips ("Dr auto", "?") the clinician can override with one click, never touch user-corrected rows, and count uncertain rows as incorrect in strict attribution so uncertainty cannot inflate quality numbers. Cue thresholds were measured on the full baseline corpus (zero wrong flips); no LLM involvement, `max_tokens truncation` stays untouched by construction.
-- **Eval trend report strict columns (M20)** - `scripts/eval-fixtures.sh` per-run and `--report` tables now lead with strict attribution (+delta), uncertainty coverage, incorrect-confident rate, best valid dyadic ceiling, and the diagnostic free oracle, replacing the delta-heavy legacy layout.
-- **Row-preserving summary input (M20 Phase 2)** - the browser's summary request now sends one record per transcript row (with `segment_id` and the row-resolved role) instead of per coalesced same-speaker card, so summarising no longer replaces server history with row-losing aggregates; the summary transcript is rebuilt from the server-corrected rows so a stale client can never feed the note an uncorrected role.
-- **Honest role-confidence badge (M20 Phase 1)** - role updates now carry a backwards-compatible `role_stability` field computed live from speaker-identity counters (anchor remap rate, phantom merges, pending contrary mapping), and the browser badge only shows green "Roles identified" when mapping confidence is high AND speaker identity stayed stable; a confident mapping over churning identities renders as amber "Roles assigned - verify labels" with a correction hint, so the consult-03 failure mode (90% badge over inverted rows) can no longer render as identified. The dev panel State tab shows the same `roleStability` object.
-- **Eval history fetch race fix (M20)** - `scripts/eval-fixtures.sh` now fetches session history after the role-timeline settle window instead of before it, so scored attribution reflects the settled labels a clinician sees rather than a race against post-disconnect role flips (identical role-decision timelines previously scored 45% or 55% depending on fetch timing).
-- **Strict doctor/patient attribution metrics (M20)** - `scripts/transcript-quality.py` now reports strict clean attribution (uncertain/UNKNOWN clean rows stay in the denominator as incorrect), labeled-row accuracy, uncertainty coverage, and incorrect-confident-row rate alongside the existing visible attribution and best-valid-dyadic ceiling, and marks the per-ID speaker oracle as free/diagnostic-only in its output. Hiding hard rows behind uncertainty can no longer raise the headline detection number.
-- **Per-window speaker-continuity diagnostics (M20)** - live NeMo sessions log one `nemo_session.window_continuity` record per emission window (raw vs canonical speaker IDs, overlap-vote evidence, mapping reasons, remap/phantom-merge counts, emitted spans - never transcript text), and `scripts/eval-fixtures.sh` saves them per fixture as `window-continuity.jsonl` via the new `scripts/window-continuity.py`. Requires `LOG_FORMAT=json` on the agent container; the eval runner warns when no windows are captured.
-- **Row-level attribution diagnostics (M20)** - `scripts/transcript-quality.py --row-diagnostics-json` writes a per-row artifact (expected vs visible role, overlap flag, confidently-wrong flag, best-valid-mapping fixability, and window/seam joins against the window artifact) so one wrong Doctor/Patient card can be traced without rescoring; the eval runner stores it as `row-diagnostics.json` beside each fixture's history.
-- **Medical term correction safety** - the post-ASR fallback now has a reviewer/eval sidecar and CPU-only evaluator, preserves sentence-initial capitalization, tolerates missing/unreadable lexicon files, and disables risky prior variants (`heart attack`, `thyroid function tests`, `listen april`) unless reviewed.
-- **Medical boost evaluator coverage** - the CPU-only medical boost evaluator now fails when active lexicon rows lack reviewer provenance/rationale or when the review table drifts from the active runtime lexicon.
-- **Gruff PHP accepted-debt baseline** - added a PHP-specific baseline entry and Composer validation wrapper for the requested `blundergoat/strands-php-client` `dev-dev#98bd6598...` constraint so preflight stays green while the project deliberately tests that unreleased client branch without breaking `gruff-py`'s default baseline loader.
-- **Transcript fragment readability** - live NeMo sessions now merge adjacent same-speaker word-sized fragments before publishing them, reducing clean-region fragment rates across PriMock57 without merging alternating-speaker ping-pong fragments or changing the browser payload shape.
-- **Transcript punctuation readability** - server-side segment cleanup now inserts missing spaces after glued sentence punctuation before rows reach the browser, so ASR text like `started.My` renders as readable transcript text without changing payload shape.
-- **Transcript overlap-ceiling spike** - added an eval-only separated-channel runner for named PriMock57 fixtures, but stopped the full-corpus ceiling path after batch mode exceeded GPU memory and WebSocket mode destabilized NeMo on c04; the runner now blocks accidental full-corpus runs unless explicitly allowed.
-- **CI context validation workflow** - removed the GitHub Actions wrapper for context validation; the local `./scripts/context-validate.sh` check remains available for agent/workflow edits.
-- **Transcript seam spike results** - recorded and rejected two M17 seam-residue mechanisms: NeMo word timestamps exposed the needed SDK surface but crashed the GPU path during live fixture eval, and raising the emission floor failed to reach zero seam repeats without risking short-utterance loss. The accepted runtime keeps the stable timestamp-free NeMo decode path and the previous 0.3s emission floor.
-- **Strands PHP client dev upgrade** - Composer now uses the requested `blundergoat/strands-php-client` `dev-dev` commit `98bd6598...`; Symfony Strands calls use the new response-observer hook to add body-safe response counts to `strands.client.call` logs, and the scribe client retries transient Python proxy failures (`429/502/503/504`) twice with a short backoff.
-- **Windowed transcript emission** - `TranscriptionSession` now transcribes only audio past an emission high-water mark (with a short context lead) instead of re-transcribing the whole session every chunk. Each stretch of speech reaches the browser exactly once, segments still forming at the buffer edge wait one chunk, the finalize step drains and publishes the held tail, and window speaker IDs are matched to the previous window so labels stay continuous. Fixes the duplicated/growing live transcript and removes the O(n²) GPU cost; measured on PriMock57 consultation-03 ground truth, 4-gram duplication dropped to 3%.
-- **M16 reduced quality scope** - the 0.3.0 diarization milestone now ships phantom containment, confidence observability, flip damping, and diagnostic ceilings while deferring true seam-stable speaker identity to a future milestone; the deep diagnosis showed the original ≥90% attribution target is capped by window-seam identity instability.
-- **Dyadic speaker containment** - NeMo sessions now cap visible speaker IDs to the configured consultation limit (`NEMO_SPEAKER_CAP`, default `2`) and merge stray window-local speaker IDs back into an established visible identity, with phantom-merge counts captured in session quality records.
-- **Dev workspace layout** - transcript, summary, and dev rail now split the width 5/4/3; Clinical Hints render above a collapsible Dev Panel in the right rail; the Demo Audio picker moved into the header (placeholder "Select demo audio", icon-button height, chevron icon, Upload WAV entry in its menu) and the left fixture panel was removed, as was the "Speaker labels corrected" toast.
-- **Ollama behind a compose profile** - the `ollama` service only starts under the `ollama` compose profile; `start-dev.sh` activates it when `ROLE_AGENT_MODEL_PROVIDER=ollama`, and Bedrock setups run a three-service stack. `check-ai-model.sh` gained a real Bedrock probe (inference-profile existence plus a one-token invoke) instead of echoing configuration.
-- **Agent log defaults** - the NeMo agent now defaults to JSON logs in Compose, with documented `jq` commands for tracing chunk timing, errors, and Mercure publishes by `session_id`; `LOG_FORMAT=console` remains available for plain interactive logs.
-- **Streaming demo replay** - demo audio now streams through the live transcription pipeline instead of a batch upload: the browser decodes the WAV to 16 kHz PCM, sends chunks over the same WebSocket as the microphone paced by the audible replay clock, and transcript rows arrive via Mercure exactly like a live visit. Removed the FastAPI `/session/{id}/replay` and `/session/{id}/replay/stop` endpoints, `replay_session.py`, and the Symfony replay proxy routes; this also retires the PHP upload-size and full-file NeMo GPU-memory footguns for demo audio.
-- **Medical-only agent behavior** - removed Python-side mode selection for role inference, summaries, replay, and WebSocket ingest so the agent lane always uses DOCTOR/PATIENT role mapping and medical SOAP summaries.
-- **Medical-only scribe UI** - removed the browser mode selector, stored mode preference, and mode query parameters from live WebSocket and replay requests.
-- **Medical-only demo scenarios** - removed meeting, interview, TV/media, and lecture scenario fixtures from the developer scenario corpus.
-- **Demo audio picker** - replaced the left-side dev scenario runner and duplicate header demo button with generated `tests/fixtures/audio/` WAV options that use a built-in-server-safe replay URL.
-- **PriMock57 demo audio set** - excluded consultations 01, 09, and 10 from local fixture generation, manifest output, and the default M2 replay smoke.
-- **PriMock57 replay clip length** - generate full-length PriMock57 demo consultations (previously capped to 90 seconds) so replay and transcription-quality checks cover the whole encounter; `NEMO_BUFFER_MAX_DURATION` (default 900s) bounds GPU memory.
-- **Gruff TypeScript scope** - excluded the vendored Tailwind runtime from gruff-ts so analyzer findings focus on maintained frontend and workflow source.
-- **Frontend structure** - split transcript rendering, replay, summary, and download behavior out of the core recording script for easier gruff-ts verification.
-- **Gruff Python scope** - excluded one-off NeMo exploration scripts from gruff-py so Python analyzer findings focus on maintained runtime and test code.
-- **Python API structure** - moved live streaming and role-inference queue workflows out of `server.py` while preserving FastAPI routes and browser-visible Mercure behavior.
-- **Python quality gates** - scoped gruff-py to maintained runtime code and kept pytest as the behavioral test-quality gate for integration-heavy Python tests.
-- **PHP complexity gate** - retired the bespoke cyclomatic checker and rewired Composer/preflight complexity checks to gruff-php.
-- **PHP dependency bounds** - required PHP `>=8.3 <9.0` (8.3+ within PHP 8; the deployable image stays on 8.3) and moved `blundergoat/strands-php-client` from the moving `dev-dev` branch to the tagged 1.4 series.
-- **PHP generated reference scope** - excluded the generated Symfony/Psalm `config/reference.php` from gruff-php instead of hand-editing generated output.
-- **PHPUnit strictness** - enabled failure-on-warning, failure-on-deprecation, risky-test, output, and global-state strict flags.
-- **Observable process logs** - added JSON-line logging on Python and PHP with `session_id`/`correlation_id` join keys, Strands SDK token/latency metrics, and Mercure delivery outcomes.
-- **Pinned NeMo image build** - moved the GPU agent image to `nvcr.io/nvidia/nemo:26.02`, pinned `nemo_toolkit[asr]==2.7.3`, and made the container install the checked-in Python requirements file.
-- **Python dependency floors** - raised FastAPI, Uvicorn, Pydantic, HTTPX, websockets, SSE Starlette, soundfile, Strands Agents, pytest, pytest-asyncio, and Ruff floors while keeping numpy at the NeMo-compatible 1.x floor until the GPU image is verified.
-- **WebSocket server backend** - set Uvicorn to `websockets-sansio` in both Dockerfile and Compose entrypoints so local browser sessions use the same backend.
-- **PHP dependency floors** - raised Mercure, Mercure Bundle, PHPUnit, and Infection within the PHP 8.3/Symfony 6.4 lane, and tightened `symfony/dotenv` back to the Symfony 6.4 series.
-- **Clinical summary grounding** - added a CPU-only PoC clinical knowledge helper so generated SOAP summaries can include short documentation reminders without using the NeMo GPU.
-- **Scribe workspace design** - refreshed the consultation UI toward the 0.3.0 mockup with a compact left demo-audio/dev rail, softer clinical palette, pill controls, and a transcript/summary split workspace.
-- **Session summary panel states** - gave the summary panel explicit pending, generating, generated, and failed states with a status badge (`✓ Generated` / `Summary unavailable`) and a retry control, showed the pending placeholder only once transcript text exists, made the panel a fixed non-collapsible header (removed the toggle and chevron), and guarded against overlapping in-flight summary requests per session.
-- **Consultation fonts** - loaded the Libre Franklin (UI) and IBM Plex Mono (dev/log) webfonts so the rendered consultation UI matches the 0.3.0 mockup typography instead of falling back to system fonts.
-- **Demo audio dropdown** - replaced the demo-audio card list with a compact dropdown selector ("consultation-0X · complaint" plus a "PriMock57 consultation · doctor / patient" descriptor) matching the 0.3.0 mockup; picking a clip starts its replay and replay status still marks the chosen option.
-- **Summary prose citations can no longer show invalid minute:second values** - the summary agent's citation rules now state explicitly that bracket timestamps are MM:SS with seconds 00-59 (with a conversion example: 196 seconds is [03:16], never [02:76]) and that segment IDs never appear inside brackets. The invalid formats had appeared twice in manual tests (`[02:98-03:01]`, `[02:76-02:79]`) plus one ID-in-brackets variant; a regenerated summary over a captured 126-row consultation produced 7/7 valid citations with the tightened instructions. Rendered source chips were never affected - this is prose-formatting only.
-- **Post-visit row correction no longer wipes the role badge** - a transcript row correction sent after the reconnect grace window expired used to resurrect empty role state and broadcast it (`mapping={}`, zero confidence), dropping the header badge from `Roles identified (92%)` to `Speakers unclear (0%)` on the consult-03 manual test. The row-override publish now peeks at role state instead of creating it and includes mapping/confidence only for a still-live visit, and the browser applies row corrections without letting a `manual_override` event move the earned confidence badge.
-- **M21/M22 review hardening** - removed an unconditional transcript-bearing streaming-engine debug dump to `/tmp/engine-debug.jsonl`; live Stop now drains even when no rows are visible before finalize flushes the first rows; and late same-speaker or cross-speaker rows now stay chronological inside/coalesced across transcript cards before summary generation reads the DOM.
-- **Role-agent tool payload size** - shrank the Strands `assign_roles` contract so the model passes only session ID, mapping, confidence, and terse reasoning while transcript rows stay in server-side pending state; role updates still publish the same browser `attributed_segments` payload, role-agent input now uses capped per-speaker evidence instead of `transcript_so_far`, and `session.quality` records role truncation events.
-- **Suppressed role-flip handling** - a damped `assign_roles` flip now counts as a successful tool decision, so the role-agent runtime keeps the established DOCTOR/PATIENT mapping instead of falling through to the keyword fallback and applying the suppressed relabel.
-- **Agent session isolation and role overrides** - role and summary Strands agents are now created per call instead of cached as singleton conversation objects, and server-side role mapping now preserves a user's manual speaker correction over later agent proposals.
-- **Manual role override persistence** - speaker-label clicks now post through the same-origin Symfony `/scribe/{sessionId}/roles/override` proxy instead of a browser-to-FastAPI CORS request, so the visible correction is also saved in the server role state.
-- **Structured role and summary agent contracts** - role inference now accepts only the compact `assign_roles` tool path and falls back to the keyword classifier when the tool is not invoked; summary generation now uses a Pydantic structured-output schema, drops the unused `duration_seconds` summary field, and has independent `SUMMARY_AGENT_*` model and token settings.
-- **Python diagnostic log lines** - warning and error logs in the agent now put session IDs, error types, and error text into the plain message line, while exception-backed paths include tracebacks. Added an observability guard so `logger.error("event", extra={...})` regressions fail in pytest instead of hiding details in Docker logs.
-- **Strands callback noise** - role and summary agents now pass the SDK's explicit null callback handler so model reasoning, tool banners, and streamed summary prose do not print into the container log stream.
-- **Ollama host unreachable via stale `.env`** - the agent's `OLLAMA_HOST` is now pinned to the in-network `http://ollama:11434` in `docker-compose.yml` and is no longer overridable by `.env`. A stale `.env` value of `http://host.docker.internal:11434` (unreachable from the agent on WSL2) was silently making every summary 502 and forcing role inference onto the weak keyword heuristic across container recreates.
-- **Demo Audio panel gap** - the demo-audio panel is now content-height (grid `auto` row) so the Upload WAV button sits directly under the selector and the Dev Panel fills the remaining rail, instead of a fixed 42vh panel with a large empty gap.
-- **Consultation viewport layout** - the scribe page now fits the viewport height with the transcript and summary panels scrolling internally, instead of growing past the viewport and producing a page-level vertical scrollbar.
-- **Agent image boto3/botocore conflict** - the NeMo base image's runtime venv (`/opt/venv`) shipped `botocore 1.42.61`, which shadowed the boto3/botocore that `strands-agents` installed into the system site and crashed the FastAPI agent at import (`cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'`), leaving the container unhealthy and blocking `setup-initial.sh`. The `docker/nemo/Dockerfile` now installs a matched `boto3==1.42.61`/`botocore==1.42.61` pair into `/opt/venv`, which also satisfies the base image's `aiobotocore<1.42.62` pin.
-- **Ollama Compose wiring** - the agent now defaults to the bundled `ollama` service (`http://ollama:11434`), which starts with the stack; removed the `local` profile, added a `nemo-agent`→`ollama` dependency, and dropped the host port so it never clashes with a host-side Ollama. Fixes summaries returning 502 and role inference falling back to the heuristic when `host.docker.internal:11434` was unreachable (e.g. on WSL2).
-- **Demo audio replay routing** - added same-origin Symfony proxies for replay and summary requests so the browser receives JSON from FastAPI instead of app-origin HTML errors.
-- **Audible demo audio stop flow** - made Demo Audio replay attach the selected WAV to a browser audio player and added early replay stop/cancel handling before the current automatic summary flow.
-- **Demo audio transcript pacing** - made replay transcript rows reveal from the browser audio clock and send the visible transcript snapshot to stop/summary routes so text cannot outrun what the user hears.
-- **Large demo WAV replay** - raised local PHP upload limits for PriMock fixtures and made replay treat malformed success responses as recoverable UI errors.
-- **Transcript empty state** - hid the start prompt as soon as transcript rows render, including dev-injected replay/test events.
-- **Frontend transcript rendering** - moved transcript, summary, status, and dev-panel output away from HTML-string rendering so model and scenario text is inserted as text.
-- **Deploy workflow actions** - pinned third-party AWS GitHub Actions to reviewed commit SHAs.
-- **Env template placeholders** - replaced realistic-looking committed secret examples with obvious local placeholders and removed copied AWS credential slots from `.env.example`.
-- **Remote health-check secret path** - moved the production API key secret path behind a required `SECRET_PATH` override instead of committing the deployed path.
-- **Multi-mode support** - removed Meeting, Interview, TV/Media, Lecture, and General modes, including the `?mode=` transport parameter, `_session_modes`, mode prompt dictionaries, and the browser mode selector.
-- **Transcript download control** - removed the Download button, keyboard shortcut, and browser-side JSON/TXT export code from the scribe UI.
+Adds corrected transcripts, evidence-linked notes, stronger speaker handling, safer summaries, and
+a more focused medical workflow.
+
+- **Finished visits keep their role state** - Late role reads and corrections no longer recreate
+  empty state or wipe the confidence badge, while manual labels still persist.
+- **Notes stay faithful to the consultation** - Patient uncertainty remains uncertain, assessments
+  use clinician-stated diagnoses, and reported symptoms stay out of examination findings.
+- **Fewer false source warnings** - Source checks now recognise common doctor question
+  introductions without changing live speaker decisions.
+- **Citation links open the transcript** - Source links switch to the Transcript tab, scroll to the
+  evidence, and briefly highlight every cited block.
+- **Compact source popovers** - Each cited section has an accessible source count and popover
+  instead of a row of always-visible citation chips.
+- **Note and Transcript tabs** - The summary panel now shows the generated note and its corrected
+  source transcript in separate keyboard-friendly tabs.
+- **Safe citation diagnostics** - Invalid or missing citations are counted in logs without
+  recording consultation wording.
+- **Readable transcript stitching** - Adjacent rows from the same speaker are grouped for display
+  while keeping their source IDs and timestamps.
+- **Medical term correction enabled** - Common drug and condition corrections are on by default and
+  can still be disabled when required.
+- **No inline citation clutter** - Timestamp and row markers are removed from note prose while
+  structured source links remain available.
+- **Safer corrected-role cleanup** - Weaker wording cues are used only when the original speaker
+  structure is clearly unreliable.
+- **Real-time evaluation pacing** - Correction checks can run at real listening speed, making
+  browser replays the trusted measure of live behaviour.
+- **Word echoes split correctly** - A clinician repeating a patient's content word can be separated
+  from the patient's answer when the timing and wording are clear.
+- **Orphan speaker rows repaired** - Early rows created under temporary speaker identities can be
+  relabelled without overriding clinician corrections.
+- **Streaming enabled for local development** - Local sessions now use the session-long streaming
+  engine by default, while automated checks keep the stable windowed engine.
+- **Native word timing** - Post-visit correction now prefers the speech model's word timestamps
+  over estimated timing.
+- **Identity and echo rows separated** - Patient identity answers can be split from a clinician's
+  repeated acknowledgement when timing evidence is strong.
+- **Narrow timing changes only** - Testing supported word timing for specific echo boundaries but
+  rejected broad transcript realignment.
+- **Corrected-source checker** - A privacy-safe checker now reports corrected rows whose wording
+  conflicts with their visible Doctor or Patient label.
+- **Offline diarisation evaluation** - A repeatable comparison now measures full-recording speaker
+  models before any runtime change is considered.
+- **Post-visit timing confirmed** - Testing showed that word timestamps are safe for correction
+  without enabling the unstable live timestamp path.
+- **Corrected transcript evaluation** - Demo recordings can be replayed, corrected, scored, and
+  compared with the live transcript in one run.
+- **Correction before summary** - Stopping a visit now creates a corrected transcript before
+  generating the note, with a safe fallback to live rows.
+- **Corrected transcript access** - The exact corrected transcript used by summaries can be fetched
+  for review and testing.
+- **Evidence-linked summaries** - Notes prefer corrected rows and include validated links back to
+  the transcript evidence.
+- **Session-long streaming engine** - One speaker cache now follows the whole visit, greatly
+  reducing mid-visit Doctor and Patient label swaps.
+- **Stop waits for final words** - Ending a recording keeps the event stream open briefly so the
+  final transcript rows reach the browser and note.
+- **Late role changes recorded** - Speaker changes that arrive after finalisation are counted
+  without altering existing quality records.
+- **Per-row speaker correction** - Clinicians can correct one transcript line without relabelling
+  every row from the same speaker.
+- **Session quality records** - Completed visits record timing, transcript delivery, speaker
+  stability, role confidence, and errors without storing clinical wording.
+- **Repeatable demo evaluation** - Demo recordings can be streamed through the real path and
+  compared with earlier quality results.
+- **Speaker attribution scoring** - Evaluation now measures whether each clean transcript row is
+  assigned to the right role.
+- **Clearer role diagnostics** - Reports separate speech-model speaker mixing from role-mapping and
+  fallback errors.
+- **Honest mapping limits** - Quality reports now distinguish realistic two-role accuracy from a
+  looser diagnostic best case.
+- **Word-level quality measures** - Reports include word errors, overlap performance, fragment
+  density, and repeated seam wording.
+- **Reference transcripts added** - Demo consultations now have matching speaker-labelled reference
+  transcripts for objective scoring.
+- **Helpful summary errors** - Failed notes show practical model-recovery guidance instead of a
+  generic error.
+- **Live model warnings** - The interface warns during a visit when the role or summary model
+  cannot be reached.
+- **Model check before recording** - Recording and replay stop early with clear guidance when the
+  required AI model is unavailable.
+- **Connection status in the Dev Panel** - A simple indicator shows whether the live event stream
+  is connected.
+- **Stable speaker-confidence badge** - The badge now settles after inference and clearly
+  distinguishes identified, uncertain, and unclear roles.
+- **Log and evaluation reports** - New tools summarise process health and role quality without
+  requiring GPU access for every check.
+- **Current stack documented** - The active models, services, topics, and key dependencies are
+  described in one place.
+- **Clinical intelligence documented** - Medical term correction and summary grounding are
+  explained with their safety limits and controls.
+- **Synthetic demo consultations** - Five licence-safe recordings cover chest pain, role changes,
+  extra speakers, drug names, and monologues.
+- **Optional medical phrase correction** - A reviewed medical lexicon can correct common
+  speech-recognition mistakes after transcription.
+- **Clinical hints tested** - A review-only hints panel was introduced during development and later
+  removed from the release.
+- **Source-check reports saved** - Corrected transcript evaluations now include both readable and
+  structured source-label results.
+- **Automatic correction on Stop** - Live and replay sessions start correction and summary
+  generation as soon as finalisation completes.
+- **Mixed rows split more safely** - Clear doctor prompts and patient answers are separated while
+  uncertain identity echoes remain together.
+- **Better corrected role labels** - Strong first-person, body-location, and short-answer cues can
+  repair obvious source-label mistakes.
+- **More stable corrected alignment** - Short consumed words no longer push later corrected text
+  into the wrong speaker rows.
+- **Mixed cards ask for review** - A transcript card with conflicting row roles shows a neutral
+  review label instead of a confident speaker label.
+- **Clinical hints removed** - The hints panel, event feed, and summary payload were removed;
+  medical summary grounding remains.
+- **Offline diarisation not promoted** - Full-recording speaker models did not meet the
+  role-attribution bar, so runtime behaviour stayed unchanged.
+- **External diarisation remains gated** - The optional external model was not tested because its
+  dependency and access requirements were not approved.
+- **Full-audio Sortformer rejected** - It reduced some word errors but created too many speaker
+  identities and sharply reduced role accuracy.
+- **Broad word-timed alignment rejected** - It improved wording but moved too many rows to the
+  wrong role, so it remains evaluation-only.
+- **Seam trimming rejected** - Removing repeated seam wording also increased overall word errors,
+  so the change was reverted.
+- **Anchor-based correction alignment** - Corrected text now follows live-text anchors and keeps
+  visible rows that the second pass misses.
+- **Summary requests preserve history** - Browser rows are merged into stored transcript history
+  instead of replacing rows the browser did not receive.
+- **Clear finalisation logs** - Window logs now distinguish normal chunks from the final transcript
+  flush.
+- **Held-tail speaker anchor rejected** - Reusing earlier held rows did not improve speaker
+  accuracy, so the experiment was removed.
+- **Less biased role inference** - Automatic mappings are no longer fed back into the role prompt,
+  reducing the chance that an early mistake reinforces itself.
+- **Automatic row exceptions** - Clear wording cues can relabel or mark individual rows uncertain
+  without touching clinician corrections.
+- **Stricter trend reports** - Evaluation tables lead with strict role accuracy, uncertainty,
+  confident errors, and realistic mapping limits.
+- **Row-based summary input** - Summaries receive each corrected transcript row rather than a
+  merged card that can hide role differences.
+- **Honest role badge** - Green confidence now requires both a confident mapping and stable speaker
+  identities; unstable sessions ask for label review.
+- **Stable evaluation history** - Reports wait for late role decisions before scoring the labels a
+  clinician would actually see.
+- **Strict Doctor and Patient metrics** - Unknown rows remain in the accuracy denominator so
+  uncertainty cannot inflate the headline score.
+- **Speaker continuity diagnostics** - Privacy-safe window records show how speaker identities were
+  matched, merged, or remapped.
+- **Row-level attribution diagnostics** - Each scored row can be traced to its expected role,
+  visible role, overlap state, and speaker window.
+- **Safer medical corrections** - Phrase fixes preserve capitalisation, tolerate missing data, and
+  disable risky replacements until reviewed.
+- **Medical correction coverage** - Quality checks fail when an active correction lacks reviewer
+  context or drifts from the approved list.
+- **Reviewed PHP quality exception** - Quality tooling accepts the temporary client constraint
+  without hiding unrelated PHP issues.
+- **Fewer transcript fragments** - Adjacent word-sized pieces from the same speaker are joined
+  before they reach the browser.
+- **Cleaner punctuation spacing** - Missing spaces after sentence punctuation are repaired before
+  transcript rows are displayed.
+- **Overlap benchmark guarded** - A separated-channel evaluation was kept limited after larger runs
+  exhausted GPU memory and destabilised the speech model.
+- **Local context validation retained** - The CI wrapper was removed, while the same context check
+  remains available for local workflow changes.
+- **Unsafe seam changes rejected** - Word timestamps destabilised live GPU transcription, and a
+  higher release threshold risked losing short speech.
+- **PHP client updated** - The client now records body-safe response counts and retries temporary
+  proxy failures with a short delay.
+- **Efficient windowed transcription** - Only new audio is transcribed, removing duplicate output
+  and repeated full-session GPU work.
+- **Focused speaker-quality scope** - This release contains phantom-speaker control, clearer
+  confidence, and role-flip damping; seamless identity tracking remains future work.
+- **Two-speaker containment** - Extra temporary speaker IDs are merged back into the established
+  Doctor and Patient identities.
+- **More balanced workspace** - Transcript, summary, hints, developer tools, and demo controls use
+  the available screen space more effectively.
+- **Optional local model service** - The local model starts only when selected, keeping
+  cloud-backed development stacks smaller.
+- **Structured agent logs by default** - Local services emit searchable JSON logs, with plain
+  console output still available.
+- **Replay uses the live pipeline** - Demo audio now follows the same paced WebSocket and event
+  path as a microphone session.
+- **Medical-only agent workflow** - Role inference and summaries now always use Doctor, Patient,
+  and medical-note behaviour.
+- **Medical-only interface** - Non-medical mode selection and transport options were removed from
+  the browser.
+- **Medical-only demos** - Meeting, interview, broadcast, and lecture scenarios were removed from
+  the demo set.
+- **Simpler demo picker** - Generated consultation recordings are selected from one built-in menu
+  instead of separate scenario controls.
+- **Curated demo recordings** - Recordings that were unsuitable for the default medical demo set
+  are no longer generated.
+- **Full-length replay clips** - Demo consultations now cover the full encounter, with an upper
+  duration limit to protect GPU memory.
+- **Focused TypeScript analysis** - Vendored frontend code is excluded so findings cover maintained
+  application code.
+- **Smaller frontend modules** - Transcript, replay, summary, and download behaviour were split out
+  of the main recording script.
+- **Focused Python analysis** - One-off speech-model experiments are excluded from maintained
+  runtime checks.
+- **Smaller Python API module** - Streaming and role queues moved out of the main server module
+  without changing public behaviour.
+- **Python behaviour remains the test gate** - Runtime analysis focuses on maintained code while
+  integration behaviour stays covered by tests.
+- **Standard PHP complexity checks** - The custom complexity script was replaced with the shared
+  PHP analyser.
+- **Clear PHP version bounds** - The project now requires PHP 8.3 within the PHP 8 series and uses
+  a tagged client release.
+- **Generated PHP reference excluded** - Generated framework reference data is no longer treated as
+  maintained source code.
+- **Stricter PHPUnit runs** - Warnings, deprecations, risky tests, unexpected output, and global
+  state now fail the suite.
+- **Joined service logs** - PHP and Python logs share session and request identifiers plus safe
+  timing and delivery details.
+- **Pinned speech-model image** - The GPU image and speech toolkit versions are fixed for
+  repeatable builds.
+- **Updated Python dependencies** - Supported service and test libraries were raised while keeping
+  the speech model's compatible numeric stack.
+- **Consistent WebSocket backend** - Local and container runs now use the same server
+  implementation.
+- **Updated PHP dependencies** - Messaging, testing, and framework packages use newer compatible
+  versions within the supported PHP lane.
+- **Grounded clinical summaries** - A CPU-only knowledge helper can add short documentation
+  reminders without using the speech GPU.
+- **Refreshed scribe design** - The consultation screen has a softer clinical palette, compact
+  controls, and a clearer transcript-summary split.
+- **Clear summary states** - The note panel now shows pending, generating, ready, and failed states
+  with guarded retries.
+- **Consistent consultation fonts** - The interface and developer logs use the intended UI and
+  monospace typefaces.
+- **Compact demo dropdown** - Demo selection now uses a concise consultation menu with upload
+  support.
+- **Valid prose timestamps** - Summary instructions now require real minute-and-second ranges and
+  keep row IDs out of bracketed prose.
+- **Row corrections keep the badge** - Correcting a row after a visit no longer clears the earned
+  role-confidence state.
+- **Streaming review fixes** - Transcript-bearing debug output was removed, empty-start
+  finalisation now drains correctly, and late rows stay chronological.
+- **Smaller role-agent requests** - The model receives compact speaker evidence while full
+  transcript rows remain on the server.
+- **Suppressed flips stay suppressed** - A rejected role change no longer falls through to a weaker
+  fallback that applies the same change.
+- **Isolated agent sessions** - Role and summary agents no longer share conversation state, and
+  clinician overrides win over later suggestions.
+- **Persistent manual role changes** - Browser label changes now travel through the application and
+  are stored on the server.
+- **Structured agent responses** - Role assignment and note generation use explicit schemas with
+  independent model settings.
+- **Useful Python error lines** - Warning and error messages include safe session and error
+  details, with tracebacks where available.
+- **Quieter model callbacks** - Internal model reasoning and tool banners no longer spill into
+  container logs.
+- **Reliable local model address** - The agent always uses the in-network local-model address
+  instead of a stale host setting.
+- **Tighter demo panel spacing** - Upload controls now sit directly below the selector and
+  developer tools use the remaining height.
+- **Viewport-sized consultation screen** - Transcript and summary panels scroll internally instead
+  of creating a page-level scrollbar.
+- **Compatible cloud libraries** - The GPU image now installs a matching cloud SDK pair and starts
+  without the previous import failure.
+- **Bundled local model wiring** - The local model starts with the application when needed and no
+  longer exposes a conflicting host port.
+- **Same-origin replay requests** - Replay and summary calls go through the application so browser
+  errors stay valid JSON.
+- **Audible replay stop** - Demo audio has a browser player and can be stopped or cancelled before
+  automatic summary generation.
+- **Replay follows the audio clock** - Transcript rows appear in step with audible playback and
+  summaries use only visible rows.
+- **Large replay uploads supported** - Local upload limits now handle full demo recordings and
+  malformed responses fail cleanly.
+- **Transcript empty state fixed** - The start prompt disappears as soon as any transcript rows
+  arrive.
+- **Safe frontend rendering** - Transcript, summary, status, and developer text are inserted as
+  text instead of raw HTML.
+- **Pinned deployment actions** - Third-party deployment actions use reviewed commit versions.
+- **Obvious secret placeholders** - Example environment values no longer resemble real credentials.
+- **Configurable health-check secret** - Production health checks require an explicitly configured
+  secret path.
+- **Non-medical modes removed** - Meeting, interview, broadcast, lecture, and general workflows
+  were removed from the product.
+- **Transcript download removed** - The download button, shortcut, and browser export code were
+  removed.
 
 ## v0.2.0 - 2026-03-16
 
-Release covering tool-based role mapping, summaries, replay, transcript grouping, scenario gates, JS extraction, UI polish, developer guidance, multi-mode role inference, local-first defaults, SQLite persistence, manual speaker overrides, and full-stack hardening.
+Introduces role mapping, summaries, replay, persistence, reconnect support, stronger quality
+checks, and local-first development.
 
-- **Gruff quality analyzers** - added TypeScript, Python, and PHP dev analyzers: `@blundergoat/gruff-ts`, `gruff-py`, and `blundergoat/gruff-php`.
-- **Agent-neutral instruction layer** - added reusable AI guidance in `ai/instructions/` plus routing docs for agents that do not depend on Claude Code or Codex runtime files.
-- **CI validation** - added router-table and skills-directory checks, plus a quick-reference commit instruction file.
-- **`@tool` role assignment** - added Strands tool support for role state management while keeping the free-text JSON fallback.
-- **Session summaries** - added six mode-specific summary prompts, `POST /session/{id}/summary`, Mercure summary publishing, UI display, and transcript export support.
-- **Replay demo mode** - added WAV upload replay through NeMo with paced Mercure events, speed control, progress UI, and automatic role inference.
-- **Transcript grouping** - merges consecutive same-speaker segments into chat blocks that relabel and download correctly.
-- **Scenario assertions** - added duration, content, and fixture-structure validation for the scenario runner.
-- **Ollama tool-calling footgun** - documented models that support `assign_roles`, including `qwen3.5:9b`.
-- **Frontend extraction** - moved production code to `public/js/scribe.js` and dev-only panel code to `public/js/scribe-dev.js`.
-- **Developer instrumentation** - added WebSocket frame/byte counters, Docker hot reload, template rebuild guidance, five multi-mode scenarios, and 37 Python tests.
-- **Mode-aware role inference** - added six mode-specific prompts, browser-passed mode, context labels, and per-mode agent caching.
-- **Role inference fallback** - falls back from LLM agent to mode-specific heuristics, then to graceful no-role output.
-- **Manual speaker override** - lets users cycle roles, publishes overrides to Mercure, locks confirmed speakers, and exposes `POST /session/{id}/roles/override`.
-- **SQLite persistence** - added `StorageBackend`, SQLite and memory backends, `SESSION_STORAGE=sqlite|memory`, WAL mode, and Docker data persistence.
-- **Reconnect support** - added WebSocket reconnect grace, session resume, and Mercure Last-Event-ID event IDs.
-- **Speaker and role UX** - added hallucination filtering, cold-start animation, flip toast, audio-level feedback, clipping warnings, keyboard shortcuts, and transcript accessibility attributes.
-- **Runtime cleanup and protocol fields** - added orphan cleanup plus `segment_id`, `revision`, and `supersedes` fields for future reconciliation.
-- **Local runtime support** - added optional CPU Ollama service, bundled Tailwind, Python hot reload, and expanded SQLite, role inference, hallucination, and session tests.
-- **BREAKING: PHP baseline is now 8.3+.** Upgrade local, CI, and deployment PHP from 8.2 to 8.3 before running Composer; this has no deprecation window because the PHP Gruff dev tool requires PHP 8.3.
-- **Ollama default model** - changed `llama3.1:8b` to `qwen3.5:9b` to match local pulls, `.env.example`, and Docker Compose.
-- **Role inference worker** - detects tool invocation via mapping-history growth and avoids duplicate role mapping application.
-- **Role inference prompt and agent setup** - instructs tool calling with JSON fallback and passes `assign_roles` in the agent tool list.
-- **Role flip detection** - moved client-side so Mercure reporting reflects visible mapping changes.
-- **Developer scripts and labels** - simplified `start-dev.sh` flags and renamed TV/General start labels.
-- **Agent guidance** - made Ask First paths, commit areas, evals, and lessons more project-specific.
-- **Default role provider** - changed `ROLE_AGENT_MODEL_PROVIDER` from `bedrock` to `ollama` for local-first startup.
-- **Confidence scoring** - uses a rolling last-five window instead of lifetime average.
-- **Transcript context** - sends the first 500 and last 3000 characters to preserve opening context.
-- **Agent parsing and prompt state** - extracts JSON from preamble text and caps mapping history to five entries.
-- **Inference queue** - uses `maxsize=50` with non-blocking enqueue and drops overflow batches.
-- **Async/runtime internals** - replaced deprecated event-loop access, reused one Mercure `httpx.AsyncClient`, switched `AudioBuffer` to `deque`, optimized relabeling by speaker map, and simplified session destruction.
-- **`ROLE_INFERENCE_SYSTEM_PROMPT`** - removed the unused backwards-compatibility alias.
-- **Legacy live role SSE path** - removed the PHP `/roles/stream` endpoint, `RoleInferenceService::streamRoleInference()`, `RoleInferenceResult`, `fetchAuthoritativeSnapshot()`, and the Python `/session/{id}/roles/stream` endpoint.
-- **Unused SSE support** - removed `sse-starlette` imports and SSE consumer tracking.
-- **`docker-compose.no-gpu.yml`** - removed the unused no-GPU compose file because the app requires GPU transcription.
-- **Instruction drift** - fixed the `blundergoat/strands-php-client` package name, footgun cross-reference, and CI instruction-file triggers.
-- **Session cleanup** - clears confidence pulse, dev panel logs, speaker maps, summaries, and replay state.
-- **Download fallback** - collects text from grouped segment spans instead of a single segment node.
-- **E2E contracts** - uses UUID session IDs, checks the `/summary` endpoint, and asserts the extracted `scribe.js` reference.
-- **Python tests** - repaired stale imports, fixtures, UUIDs, and `AudioBuffer` API expectations.
-- **File upload security** - replaced user-shaped temp paths with `NamedTemporaryFile`.
-- **Session ID validation** - rejects malformed IDs with HTTP 400 on all endpoints.
-- **Error privacy** - publishes generic Mercure errors and truncates role inference logs with `error_type`.
-- **Frontend/runtime issues** - declared `pcmStreamer`, filtered health-check log spam, and made the ready banner use configured ports.
-- **230 Python unit tests** cover tool/free-text role mapping, flip detection, agent creation, summaries, replay, heuristics, and scenario fixtures.
-- **25 E2E contract tests** cover agent health, sessions, WebSocket, file transcription, PHP proxy, Mercure pub/sub, lifecycle, and cross-service shape matching.
-- Session IDs are UUID-validated on all API endpoints.
-- Temp files use secure generated paths.
-- Mercure error messages are sanitized.
-- Transcript content is stripped from application logs.
+- **Code quality analysers** - Added maintained-code checks for TypeScript, Python, and PHP.
+- **Agent-neutral guidance** - Shared instructions can be used by different coding agents without
+  depending on one runtime.
+- **CI validation** - Automated checks now validate instruction routing and skill directories.
+- **Tool-based role assignment** - The role agent can submit structured speaker mappings while
+  retaining a text fallback.
+- **Session summaries** - Visits can produce structured summaries and publish them to the
+  interface.
+- **Replay mode** - WAV recordings can be replayed through transcription with pacing, progress, and
+  role inference.
+- **Transcript grouping** - Consecutive rows from the same speaker are shown as one readable block.
+- **Scenario validation** - Demo scenarios now check duration, expected content, and recording
+  structure.
+- **Local model guidance** - Documentation identifies local models that support structured role
+  assignment.
+- **Smaller frontend scripts** - Production and developer-only behaviour were moved out of the page
+  template.
+- **Developer instrumentation** - Added connection counters, hot reload, scenario coverage, and
+  broader Python tests.
+- **Mode-aware roles** - Role prompts can reflect the selected consultation mode.
+- **Graceful role fallback** - Role inference falls back from the model to simple rules, then to an
+  unknown result.
+- **Manual speaker labels** - Users can correct speaker roles and keep confirmed labels stable.
+- **SQLite persistence** - Sessions can use durable SQLite storage or in-memory storage.
+- **Reconnect support** - WebSocket and event-stream sessions can resume after brief connection
+  loss.
+- **Improved role interface** - Added clipping warnings, shortcuts, audio feedback, flip notices,
+  and accessible transcript labels.
+- **Safer session cleanup** - Old sessions are removed and transcript rows carry stable revision
+  identifiers.
+- **Local runtime support** - Added a bundled local model, frontend assets, hot reload, and wider
+  integration coverage.
+- **PHP 8.3 required** - Local, CI, and deployment environments must use PHP 8.3 or newer within
+  PHP 8.
+- **New local model default** - The default changed to a model with reliable tool-calling support.
+- **More reliable tool detection** - Role inference recognises successful structured calls without
+  applying the same mapping twice.
+- **Clearer role prompt** - The model is asked to use the structured tool first and JSON only as a
+  fallback.
+- **Browser-side flip detection** - Visible role changes are measured where the user actually sees
+  them.
+- **Simpler developer commands** - Startup options and scenario labels were made clearer.
+- **Project-specific agent guidance** - Instructions now reflect this application's boundaries,
+  checks, and release process.
+- **Local-first role provider** - New development environments prefer the bundled local model.
+- **Recent confidence matters most** - Role confidence uses the latest five decisions instead of
+  the whole session.
+- **Better transcript context** - Role inference keeps the opening and most recent wording when
+  input must be shortened.
+- **Bounded agent state** - Model responses can include surrounding text, while mapping history
+  remains capped.
+- **Bounded inference queue** - Overloaded role work is dropped instead of growing without limit.
+- **Lighter runtime internals** - Shared HTTP clients, queues, and audio buffers use simpler and
+  more efficient patterns.
+- **Old prompt alias removed** - The unused compatibility setting for the role prompt was deleted.
+- **Legacy role stream removed** - The obsolete server-sent role stream and its client code were
+  deleted.
+- **Unused event-stream package removed** - Remaining unused server-sent-event support was removed.
+- **Unused no-GPU compose file removed** - The application now has one supported GPU-based stack.
+- **Instruction names corrected** - Package names, references, and CI triggers now match the live
+  project.
+- **Complete session reset** - Reset clears role, summary, replay, confidence, and developer-panel
+  state.
+- **Reliable transcript downloads** - Exports collect text from every row in a grouped speaker
+  block.
+- **Updated end-to-end contracts** - Integration checks use valid session IDs and current summary
+  and frontend behaviour.
+- **Repaired Python tests** - Stale imports, test data, IDs, and audio-buffer expectations were
+  updated.
+- **Secure upload files** - Uploaded audio uses generated temporary paths instead of user-shaped
+  names.
+- **Validated session IDs** - Malformed IDs are rejected consistently across all API endpoints.
+- **Private error delivery** - Browser errors are generic and logged model details are shortened.
+- **Frontend and runtime fixes** - Corrected missing browser state, noisy health logs, and
+  configured port display.
+- **230 Python unit tests** - Role mapping, summaries, replay, fallbacks, and session behaviour
+  have direct coverage.
+- **25 end-to-end checks** - Health, sessions, streaming, uploads, proxies, events, and lifecycle
+  contracts are covered.
+- **UUID-only sessions** - Every API endpoint validates session identifiers.
+- **Secure temporary files** - Temporary uploads use unpredictable generated paths.
+- **Sanitised event errors** - Published errors do not expose internal exception details.
+- **No transcript text in logs** - Application logs exclude consultation content.
 
 ## v0.1.0 - 2026-03-15
 
-First release: real-time audio transcription with speaker diarisation, role inference, and a developer scenario runner that works without GPU hardware.
+First release of real-time medical transcription with speaker roles, summaries, and developer
+testing tools.
 
-- **Transcription UI** - added the Twig page with live transcript, recording controls, timer, JSON/text download, and reset.
-- **Modes and theme** - added Medical, Meeting, Interview, TV/Media, Lecture, and General modes plus persisted light/dark theme.
-- **Streaming clients** - added Mercure `StreamOrchestrator`, browser-side `PcmStreamer`, and WebSocket reconnect logic.
-- **Role inference** - added Strands role updates, retroactive relabeling, and confidence badges.
-- **Dev panel** - added dev-only scenario, transcript, inspector, pipeline, Mercure, WebSocket, state, and raw-event views.
-- **Scenario runner** - added eight fixture-driven scenarios with validation, batch execution, progress, and JSON export.
-- **Backend and agent APIs** - added ScribeController routes, FastAPI WebSocket ingest, NeMo diarisation, Mercure publishing, session lifecycle, and role assignment tooling.
-- **Infrastructure and tooling** - added Terraform, GPU Docker Compose, Mercure, setup/start/preflight/health/load/e2e/context scripts, quality gates, PHPUnit, pytest, Playwright scaffolding, and project docs.
-- `start-dev.sh` no longer crashes on unbound variables or undefined functions.
-- Dev panel segment data updates retroactively.
-- StreamOrchestrator `_active` flag ordering is correct.
-- Python hot-reload uses the correct Docker volume mount path.
+- **Transcription interface** - Added live transcript, recording controls, timer, downloads, and
+  reset.
+- **Modes and themes** - Added six session modes plus saved light and dark themes.
+- **Streaming clients** - Added browser audio streaming, live events, and WebSocket reconnection.
+- **Role inference** - Added automatic role labels, past-row relabelling, and confidence badges.
+- **Developer panel** - Added scenario, transcript, connection, pipeline, state, and raw-event
+  views.
+- **Scenario runner** - Added eight validated scenarios with progress and JSON export.
+- **Backend services** - Added application routes, live audio ingest, speech recognition, events,
+  session lifecycle, and role tools.
+- **Infrastructure and testing** - Added containers, deployment setup, health checks, load checks,
+  unit tests, and browser-test scaffolding.
+- **Reliable local startup** - Startup no longer fails on missing shell variables or helper
+  functions.
+- **Retroactive developer updates** - The developer panel now reflects later transcript
+  corrections.
+- **Correct stream state** - The browser marks the stream active in the correct order.
+- **Working Python hot reload** - The development container now mounts the correct source path.
