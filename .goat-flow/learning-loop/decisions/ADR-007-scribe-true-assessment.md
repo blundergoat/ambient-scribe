@@ -1,7 +1,7 @@
 # ADR-007: Assessment Section Is Scribe-True (Clinician-Stated Only)
 
 **Date:** 2026-07-07
-**Status:** Accepted (user decision, 0.4.0 M00)
+**Status:** Accepted (user decision, 0.4.0-slice-1 M00)
 
 ## Context
 

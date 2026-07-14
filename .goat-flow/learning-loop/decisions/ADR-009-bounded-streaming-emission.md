@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-07-13
-**Ticket/Context:** 0.4.1 M06 long-turn emission starvation
+**Ticket/Context:** 0.4.0-slice-2 M06 long-turn emission starvation
 
 ## Context
 

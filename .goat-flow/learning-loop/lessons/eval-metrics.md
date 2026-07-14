@@ -176,7 +176,7 @@ the plan was drafted but matched four WAVs after the local corpus expanded. The 
 correctly exited 2, while the outer loop repeated the same failure three times because its
 example omitted `set -e`.
 **Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "matched multiple files"),
-`.goat-flow/plans/0.4.0/M02-eval-vs-browser-live-gap.md` (search: "Phase 1 - zero-code
+`.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search: "Phase 1 - zero-code
 5-second/1x discriminator").
 **Prevention:** Persist exact fixture slugs or direct paths in plans and handoffs, even when a
 short consultation number is unique today. Put multi-run eval loops under `set -e`, and run
@@ -190,7 +190,7 @@ before the corrected-fixture runner requested post-visit correction. The request
 past the documented 120-second budget while reconnect grace expired, even though the live
 replay and timeline were already complete. M02 did not need correction to diagnose roles.
 **Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction" and
-"write_role_timeline"), `.goat-flow/plans/0.4.0/M02-eval-vs-browser-live-gap.md` (search:
+"write_role_timeline"), `.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search:
 "Authoritative settled-role rerun").
 **Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
 fixed diagnostic waits and give its client an explicit timeout. Use the live-only evaluator
@@ -203,7 +203,7 @@ for live-lane diagnostics instead of making unrelated correction success a prere
 improvements, zero worsened spans, and no new identities, then reproduced all three flag-OFF
 hashes. The canonical 20-fixture run still regressed corrected strict by 1.290 points and raised
 incorrect-confident by 1.645 points, with large failures on two non-target c07 fixtures.
-**Evidence:** `.goat-flow/plans/0.4.1/M04-crosstalk-bleed-mechanism.md` (search:
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search:
 "Stable-alias candidate rejected and removed") and
 `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-full-corpus-gate-verdict.md`.
 **Prevention:** Treat named causal fixtures as mechanism proof, not release coverage. A visit-long
@@ -216,7 +216,7 @@ and default-OFF compatibility are exact.
 **What happened:** M05's exact guard-ON replay scored zero safe repeats, but logged no withheld row;
 the retained 67-row/3-phantom target instead became 63 rows/10 phantoms and its original pair was
 not reproduced. The zero could not be attributed to the guard or prove no word loss.
-**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search:
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search:
 "duplicate_row_withheld event").
 **Prevention:** Require the causal guard event plus a matched before/after target. A zero detector
 count alone is not improvement when the input behavior or adjacent identity metrics changed.
@@ -243,7 +243,7 @@ but the 20-fixture run found four 20-25-second first-batch intervals. The worst 
 stable clock-ready rows yet only 9.8 seconds of measured hold, so a strict 10-second comparison
 waited for the next five-second evaluation step.
 **Evidence:** `var/quality/full-corpus-20260712T233933Z/m06-delivery-violation-details.txt` and
-`.goat-flow/plans/0.4.1/M06-emission-starvation.md` (search: "CORPUS GATE REGRESSION").
+`.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "CORPUS GATE REGRESSION").
 **Prevention:** When a policy is evaluated only on a fixed cadence, project and test boundary
 values just below the threshold as well as long established holds. Include time-to-first-row in
 the corpus delivery gate; mid-consultation target fixtures do not cover startup quantization.

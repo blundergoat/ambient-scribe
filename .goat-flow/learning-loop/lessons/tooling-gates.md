@@ -37,7 +37,7 @@ review. Prefer in-place hunks when a full replacement is unnecessary.
 the rejected behavior. The changed-symbol hook then surfaced the class's pre-existing size debt
 as changed scope even though no behavior remained.
 **Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope") and
-`.goat-flow/plans/0.4.1/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
+`.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
 **Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
 but do not widen a debt-heavy symbol to chase formatter debt outside scope.
 
@@ -72,8 +72,8 @@ user-visible acceptance metric.
 **What happened:** M05's flag-OFF c02 stream finalized with zero quality errors, but the correction
 HTTP call timed out after 120 seconds before producing the artifact needed for canonical hashing.
 Health and CUDA stayed live, so neither a matching nor mismatching byte result existed.
-**Evidence:** `.goat-flow/plans/0.4.1/M05-dual-identity-duplicates.md` (search: "120.002 seconds")
-and `.goat-flow/plans/0.4.1/M06-emission-starvation.md` (search: "120.001 seconds"). M06 repeated
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search: "120.002 seconds")
+and `.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "120.001 seconds"). M06 repeated
 the boundary with max-hold behavior explicitly off, confirming it is not a byte or release-policy
 result.
 **Prevention:** Separate correction availability from byte comparison: retain the timeout timeline,
@@ -219,7 +219,7 @@ During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` report
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import"), `.goat-flow/plans/0.4.0/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections").
+**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import"), `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections").
 
 Full pytest caught that the test helper loaded `scripts/analyze-logs.py` with `importlib.util.module_from_spec()` but did not register it in `sys.modules` before executing the module. Python dataclasses resolving postponed annotations then failed during import.
 
@@ -232,7 +232,7 @@ probe template, not only in one test helper.
 ## Lesson: Provider probes must modify the SDK-formatted request in place
 
 **Created:** 2026-07-10
-**Evidence:** `.goat-flow/plans/0.4.0/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections"), `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
+**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections"), `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
 
 The first M08 Bedrock token-cap probe passed a new `inferenceConfig` beside the request generated
 by the installed Strands formatter. That formatter had already embedded `inferenceConfig`, so the

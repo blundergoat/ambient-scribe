@@ -430,8 +430,8 @@ image fails at startup instead of silently skipping publishes.
 
 ## Lesson: "Peek instead of create" needs a liveness signal when the call is a write (2026-07-07)
 
-Replacing `get_or_create_state` with `peek_state` in the speaker-scope role override (0.4.0
-M04) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
+Replacing `get_or_create_state` with `peek_state` in the speaker-scope role override
+(0.4.0-slice-1 M04) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
 role worker has created any state, and peek-only meant that early override never became a
 confirmed override - the next agent update could undo the clinician. An existing regression
 (`tests/python/test_api.py`, search: "survives_later_agent_update") caught it immediately.
@@ -482,7 +482,7 @@ it was stopped only after the WAV duration and field cutoff were compared. M05 r
 cutoff error through headless UI timing: a 132.8-second target reached 215.6 seconds while tool
 polls lagged the faster audio clock, and the first stale control click hit hidden microphone Start
 instead of replay Stop. The eventual Stop also triggered one automatic 6,401-token summary.
-**Evidence:** `.goat-flow/plans/0.4.0/M11-note-phrasing-fidelity.md` (search: "initial
+**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M11-note-phrasing-fidelity.md` (search: "initial
 uncapped replay") and
 `var/quality/m05-dual-identity-duplicates-20260712T060345Z/instrumented-browser-20260712T081246Z/mechanism-verdict.md`.
 **Prevention:** Before a real-time fixture recapture, record both the WAV duration and the

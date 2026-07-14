@@ -3,7 +3,7 @@
 **Status:** Rejected (revision 2 repeated the c07 spot non-regression failure)
 **Date:** 2026-07-14
 **Updated:** 2026-07-14 (approved isolated c07 retry reproduced the failed gate)
-**Ticket/Context:** 0.4.1 M07 role-map bifurcation
+**Ticket/Context:** 0.4.0-slice-2 M07 role-map bifurcation
 
 ## Context
 

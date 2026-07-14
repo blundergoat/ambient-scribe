@@ -3,7 +3,7 @@
 **Status:** Rejected
 **Date:** 2026-07-12
 **Updated:** 2026-07-12 (corpus quality regressed; keep both candidates disabled)
-**Ticket/Context:** 0.4.1 M04
+**Ticket/Context:** 0.4.0-slice-2 M04
 
 ## Context
 

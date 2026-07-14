@@ -1,225 +1,30 @@
 # Changelog
 
-All notable changes to Ambient Scribe are documented in this file.
+## v0.4.0 - unreleased
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+0.4.0 was delivered in two plan slices: slice 1 (eval trust, fresh baselines, post-UX polish; `.goat-flow/plans/0.4.0-slice-1/`) and slice 2 (corpus-driven quality and first readiness steps; `.goat-flow/plans/0.4.0-slice-2/`). Each entry names its slice and milestone.
 
-## [0.4.1] - unreleased
+- **Corpus and evidence harness hardening (slice 2 M01)** - corrected-fixture `--all` and multi-fixture runs record an unavailable correction as PHI-safe failure artifacts, show `FAILED` corrected metrics plus the safe reason in the final table, continue through later fixtures, and end with a stable `fixtures=N ok=N failed=N` sentinel; named single-fixture gates remain fail-fast. Correction failures report the failed chunk and planned chunk count through exception metadata, the API response, and structured logs. The isolated browser runner uses parallel PHP workers plus a test-only static-asset router, replacing the asset-drop-prone single-server lane.
+- **Composite denial checks follow the user's complete screening answer (slice 2 M02)** - generated-note fidelity checks join bounded clinician question fragments before judging a short patient denial, so one composite sentence can verify each independently answered topic across corrected-row splits. A leading patient `No` folded onto the next clinician row is recovered, denial scope stops before a contrasting reported symptom, and a later `No` cannot overwrite an earlier affirmative answer. The known c03 false warnings now pass while unanswered questions, clinician-only negatives, and the equivocal weight-change claim stay protected; a five-generation c03 campaign audited 16 denial claims with zero unsupported denials, zero false flags, and zero missed fabrications (fidelity suite: 80 tests).
+- **Low-confidence wording is visibly reviewable without rewriting the note (slice 2 M03)** - corpus-derived strict thresholds mark live rows below `0.76` and corrected rows below `0.78` with a local dotted tint, keyboard focus, and an accessible explanation in both themes; absent and exact-boundary confidence stay plain. Generated prose remains byte-identical: an additive `sections[].low_confidence` field marks only sentences whose linked, measured corrected rows are predominantly sub-threshold (tooltip `Low-confidence transcription`). A zero-token A/B selected this deterministic flag over prompt-side hedging; re-renders across worst, typical, and day5 fixtures marked 10.3-24.1% of rows with no warning wall.
+- **Cross-talk fold mechanism confirmed; guarded policies rejected (slice 2 M04)** - default-OFF, PHI-safe streaming evidence (cache-slot frame counts, acoustic and stable-word shares, fold decisions, and timing spans - never consultation wording) plus two controlled replays confirmed that marginal third slots can fold short Patient speech into the visible Doctor stream. Both guarded policies failed corpus gates: keeping every sustained origin visible regressed phantom identities 10 -> 18, and a visit-long stable alias regressed corrected strict attribution 88.985% -> 87.695% while raising incorrect-confident rows 10.595% -> 12.240%. Release fold behavior is unchanged; the reusable TextGrid-grounded scorer, ADR-008, and the corpus evidence are retained.
+- **Dual-identity duplicate speakers closed diagnostic/no-fix (slice 2 M05)** - a deterministic PHI-safe scorer measures duplicate-speaker prevalence (wording compared only in memory; safe IDs, roles, timing, and counts reported): zero candidates across the 6,072-row canonical corpus, one reproduced in the retained browser artifact. Slot-evidence replays located the mechanism before adapter folding - both raw cache slots clear the substantial-voice threshold, so the adapter preserves the engine's split identity. The narrow default-OFF withhold guard built for that target failed causal acceptance (the target pair was not reproduced; rows dropped 67 -> 63 and phantom merges changed 3 -> 10) and was removed exactly. No runtime behavior changed; the scorer, its contracts, and the rejection evidence are retained.
+- **Long-turn transcript freezes diagnosed; a bounded release ships opt-in (slice 2 M06)** - PHI-safe evidence (clock/frontier times, row and slot-activity counts only) proved a repeatedly refreshed mutable tail can pin the global stability frontier behind stable clock-ready rows: c01 held rows across a 50-second zero-emission span before a 25-row browser burst. An opt-in bounded release (default `0` keeps prior behavior) frees only already-stable rows an obsolete frontier has hidden past the limit, leaving wording, timestamps, cadence, and speaker policy untouched. With a 10-second bound and its cadence-aware refinement, c01 improves to at most 10 seconds without rows, 15 seconds between batches, and a 9-row largest burst - reproduced in a real browser replay where the visible transcript grows 14 -> 89 rows through the long Patient turn instead of freezing. The refined full corpus passed 20/20 corrections with WER/strict/incorrect-confident deltas of +0.345/-0.250/+0.195 points and source-chip findings 62 -> 61.
+- **Generated-note quality now has a six-visit corpus baseline (slice 2 M08)** - six full-length corrected replays and sentence-level adversarial review against corrected rows and Doctor/Patient TextGrids record 203/203 resolved citations but fail release quality: 1/6 notes is content-clean, 21/209 substantive claims are unsupported and unflagged, fidelity-warning precision is 12.5%, wording-warning precision is 20.0%, and one 33,922-character visit is truncated at the 32,768-character selection cap. The baseline routes reopened coverage and precision debts plus seven novel unsupported-claim shapes; no product behavior changed in this evaluation-only milestone.
+- **Overlap speech now has a corpus decision baseline (slice 2 M09)** - 6.0% of corpus time and 9.5% of known reference words sit in overlapped speech; corrected known-word overlap WER remains 82.6% and visible overlap-row attribution 84.2%. A TextGrid audit of all 248 overlap spans in the three heaviest fixtures confirms privacy-confirmation, symptom-denial, medication, and safety-net wording or attribution defects. The user selected model-lane escalation: 0.6.0-M02 now requires a tag-clean, speaker-aware overlap benchmark and candidate non-regression gate. No product behavior changed.
+- **Long post-visit corrections stay inside the single-GPU capacity envelope (slice 1 M09)** - capacity-risk recordings are transcribed as ordered three-minute chunks through one restored NeMo model with visit-relative timings and confidence recombined; short visits keep the one-shot call, and sub-ten-second remainders ride inside the final chunk after a 1.56-second tail sliver decoded empty and vetoed a whole correction. The observed `device not ready` failure gets one same-model retry after CUDA cache reclamation; OOM, illegal-memory, model-load, malformed-audio, and empty-result failures remain immediate fallbacks. Corrections are globally single-flight, duplicate Summarise clicks reuse the completed artifact, and PHI-safe metadata reports attempts, retry, chunk count, and a sanitized reason without raw CUDA details. The browser pairs every note with its actual source: corrected notes show no degradation notice, while a known fallback persistently says the note was built from the live transcript. GPU acceptance: the c02/c03/c08 trio stayed byte-identical, and the previously three-for-three-failing full-length c03 passed on a deliberately dirty GPU (bounded 11.5/16.3 GiB peak vs the fatal 15.7 GiB one-shot spike).
+- **Generated notes preserve who was uncertain and quote only transcript words (slice 1 M11)** - summary instructions describe missing or unintelligible material as a limitation of the record, never as patient uncertainty, failed recall, or refusal unless the patient's own words establish that state. The deterministic verifier adds `patient-state-without-evidence` (topic-local patient evidence) and `non-verbatim-quote` (straight/curly quote parsing, exact token-sequence matching, same-role row joins, explicit attribution); one-redo and fewer-violations draft selection apply unchanged. The fidelity suite grew 32 -> 64 tests; the closing audit reopened the split-question denial precision debt that slice 2 M02 later closed.
+- **The note fidelity checker catches the fabricated denial it was built for and stops flagging true sentences (slice 1 M10)** - denial evidence is clause-scoped: uncertainty phrases are masked so they never impersonate a denial, a denial and its topic must share one local clause, and a sentence claiming a denial while admitting the question went unanswered fails outright - the day3 fabrication now flags with the patient's monologue present. An eight-word bare-answer rule replaces the 40-character gate, so the real 41-character rash denial verifies while "...but no no" mid-row negations no longer launder anything. Honest exam-absence phrasing stays exempt; performed-exam claims still flag. Regeneration can no longer ship a worse note: the fewer-violations draft ships, with per-violation diagnostics (never clinical prose) in structured logs. Fidelity suite 17 -> 32 tests; replay audits: c03 3/3 generations zero false flags, day5's single flag audited true.
+- **Long consultations keep their closing Assessment and Plan in generated notes (slice 1 M08)** - corrected, browser-visible, and stored summary inputs share one 32,768-character whole-row selection contract instead of silently taking the first 8,000 characters. A visit exceeding the cap keeps complete opening and closing rows, uses exactly that selected set for the prompt, citations, retrieval, and fidelity checks, emits a structured warning, and returns neutral elision metadata through HTTP and Mercure; the note panel shows a persistent accessible notice when middle rows were omitted.
+- **Every transcript row carries how clearly it was heard (slice 1 M06 phase 2)** - live, windowed, and corrected rows gain an additive `confidence` value (0-1, the row's weakest word), persisted through memory and SQLite (in-place column upgrade), published over Mercure, stamped on each row as `data-confidence`, and echoed through the summary round-trip. Absent stays absent: unmeasured rows omit the key and render exactly as before. No-harm evidence: a paired control-vs-confidence probe emitted byte-identical rows (1514/1514 steps word-aligned), and the GPU trio gate re-run stayed byte-identical with 100% live-row and 93% corrected-row coverage.
+- **Every generated note is verified against the transcript before the clinician sees it (slice 1 M07)** - a deterministic fidelity checker catches the three fabrication families prompt rules alone could not reliably prevent: patient uncertainty resolved to a definitive value, negative findings the patient never gave, and screening answers dressed up as examination findings. A failing draft gets one regeneration naming the exact rejected sentences; still-failing sentences ship visibly marked with an amber "Unverified against transcript" underline rather than silently stripped - nothing is ever removed. Across four five-generation replay campaigns the checker caught first-draft fabrications in every flagged run, and an independent adversarial audit of the final campaign passed all five notes.
+- **Word-confidence GPU spike: GO (slice 1 M06 phase 1)** - a fixture-only probe proves both pinned NeMo models yield real word/token confidence by enabling `confidence_cfg` in the decoding config (word-confidence minimums 0.61-0.73, no all-1.0 degeneracy, zero CUDA instability), and a follow-up eval reproduced the canonical baseline byte-for-byte.
+- **Demo audio fixture expansion and day-qualified labels (slice 1)** - the local fixture set grew to 20 full-length PriMock57 consultations (13 added), each with doctor/patient TextGrid ground truth, broadening replay coverage from ENT through cardiac red flags, stroke-like symptoms, allergy/anaphylaxis, and anxiety presentations. The Demo Audio picker labels each row with a compact day-qualified ID like `consult 1.2`, and the fixture transcript downloader discovers TextGrid URLs from local PriMock filenames.
+- **Effective model defaults now agree across local and production setup (slice 2 M00)** - production Terraform emits canonical role and summary provider/model variables, using AU Haiku 4.5 in `ap-southeast-2` for both user flows; bare Compose keeps CPU Ollama/Qwen local-first while its Bedrock fallback resolves to the same Haiku profile (summary stays on Haiku for lower note-generation cost). The model checker validates every distinct role/summary pair once, the Ollama installer no longer edits `.env` or exposes a GPU, and fixture-only second-pass evaluation defaults to the pinned-runtime TDT v3 model. No selected model was upgraded.
+- **Delayed same-speaker wording stays in one transcript card (slice 2)** - a stable row arriving after a later speaker turn is inserted into the preceding card for the same raw speaker instead of showing a second adjacent Doctor or Patient entry; spoken order, correctable row IDs, and the later speaker's separate turn stay intact for review and summary input.
+- **Dev startup catches a silently dropped WSL2 GPU (slice 1)** - `scripts/start-dev.sh` showed `nvidia-smi ✔` even when WSL2 had lost the GPU adapter (the binary exits 0 with empty output), letting startup continue to a cryptic container failure. Detection now requires a named adapter, and both failure points print the remedy: quit Docker Desktop, `wsl --shutdown` from Windows, restart Docker Desktop, re-run.
 
-### Added
-
-- **Corpus and evidence harness hardening (0.4.1 M01)** - corrected-fixture `--all` and
-  multi-fixture runs now preserve an explicit unavailable correction as PHI-safe fixture/run
-  failure artifacts, show `FAILED` corrected metrics plus the safe reason in the final table,
-  continue through later fixtures, and end with a stable `fixtures=N ok=N failed=N` sentinel;
-  named single-fixture gates remain fail-fast. Correction failures now report the one-based failed
-  chunk and planned chunk count through exception metadata, the API response, and structured logs.
-  The isolated browser runner uses parallel PHP workers plus a test-only static-asset router, with
-  two consecutive 43-test Playwright passes replacing the asset-drop-prone single-server lane.
-  Long eval guidance now requires capturing correction/instrumentation lines during the run, and
-  the roadmap points at the completed 20-fixture baseline and active 0.4.1 order.
-
-- **Composite denial checks follow the user's complete screening answer (0.4.1 M02)** -
-  generated-note fidelity checks now join bounded clinician question fragments before judging a
-  short patient denial, so one composite sentence can verify each independently answered topic
-  across corrected-row splits. The checker also recognizes the retained `that's all fine`
-  screening response, narrowly recovers a leading patient `No` folded onto the next clinician
-  row, preserves the topic when a patient repeats a question and answers `No` in the same row,
-  and stops denial scope before a contrasting reported symptom. The c03 neurological and mood
-  false warnings plus retained respiratory, GI/urinary, and joint-swelling families now pass while
-  unanswered questions, clinician-only negatives, long answers, and the equivocal weight-change
-  claim remain protected. Older question fragments can complete a compound topic only when the
-  immediate follow-up overlaps it, so a later `No` cannot overwrite an earlier affirmative
-  answer. The fidelity suite now has 80 passing tests; a clean
-  five-generation c03 campaign audited 16 denial claims with zero unsupported denials, zero false
-  denial flags, and zero unflagged fabricated denials.
-
-- **Low-confidence wording is visibly reviewable without rewriting the note (0.4.1 M03)** -
-  corpus-derived strict thresholds now mark live rows below `0.76` and corrected rows below `0.78`
-  with local dotted tint, keyboard focus, and an accessible explanation in both themes, without
-  adding a persistent confidence label to live cards or corrected blocks; absent and exact-boundary
-  confidence stay plain, role cards keep their labels and height, and corrected stitched utterances
-  preserve row-local cues.
-  Generated prose remains byte-identical: after citation validation, a deterministic additive
-  `sections[].low_confidence` field marks only sentences whose conservatively linked, measured
-  corrected rows are predominantly sub-threshold, with tooltip `Low-confidence transcription`.
-  The retained day5 calf/carp sentence is now visibly flagged; no citation/overlap, unmeasured
-  rows, and low/high ties remain unmarked. A zero-token A/B selected this deterministic flag over
-  prompt-side text hedging. Product re-renders matched stored threshold counts across the
-  worst-liveBad, typical, and day5 fixtures (10.3-24.1% marked; no warning wall), while focused
-  fidelity/summary tests remained green.
-
-- **Cross-talk fold mechanism confirmed; guarded policies rejected (0.4.1 M04)** -
-  OFF-by-default, PHI-safe streaming evidence now records cache-slot frame counts, acoustic
-  and stable-word shares, fold decisions, and timing/word-count spans without consultation
-  wording. Two controlled 1x replays confirmed that marginal third slots can fold short
-  Patient speech into the visible Doctor stream. A reusable TextGrid-grounded scorer now
-  classifies those spans as correct, wrong, or unresolved and compares candidate attribution
-  with the same Phase 0 timing.
-
-  Neither guarded policy is accepted for user visits. Keeping every acoustically sustained
-  origin visible improved the named fixtures but regressed corpus phantom identities 10 -> 18.
-  A visit-long stable alias then passed the two targeted attribution-delta gates (9 improved,
-  zero worsened, zero newly confident wrong) and reproduced all three flag-OFF hashes, but the
-  final 20-fixture corpus regressed corrected strict 88.985% -> 87.695% and raised incorrect-
-  confident 10.595% -> 12.240%. The stable-alias product/test delta was removed after that
-  kill. The diagnostic guard remains `0`, release fold behavior is unchanged, and the retained
-  scorer, ADR-008, footgun, and corpus artifacts preserve the evidence for future work.
-
-- **Dual-identity duplicate prevalence is measurable without exposing transcript wording
-  (0.4.1 M05 Phase 0)** - a deterministic offline scorer finds rows with identical normalized
-  non-empty text, positive spoken-time overlap, and different visible speaker IDs. It compares
-  wording only in memory and reports safe session/segment IDs, roles, timing, overlap, word count,
-  and a metadata-derived pair ID; malformed and empty histories have explicit outcomes. The exact
-  canonical 20-fixture baseline contains zero candidates across 6,072 live rows, while the retained
-  M08 browser replacement reproduces one candidate across 306 rows and canonical day5-c09 remains
-  zero across 296. A fresh instrumented 1x day5-c09 replay also found zero candidates across 296
-  final server rows despite 10 phantom merges and 10 folded spans / 17 words. A subsequent
-  132.8-second browser check reproduced one ground-truth Patient across overlapping speaker_0 and
-  speaker_3 rows while the exact scorer still reported zero. A JSON/slot-evidence browser replay
-  then located the mechanism before adapter folding: both raw slots clear the substantial-voice
-  threshold, so the adapter preserves the engine's split identity and the browser receives both.
-  A planning-only D3 pass selected a narrow default-OFF adapter candidate: withhold a later
-  cross-slot row only when it shares four consecutive words within a 0.5-second start gap and at
-  least 0.80 word-LCS similarity, with equal normalized vocabulary so no distinct clinical term is
-  lost; a TextGrid-grounded scorer must reproduce target=1 and canonical corpus=2 first. M05 is
-  locally implemented behind the off flag with 35 focused tests green, but the first retained-
-  artifact score rejected the equal-vocabulary assumption: the target shares seven of eight ordered
-  words (0.875 similarity) while differing by one connector. The approved refinement accepts equal
-  word multisets or exactly one `and`/`but` substitution and no other differing word. Its red proof
-  produced exactly four intended failures with 35 existing/anti-target contracts passing. The shared
-  Counter-based scorer/runtime rule now passes all 39 focused contracts; Ruff, Compose, and both
-  Gruff lanes are clean. Retained manual/instrumented artifacts now score 1/1, but the exact accepted
-  canonical 20 scores 0 rather than the planned 2 because both planning candidates contain distinct
-  non-connector words. The corrected baseline is approved: safe canonical repeats remain 0, both
-  near-matches are anti-targets that stay visible, and the retained connector target must improve
-  1 -> 0. The first flag-OFF c02 byte-gate attempt finalized streaming cleanly but its correction
-  request timed out after 120 seconds before a corrected artifact or hash existed; c03/c08 were not
-  started. One clean isolated c02 retry is approved; the candidate remains unaccepted/off and a
-  repeated timeout stops the gate before c03/c08. The retry completed in 50.821 seconds and matched
-  the retained c02 canonical hash exactly; c03/c08 then completed in 11.636/11.823 seconds. The
-  flag-OFF trio passes `HASH_MATCHES=3/3`, strict 100.0/96.8/93.8, zero source-chip findings, and
-  clean runtime health. The exact guard-ON target then scored zero pairs without a withheld-row
-  event; it emitted 63 vs 67 baseline rows and changed phantom merges 3 -> 10 because the target
-  pair was not reproduced. The runtime/config/guard-test candidate was therefore rejected before
-  browser/corpus promotion and removed exactly; no duplicate guard or user default ships. The
-  retained PHI-safe scorer and contracts reproduce manual/instrumented/canonical counts 1/1/0 and
-  pass 7 focused tests, Ruff, and scorer Gruff A/100. Full closure passes Python 608, PHPUnit
-  37/159, Playwright 48, PHPStan, PHP-CS, all 12 enabled preflight checks, learning index/stats,
-  context validation, PHI/symbol scans, and `git diff --check`. M05 closes diagnostic/no-fix with
-  its rejection evidence preserved and no runtime behavior change.
-
-- **Long-turn transcript freezes now have a PHI-safe causal signal (0.4.1 M06 Phase 0)** -
-  operator-only streaming evidence records why stable rows released or remained held using only
-  clock/frontier times, row counts, and speaker-slot activity counts. Fresh 1x c01 and c03 replays
-  prove the global stability frontier is the starvation mechanism: c01 held 8 -> 44 rows across a
-  50-second zero-emission span before a 25-row browser burst; c03 reached 25 seconds without rows
-  and a 30-second batch interval. Both had stable clock-ready rows waiting, which rejects decoder
-  finality, speaker-turn boundaries, and the browser adapter as causes. Captured evidence selects a
-  default-off 10-second bounded-release candidate. When explicitly enabled, it releases only
-  already-stable rows that an obsolete frontier has hidden past the limit; mutable wording, future
-  rows, honest timestamps, cadence, and speaker policy stay unchanged. Ordinary visits retain the
-  prior release policy at the default `0`. The first flag-off c02 compatibility stream finalized
-  cleanly, but post-visit correction timed out before a corrected hash existed; later byte, target,
-  corpus, and browser gates remained pending rather than being misreported as regressions. One
-  approved clean retry completed in 50.013 seconds and reproduced the exact retained c02 hash;
-  c03/c08 then completed and the compatibility gate passed `HASH_MATCHES=3/3`. A c08 strict-score
-  wobble is confined to post-ASR role labels; canonical transcript bytes remain exact. With the
-  10-second bound enabled, c01 improves from 50 to 10 seconds without rows, 55 to 15 seconds
-  between batches, and a 25- to 9-row largest burst; WER, strict attribution, and seams remain
-  within the declared noise band. A real browser replay reproduces the 10/15-second delivery and
-  six screenshots through the long Patient turn show the visible transcript growing from 14 to
-  89 rows instead of freezing and appending a wall near 02:25. The first full-corpus promotion
-  gate is retained as rejection evidence rather than enabling the policy: although all 20
-  corrections completed and corpus quality means moved by at most 0.405 points on the declared
-  WER/strict/incorrect-confident measures, four fixtures still had 20-25-second startup batch
-  gaps. The candidate therefore remains default-OFF pending a separately approved refinement.
-  That refinement is now approved and in progress: the release decision may account for the next
-  browser-audio tick only when stable clock-ready rows are already waiting; startup silence with
-  no stable wording remains untouched. Direct contracts pass and the first causal target now
-  emits at 15 rather than 20 seconds, but its full-length post-stop correction timed out before a
-  corrected artifact existed. A live-only alternate gate is approved: retained c03 plus fresh
-  c06/c08/day3-c05 runs measure causal delivery and live quality without invoking correction.
-  That gate passes: stable-ready/no-emission waits are 0/5/5/5 seconds, four-fixture live WER
-  moves only +0.025 points, strict and incorrect-confident means are flat, and all quality,
-  health, CUDA, and fatal-log checks are clean. The runtime is restored default-OFF; promotion
-  remains pending the second full corpus. A final c08 browser replay visually confirms first rows
-  at 20 seconds versus 25-26 seconds default-off, followed by continuous delivery; it finalizes
-  106 rows / zero errors and correction completes without retry. The refined second full corpus
-  passes 20/20 corrections with zero causal violations or runtime errors: stable-ready wait is at
-  most 5 seconds, corrected WER/strict/incorrect-confident move only +0.345/-0.250/+0.195 points,
-  and source-chip findings improve 62 -> 61. The user-assisted restore passes with effective
-  streaming/max-hold/evidence/log values `streaming/0/0/console`, loaded models, CUDA, and clean
-  fatal logs; the protected local environment file remains unread and unedited. Final verification
-  passes Python 624, PHPUnit 37/159, Playwright 48, JavaScript 15, PHPStan, PHP-CS, Ruff, all 12
-  enabled preflight checks, context validation, learning index/stats, and `git diff --check`.
-  M06 closes with the bounded policy available for explicit use and ordinary visits still at `0`.
-
-- **Generated-note quality now has a six-visit corpus baseline (0.4.1 M08)** - six fresh,
-  full-length corrected replays produced the approved six final notes at the twelve-generation
-  Bedrock cap, followed by sentence-level adversarial review against corrected rows and
-  Doctor/Patient TextGrids. The audit records 203/203 resolved citations, but fails release
-  quality: only 1/6 notes is content-clean and 21/209 substantive claims are unsupported and
-  unflagged. Fidelity warnings are 1 true / 7 false (12.5% precision); low-confidence wording
-  warnings are 3 true / 12 false (20.0% precision), with two true warnings linked to unrelated
-  rows. One 33,922-character visit is honestly retained as a truncation failure at the 32,768-
-  character selection cap. The baseline and ISSUE route reopened M02/M03 coverage and precision,
-  the input-cap debt, and seven novel unsupported shapes; no prompt, checker, UI, API, model, or
-  runtime behavior changed during this evaluation-only milestone. Closure passes Python 624,
-  PHPUnit 37/159, Playwright 49, JavaScript 15, PHPStan, PHP-CS, canonical Ruff lint, all 12
-  enabled preflight checks, context validation, learning index/statistics, and final health/CUDA.
-
-- **Overlap speech now has a corpus decision baseline (0.4.1 M09)** - analysis of the accepted
-  20-fixture corpus finds 672.2/11,174.9 seconds (6.0%) and 2,974/31,186 known reference words
-  (9.5%) associated with simultaneous speech. Corrected known-word overlap WER remains 82.6%,
-  while visible overlap-row attribution is 84.2% (433/514). A TextGrid audit of all 248 overlap
-  spans in the three heaviest fixtures confirms privacy-confirmation, symptom-denial, medication,
-  and safety-net wording or attribution defects, without finding a complete dosage-instruction
-  loss. The user selected model-lane escalation: 0.5.0-M02 now requires a tag-clean, speaker-aware
-  overlap benchmark and candidate non-regression gate. No runtime, model, prompt, UI, or API
-  behavior changed. Closure passes Python 624, PHPUnit 37/159, Playwright 49, JavaScript 15,
-  PHPStan, PHP-CS, Ruff, all 12 enabled preflight checks, context validation, learning statistics,
-  and final health/CUDA.
-
-### Changed
-
-- **Effective model defaults now agree across local and production setup (0.4.1 M00)** - production
-  Terraform emits canonical role and summary provider/model variables, using AU Haiku 4.5 in
-  `ap-southeast-2` for both user flows. Bare Compose keeps CPU Ollama/Qwen local-first while its
-  Bedrock fallback and optional summary inheritance resolve to the same Haiku profile; summary
-  remains on Haiku deliberately for lower note-generation cost. The model checker validates every
-  distinct role/summary pair once, and the Ollama installer no longer edits `.env` or exposes a
-  GPU: it exact-matches model tags and requires zero VRAM after a one-token smoke. Fixture-only
-  second-pass evaluation now defaults to the pinned-runtime TDT v3 model; Unified remains an
-  explicit experiment after its recorded construction failure. No selected model was upgraded.
-
-### Fixed
-
-- **Delayed same-speaker wording stays in one transcript card** - when a stable row arrives after
-  a later speaker turn, the browser now inserts it into the preceding card for the same raw speaker
-  instead of showing a second adjacent Doctor or Patient entry. Spoken order, correctable row IDs,
-  and the later speaker's separate turn remain intact for both review and summary input.
-
-## [0.4.0] - unreleased
-
-### Added
-
-- **Long post-visit corrections stay inside the single-GPU capacity envelope (0.4.0 M09)** - short visits preserve the existing one-shot second-pass ASR call, while capacity-risk recordings are transcribed as ordered three-minute chunks through one restored NeMo model, with visit-relative timings/confidence recombined and scratch audio removed. The exact observed `device not ready` failure gets one same-model retry after CUDA reclamation and a bounded backoff; OOM, illegal-memory, model-load, malformed-audio, and empty-result failures remain immediate fallbacks. A red-test-first `gc.collect()` + `torch.cuda.empty_cache()` now runs before every correction model restore after a real day5 restore failure with stale cache resident. Correction requests are globally single-flight without occupying an executor worker while queued, duplicate Summarise clicks reuse the completed artifact, and PHI-safe API/log metadata reports attempts, retry, chunk count, and a sanitized reason category without returning raw CUDA details. The browser now retains that safe outcome per consultation and pairs it with the summary's actual source: corrected notes show no degradation notice, a known fallback persistently says the note was built from live transcript because correction was unavailable, and direct live/store summaries use neutral source wording without inventing a failed attempt; HTTP and Mercure share the same accessible notice. GPU acceptance: the M01 c02/c03/c08 trio stayed byte-identical; the full 579-second day5 browser replay completed correction in 17.06 s (chunk_count=4, no retry) and summarized from corrected source in 32.37 s with no degradation notice; the previously three-for-three-failing full-length c03 correction passed on a deliberately dirty GPU (pre-restore release reclaimed ~4.7 GiB, bounded peak 11.5/16.3 GiB vs the fatal 15.7 GiB one-shot spike) and the M08 escalated summary acceptance reported corrected source with resolved citations, the clinician's hedged migraine impression, and the diary/analgesia/follow-up plan. A first full-corpus sweep (all 20 fixtures, full length, 1x) then exposed one boundary case - a 541.56-second visit chunked to a 1.56-second tail sliver that decoded empty and vetoed the whole correction - so remainders under ten seconds now ride inside the final chunk (red-test-first; a full-size chunk decoding empty still falls back loudly to the live transcript).
-
-- **Generated notes preserve who was uncertain and quote only transcript words (0.4.0 M11)** - summary instructions now describe missing or unintelligible material as a limitation of the record, never as patient uncertainty, failed recall, or refusal unless the patient's own words establish that state. The deterministic verifier adds `patient-state-without-evidence` with topic-local patient evidence and `non-verbatim-quote` with straight/curly single/double quote parsing, exact token-sequence matching, same-role row joins, and explicit patient/clinician attribution. Existing one-redo, fewer-violations draft selection, and visible flags apply unchanged. The fidelity suite grew from 32 to 64 tests and the full Python suite is 555 green. Five retained day3/day5 generations passed the M11 target-family audit after every live paraphrase shape was pinned; the same audit reopened the separate M10 row-shape footgun because split clinician questions still create false denial warnings.
-
-- **The note fidelity checker now catches the fabricated denial it was built for and stops flagging true sentences (0.4.0 M10)** - denial evidence is clause-scoped: uncertainty phrases ("I don't know", "don't think") are masked before matching so they never impersonate a denial, a denial and its topic must share one local clause (multi-word topics need two matched words), and a note sentence that claims a denial while admitting the question went unanswered fails outright - the day3 field fabrication ("She denies prior history of lip swelling...") now flags with the patient's no-punctuation monologue present. The arbitrary 40-character bare-answer gate became an eight-word rule: the answer must open with a denial word after a clinician question naming the topic, so the real 41-character corrected rash denial verifies while "...but no no" mid-row negations no longer launder anything (a day5 replay proved that shape live: "denies weight change" flagged TRUE against the patient's "weight change just a bit" self-correction, which the old gate would have verified). Honest exam-absence and exam-intent phrasings ("concludes before examination is performed", "Doctor proposed ... examination") are exempt while performed-exam claims still flag. The one allowed regeneration can no longer ship a worse note: both drafts are kept and the fewer-violations draft ships (field case 1-vs-3 pinned), with selection and per-violation diagnostics (rule, subtype, location, ordinals, word count - never clinical prose) in structured logs. Fidelity suite grew 17 to 32 tests; replay audits: c03 3/3 generations zero false flags, day5 single flag audited true.
-
-- **Long consultations now keep their closing Assessment and Plan in generated notes (0.4.0 M08)** - all corrected, browser-visible, and stored summary inputs now share one 32,768-character whole-row selection contract instead of silently taking the first 8,000 characters. Every measured consultation fits in full; if a larger future visit exceeds the cap, generation keeps complete opening and closing rows, uses that exact selected set for the prompt, citations, retrieval, and fidelity checks, emits a structured warning, and returns neutral source/elision metadata through both HTTP and Mercure. The note panel displays a persistent accessible notice when middle rows were omitted and remains unchanged for complete inputs.
-- **Dev startup now catches a silently dropped WSL2 GPU (0.4.0)** - `scripts/start-dev.sh` previously showed `nvidia-smi ✔` even when WSL2 had lost the GPU adapter (nvidia-smi exits 0 with empty output in that state), letting startup continue until the nemo-agent container failed with a cryptic "no adapters were found" error. Detection (`scripts/env-detect.sh`) now requires a NAMED adapter, not just the binary, and both failure points print the actual remedy: quit Docker Desktop, `wsl --shutdown` from Windows, restart Docker Desktop, re-run. Companion footgun documents the deeper trap: a hot-reload in that state silently loads NeMo on CPU and makes baseline-gated evals produce false regressions (`.goat-flow/learning-loop/footguns/runtime.md`).
-- **Every transcript row now carries how clearly it was heard (0.4.0 M06 phase 2)** - live streaming rows, windowed rows, and post-visit corrected rows all gain an additive `confidence` value (0-1, the row's weakest word under the probe-proven `confidence_cfg` decoding), persisted through memory and SQLite storage (in-place column upgrade, no DB reset), published over Mercure, stamped on each row as `data-confidence`, and echoed back through the summary round-trip so a server restore keeps it. Absent stays absent: unmeasured rows (legacy histories, live-fallback corrected rows) omit the key and render exactly as before, and nothing styles rows yet - this unblocks the summary UX low-confidence styling task (UX-M7). No-harm evidence: a paired control-vs-confidence probe through the real streaming engine emitted byte-identical rows on both fixtures (1514/1514 steps word-aligned), and the GPU trio gate re-run (2026-07-08, after the host GPU restore) PASSED: text and timing byte-identical to the M01 baseline on all six lanes (live + corrected for all three fixtures), corrected strict 100.0/96.8/93.8 reproduced, 100% live-row and 93% corrected-row coverage with non-degenerate values (row minimums 0.58-0.77), and the only movement anywhere confined to LLM role labels (the documented role-worker wobble; the role-agent prompt provably never sees confidence). Ships with 28 new Python contract tests and a browser e2e for the with/without-field render contract.
-- **Every generated note is now verified against the transcript before the clinician sees it (0.4.0 M07)** - a deterministic fidelity checker compares each note sentence with the visit transcript and catches the three fabrication families prompt rules alone could not reliably prevent: patient uncertainty resolved to a definitive value ("onset was sudden" after "I don't know"), negative findings the patient never gave (including unanswered trailing questions, "denied all", and "screening (...) negative" shapes), and screening answers dressed up as examination findings. A failing draft gets one regeneration with the exact rejected sentences named; sentences that still fail ship visibly marked with an amber "Unverified against transcript" underline rather than silently stripped (the user-decided policy - nothing is ever removed). Across four 5-generation replay campaigns the checker caught first-draft fabrications in every flagged run, the redo repaired most outright, and an independent adversarial audit of the final campaign passed all five notes with zero unflagged fabrications. Ships with 17 unit tests pinned to real campaign specimens, a browser e2e for the visible marker (37 total), and `summary.fidelity_*` log events for observability.
-- **Word-confidence GPU spike: GO (0.4.0 M06 phase 1)** - a new fixture-only probe (`scripts/probe-word-confidence.py`) proves NeMo word/token confidence is obtainable from BOTH pinned models (the live multitalker streamer and the post-visit second pass) by enabling `confidence_cfg` in the decoding config: real discriminative values on two fixtures (word-confidence minimums 0.61-0.73, far from all-1.0), with the runtime's CUDA-graph workaround mirrored and - unlike the known-crashy timestamp mode - zero CUDA instability. A follow-up eval run reproduced the canonical baseline byte-for-byte. This unblocks per-row confidence persistence (M06 phase 2) and, after it, the summary UX low-confidence styling (UX-M7).
-- **Demo audio fixture expansion and day-qualified labels (0.4.0)** - the local fixture set now holds 20 full-length PriMock57 consultations (13 added to the original 7), each with doctor/patient TextGrid ground truth, broadening replay coverage across ENT, musculoskeletal, cardiac red flags, stroke-like symptoms, allergy/anaphylaxis, dizziness, anxiety, gynaecology/abdominal pain, wheeze, fatigue, rash, and systemic symptoms. The Demo Audio picker now labels each row with a compact day-qualified ID like `consult 1.2` (day 1, consultation 2) instead of the ambiguous `consultation-02` prefixes, and the fixture transcript downloader discovers TextGrid URLs from local PriMock filenames instead of a day1-only table.
-
-## [0.3.0] - 2026-07-07
-
-### Added
+## v0.3.0 - 2026-07-07
 
 - **Post-visit role requests no longer resurrect role state (0.4.0 M04)** - the speaker-scope role override and the roles snapshot endpoint now peek at role state for finished visits instead of creating it, closing the remaining two callers behind the badge-wipe footgun. A finished visit's speaker relabel still persists everywhere it should: the clinician's explicit label is applied to stored rows AND the corrected artifact (so a retried summary cites the new label) and broadcast as a partial mapping with no fabricated confidence, while the auto-row re-judge is skipped rather than run against a one-speaker mapping. Live visits are liveness-gated, so a label clicked before the role worker's first update still pins against later agent proposals. Three new regressions plus the badge e2e suite (7/7) cover both paths.
 - **Summary notes preserve patient uncertainty and stay scribe-true (0.4.0 M00, ADR-007)** - the note generator's shared rules now forbid asserting clinical facts the transcript does not support: explicit patient uncertainty ("I don't know") is documented as unclear rather than resolved to one side, clinical characteristics (onset, severity, laterality, timing) appear only as the speaker stated them, and negative findings require an explicit denial or examination. The Assessment section is restricted to clinician-stated diagnoses per ADR-007 (Option B: scribe, not assistant) - AI-inferred diagnoses and unstated rule-outs are barred, and an absent assessment is reported as not documented. The Objective section takes only clinician-performed examination content, keeping patient-reported symptoms in Subjective (closes the c08 acceptance-run mislabeling, M03 item a). Prompt-rule regressions pin all three rule families.
@@ -268,9 +73,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Synthetic demo consultation corpus** - added an FFmpeg/Flite generator, manifest, attribution notes, and documentation for five license-clean replay WAVs, including chest pain, role-flip, three-speaker, drug-vocabulary, and monologue cases.
 - **Medical phrase normalisation** - added an opt-in medical lexicon and post-ASR correction fallback behind `MEDICAL_BOOST_ENABLED` while NeMo decode-time phrase boosting remains GPU-pending.
 - **Clinical hints sidebar** - added the `scribe/session/{id}/hints` Mercure topic, summary-response hint fallback, browser subscription, and dismissible sidebar for assistive clinician-review suggestions.
-
-### Changed
-
 - **Corrected fixture source-chip reports** - `scripts/eval-corrected-fixtures.sh` now saves corrected source-chip QA reports beside every corrected fixture run (`source-chip-score.txt` and `source-chip-score.json`) and prints the scorer summary line in the final eval output. Findings warn by default; `CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS=1` opts into failing the eval after the evidence is saved.
 - **Stop-triggered corrected summaries** - Stop/finalized now starts the existing correction-before-summary path automatically for demo replay as well as live recording, keeping retained audio inside the grace window and removing the main Summarise button. The summary panel still exposes retry after a failed note.
 - **Corrected mixed source-chip cleanup** - corrected transcript cleanup now splits high-confidence Doctor prompt + Patient answer rows into separate source chips and keeps short clinician prompt fragments like `age, please?` and `is it affected?` Doctor-owned. Identity rows with echoed age acknowledgements remain unsplit until word-level timing is promoted, because splitting them created a timed attribution regression. Final fixture gates: consult-02/03/08 @60s scored 100.0% / 96.8% / 90.6% corrected strict attribution with `findings=0`; consult-03 @165s scored 97.8% corrected strict attribution with `findings=0`.
@@ -286,12 +88,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Post-stop corrected transcript alignment** - corrected rows now use live-text anchors instead of proportional word spreading, preserve live rows when second-pass ASR drops a visible utterance, and apply cue-order role cleanup only inside the corrected artifact. On consult-03 @60s manual replay, live strict attribution was 87.1% with 36.6% non-overlap WER; corrected output scored 96.8% strict attribution with 26.8% non-overlap WER.
 - **Summary requests merge instead of replacing history (M21)** - a summary POST can no longer shrink the server-stored transcript: browser rows are merged by `segment_id` (roles update only rows no correction or automatic exception owns), rows the browser missed or filtered stay stored and still reach the note, rows the server never emitted are skipped, and an empty store falls back to the old restore-from-browser behavior for reconnects. Blank-text rows remain excluded from the note text at read time.
 - **Finalize flush window logging (M21)** - `nemo_session.window_continuity` console lines now include the existing `phase` field (`chunk`/`finalize`), so the finalize flush re-logging the last window index is distinguishable outside JSON mode.
-- **Rejected held-tail speaker-anchor spike (M20 Phase 5)** - tested the one seam mechanism
-  exposed by the Phase 0 window artifacts: using the prior window's canonicalized held rows
-  as extra overlap-vote evidence without widening NeMo audio, enabling timestamps, or adding
-  a GPU model. The mechanism passed focused unit checks but failed the c03 @83s median gate
-  (65.0/65.0/65.0 strict vs the accepted 70.0), so it was reverted; a restore smoke returned
-  c03 @83s strict attribution to 70.0. No Phase 5 speaker-identity runtime change remains.
+- **Rejected held-tail speaker-anchor spike (M20 Phase 5)** - tested the one seam mechanism exposed by the Phase 0 window artifacts: using the prior window's canonicalized held rows as extra overlap-vote evidence without widening NeMo audio, enabling timestamps, or adding a GPU model. The mechanism passed focused unit checks but failed the c03 @83s median gate (65.0/65.0/65.0 strict vs the accepted 70.0), so it was reverted; a restore smoke returned c03 @83s strict attribution to 70.0. No Phase 5 speaker-identity runtime change remains.
 - **Role-agent establishment hardening (M20 Phase 4)** - role inference no longer sends the current automatic mapping or mapping history back into the Strands prompt, so an early wrong UI label cannot anchor later decisions. Bounded role evidence now refreshes representative utterances from cue-rich rows, includes opener-derived doctor/patient cue counts and first-seen position, and caps each evidence row at 120 chars. High-precision clinician self-introduction / consultation-opener cues produce an `establishment_hint`; if the model returns the exact two-speaker inverse and no clinician override exists, the server keeps the opener-derived mapping and logs `role_inference.establishment_hint_guard`. Final gates: c03 @83s strict 70.0 across 3/3 runs, c02 strict 82.4 across 3/3 runs, full-corpus strict avg 61.6 with zero truncations.
 - **Automatic row-level role exceptions (M20 Phase 3)** - after every speaker-mapping update, a CPU-only cue lane re-judges each identified transcript row against cheap, explainable wording cues (clinician questions, second-person body references, first-person symptom reports) and either relabels a row that contradicts its speaker's mapped role or marks it explicitly uncertain; blended question+answer rows and quoted/echoed symptom wording go uncertain rather than confidently wrong. Exceptions ride the roles topic as an additive `row_exceptions` field, render as tentative dashed chips ("Dr auto", "?") the clinician can override with one click, never touch user-corrected rows, and count uncertain rows as incorrect in strict attribution so uncertainty cannot inflate quality numbers. Cue thresholds were measured on the full baseline corpus (zero wrong flips); no LLM involvement, `max_tokens truncation` stays untouched by construction.
 - **Eval trend report strict columns (M20)** - `scripts/eval-fixtures.sh` per-run and `--report` tables now lead with strict attribution (+delta), uncertainty coverage, incorrect-confident rate, best valid dyadic ceiling, and the diagnostic free oracle, replacing the delta-heavy legacy layout.
@@ -342,42 +139,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Session summary panel states** - gave the summary panel explicit pending, generating, generated, and failed states with a status badge (`✓ Generated` / `Summary unavailable`) and a retry control, showed the pending placeholder only once transcript text exists, made the panel a fixed non-collapsible header (removed the toggle and chevron), and guarded against overlapping in-flight summary requests per session.
 - **Consultation fonts** - loaded the Libre Franklin (UI) and IBM Plex Mono (dev/log) webfonts so the rendered consultation UI matches the 0.3.0 mockup typography instead of falling back to system fonts.
 - **Demo audio dropdown** - replaced the demo-audio card list with a compact dropdown selector ("consultation-0X · complaint" plus a "PriMock57 consultation · doctor / patient" descriptor) matching the 0.3.0 mockup; picking a clip starts its replay and replay status still marks the chosen option.
-
-### Fixed
-
 - **Summary prose citations can no longer show invalid minute:second values** - the summary agent's citation rules now state explicitly that bracket timestamps are MM:SS with seconds 00-59 (with a conversion example: 196 seconds is [03:16], never [02:76]) and that segment IDs never appear inside brackets. The invalid formats had appeared twice in manual tests (`[02:98-03:01]`, `[02:76-02:79]`) plus one ID-in-brackets variant; a regenerated summary over a captured 126-row consultation produced 7/7 valid citations with the tightened instructions. Rendered source chips were never affected - this is prose-formatting only.
-- **Post-visit row correction no longer wipes the role badge** - a transcript row
-  correction sent after the reconnect grace window expired used to resurrect empty
-  role state and broadcast it (`mapping={}`, zero confidence), dropping the header
-  badge from `Roles identified (92%)` to `Speakers unclear (0%)` on the consult-03
-  manual test. The row-override publish now peeks at role state instead of creating
-  it and includes mapping/confidence only for a still-live visit, and the browser
-  applies row corrections without letting a `manual_override` event move the earned
-  confidence badge.
-- **M21/M22 review hardening** - removed an unconditional transcript-bearing
-  streaming-engine debug dump to `/tmp/engine-debug.jsonl`; live Stop now drains
-  even when no rows are visible before finalize flushes the first rows; and late
-  same-speaker or cross-speaker rows now stay chronological inside/coalesced across
-  transcript cards before summary generation reads the DOM.
-- **Role-agent tool payload size** - shrank the Strands `assign_roles` contract so the
-  model passes only session ID, mapping, confidence, and terse reasoning while transcript
-  rows stay in server-side pending state; role updates still publish the same browser
-  `attributed_segments` payload, role-agent input now uses capped per-speaker evidence
-  instead of `transcript_so_far`, and `session.quality` records role truncation events.
-- **Suppressed role-flip handling** - a damped `assign_roles` flip now counts as a successful
-  tool decision, so the role-agent runtime keeps the established DOCTOR/PATIENT mapping
-  instead of falling through to the keyword fallback and applying the suppressed relabel.
-- **Agent session isolation and role overrides** - role and summary Strands agents are now
-  created per call instead of cached as singleton conversation objects, and server-side role
-  mapping now preserves a user's manual speaker correction over later agent proposals.
-- **Manual role override persistence** - speaker-label clicks now post through the same-origin
-  Symfony `/scribe/{sessionId}/roles/override` proxy instead of a browser-to-FastAPI CORS
-  request, so the visible correction is also saved in the server role state.
-- **Structured role and summary agent contracts** - role inference now accepts only the
-  compact `assign_roles` tool path and falls back to the keyword classifier when the tool is
-  not invoked; summary generation now uses a Pydantic structured-output schema, drops the
-  unused `duration_seconds` summary field, and has independent `SUMMARY_AGENT_*` model and
-  token settings.
+- **Post-visit row correction no longer wipes the role badge** - a transcript row correction sent after the reconnect grace window expired used to resurrect empty role state and broadcast it (`mapping={}`, zero confidence), dropping the header badge from `Roles identified (92%)` to `Speakers unclear (0%)` on the consult-03 manual test. The row-override publish now peeks at role state instead of creating it and includes mapping/confidence only for a still-live visit, and the browser applies row corrections without letting a `manual_override` event move the earned confidence badge.
+- **M21/M22 review hardening** - removed an unconditional transcript-bearing streaming-engine debug dump to `/tmp/engine-debug.jsonl`; live Stop now drains even when no rows are visible before finalize flushes the first rows; and late same-speaker or cross-speaker rows now stay chronological inside/coalesced across transcript cards before summary generation reads the DOM.
+- **Role-agent tool payload size** - shrank the Strands `assign_roles` contract so the model passes only session ID, mapping, confidence, and terse reasoning while transcript rows stay in server-side pending state; role updates still publish the same browser `attributed_segments` payload, role-agent input now uses capped per-speaker evidence instead of `transcript_so_far`, and `session.quality` records role truncation events.
+- **Suppressed role-flip handling** - a damped `assign_roles` flip now counts as a successful tool decision, so the role-agent runtime keeps the established DOCTOR/PATIENT mapping instead of falling through to the keyword fallback and applying the suppressed relabel.
+- **Agent session isolation and role overrides** - role and summary Strands agents are now created per call instead of cached as singleton conversation objects, and server-side role mapping now preserves a user's manual speaker correction over later agent proposals.
+- **Manual role override persistence** - speaker-label clicks now post through the same-origin Symfony `/scribe/{sessionId}/roles/override` proxy instead of a browser-to-FastAPI CORS request, so the visible correction is also saved in the server role state.
+- **Structured role and summary agent contracts** - role inference now accepts only the compact `assign_roles` tool path and falls back to the keyword classifier when the tool is not invoked; summary generation now uses a Pydantic structured-output schema, drops the unused `duration_seconds` summary field, and has independent `SUMMARY_AGENT_*` model and token settings.
 - **Python diagnostic log lines** - warning and error logs in the agent now put session IDs, error types, and error text into the plain message line, while exception-backed paths include tracebacks. Added an observability guard so `logger.error("event", extra={...})` regressions fail in pytest instead of hiding details in Docker logs.
 - **Strands callback noise** - role and summary agents now pass the SDK's explicit null callback handler so model reasoning, tool banners, and streamed summary prose do not print into the container log stream.
 - **Ollama host unreachable via stale `.env`** - the agent's `OLLAMA_HOST` is now pinned to the in-network `http://ollama:11434` in `docker-compose.yml` and is no longer overridable by `.env`. A stale `.env` value of `http://host.docker.internal:11434` (unreachable from the agent on WSL2) was silently making every summary 502 and forcing role inference onto the weak keyword heuristic across container recreates.
@@ -390,24 +159,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Demo audio transcript pacing** - made replay transcript rows reveal from the browser audio clock and send the visible transcript snapshot to stop/summary routes so text cannot outrun what the user hears.
 - **Large demo WAV replay** - raised local PHP upload limits for PriMock fixtures and made replay treat malformed success responses as recoverable UI errors.
 - **Transcript empty state** - hid the start prompt as soon as transcript rows render, including dev-injected replay/test events.
-
-### Security
-
 - **Frontend transcript rendering** - moved transcript, summary, status, and dev-panel output away from HTML-string rendering so model and scenario text is inserted as text.
 - **Deploy workflow actions** - pinned third-party AWS GitHub Actions to reviewed commit SHAs.
 - **Env template placeholders** - replaced realistic-looking committed secret examples with obvious local placeholders and removed copied AWS credential slots from `.env.example`.
 - **Remote health-check secret path** - moved the production API key secret path behind a required `SECRET_PATH` override instead of committing the deployed path.
-
-### Removed
-
 - **Multi-mode support** - removed Meeting, Interview, TV/Media, Lecture, and General modes, including the `?mode=` transport parameter, `_session_modes`, mode prompt dictionaries, and the browser mode selector.
 - **Transcript download control** - removed the Download button, keyboard shortcut, and browser-side JSON/TXT export code from the scribe UI.
 
-## [0.2.0] - 2026-03-16
+## v0.2.0 - 2026-03-16
 
 Release covering tool-based role mapping, summaries, replay, transcript grouping, scenario gates, JS extraction, UI polish, developer guidance, multi-mode role inference, local-first defaults, SQLite persistence, manual speaker overrides, and full-stack hardening.
-
-### Added
 
 - **Gruff quality analyzers** - added TypeScript, Python, and PHP dev analyzers: `@blundergoat/gruff-ts`, `gruff-py`, and `blundergoat/gruff-php`.
 - **Agent-neutral instruction layer** - added reusable AI guidance in `ai/instructions/` plus routing docs for agents that do not depend on Claude Code or Codex runtime files.
@@ -428,9 +189,6 @@ Release covering tool-based role mapping, summaries, replay, transcript grouping
 - **Speaker and role UX** - added hallucination filtering, cold-start animation, flip toast, audio-level feedback, clipping warnings, keyboard shortcuts, and transcript accessibility attributes.
 - **Runtime cleanup and protocol fields** - added orphan cleanup plus `segment_id`, `revision`, and `supersedes` fields for future reconciliation.
 - **Local runtime support** - added optional CPU Ollama service, bundled Tailwind, Python hot reload, and expanded SQLite, role inference, hallucination, and session tests.
-
-### Changed
-
 - **BREAKING: PHP baseline is now 8.3+.** Upgrade local, CI, and deployment PHP from 8.2 to 8.3 before running Composer; this has no deprecation window because the PHP Gruff dev tool requires PHP 8.3.
 - **Ollama default model** - changed `llama3.1:8b` to `qwen3.5:9b` to match local pulls, `.env.example`, and Docker Compose.
 - **Role inference worker** - detects tool invocation via mapping-history growth and avoids duplicate role mapping application.
@@ -444,16 +202,10 @@ Release covering tool-based role mapping, summaries, replay, transcript grouping
 - **Agent parsing and prompt state** - extracts JSON from preamble text and caps mapping history to five entries.
 - **Inference queue** - uses `maxsize=50` with non-blocking enqueue and drops overflow batches.
 - **Async/runtime internals** - replaced deprecated event-loop access, reused one Mercure `httpx.AsyncClient`, switched `AudioBuffer` to `deque`, optimized relabeling by speaker map, and simplified session destruction.
-
-### Removed
-
 - **`ROLE_INFERENCE_SYSTEM_PROMPT`** - removed the unused backwards-compatibility alias.
 - **Legacy live role SSE path** - removed the PHP `/roles/stream` endpoint, `RoleInferenceService::streamRoleInference()`, `RoleInferenceResult`, `fetchAuthoritativeSnapshot()`, and the Python `/session/{id}/roles/stream` endpoint.
 - **Unused SSE support** - removed `sse-starlette` imports and SSE consumer tracking.
 - **`docker-compose.no-gpu.yml`** - removed the unused no-GPU compose file because the app requires GPU transcription.
-
-### Fixed
-
 - **Instruction drift** - fixed the `blundergoat/strands-php-client` package name, footgun cross-reference, and CI instruction-file triggers.
 - **Session cleanup** - clears confidence pulse, dev panel logs, speaker maps, summaries, and replay state.
 - **Download fallback** - collects text from grouped segment spans instead of a single segment node.
@@ -463,24 +215,16 @@ Release covering tool-based role mapping, summaries, replay, transcript grouping
 - **Session ID validation** - rejects malformed IDs with HTTP 400 on all endpoints.
 - **Error privacy** - publishes generic Mercure errors and truncates role inference logs with `error_type`.
 - **Frontend/runtime issues** - declared `pcmStreamer`, filtered health-check log spam, and made the ready banner use configured ports.
-
-### Tests
-
 - **230 Python unit tests** cover tool/free-text role mapping, flip detection, agent creation, summaries, replay, heuristics, and scenario fixtures.
 - **25 E2E contract tests** cover agent health, sessions, WebSocket, file transcription, PHP proxy, Mercure pub/sub, lifecycle, and cross-service shape matching.
-
-### Security
-
 - Session IDs are UUID-validated on all API endpoints.
 - Temp files use secure generated paths.
 - Mercure error messages are sanitized.
 - Transcript content is stripped from application logs.
 
-## [0.1.0] - 2026-03-15
+## v0.1.0 - 2026-03-15
 
 First release: real-time audio transcription with speaker diarisation, role inference, and a developer scenario runner that works without GPU hardware.
-
-### Added
 
 - **Transcription UI** - added the Twig page with live transcript, recording controls, timer, JSON/text download, and reset.
 - **Modes and theme** - added Medical, Meeting, Interview, TV/Media, Lecture, and General modes plus persisted light/dark theme.
@@ -490,14 +234,7 @@ First release: real-time audio transcription with speaker diarisation, role infe
 - **Scenario runner** - added eight fixture-driven scenarios with validation, batch execution, progress, and JSON export.
 - **Backend and agent APIs** - added ScribeController routes, FastAPI WebSocket ingest, NeMo diarisation, Mercure publishing, session lifecycle, and role assignment tooling.
 - **Infrastructure and tooling** - added Terraform, GPU Docker Compose, Mercure, setup/start/preflight/health/load/e2e/context scripts, quality gates, PHPUnit, pytest, Playwright scaffolding, and project docs.
-
-### Fixed
-
 - `start-dev.sh` no longer crashes on unbound variables or undefined functions.
 - Dev panel segment data updates retroactively.
 - StreamOrchestrator `_active` flag ordering is correct.
 - Python hot-reload uses the correct Docker volume mount path.
-
-[Unreleased]: https://github.com/user/ambient-scribe/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/user/ambient-scribe/releases/tag/v0.2.0
-[0.1.0]: https://github.com/user/ambient-scribe/releases/tag/v0.1.0

@@ -112,4 +112,4 @@ to a file, then import the module under test directly in the project venv
 `_negative_finding_violation`) against those rows. Confirmed twice in one session: reproduced
 the missed fabricated denial (session `203d1d35`) and the three false-positive flags (session
 `d97a9bde`). Keep the scripts with the milestone that owns the fix so they become regression
-tests (`.goat-flow/plans/0.4.0/tools/m10-*.py`).
+tests (`.goat-flow/plans/0.4.0-slice-1/tools/m10-*.py`).
