@@ -20,6 +20,10 @@ let replayDrainTimeout = null;
 let isLiveDraining = false;
 let liveDrainTimeout = null;
 const MIXED_ROW_ROLE_LABEL = 'Review labels';
+// Terminal source attestation from the backend `finalized` event. Until it
+// arrives, the visit's transcript is not complete and no note may be
+// requested - a Stop-wait timeout only releases the UI, never the note.
+let terminalAttestation = null;
 
 /**
  * Builds summary rows from the transcript rows visible in the browser.
@@ -228,12 +232,25 @@ function announce(message) {
 function handleRawSegment(segmentEvent) {
     // Finalized events close replay or mark live transcription complete.
     if (segmentEvent.type === 'finalized') {
+        // The backend just attested the terminal transcript; notes are now
+        // allowed. Older backends without the fields still count as terminal.
+        terminalAttestation = {
+            id: segmentEvent.attestation_id ?? null,
+            rowCount: segmentEvent.terminal_row_count ?? null,
+            roleSettlement: segmentEvent.role_settlement ?? null,
+        };
         if (isReplayActive) {
             endReplay();
         } else if (isLiveDraining) {
             endLiveStop();
         } else {
+            // The visit UI already ended on the bounded timeout; this late
+            // finalize means the complete source finally exists, so the note
+            // the user is waiting for can start now.
             setPlainStatus('Transcript finalized');
+            if (typeof resumeSummaryAfterLateFinalize === 'function') {
+                resumeSummaryAfterLateFinalize();
+            }
         }
         return;
     }

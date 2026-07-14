@@ -420,6 +420,14 @@ async function requestSummary() {
         return;
     }
 
+    // No terminal attestation means the backend is still finishing the visit
+    // (e.g. the Stop wait timed out first). Requesting a note now is how an
+    // emergency plan once went missing - wait and auto-resume instead.
+    if (!terminalAttestation) {
+        showSummaryWaitingForSource();
+        return;
+    }
+
     // One in-flight request per session keeps auto-trigger and retry from overlapping.
     if (summaryRequestSessionId === CONFIG.sessionId) {
         return;
@@ -439,6 +447,21 @@ async function requestSummary() {
     try {
         setSummaryLoadingText('Improving transcript...');
         await ensureCorrectedTranscriptReady();
+
+        // A blocked source means no honest note can exist yet (still
+        // finalizing, lineage changed, or correction lost rows) - show the
+        // specific reason instead of generating from a bad source.
+        if (
+            correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+            && correctionOutcomeForVisibleSession.status === 'blocked'
+        ) {
+            setSummaryStatus('failed');
+            showSummaryMessage(
+                blockedSourceMessage(correctionOutcomeForVisibleSession.reasonCategory)
+            );
+            return;
+        }
+
         setSummaryLoadingText('Generating summary...');
         const response = await fetch(`/session/${requestedSessionId}/summary`, {
             method: 'POST',
@@ -470,6 +493,65 @@ async function requestSummary() {
             summaryRequestSessionId = null;
         }
     }
+}
+
+/**
+ * Shows that the note is waiting for the backend to finish the transcript.
+ * Use when the user's Stop wait ended before the `finalized` event arrived;
+ * the note starts automatically once the terminal source exists.
+ */
+function showSummaryWaitingForSource() {
+    const summaryPanel = document.getElementById('summaryPanel');
+    const summaryPendingText = document.getElementById('summaryPendingText');
+
+    // Test pages without the panel still capture transcript safely.
+    if (!summaryPanel) {
+        return;
+    }
+
+    summaryPanel.classList.remove('hidden');
+    setSummaryStatus('pending');
+
+    // The pending row explains the wait instead of implying generation began.
+    if (summaryPendingText) {
+        summaryPendingText.textContent =
+            'Waiting for the final transcript — the note will generate automatically.';
+    }
+}
+
+/**
+ * Starts the note after a late `finalized` event ends the source wait.
+ * Use from the transcript stream handler when the visit UI already ended on
+ * the bounded timeout but the backend has now attested the full transcript.
+ */
+function resumeSummaryAfterLateFinalize() {
+    // Without attestation or visible text there is still nothing to generate.
+    if (!terminalAttestation || segmentIndex === 0) {
+        return;
+    }
+
+    // A request already running for this session must not be duplicated.
+    if (summaryRequestSessionId === CONFIG.sessionId) {
+        return;
+    }
+
+    requestSummary();
+}
+
+/**
+ * Maps a blocked note source to the sentence the clinician should see.
+ * Empty/unknown reasons fall back to a safe generic explanation.
+ */
+function blockedSourceMessage(reason) {
+    const messages = {
+        source_not_terminal: 'Source still finalizing — note unavailable.',
+        stale_lineage: 'The transcript changed after finalization — note unavailable.',
+        unaccounted_meaningful_rows: 'Correction lost part of the visit — note unavailable.',
+        correction_pending: 'Transcript correction has not completed — note unavailable.',
+        source_exceeds_note_limit: 'The visit exceeds the note input limit — the transcript remains available.',
+        empty_visit: 'No usable audio was captured — note unavailable.',
+    };
+    return messages[reason] ?? 'The note source is unavailable for this visit.';
 }
 
 /**
@@ -521,12 +603,21 @@ async function ensureCorrectedTranscriptReady() {
 
         // A reset can finish while the old visit's correction request is still returning.
         if (CONFIG.sessionId === correctionRequestedSessionId) {
+            // Blocked keeps its specific reason so the panel can explain why
+            // no note exists; ready/unavailable keep today's meanings.
+            const correctionStatus = correctionPayload?.status === 'ready'
+                ? 'ready'
+                : correctionPayload?.status === 'blocked'
+                    ? 'blocked'
+                    : 'unavailable';
             correctionOutcomeForVisibleSession = {
                 sessionId: correctionRequestedSessionId,
-                status: correctionPayload?.status === 'ready' ? 'ready' : 'unavailable',
-                reasonCategory: typeof correctionPayload?.reason_category === 'string'
-                    ? correctionPayload.reason_category
-                    : null,
+                status: correctionStatus,
+                reasonCategory: typeof correctionPayload?.reason === 'string'
+                    ? correctionPayload.reason
+                    : typeof correctionPayload?.reason_category === 'string'
+                        ? correctionPayload.reason_category
+                        : null,
                 attempted: correctionPayload?.attempted === true,
             };
         }
@@ -601,6 +692,14 @@ function setSummaryLoadingText(message) {
  * (502/503) mean the model or service failed and get an actionable fix note.
  */
 function renderSummaryResponse(response, summaryPayload) {
+    // The backend refused to build a note from an unattested source; the
+    // transcript stays reviewable and the panel explains the specific reason.
+    if (response.ok && summaryPayload.status === 'blocked') {
+        setSummaryStatus('failed');
+        showSummaryMessage(blockedSourceMessage(summaryPayload.reason));
+        return;
+    }
+
     if (response.ok && !summaryPayload.isFallbackPayload) {
         renderSummary(summaryPayload);
         return;

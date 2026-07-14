@@ -5,6 +5,16 @@
 Improves transcript reliability, note safety, confidence cues, long-visit handling, and local
 setup.
 
+- **Incomplete-note race pinned for repair** - The case where a note was generated from an
+  incomplete transcript and silently omitted the visit's emergency instructions is now frozen as a
+  deterministic fixture with integrity tests, so the upcoming terminal-source gate can be built and
+  proven against the exact failure a clinician would experience.
+- **Notes only from the finished visit** - Summaries and transcript correction now bind to a
+  terminal source attestation captured at finalization: a browser timeout can release the waiting
+  screen but can no longer trigger a note from a partial transcript, a correction that loses any
+  meaningful row is rejected instead of stored, over-limit visits get an explicit note-unavailable
+  state instead of a silently shortened note, and a late role result can no longer relabel a
+  finished draft. When finalization arrives after the wait, the note now starts automatically.
 - **More reliable correction checks** - Batch checks now continue after safe failures, report clear
   totals, and use a more reliable browser test server.
 - **Better denial checks** - Note checks now consider the clinician's full question and the

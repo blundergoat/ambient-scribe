@@ -53,6 +53,85 @@ RunRoleInference = Callable[
 role_inference_queues: dict[str, asyncio.Queue[list[dict[str, Any]] | None]] = {}
 role_inference_workers: dict[str, asyncio.Task[None]] = {}
 
+# --- Terminal role settlement (M02 source integrity) -------------------------
+# When the clinician stops a visit, the note source must not change under a
+# late role result. Settlement waits for the queued tail work to drain, then
+# closes the visit's role revision: results after closure are rejected stale.
+ROLE_SETTLEMENT_TIMEOUT_SECONDS = 15.0
+_ROLE_SETTLEMENT_POLL_SECONDS = 0.1
+
+# Monotonic count of role results applied to a visit's stored transcript.
+_role_revisions: dict[str, int] = {}
+# Sessions whose role revision is closed; maps to the frozen revision number.
+_closed_role_revisions: dict[str, int] = {}
+# Sessions with an inference call currently running off the event loop.
+_busy_role_sessions: set[str] = set()
+
+
+def current_role_revision(session_id: str) -> int:
+    """Return how many role results have been applied to this visit's rows.
+
+    Args:
+        session_id: Visit the caller is attesting; unknown sessions are 0.
+
+    Returns:
+        Monotonic revision count; 0 means no role result was ever applied.
+    """
+    return _role_revisions.get(session_id, 0)
+
+
+def _discard_role_settlement_state(session_id: str) -> None:
+    """Forget settlement bookkeeping when a visit's role state is cleaned up."""
+    _role_revisions.pop(session_id, None)
+    _closed_role_revisions.pop(session_id, None)
+    _busy_role_sessions.discard(session_id)
+
+
+async def wait_for_role_settlement(
+    session_id: str,
+    timeout_seconds: float = ROLE_SETTLEMENT_TIMEOUT_SECONDS,
+) -> str:
+    """Wait for the visit's queued role work to drain, then close its revision.
+
+    Called during finalization, after the tail role batch is enqueued and
+    before the terminal watermark is captured, so the note's role labels stop
+    moving. The bound sits above every observed tail completion (+4.7 s,
+    +8.3 s, +11.6 s across the three manual sessions).
+
+    Args:
+        session_id: Visit being finalized.
+        timeout_seconds: Longest the user's finalize may wait for role work.
+
+    Returns:
+        `settled` when the queue drained in time, else `failed_frozen` -
+        either way the revision is closed and later results are stale.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    settlement = "failed_frozen"
+    while time.monotonic() < deadline:
+        queue = role_inference_queues.get(session_id)
+        queue_is_idle = queue is None or queue.empty()
+        # Drained means no queued batch remains AND no inference is running.
+        if queue_is_idle and session_id not in _busy_role_sessions:
+            settlement = "settled"
+            break
+        await asyncio.sleep(_ROLE_SETTLEMENT_POLL_SECONDS)
+
+    _closed_role_revisions[session_id] = _role_revisions.get(session_id, 0)
+    # A frozen visit keeps its last labels and stays visibly review-required.
+    if settlement == "failed_frozen":
+        logger.warning(
+            "role_settlement.failed_frozen session_id=%s revision=%s",
+            session_id,
+            _closed_role_revisions[session_id],
+            extra={
+                "session_id": session_id,
+                "revision": _closed_role_revisions[session_id],
+            },
+        )
+
+    return settlement
+
 
 @dataclass(slots=True)
 class RoleInferenceServices:
@@ -205,6 +284,7 @@ def cancel_orphaned_role_inference(live_session_ids: set[str]) -> int:
     for session_id in orphaned_session_ids:
         role_inference_queues.pop(session_id, None)
         _provider_unavailable_warned.discard(session_id)
+        _discard_role_settlement_state(session_id)
         worker = role_inference_workers.pop(session_id, None)
         # A live worker without a session would publish labels to a closed visit.
         if worker and not worker.done():
@@ -292,6 +372,7 @@ async def _role_inference_worker(
         # If the browser cannot reconnect, remove role state with the worker.
         if not services.lifecycle.is_active(session_id):
             cleanup_role_state(session_id)
+            _discard_role_settlement_state(session_id)
 
 
 def _emit_quality_tail_if_needed(session_id: str) -> None:
@@ -381,18 +462,36 @@ async def _infer_and_publish_role_update(
     services: RoleInferenceServices,
 ) -> None:
     """Run role inference off-loop and publish the result to the transcript."""
+    # After settlement closed the visit (the clinician's note source is
+    # frozen), a late role result must not relabel stored rows or the UI.
+    if session_id in _closed_role_revisions:
+        logger.info(
+            "role_result_stale_rejected session_id=%s closed_revision=%s",
+            session_id,
+            _closed_role_revisions[session_id],
+            extra={
+                "session_id": session_id,
+                "closed_revision": _closed_role_revisions[session_id],
+            },
+        )
+        return
+
     role_evidence = _build_bounded_role_evidence(
         session_id, services.sessions, merged_segments
     )
     loop = asyncio.get_running_loop()
     started_at = time.time()
-    result = await loop.run_in_executor(
-        None,
-        services.run_role_inference,
-        session_id,
-        merged_segments,
-        role_evidence,
-    )
+    _busy_role_sessions.add(session_id)
+    try:
+        result = await loop.run_in_executor(
+            None,
+            services.run_role_inference,
+            session_id,
+            merged_segments,
+            role_evidence,
+        )
+    finally:
+        _busy_role_sessions.discard(session_id)
     duration_ms = int((time.time() - started_at) * 1000)
 
     # A model that is unreachable should warn the browser once, even if the
@@ -405,6 +504,9 @@ async def _infer_and_publish_role_update(
     if result and result.get("path") != "none":
         role_update = _build_role_update_payload(session_id, merged_segments, result)
         services.sessions.apply_role_mapping(session_id, role_update.mapping)
+        # Each applied result advances the visit's role revision; the terminal
+        # watermark records the revision the clinician's note was built under.
+        _role_revisions[session_id] = _role_revisions.get(session_id, 0) + 1
         # After every mapping, the row-cue lane re-judges rows whose text
         # contradicts their speaker's role (e.g. a doctor question rendered
         # inside a Patient card) and relabels or un-labels just those rows.
@@ -726,7 +828,10 @@ def _build_bounded_role_evidence(
             speaker_evidence["role_cue_counts"][cue_name] += cue_count
 
         # Opening cues establish the visit baseline before later seam swaps confuse identity.
-        if speaker_evidence["_opening_utterances_seen"] < ROLE_EVIDENCE_OPENING_UTTERANCES:
+        if (
+            speaker_evidence["_opening_utterances_seen"]
+            < ROLE_EVIDENCE_OPENING_UTTERANCES
+        ):
             for cue_name, cue_count in cue_counts.items():
                 speaker_evidence["opening_role_cue_counts"][cue_name] += cue_count
             speaker_evidence["_opening_utterances_seen"] += 1
@@ -742,7 +847,9 @@ def _build_bounded_role_evidence(
             {
                 **utterance,
                 "_role_cue_strength": (
-                    cue_counts["doctor"] + cue_counts["patient"] + cue_counts["questions"]
+                    cue_counts["doctor"]
+                    + cue_counts["patient"]
+                    + cue_counts["questions"]
                 ),
             }
         )

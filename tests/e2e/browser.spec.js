@@ -1443,7 +1443,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
     ]);
   });
 
-  test("a dead backend cannot hold the visit open: timeout still summarizes", async ({
+  test("a dead backend releases the visit UI but can never authorize a note", async ({
     page,
   }) => {
     test.setTimeout(45000);
@@ -1456,10 +1456,48 @@ test.describe("Live-stop finalize drain (M21)", () => {
     await page.evaluate(() => stopRecording());
     await expect(page.locator("#status")).toContainText("Finishing transcription");
 
-    // No finalized event ever arrives; the bounded timeout finishes the visit.
+    // No finalized event ever arrives; the bounded timeout releases the UI...
     await expect(page.locator("#status")).toContainText("Session ended", {
       timeout: 20000,
     });
+    // ...but without a terminal attestation the note must stay unavailable:
+    // generating from a pre-terminal snapshot is how an emergency plan was
+    // silently truncated (consult-3.1). The panel explains the wait instead.
+    await expect(page.locator("#summaryPendingText")).toContainText(
+      "Waiting for the final transcript",
+    );
+    await page.waitForTimeout(2000);
+    expect(summaryCalls.length).toBe(0);
+  });
+
+  test("a late finalized event after the timeout starts the waiting note", async ({
+    page,
+  }) => {
+    test.setTimeout(45000);
+    const summaryCalls = [];
+    const correctionCalls = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, []);
+    await stubSummaryRoute(page, summaryCalls);
+    await injectFakeSegments(page, 2);
+    await enterLiveRecordingState(page);
+
+    await page.evaluate(() => stopRecording());
+    await expect(page.locator("#status")).toContainText("Session ended", {
+      timeout: 20000,
+    });
+    expect(summaryCalls.length).toBe(0);
+
+    // The backend finally finishes (slow finalize/backlog): the attested
+    // terminal source arrives and the note the user is waiting on begins.
+    await page.evaluate(() =>
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-e2e-1",
+        terminal_row_count: 2,
+      }),
+    );
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
   });
 

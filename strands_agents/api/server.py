@@ -38,9 +38,12 @@ from api.role_inference_queue import (
     role_inference_queues,
     role_inference_workers,
 )
+from api import source_integrity
 from api.role_agent_runtime import run_role_inference as _run_role_inference
 from api.role_heuristics import compute_row_role_exceptions
-from api.agent_observability import configure_strands_telemetry as _configure_strands_telemetry
+from api.agent_observability import (
+    configure_strands_telemetry as _configure_strands_telemetry,
+)
 from api.mercure_publisher import did_publish_mercure_event
 from api.streaming_session import StreamingServices, transcribe_stream_session
 from api.summary_request import (
@@ -130,6 +133,8 @@ SESSION_STORAGE = os.environ.get("SESSION_STORAGE", "memory")
 SESSION_RECONNECT_GRACE_SECONDS = float(
     os.environ.get("SESSION_RECONNECT_GRACE_SECONDS", "30")
 )
+
+
 def _history_duration(segments: list[dict]) -> float:
     """Estimate session duration from stored segment timestamps."""
     if not segments:
@@ -526,26 +531,46 @@ async def correct_session_transcript(
     _validate_session_id(session_id)
     force_requested = bool(correction_request.force) if correction_request else False
 
+    watermark = source_integrity.get_terminal_watermark(session_id)
+    # No terminal watermark means the visit is still finalizing (or the server
+    # restarted): a browser timeout must not authorize a pre-terminal snapshot.
+    # Example: the user's Stop wait expired while the backend was still working
+    # through queued audio - exactly the consult-3.1 truncated-note incident.
+    if watermark is None:
+        return _blocked_source_response(
+            session_id,
+            "source_not_terminal",
+            "The transcript is still finalizing; the note source is not ready.",
+        )
+
     existing_corrected_segments = sessions.get_corrected_segments(session_id)
     # Existing corrected rows can be reused for retry clicks on the summary button.
     if existing_corrected_segments and not force_requested:
-        return {
-            "session_id": session_id,
-            "status": "ready",
-            "source": "corrected_segments",
-            "segments": len(existing_corrected_segments),
-            "model": existing_corrected_segments[0].get("source_model", ""),
-            "reused": True,
-            "attempted": False,
-            "attempts": 0,
-            "retried": False,
-            "chunk_count": 0,
-        }
+        # Reuse is only honest when the artifact was attested against this
+        # terminal watermark; anything else must run a fresh correction.
+        if watermark.correction_status == "attested_corrected":
+            return {
+                "session_id": session_id,
+                "status": "ready",
+                "source": "corrected_segments",
+                "source_state": "whole_visit_corrected",
+                "attestation_id": watermark.attestation_id,
+                "segments": len(existing_corrected_segments),
+                "model": existing_corrected_segments[0].get("source_model", ""),
+                "reused": True,
+                "attempted": False,
+                "attempts": 0,
+                "retried": False,
+                "chunk_count": 0,
+            }
+        force_requested = True
 
     browser_visible_segments = browser_visible_segments_from_summary(correction_request)
     # Browser rows carry the roles the clinician currently sees before correction runs.
     if browser_visible_segments:
-        merge_result = sessions.merge_browser_segments(session_id, browser_visible_segments)
+        merge_result = sessions.merge_browser_segments(
+            session_id, browser_visible_segments
+        )
         logger.info(
             "correction.segments_merged session_id=%s matched=%s unknown=%s restored=%s",
             session_id,
@@ -556,6 +581,19 @@ async def correct_session_transcript(
         )
 
     live_segments = sessions.get_segments(session_id)
+    # Correction must consume exactly the terminal transcript the clinician
+    # stopped with. Row identity excludes role labels, so post-visit role
+    # corrections do not break this; new/lost rows do.
+    if (
+        source_integrity.canonical_rows_hash(live_segments)
+        != watermark.terminal_live_row_hash
+    ):
+        return _blocked_source_response(
+            session_id,
+            "stale_lineage",
+            "The stored transcript no longer matches the finalized visit.",
+        )
+
     active_session = lifecycle.get(session_id)
     # After reconnect grace expires, the audio buffer is gone and correction cannot run.
     if active_session is None:
@@ -564,6 +602,7 @@ async def correct_session_transcript(
             "Session audio is no longer available for correction.",
             live_segments,
             reason_category="audio_expired",
+            watermark=watermark,
         )
 
     # A trimmed buffer holds only the visit's tail; aligning tail-only ASR against
@@ -575,6 +614,7 @@ async def correct_session_transcript(
             "Visit audio exceeded the retention window; the live transcript is used as-is.",
             live_segments,
             reason_category="retention_window",
+            watermark=watermark,
         )
 
     retained_audio = active_session.buffer.full_audio()
@@ -585,6 +625,7 @@ async def correct_session_transcript(
             "No retained audio is available for correction.",
             live_segments,
             reason_category="empty_audio",
+            watermark=watermark,
         )
 
     loop = asyncio.get_running_loop()
@@ -654,9 +695,42 @@ async def correct_session_transcript(
                 reason_category=correction_error.reason_category,
                 failed_chunk_index=correction_error.failed_chunk_index,
                 chunk_count_planned=correction_error.chunk_count_planned,
+                watermark=watermark,
+            )
+
+        # A corrected artifact is whole-visit-true or absent: every meaningful
+        # live row's words must survive into the corrected output. Losing one
+        # row here is how "we do have antihistamines" vanished from a note.
+        unaccounted_row_ids = source_integrity.coverage_unaccounted_rows(
+            live_segments, correction_result.segments
+        )
+        if unaccounted_row_ids:
+            logger.warning(
+                "correction.coverage_failed session_id=%s unaccounted=%s",
+                session_id,
+                len(unaccounted_row_ids),
+                extra={
+                    "session_id": session_id,
+                    "unaccounted": len(unaccounted_row_ids),
+                    "coverage_version": source_integrity.COVERAGE_VERSION,
+                },
+            )
+            watermark.correction_status = "coverage_failed"
+            watermark.unaccounted_meaningful_row_count = len(unaccounted_row_ids)
+            return _blocked_source_response(
+                session_id,
+                "unaccounted_meaningful_rows",
+                "Correction lost part of the visit; the note stays unavailable.",
             )
 
         sessions.replace_corrected_segments(session_id, correction_result.segments)
+        # Bind the artifact to the terminal identity so summary can attest it.
+        watermark.correction_status = "attested_corrected"
+        watermark.correction_input_row_hash = watermark.terminal_live_row_hash
+        watermark.corrected_output_row_hash = source_integrity.canonical_rows_hash(
+            correction_result.segments
+        )
+        watermark.unaccounted_meaningful_row_count = 0
         duration_ms = int((time.time() - started_at) * 1000)
         logger.info(
             (
@@ -686,6 +760,8 @@ async def correct_session_transcript(
         "session_id": session_id,
         "status": "ready",
         "source": correction_result.source,
+        "source_state": "whole_visit_corrected",
+        "attestation_id": watermark.attestation_id,
         "segments": len(correction_result.segments),
         "word_count": correction_result.word_count,
         "model": correction_result.model_name,
@@ -694,6 +770,71 @@ async def correct_session_transcript(
         "attempts": correction_result.attempts,
         "retried": correction_result.retried,
         "chunk_count": correction_result.chunk_count,
+    }
+
+
+def _resolve_summary_source_state(
+    summary_context: Any,
+    watermark: source_integrity.TerminalWatermark,
+) -> str:
+    """Decide which attested source, if any, may feed the user's note.
+
+    Args:
+        summary_context: Selected transcript lane and rows for this request.
+        watermark: The visit's terminal identity captured at finalization.
+
+    Returns:
+        `whole_visit_corrected`, `whole_visit_live_fallback`, or a blocked
+        reason; blocked means the browser shows note-unavailable, never a
+        silently degraded draft.
+    """
+    # Corrected rows may feed a note only when this exact terminal visit
+    # attested them; older or partial artifacts are stale lineage.
+    if summary_context.source == "corrected_segments":
+        if watermark.correction_status == "attested_corrected":
+            return "whole_visit_corrected"
+        return "stale_lineage"
+
+    # Live rows may serve only as the visible fallback after a bounded
+    # correction failure, and only when they still match the terminal visit.
+    if watermark.fallback_reason in source_integrity.LIVE_FALLBACK_REASONS:
+        live_rows_match_terminal = (
+            source_integrity.canonical_rows_hash(summary_context.complete_segments)
+            == watermark.terminal_live_row_hash
+        )
+        if live_rows_match_terminal:
+            return "whole_visit_live_fallback"
+        return "stale_lineage"
+
+    # No correction outcome is bound yet: the browser should correct first.
+    return "correction_pending"
+
+
+def _blocked_source_response(session_id: str, reason: str, detail: str) -> dict:
+    """Tell the browser no note source exists yet, with one specific reason.
+
+    Used when the user's visit has no terminal watermark, its lineage went
+    stale, or correction lost meaningful rows. The transcript stays readable;
+    only note generation is refused.
+
+    Args:
+        session_id: Visit the browser asked about.
+        reason: Bounded machine reason, e.g. `source_not_terminal`; never prose.
+        detail: Plain sentence for support/dev surfaces; empty loses context.
+
+    Returns:
+        Non-fatal JSON the browser renders as a specific note-unavailable state.
+    """
+    return {
+        "session_id": session_id,
+        "status": "blocked",
+        "source_state": "blocked",
+        "reason": reason,
+        "detail": detail,
+        "attempted": False,
+        "attempts": 0,
+        "retried": False,
+        "chunk_count": 0,
     }
 
 
@@ -707,6 +848,7 @@ def _correction_unavailable_response(
     retried: bool = False,
     failed_chunk_index: int | None = None,
     chunk_count_planned: int = 0,
+    watermark: source_integrity.TerminalWatermark | None = None,
 ) -> dict:
     """Build a non-fatal correction response for live-preview fallback.
 
@@ -724,7 +866,7 @@ def _correction_unavailable_response(
         JSON payload telling the browser to continue with the live preview;
         empty rows mean summary generation may still have no source.
     """
-    return {
+    response = {
         "session_id": session_id,
         "status": "unavailable",
         "source": "live_segments",
@@ -737,6 +879,40 @@ def _correction_unavailable_response(
         "failed_chunk_index": failed_chunk_index,
         "chunk_count_planned": chunk_count_planned,
     }
+
+    # Without a terminal watermark the live rows cannot be attested complete,
+    # so no fallback note source may be advertised to the browser.
+    if watermark is None:
+        response["source_state"] = "blocked"
+        response["reason"] = "source_not_terminal"
+        return response
+
+    fallback_reason = source_integrity.fallback_reason_for_category(reason_category)
+    live_rows_match_terminal = (
+        source_integrity.canonical_rows_hash(live_segments)
+        == watermark.terminal_live_row_hash
+    )
+    # A bounded failure over the attested-complete live transcript may fall
+    # back to it - visibly, and review-required (e.g. a >15-minute visit whose
+    # audio exceeded the retention window, per ADR-006).
+    if (
+        fallback_reason in source_integrity.LIVE_FALLBACK_REASONS
+        and live_rows_match_terminal
+    ):
+        watermark.correction_status = f"unavailable:{fallback_reason}"
+        watermark.fallback_reason = fallback_reason
+        response["source_state"] = "whole_visit_live_fallback"
+        response["fallback_reason"] = fallback_reason
+        response["attestation_id"] = watermark.attestation_id
+        return response
+
+    # Anything else (empty visit, mutated rows) is blocked, never a fallback.
+    watermark.correction_status = "blocked"
+    response["source_state"] = "blocked"
+    response["reason"] = (
+        "stale_lineage" if not live_rows_match_terminal else "empty_visit"
+    )
+    return response
 
 
 @app.api_route("/session/{session_id}/history", methods=["GET", "POST"])
@@ -907,7 +1083,9 @@ async def roles_override(session_id: str, request: Request) -> dict:
     return await _apply_speaker_role_override(session_id, speaker_id, role)
 
 
-async def _apply_speaker_role_override(session_id: str, speaker_id: str, role: str) -> dict:
+async def _apply_speaker_role_override(
+    session_id: str, speaker_id: str, role: str
+) -> dict:
     """Persist and broadcast a speaker-level role correction.
 
     The clinician clicked a speaker label (e.g. cycled spk_0 to Doctor), so
@@ -1100,6 +1278,36 @@ async def generate_summary(
     if not summary_context.selected_segments:
         raise HTTPException(status_code=404, detail="No transcript found for session")
 
+    watermark = source_integrity.get_terminal_watermark(session_id)
+    # A note may only be built from an attested terminal source. Example: the
+    # browser's Stop wait expired and it asked for a note while the backend was
+    # still emitting rows - the request must fail closed, not truncate the plan.
+    if watermark is None:
+        return _blocked_source_response(
+            session_id,
+            "source_not_terminal",
+            "The transcript is still finalizing; the note source is not ready.",
+        )
+
+    source_state = _resolve_summary_source_state(summary_context, watermark)
+    # Any state other than the two attested whole-visit sources refuses a note
+    # while keeping the transcript reviewable for the clinician.
+    if source_state not in {"whole_visit_corrected", "whole_visit_live_fallback"}:
+        return _blocked_source_response(
+            session_id,
+            source_state,
+            "No attested whole-visit source exists for this note.",
+        )
+
+    # Silently shortening a clinical note is never acceptable: an over-limit
+    # visit keeps its reviewable transcript and gets no draft in this release.
+    if summary_context.transcript_truncated:
+        return _blocked_source_response(
+            session_id,
+            "source_exceeds_note_limit",
+            "The visit exceeds the note input limit; the transcript remains available.",
+        )
+
     logger.info(
         "summary.requested source=%s segments=%s transcript_chars=%s",
         summary_context.source,
@@ -1152,6 +1360,11 @@ async def generate_summary(
             "transcript_truncated": summary_context.transcript_truncated,
             "original_transcript_chars": summary_context.original_transcript_chars,
             "kept_transcript_chars": summary_context.kept_transcript_chars,
+            # Source attestation the browser shows beside the draft; a live
+            # fallback is always visibly review-required.
+            "source_state": source_state,
+            "fallback_reason": watermark.fallback_reason or None,
+            "attestation_id": watermark.attestation_id,
         }
     )
     await publish_summary_outputs(
@@ -1279,17 +1492,25 @@ def _probe_summary_model() -> SummaryModelProbe:
             # No resolvable credentials means every role/summary call will fail
             # mid-consultation; surface that before recording starts.
             if aws_session.get_credentials() is None:
-                return SummaryModelProbe(False, "bedrock credentials are not configured")
+                return SummaryModelProbe(
+                    False, "bedrock credentials are not configured"
+                )
             region = os.environ.get("AWS_DEFAULT_REGION") or aws_session.region_name
             if not region:
-                return SummaryModelProbe(False, "bedrock region is not configured (AWS_DEFAULT_REGION)")
+                return SummaryModelProbe(
+                    False, "bedrock region is not configured (AWS_DEFAULT_REGION)"
+                )
         except Exception as exc:
-            return SummaryModelProbe(False, f"bedrock credential check failed ({type(exc).__name__})")
+            return SummaryModelProbe(
+                False, f"bedrock credential check failed ({type(exc).__name__})"
+            )
         return SummaryModelProbe(True, f"bedrock:{region}")
 
     # A typo'd provider would otherwise pass pre-flight and fail at first use.
     if provider != "ollama":
-        return SummaryModelProbe(False, f"unknown ROLE_AGENT_MODEL_PROVIDER '{provider}'")
+        return SummaryModelProbe(
+            False, f"unknown ROLE_AGENT_MODEL_PROVIDER '{provider}'"
+        )
 
     host = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
     model = os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")

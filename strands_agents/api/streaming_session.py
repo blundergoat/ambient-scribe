@@ -15,7 +15,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from api import source_integrity
 from api.role_heuristics import compute_row_role_exceptions
+from api.role_inference_queue import current_role_revision, wait_for_role_settlement
 from fastapi import WebSocket, WebSocketDisconnect
 from nemo_session import TranscriptionSession
 from nemo_streaming_engine import streaming_engine_enabled
@@ -166,6 +168,9 @@ async def _resume_or_create_session(
             },
         )
         session = existing_session
+        # Resuming means the visit keeps recording: any earlier "terminal"
+        # identity is no longer true and must not authorize a note source.
+        source_integrity.discard_terminal_watermark(session_id)
     else:
         # M22: the process-level engine flag selects windowed (default) or
         # session-long streaming identity at session construction only.
@@ -308,6 +313,11 @@ async def _finalize_after_disconnect(
     if tail_payloads != []:
         await services.enqueue_role_inference(session_id, tail_payloads)
 
+    # The clinician's note source must not keep moving after Stop: wait for
+    # the queued role tail to drain (bounded), then close the role revision so
+    # any later role result is rejected stale instead of relabeling the draft.
+    role_settlement = await wait_for_role_settlement(session_id)
+
     services.sessions.replace_segments(
         session_id,
         [segment.dict() for segment in session.accumulated_transcript],
@@ -326,12 +336,36 @@ async def _finalize_after_disconnect(
             ),
         )
 
-    await _emit_session_quality_record(session_id, session, services, state, current_state)
+    await _emit_session_quality_record(
+        session_id, session, services, state, current_state
+    )
+
+    # Freeze the terminal source identity the note is allowed to use. This is
+    # the only moment "the whole visit" is true: final rows are committed and
+    # role settlement has closed. Correction/summary requests bind to it.
+    watermark = source_integrity.record_terminal_watermark(
+        session_id,
+        services.sessions.get_segments(session_id),
+        # Buffer counters default to zero so a minimal test session (or a
+        # future buffer variant) still finalizes instead of crashing the stop.
+        audio_seconds=float(getattr(session.buffer, "duration_seconds", 0.0) or 0.0),
+        trimmed_seconds=float(getattr(session.buffer, "trimmed_seconds", 0.0) or 0.0),
+        role_revision=current_role_revision(session_id),
+        role_settlement=role_settlement,
+    )
 
     event_id = _next_stream_event_id(session_id, services)
     await services.publish_to_mercure(
         f"scribe/session/{session_id}/raw",
-        {"type": "finalized", "session_id": session_id},
+        {
+            "type": "finalized",
+            "session_id": session_id,
+            # Opaque attestation only - hashes stay server-side. The browser
+            # uses this to know a terminal note source now exists.
+            "attestation_id": watermark.attestation_id,
+            "terminal_row_count": watermark.terminal_live_row_count,
+            "role_settlement": watermark.terminal_role_settlement,
+        },
         event_id=event_id,
     )
 

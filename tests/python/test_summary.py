@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import api.server as api_server
 from agents import MEDICAL_SUMMARY_PROMPT
+from api import source_integrity
 from api.server import app, sessions
 from api.summary_generation import (
     SessionSummaryOutput,
@@ -84,14 +85,19 @@ class TestSummaryPrompts:
 
     def test_medical_prompt_restricts_assessment_to_clinician_statements(self):
         """ADR-007 Option B: the Assessment section is scribe-true, never AI-inferred."""
-        assert "Only diagnoses or differentials the clinician stated" in MEDICAL_SUMMARY_PROMPT
+        assert (
+            "Only diagnoses or differentials the clinician stated"
+            in MEDICAL_SUMMARY_PROMPT
+        )
         assert "Never add" in MEDICAL_SUMMARY_PROMPT
         assert "no assessment was documented" in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_keeps_patient_reports_out_of_objective(self):
         """Objective may hold only clinician-performed examination content (M03 item a)."""
         assert "Only clinician-performed examination findings" in MEDICAL_SUMMARY_PROMPT
-        assert "Patient-reported symptoms belong in Subjective" in MEDICAL_SUMMARY_PROMPT
+        assert (
+            "Patient-reported symptoms belong in Subjective" in MEDICAL_SUMMARY_PROMPT
+        )
 
 
 class TestSummaryEndpoint:
@@ -100,7 +106,33 @@ class TestSummaryEndpoint:
     def setup_method(self):
         sessions._sessions.clear()
         api_server._mercure_event_ids.clear()
+        # A leftover attestation would let one test summarize another test's
+        # "finalized" visit, so every case starts unattested.
+        source_integrity._terminal_watermarks.clear()
         app.state.http_client = httpx.AsyncClient(timeout=5.0)
+
+    @staticmethod
+    def _attest_summary_source(*, corrected_attested: bool = False) -> None:
+        """Attest the seeded rows as the finalized visit, like Stop does.
+
+        Summaries now refuse pre-terminal sources. Live-lane tests attest with
+        a bounded correction failure (the honest live-fallback state); tests
+        seeding corrected rows mark them attested so they may feed the note.
+        """
+        watermark = source_integrity.record_terminal_watermark(
+            TEST_SESSION_ID,
+            sessions.get_segments(TEST_SESSION_ID),
+            audio_seconds=1.0,
+            trimmed_seconds=0.0,
+            role_revision=0,
+            role_settlement="settled",
+        )
+        if corrected_attested:
+            watermark.correction_status = "attested_corrected"
+            return
+        # Live rows may feed a note only as the visible post-failure fallback.
+        watermark.correction_status = "unavailable:correction_error"
+        watermark.fallback_reason = "correction_error"
 
     def test_summary_404_on_empty_session(self):
         client = TestClient(app, raise_server_exceptions=False)
@@ -128,6 +160,8 @@ class TestSummaryEndpoint:
             },
         )
 
+        self._attest_summary_source()
+
         mock_summary = {
             "title": "Medical Consultation",
             "sections": [
@@ -154,6 +188,20 @@ class TestSummaryEndpoint:
 
     def test_summary_uses_browser_visible_segments_from_request(self):
         """Summaries can use only the transcript rows visible in the browser."""
+        # The finalized visit already stored this row; the browser resends the
+        # same row (identity-equal) with the roles the clinician can see.
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_1",
+                "role": "PATIENT",
+                "text": "I have sore red skin.",
+                "start": 16.0,
+                "end": 20.0,
+                "segment_id": "live-0001",
+            },
+        )
+        self._attest_summary_source()
         mock_summary = {
             "title": "Partial Transcript",
             "sections": [
@@ -162,7 +210,9 @@ class TestSummaryEndpoint:
             "key_points": ["Visible transcript text only"],
         }
 
-        with patch("api.server._run_summary_generation", return_value=mock_summary) as summary_runner:
+        with patch(
+            "api.server._run_summary_generation", return_value=mock_summary
+        ) as summary_runner:
             client = TestClient(app, raise_server_exceptions=False)
             response = client.post(
                 f"/session/{TEST_SESSION_ID}/summary",
@@ -174,6 +224,7 @@ class TestSummaryEndpoint:
                             "text": "I have sore red skin.",
                             "start": 16.0,
                             "end": 20.0,
+                            "segment_id": "live-0001",
                         }
                     ]
                 },
@@ -182,7 +233,9 @@ class TestSummaryEndpoint:
         assert response.status_code == 200
         summary_runner.assert_called_once()
         assert "[PATIENT] I have sore red skin." in summary_runner.call_args.args[1]
-        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "I have sore red skin."
+        assert (
+            sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "I have sore red skin."
+        )
 
     def test_summary_prefers_corrected_segments_when_available(self):
         """Corrected post-visit rows outrank stale browser-visible preview text."""
@@ -211,13 +264,17 @@ class TestSummaryEndpoint:
             ],
         )
 
+        self._attest_summary_source(corrected_attested=True)
+
         mock_summary = {
             "title": "Corrected Transcript",
             "sections": [],
             "key_points": [],
         }
 
-        with patch("api.server._run_summary_generation", return_value=mock_summary) as summary_runner:
+        with patch(
+            "api.server._run_summary_generation", return_value=mock_summary
+        ) as summary_runner:
             client = TestClient(app, raise_server_exceptions=False)
             response = client.post(
                 f"/session/{TEST_SESSION_ID}/summary",
@@ -242,23 +299,25 @@ class TestSummaryEndpoint:
         assert "browser preview typo" not in transcript
         citation_rows = summary_runner.call_args.args[2]
         assert citation_rows[0]["segment_id"] == "corrected-0001"
-        assert sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "browser preview typo"
+        assert (
+            sessions.get_segments(TEST_SESSION_ID)[0]["text"] == "browser preview typo"
+        )
 
-    def test_summary_publishes_browser_truncation_metadata_and_selected_rows(self):
-        """HTTP and Mercure report the same real browser-input selection."""
+    def test_summary_blocks_over_limit_visits_instead_of_truncating(self):
+        """A visit over the note input limit gets no silently shortened draft.
+
+        M02 contract: silent truncation once dropped the end of a long visit's
+        note input; the user now sees an explicit note-unavailable state while
+        the full transcript stays reviewable.
+        """
         rows = _summary_rows(90, text_chars=420)
-        mock_summary = {
-            "title": "Long consultation",
-            "sections": [
-                {"heading": "Plan", "content": "Tail plan remains available."},
-            ],
-            "key_points": [],
-        }
+        # The finalized visit already stored every row the browser resends.
+        for row in rows:
+            sessions.append_segment(TEST_SESSION_ID, row)
+        self._attest_summary_source()
 
         with (
-            patch(
-                "api.server._run_summary_generation", return_value=mock_summary
-            ) as summary_runner,
+            patch("api.server._run_summary_generation") as summary_runner,
             patch(
                 "api.server.publish_to_mercure",
                 new_callable=AsyncMock,
@@ -273,21 +332,11 @@ class TestSummaryEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["transcript_source"] == "browser_visible_segments"
-        assert data["transcript_truncated"] is True
-        assert data["original_transcript_chars"] > data["kept_transcript_chars"]
-        selected_rows = summary_runner.call_args.args[3]
-        assert selected_rows[0]["segment_id"] == "seg-0001"
-        assert selected_rows[-1]["segment_id"] == "seg-0090"
-        assert len(selected_rows) < len(rows)
-        published_payload = publisher.await_args.args[1]
-        for field in (
-            "transcript_source",
-            "transcript_truncated",
-            "original_transcript_chars",
-            "kept_transcript_chars",
-        ):
-            assert published_payload[field] == data[field]
+        assert data["status"] == "blocked"
+        assert data["reason"] == "source_exceeds_note_limit"
+        # No model call and no published note may exist for a blocked source.
+        summary_runner.assert_not_called()
+        publisher.assert_not_awaited()
 
     def test_summary_502_on_generation_failure(self):
         sessions.append_segment(
@@ -299,6 +348,8 @@ class TestSummaryEndpoint:
                 "end": 1.0,
             },
         )
+
+        self._attest_summary_source()
 
         with patch("api.server._run_summary_generation", return_value=None):
             client = TestClient(app, raise_server_exceptions=False)
@@ -323,6 +374,8 @@ class TestSummaryEndpoint:
             },
         )
 
+        self._attest_summary_source()
+
         with patch(
             "api.server._run_summary_generation",
             return_value={
@@ -338,6 +391,7 @@ class TestSummaryEndpoint:
         data = response.json()
         assert data["sections"] == []
         assert data["key_points"] == []
+
 
 class TestSummaryContextSelection:
     """M08 keeps one whole-row input contract across every summary source."""
@@ -406,7 +460,9 @@ class TestSummaryContextSelection:
         assert context.original_transcript_chars == context.kept_transcript_chars
         assert prompt_with_selection == legacy_prompt
 
-    def test_over_budget_corrected_rows_align_prompt_citations_and_fidelity(self) -> None:
+    def test_over_budget_corrected_rows_align_prompt_citations_and_fidelity(
+        self,
+    ) -> None:
         """The old uncapped citation path cannot reintroduce omitted rows."""
         backend = SessionStore()
         rows = _summary_rows(90, text_chars=420, id_prefix="corrected")
@@ -488,9 +544,7 @@ class TestSummaryContextSelection:
         ]
         assert len(records) == 1
         assert getattr(records[0], "source") == "session_store"
-        assert getattr(records[0], "original_chars") > getattr(
-            records[0], "kept_chars"
-        )
+        assert getattr(records[0], "original_chars") > getattr(records[0], "kept_chars")
         assert getattr(records[0], "original_segments") > getattr(
             records[0], "kept_segments"
         )
@@ -515,7 +569,10 @@ class TestRunSummaryGeneration:
             result = api_server._run_summary_generation("sid", "transcript")
 
         assert result["title"] == "Test"
-        assert mock_agent.call_args.kwargs["structured_output_model"] is SessionSummaryOutput
+        assert (
+            mock_agent.call_args.kwargs["structured_output_model"]
+            is SessionSummaryOutput
+        )
 
     def test_returns_none_without_structured_output(self):
         """Unstructured model text should make the browser show a retryable failure."""
@@ -572,7 +629,9 @@ class TestRunSummaryGeneration:
 
         assert "source IDs" in prompt
         assert '{"segment_id": "seg-0001"}' in prompt
-        assert "[source:corrected-0001 01:05-01:07 DOCTOR] Please use the cream." in prompt
+        assert (
+            "[source:corrected-0001 01:05-01:07 DOCTOR] Please use the cream." in prompt
+        )
 
     def test_summary_prompt_uses_preselected_corrected_source_index(self):
         """A bounded source index cannot be replaced by the old uncapped formatter."""
@@ -623,7 +682,9 @@ class TestRunSummaryGeneration:
                     heading="Plan",
                     content="Use topical treatment.",
                     citations=[
-                        SummaryCitationOutput(segment_id="corrected-0001", text="model text ignored"),
+                        SummaryCitationOutput(
+                            segment_id="corrected-0001", text="model text ignored"
+                        ),
                         SummaryCitationOutput(segment_id="missing-9999"),
                         SummaryCitationOutput(segment_id="corrected-0001"),
                     ],
@@ -771,7 +832,9 @@ class TestCitationDropLogging:
                 summary, self._SOURCE_ROWS, session_id="sess-1"
             )
 
-        assert [c.segment_id for c in validated.sections[0].citations] == ["corrected-0001"]
+        assert [c.segment_id for c in validated.sections[0].citations] == [
+            "corrected-0001"
+        ]
         assert not [r for r in caplog.records if "citations_dropped" in r.message]
 
     def test_blank_and_duplicate_drops_are_counted_separately(self, caplog) -> None:
@@ -780,7 +843,9 @@ class TestCitationDropLogging:
         summary = self._summary([["corrected-0001", "corrected-0001", "  "]])
 
         with caplog.at_level(logging.WARNING, logger="api.summary_generation"):
-            summary_with_validated_citations(summary, self._SOURCE_ROWS, session_id="sess-1")
+            summary_with_validated_citations(
+                summary, self._SOURCE_ROWS, session_id="sess-1"
+            )
 
         record = next(r for r in caplog.records if "citations_dropped" in r.message)
         assert getattr(record, "duplicate_citations") == 1
@@ -813,7 +878,10 @@ class TestInlineReferenceStripping:
 
     def test_single_time_reference_is_removed(self) -> None:
         """A lone [MM:SS] marker disappears without leaving double spaces."""
-        assert self._strip("Headache began at midday [00:04].") == "Headache began at midday."
+        assert (
+            self._strip("Headache began at midday [00:04].")
+            == "Headache began at midday."
+        )
 
     def test_time_range_reference_is_removed(self) -> None:
         """[MM:SS-MM:SS] ranges vanish from the sentence."""
@@ -825,7 +893,9 @@ class TestInlineReferenceStripping:
     def test_multiple_references_in_one_sentence_are_removed(self) -> None:
         """Every reference in a sentence goes, not just the first."""
         assert (
-            self._strip("Blurring in both eyes [00:27-00:29, 02:20-02:22] was noted [02:21].")
+            self._strip(
+                "Blurring in both eyes [00:27-00:29, 02:20-02:22] was noted [02:21]."
+            )
             == "Blurring in both eyes was noted."
         )
 
@@ -836,7 +906,9 @@ class TestInlineReferenceStripping:
     def test_segment_id_and_range_references_are_removed(self) -> None:
         """Legacy [corrected-XXXX] and 'to' ranges leave the prose."""
         assert (
-            self._strip("Skin symptoms on arms [corrected-0011 to corrected-0025] persist [corrected-0041].")
+            self._strip(
+                "Skin symptoms on arms [corrected-0011 to corrected-0025] persist [corrected-0041]."
+            )
             == "Skin symptoms on arms persist."
         )
 
@@ -861,7 +933,6 @@ class TestInlineReferenceStripping:
         assert self._strip("") == ""
         assert self._strip("No references here.") == "No references here."
 
-
     def test_unclosed_and_truncated_brackets_pass_through(self) -> None:
         """Verifier-suggested hardening: broken reference shapes are left alone."""
         for content in (
@@ -870,6 +941,7 @@ class TestInlineReferenceStripping:
             "Stray ] bracket only.",
         ):
             assert self._strip(content) == content
+
 
 class TestSummaryDisplayTextCleaning:
     """The full summary payload leaves generation with reference-free prose."""

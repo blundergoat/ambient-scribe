@@ -1,6 +1,6 @@
 ---
 category: review-feedback
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-14
 ---
 
 # Review Feedback Lessons
@@ -42,3 +42,30 @@ pattern they describe is the thing to watch for.
 `git log -S "<quoted code>"` on the mechanism it describes. Verdicts belong to one of four
 classes - VALID at HEAD, FIXED since filing, STALE (true then, refactored away), or WRONG -
 and only the first class gets a code change.
+
+## Lesson: Design against consumer-semantic contracts, not producer proxies
+
+**Created:** 2026-07-14
+**What happened:** During the 0.4.0-improve-claude plan cycle, an adversarial review
+(`.goat-flow/plans/0.4.0-improve-claude/REVIEW-2026-07-14-codex.md`) invalidated three
+designs that had each already survived one self-review. (1) A role-update dedup key was
+wrong TWICE: first as byte-identical payload comparison (defeated by per-batch
+`attributed_segments` and free-text `reasoning`), then - after self-correction - by
+including the whole `role_stability` object, whose `windows` counter increments every
+chunk while the browser consumes only `role_stability.level`
+(`strands_agents/api/role_inference_queue.py`, search: "def _build_role_stability";
+`public/js/scribe-transcript.js`, search: "roleStability = roleUpdateEvent.role_stability").
+(2) A proposed "regenerate the note" recovery could not repair the incident it targeted:
+three independent reuse layers (browser correction early-return, server
+reuse-unless-`force`, corrected-artifact precedence over the POST body;
+`strands_agents/api/summary_request.py`, search: "corrected_segments") meant retry
+consumed the same stale 214-row source. (3) Acceptance gates were written on proxy
+metrics (raw row counts, "≈ 0" of an unmeasured quantity) rather than identity-bearing
+state.
+**Lesson:** Before proposing a dedup key, a recovery/retry action, or an acceptance gate,
+first trace (a) exactly what the CONSUMER reads (not what the producer emits) and (b) the
+full reuse/caching path a retry actually takes, then define the contract in
+identity-bearing terms (terminal version + unique IDs, consumer-visible state bands,
+exact counters that exist). Self-review does not reliably catch second-order design
+errors in one's own corrections - an independent adversarial pass over primary sources
+does, and is worth commissioning before implementation for multi-milestone plans.

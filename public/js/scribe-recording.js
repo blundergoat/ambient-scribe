@@ -338,6 +338,8 @@ function resetVisitState() {
     confidence = 0;
     // Stability evidence belongs to the previous visit's speaker identities.
     roleStability = null;
+    // A fresh visit has no finalized transcript yet, so no note is allowed.
+    terminalAttestation = null;
     // Corrected transcript state belongs to the previous visit's audio.
     if (typeof resetPostVisitCorrectionState === 'function') {
         resetPostVisitCorrectionState();
