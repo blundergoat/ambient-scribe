@@ -110,6 +110,19 @@ _PATIENT_QUOTE_ATTRIBUTION_PATTERN = re.compile(r"\bpatient\b", re.IGNORECASE)
 _DOCTOR_QUOTE_ATTRIBUTION_PATTERN = re.compile(
     r"\b(?:doctor|clinician|physician|provider|gp)\b", re.IGNORECASE
 )
+# Possessive role mentions describe ("the patient's presentation") rather than
+# attribute - unless the possessed noun is the speech itself ("the patient's
+# words"). Reproduced on the retained 3.1 replay note, where the possessive
+# stole a clinician quote and rendered a wrong-role warning (M05).
+_QUOTE_POSSESSIVE_SPEECH_NOUNS = frozenset(
+    {"words", "account", "description", "phrase", "phrasing", "report", "statement"}
+)
+# A quote may bridge ONE token-sized opposite-role interjection ("Okay.")
+# because the speaker's own statement continued around it; anything longer, or
+# a second interruption, is a real turn change. Reproduced on the retained
+# day3-c01 note, where a one-token clinician backchannel split the patient's
+# continuous quoted statement into a false warning (M05).
+_QUOTE_BACKCHANNEL_MAX_TOKENS = 3
 
 # Clinical characteristics whose value must come from the patient, keyed by the
 # words a doctor uses when asking. Each entry lists the assertion tokens a note
@@ -808,28 +821,80 @@ def _transcript_role_token_sequences(
 ) -> list[tuple[str, tuple[str, ...]]]:
     """Build same-speaker word runs from the transcript shown beside the note.
 
-    Use so a genuine quote split across adjacent UI rows still verifies.
+    Use so a genuine quote split across adjacent UI rows still verifies, and a
+    statement continuing around a token-sized backchannel stays one run. Runs
+    never contain another speaker's words; a substantive turn always closes.
     """
-    role_token_sequences: list[tuple[str, tuple[str, ...]]] = []
-    # No current role exists before the first transcript row is read.
-    current_role: str | None = None
-    current_role_tokens: list[str] = []
-    # Each visible transcript row either extends or closes the current speaker run.
+    roles_in_order: list[str] = []
+    # Every distinct visible role owns its own bridged runs.
     for row in normalized_rows:
-        transcript_role = row["role"]
-        # A speaker change prevents a quote from joining two different people.
-        if transcript_role != current_role:
-            # A non-empty completed run becomes searchable evidence for the note.
-            if current_role is not None and current_role_tokens:
-                role_token_sequences.append((current_role, tuple(current_role_tokens)))
-            current_role = transcript_role
-            current_role_tokens = []
-        current_role_tokens.extend(_normalized_lexical_tokens(row["text"]))
-    # The final non-empty speaker run has no later role change to flush it.
-    if current_role is not None and current_role_tokens:
-        role_token_sequences.append((current_role, tuple(current_role_tokens)))
+        if row["role"] not in roles_in_order:
+            roles_in_order.append(row["role"])
+
+    role_token_sequences: list[tuple[str, tuple[str, ...]]] = []
+    for transcript_role in roles_in_order:
+        role_token_sequences.extend(
+            (transcript_role, token_run)
+            for token_run in _bridged_role_token_runs(normalized_rows, transcript_role)
+        )
 
     return role_token_sequences
+
+
+def _bridged_role_token_runs(
+    normalized_rows: list[dict[str, str]],
+    role: str,
+) -> list[tuple[str, ...]]:
+    """Collect one speaker's word runs, bridging a single tiny interjection.
+
+    A backchannel ("Okay.") between two rows of the same speaker does not end
+    that speaker's statement, so the run continues WITHOUT the interjection's
+    words. A second interruption, or one longer than the token bound, closes
+    the run - that is a real turn change, never quote-joinable.
+
+    Args:
+        normalized_rows: Lowercased transcript rows in visible order.
+        role: Speaker role whose runs are collected.
+
+    Returns:
+        Token runs for that speaker; empty when the speaker never spoke.
+    """
+    token_runs: list[tuple[str, ...]] = []
+    current_tokens: list[str] = []
+    bridged_interruptions = 0
+
+    for row in normalized_rows:
+        row_tokens = _normalized_lexical_tokens(row["text"])
+        # Wordless rows carry no speech to join or to interrupt with.
+        if not row_tokens:
+            continue
+
+        if row["role"] == role:
+            current_tokens.extend(row_tokens)
+            bridged_interruptions = 0
+            continue
+
+        # Nothing to bridge before the speaker has said anything.
+        if not current_tokens:
+            continue
+
+        # One token-sized interjection keeps the statement open.
+        if (
+            len(row_tokens) <= _QUOTE_BACKCHANNEL_MAX_TOKENS
+            and bridged_interruptions == 0
+        ):
+            bridged_interruptions = 1
+            continue
+
+        token_runs.append(tuple(current_tokens))
+        current_tokens = []
+        bridged_interruptions = 0
+
+    # The final open run has no later turn change to flush it.
+    if current_tokens:
+        token_runs.append(tuple(current_tokens))
+
+    return token_runs
 
 
 def _contains_token_sequence(
@@ -851,6 +916,29 @@ def _contains_token_sequence(
     )
 
 
+def _role_mention_attributes_speech(sentence: str, mention_end: int) -> bool:
+    """Decide whether one role mention before a quote is a speaker attribution.
+
+    Use because "based on the patient's clinical presentation, stating ..."
+    describes the patient without giving them the quote.
+
+    Args:
+        sentence: Note text being scanned for attributions.
+        mention_end: End index of the matched role word.
+
+    Returns:
+        True for plain mentions and for possessives that own the speech
+        itself; False for descriptive possessives that must not attribute.
+    """
+    following_text = sentence[mention_end:]
+    # Non-possessive mentions keep the historical last-mention behavior.
+    if not (following_text.startswith("'s") or following_text.startswith("’s")):
+        return True
+
+    lookahead_words = re.findall(r"[a-z]+", following_text[2:].lower())[:3]
+    return any(word in _QUOTE_POSSESSIVE_SPEECH_NOUNS for word in lookahead_words)
+
+
 def _quote_attributed_role(sentence: str, quote_start: int) -> str | None:
     """Find which speaker the note explicitly credits with a quote.
 
@@ -862,11 +950,13 @@ def _quote_attributed_role(sentence: str, quote_start: int) -> str | None:
     role_attributions.extend(
         (match.start(), "PATIENT")
         for match in _PATIENT_QUOTE_ATTRIBUTION_PATTERN.finditer(note_text_before_quote)
+        if _role_mention_attributes_speech(note_text_before_quote, match.end())
     )
     # Clinician mentions before the quote are candidate attributions.
     role_attributions.extend(
         (match.start(), "DOCTOR")
         for match in _DOCTOR_QUOTE_ATTRIBUTION_PATTERN.finditer(note_text_before_quote)
+        if _role_mention_attributes_speech(note_text_before_quote, match.end())
     )
     # No named speaker lets the quote match either role in the transcript UI.
     if not role_attributions:

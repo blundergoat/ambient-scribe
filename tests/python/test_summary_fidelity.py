@@ -7,7 +7,14 @@ transcript-supported phrasing stays clean when the user reviews the note.
 
 from __future__ import annotations
 
-from api.summary_fidelity import FidelityViolation, find_fidelity_violations
+import json
+from pathlib import Path
+
+from api.summary_fidelity import (
+    FidelityViolation,
+    _non_verbatim_quote_violation,
+    find_fidelity_violations,
+)
 
 # Minimal c03 visit shape: the sudden-vs-gradual exchange the patient could not
 # answer, the verbal neuro screen with its bare "No.", and the visit ending on
@@ -1779,3 +1786,116 @@ def test_m11_prompt_rules_name_record_state_and_verbatim_quotes() -> None:
     assert "unless the patient's own words" in lowered
     assert "exact contiguous phrase in the transcript" in lowered
     assert "paraphrases and inferred names" in lowered
+
+
+# --- M05 family 1: exact-quote specimens from the frozen detector manifest ---
+
+_DETECTOR_SPECIMEN_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "scribe"
+    / "note-review-detector-specimens.json"
+)
+
+
+def _manifest_specimen(specimen_id: str, group: str = "specimens") -> dict:
+    """Load one frozen manifest entry; a missing id fails the suite loudly.
+
+    Args:
+        specimen_id: Manifest id such as "c07" or "hf05".
+        group: "specimens" or "historical_flags".
+
+    Returns:
+        The frozen entry with its claim/flagged sentence and embedded rows.
+    """
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    return next(entry for entry in manifest[group] if entry["id"] == specimen_id)
+
+
+def _normalized_specimen_rows(entry: dict) -> list[dict]:
+    """Shape embedded manifest rows the way the checker normalizes transcripts."""
+    return [
+        {
+            "role": str(row.get("role", "")).upper(),
+            "text": str(row.get("text", "") or "").lower(),
+        }
+        for row in entry["source_rows"]
+    ]
+
+
+def test_possessive_role_mention_does_not_steal_quote_attribution() -> None:
+    """c07: 'based on the patient's clinical presentation, stating ...' attributes
+    nothing to the patient - the quote is the clinician's and matches the
+    contiguous DOCTOR rows exactly, so no warning may render."""
+    c07 = _manifest_specimen("c07")
+
+    violation = _non_verbatim_quote_violation(
+        c07["claim"], _normalized_specimen_rows(c07)
+    )
+
+    assert violation is None
+
+
+def test_quote_bridges_a_token_sized_backchannel() -> None:
+    """hf05: the patient's continuous statement around the clinician's one-token
+    'Okay.' is one speaker's verbatim phrase; the run must bridge it."""
+    hf05 = _manifest_specimen("hf05", group="historical_flags")
+
+    violation = _non_verbatim_quote_violation(
+        hf05["flagged_sentence"], _normalized_specimen_rows(hf05)
+    )
+
+    assert violation is None
+
+
+def test_possessive_with_speech_noun_still_attributes() -> None:
+    """'In the patient's words, ...' names the patient as the quote's speaker,
+    so identical wording spoken only by the doctor must still flag."""
+    found = _non_verbatim_quote_violation(
+        "In the patient's words, 'take the tablet tomorrow'.",
+        [{"role": "DOCTOR", "text": "take the tablet tomorrow"}],
+    )
+
+    assert found is not None
+    assert found[1] == "quote-in-wrong-role"
+
+
+def test_substantive_turn_never_bridges_a_quote() -> None:
+    """A real clinician turn between patient rows is a speaker change, not a
+    backchannel; a quote joining across it stays unverified."""
+    found = _non_verbatim_quote_violation(
+        'She reported "feeling quite swollen up".',
+        [
+            {"role": "PATIENT", "text": "i woke up feeling"},
+            {"role": "DOCTOR", "text": "tell me more about that please now"},
+            {"role": "PATIENT", "text": "quite swollen up"},
+        ],
+    )
+
+    assert found is not None
+    assert found[1] == "quote-not-contiguous"
+
+
+def test_manifest_quote_positive_keeps_flagging() -> None:
+    """c08: the remembered 'most likely' wording is not the source's 'more
+    likely to be' run - exact matching must yield the verify-manually flag,
+    never silent fuzzy acceptance."""
+    c08 = _manifest_specimen("c08")
+
+    violation = _non_verbatim_quote_violation(
+        c08["claim"], _normalized_specimen_rows(c08)
+    )
+
+    assert violation is not None
+    assert violation[1] == "quote-not-contiguous"
+
+
+def test_manifest_quote_negatives_stay_verified() -> None:
+    """c09 (cross-row within one run) and c34 (three-row quote verified today)
+    must keep verifying after the family-1 fixes."""
+    for specimen_id in ("c09", "c34"):
+        specimen = _manifest_specimen(specimen_id)
+        violation = _non_verbatim_quote_violation(
+            specimen["claim"], _normalized_specimen_rows(specimen)
+        )
+        assert violation is None, specimen_id

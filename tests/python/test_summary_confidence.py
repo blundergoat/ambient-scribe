@@ -7,9 +7,15 @@ deterministic, citation-bound, strict-threshold, and prose-preserving.
 """
 
 from copy import deepcopy
+import json
+from pathlib import Path
 from unittest.mock import patch
 
-from api.summary_confidence import add_low_confidence_note_flags
+from api.summary_confidence import (
+    SOURCE_LOW_CONFIDENCE_REASON,
+    add_low_confidence_note_flags,
+    low_confidence_review_reasons,
+)
 from api.summary_generation import (
     SessionSummaryOutput,
     SummaryCitationOutput,
@@ -282,3 +288,104 @@ def test_review_reasons_are_machine_readable_for_downstream_milestones() -> None
     assert "Fexaphenidine" in reason_row["sentence"]
     assert "fexaphenidine" in reason_row["terms"]
     assert reason_row["segment_ids"] == ["corrected-0293"]
+
+
+# --- M05 family 4: manifest specimens executed as frozen classifications ---
+
+_DETECTOR_SPECIMEN_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "scribe"
+    / "note-review-detector-specimens.json"
+)
+
+# a17/a18 are the family's pre-declared reason-lane deferral: their correct
+# source rows hold garbled ORDINARY words (carp/back/car), never a lexicon
+# variant, so reaching them needs fuzzy matching the family contract forbids.
+# The deferral is frozen in M05-detector-family-specs.md; the visible-marker
+# true positives they correspond to (hc12/hc13) are guarded by the baseline
+# re-score, not by this lane.
+_TERM_CONFIDENCE_DEFERRED_IDS = {"a17", "a18"}
+
+
+def _term_confidence_claim_specimens() -> list[dict]:
+    """Load the frozen term-confidence claim specimens this family ships against.
+
+    Returns:
+        Manifest specimens for the lane, minus the pre-declared deferrals;
+        never empty while the manifest holds the c25-c28 controls.
+    """
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    return [
+        specimen
+        for specimen in manifest["specimens"]
+        if specimen["lane"] == "term_confidence"
+        and specimen["kind"] == "claim"
+        and specimen["id"] not in _TERM_CONFIDENCE_DEFERRED_IDS
+    ]
+
+
+def _specimen_note_and_rows(specimen: dict) -> tuple[dict, list[dict]]:
+    """Build the detector inputs one manifest specimen describes.
+
+    The section cites exactly the specimen's embedded rows, so the test
+    exercises linkage, threshold, and variant gating end to end.
+
+    Args:
+        specimen: Manifest entry with claim text and embedded source rows.
+
+    Returns:
+        (note payload, citation rows) ready for the reason lane.
+    """
+    section = {
+        "heading": "Plan",
+        "content": specimen["claim"],
+        "citations": [
+            {"segment_id": row["segment_id"]} for row in specimen["source_rows"]
+        ],
+    }
+    return {"sections": [section]}, specimen["source_rows"]
+
+
+def test_manifest_term_confidence_specimens_classify_as_frozen() -> None:
+    """Every shipped term-confidence specimen keeps its frozen flag/no-flag label.
+
+    Positives must emit `source_low_confidence`; hard negatives (canonical
+    spelling above threshold, the M04-REJECTED steroid-cream mapping, and
+    ordinary low-confidence wording) must stay silent in the reason lane.
+    """
+    specimens = _term_confidence_claim_specimens()
+    assert specimens, "manifest must supply the c25-c28 controls"
+
+    for specimen in specimens:
+        note_payload, citation_rows = _specimen_note_and_rows(specimen)
+        review_reasons = low_confidence_review_reasons(note_payload, citation_rows)
+
+        if specimen["expected"] == "flag":
+            assert review_reasons, f"{specimen['id']} must produce a reason"
+            assert all(
+                reason["reason"] == SOURCE_LOW_CONFIDENCE_REASON
+                for reason in review_reasons
+            ), specimen["id"]
+        else:
+            assert review_reasons == [], f"{specimen['id']} must stay reason-silent"
+
+
+def test_visible_marker_without_clinical_term_emits_no_reason() -> None:
+    """c28: the threshold marker may fire while the reason lane stays silent.
+
+    'She lives with her parents.' links to the 0.7728 row, so the clinician
+    sees the wording cue - but with no lexicon variant in the sentence there
+    is nothing for the machine-readable clinical-term lane to say.
+    """
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    c28 = next(s for s in manifest["specimens"] if s["id"] == "c28")
+    note_payload, citation_rows = _specimen_note_and_rows(c28)
+
+    reviewed_note = add_low_confidence_note_flags(note_payload, citation_rows)
+    review_reasons = low_confidence_review_reasons(note_payload, citation_rows)
+
+    # The visible lane marks the sentence for wording review...
+    assert reviewed_note["sections"][0].get("low_confidence") == [c28["claim"]]
+    # ...while the clinical-term reason lane has nothing to name.
+    assert review_reasons == []
