@@ -39,6 +39,7 @@ _NOTE_UNCERTAINTY_MARKERS = (
     "does not know",
     "couldn't say",
     "could not say",
+    "not certain",
     "patient-unsure",
 )
 
@@ -272,6 +273,10 @@ _EXAM_PERFORMANCE_PATTERN = re.compile(
     r"\b(on examination|i can see|i can feel|i'?m listening to|reflexes are)\b",
     re.IGNORECASE,
 )
+
+# Note phrasing that presupposes an examination took place - even a negative
+# finding ("no fever documented on examination") asserts the exam context.
+_EXAM_PRESUPPOSITION_PATTERN = re.compile(r"\bon exam(?:ination)?\b", re.IGNORECASE)
 
 # Small stem map so a note's clinical vocabulary matches the patient's words.
 _TOPIC_STEM_SYNONYMS = {
@@ -644,6 +649,14 @@ def _sentence_violations(
     # Quotation marks promise verbatim words, so every lexical span must verify.
     if unsupported_quote is not None:
         _add_visible_violation("non-verbatim-quote", *unsupported_quote)
+
+    # The hedge lane catches only what the other rules missed: an already
+    # flagged sentence keeps its one specific finding (M05).
+    if not sentence_violations:
+        hedge_dropped = _hedged_statement_violation(sentence, normalized_rows)
+        # A hedged answer ("Irregular, I think") cannot become a definite claim.
+        if hedge_dropped is not None:
+            _add_visible_violation("uncertainty-resolved", *hedge_dropped)
 
     return sentence_violations
 
@@ -1763,12 +1776,29 @@ def _exam_language_violation(
         (reason, subtype), or None when the sentence is honest ("no exam documented")
         or an examination really happened.
     """
-    # Honest absence ("no examination findings documented") is the wanted behavior.
-    if _EXAM_ABSENCE_PATTERN.search(sentence) is not None:
-        return None
-
     # An exam that is only proposed/planned claims no findings either.
     if _EXAM_INTENT_PATTERN.search(sentence) is not None:
+        return None
+
+    exam_performed = any(
+        # Only a clinician's performed-exam wording can support exam findings.
+        row["role"] == "DOCTOR"
+        and _EXAM_PERFORMANCE_PATTERN.search(row["text"]) is not None
+        for row in normalized_rows
+    )
+
+    # "documented on examination" presupposes an examination happened even
+    # inside a negative-finding sentence, so the honest-absence exemption
+    # cannot launder it (M05: the day1-c07 fever key point).
+    if _EXAM_PRESUPPOSITION_PATTERN.search(sentence) is not None and not exam_performed:
+        return (
+            "this sentence presupposes an examination ('on examination'), but the"
+            " transcript shows no examination was performed",
+            "exam-presupposed-without-performance",
+        )
+
+    # Honest absence ("no examination findings documented") is the wanted behavior.
+    if _EXAM_ABSENCE_PATTERN.search(sentence) is not None:
         return None
 
     claims_exam = any(
@@ -1779,16 +1809,1309 @@ def _exam_language_violation(
         return None
 
     # A transcript row proving a performed exam legitimises the claim.
-    for row in normalized_rows:
-        # Only a clinician's performed-exam wording can support exam findings.
-        if (
-            row["role"] == "DOCTOR"
-            and _EXAM_PERFORMANCE_PATTERN.search(row["text"]) is not None
-        ):
-            return None
+    if exam_performed:
+        return None
 
     return (
         "this sentence uses examination-findings language, but the transcript shows no"
         " examination was performed - screening answers are history, not exam findings",
         "exam-claim-without-performance",
     )
+
+
+# --- M05 family 3: temporal-state / action-state review reasons ------------
+# Internal reason lane only (no payload change; M03/M06 own wording/surfacing).
+# Bounded per M05-detector-family-specs.md: note-final lanes (Plan, Assessment,
+# key points) except the medication-scope check, which is ungated because the
+# reproduced a03 specimen lives in Subjective (recorded spec amendment).
+
+_NOTE_FINAL_HEADINGS = frozenset({"plan", "assessment"})
+
+STATE_SUPERSEDED_REASON = "state_superseded"
+ACTION_NOT_CONFIRMED_DONE_REASON = "action_not_confirmed_done"
+TEMPORAL_CONTEXT_LOST_REASON = "temporal_context_lost"
+
+# "no antihistamines immediately available" / "does not have" - the note-final
+# absence assertions whose object a later source row can reverse.
+_STATE_ABSENCE_CLAIM_PATTERN = re.compile(
+    r"\b(?:no|not|without)\b(?P<object>[^.;,]{0,60}?)\bavailab(?:le|ility)\b"
+    r"|\bdoes not have\b(?P<object_have>[^.;]{0,60})",
+    re.IGNORECASE,
+)
+_STATE_NEGATION_PATTERN = re.compile(
+    r"\b(?:no|not|don'?t|none|without|haven'?t)\b", re.IGNORECASE
+)
+_STATE_AFFIRMATION_PATTERN = re.compile(
+    r"\b(?:yes|yeah|yep|we do|we have|found|got some)\b", re.IGNORECASE
+)
+# A claim narrating the reversal itself ("initially none; later found") is
+# honest and stays unflagged.
+_STATE_NARRATIVE_MARKER_PATTERN = re.compile(
+    r"\b(?:initially|later|subsequently|eventually)\b", re.IGNORECASE
+)
+
+# Completion asserted in note-final prose: past forms only, so "clinician
+# arranges" (in progress) and "to call" (instruction) never match.
+_ACTION_COMPLETION_VERB_PATTERN = re.compile(
+    r"\b(?:called|ordered|arranged|dispatched|administered)\b", re.IGNORECASE
+)
+_ACTION_ADMINISTRATION_PATTERN = re.compile(
+    r"\b(?:included|given)\b[^.;]{0,60}\badministration\b"
+    r"|\badministration\b[^.;]{0,40}\b(?:given|completed)\b",
+    re.IGNORECASE,
+)
+# Words directly before a completion verb that mark future/instruction framing.
+_ACTION_FUTURE_FRAME_WORDS = frozenset(
+    {"to", "will", "would", "instructed", "advised", "recommended", "be"}
+)
+# Source forms that promise, instruct, recommend, question, or condition an
+# action rather than confirming it happened.
+_ACTION_PROMISE_FORM_PATTERN = re.compile(
+    r"\bi'?ll\b|\bif you can\b|\bif you call\b|\bcould you\b|\bcan you\b"
+    r"|\byou can\b|\bwe need to\b|\bneed to\b|\bworth having\b|\bmight\b"
+    r"|\bmay\b|\bwhether\b|\bjust call\b|\bcall the\b|\?",
+    re.IGNORECASE,
+)
+_ACTION_COMPLETION_EVIDENCE_PATTERN = re.compile(
+    r"\b(?:has|have|had|was|were)\s+(?:been\s+)?"
+    r"(?:called|ordered|arranged|dispatched|administered)\b"
+    r"|\bon (?:its|their) way\b|\balready (?:called|ordered|arranged|done)\b"
+    # The speaker actively doing it ("and then arranging a GP follow-up") is
+    # the action underway, not a promise awaiting confirmation.
+    r"|\barranging\b",
+    re.IGNORECASE,
+)
+# Actor-future arrangement claims ("Patient to call back ... to arrange X"):
+# the arrangement content itself must be spoken, or the plan was elaborated.
+_ARRANGEMENT_CONTENT_CLAIM_PATTERN = re.compile(
+    r"\bto arrange\b(?P<content>[^.;]{0,90})", re.IGNORECASE
+)
+# Parenthetical hedges ("(presumed epinephrine auto-injectors)") flag their own
+# uncertainty; hedged content is not held to the support requirement.
+_PARENTHETICAL_PATTERN = re.compile(r"\([^)]*\)")
+
+_TIME_RANGE_CLAIM_PATTERN = re.compile(
+    r"\b(\d{1,3})\s*(?:-|–|—|to)\s*(\d{1,3})\s*(hours?|days?|weeks?)\b",
+    re.IGNORECASE,
+)
+_SOURCE_TIME_RANGE_PATTERN = re.compile(
+    r"\b([a-z\d-]+(?: [a-z\d-]+)?)\s+to\s+([a-z\d-]+(?: [a-z\d-]+)?)"
+    r"\s+(hours?|days?|weeks?)\b",
+    re.IGNORECASE,
+)
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+_NO_MEDICATIONS_CLAIM_PATTERN = re.compile(
+    r"\bno (?:current )?medications?\b(?!\s+allerg)", re.IGNORECASE
+)
+_FIRST_PERSON_INTAKE_PATTERN = re.compile(
+    r"\bi(?:'ve| have)?\s+(?:been\s+)?tak(?:ing|en)\b|\bi took\b|\bi'?m taking\b",
+    re.IGNORECASE,
+)
+# "there isn't anything that I'm taking" is the denial being summarized, not
+# evidence of intake; windows carrying it stay out of the contradiction.
+_INTAKE_DENIAL_CONTEXT_PATTERN = re.compile(
+    r"\bisn'?t anything\b|\bnothing\b|\bnot taking\b", re.IGNORECASE
+)
+
+# Words that never identify an action object or arrangement content.
+_ACTION_OBJECT_STOPWORDS = frozenset(
+    "the and with for was were been has have had also all any are but can"
+    " into from that this those these when while where which will would could"
+    " patient mother clinician doctor person immediate immediately urgent"
+    " emergency directed instructed advised call called ordered arranged"
+    " dispatched administered administration request suspected possible"
+    " pending awaiting management interim included assessed presumed check"
+    " exclude other causes location".split()
+)
+
+
+def temporal_action_review_reasons(
+    sections: list[dict[str, Any]],
+    key_points: list[str],
+    transcript_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Machine-readable temporal/action-state reasons for one generated note.
+
+    Use downstream (M05/M06 review surfaces): the browser payload is
+    unchanged and nothing here retries generation. Empty inputs produce no
+    reasons.
+
+    Args:
+        sections: Generated SOAP sections; empty means nothing to review.
+        key_points: TL;DR lines; empty means the strip is hidden.
+        transcript_rows: The note's selected source rows; empty disables
+            every source comparison, so nothing can be honestly flagged.
+
+    Returns:
+        One entry per failing sentence: {section, sentence, reason, detail,
+        segment_ids}; empty means every reviewed claim held.
+    """
+    # Without source rows there is no evidence to contradict a claim.
+    if not transcript_rows:
+        return []
+
+    source_rows = [
+        {
+            "segment_id": str(row.get("segment_id", "")),
+            "role": str(row.get("role", "")).upper(),
+            "text": str(row.get("text", "") or "").lower(),
+        }
+        for row in transcript_rows
+    ]
+
+    review_reasons: list[dict[str, Any]] = []
+    # Sections first, key points last - the same order the clinician reads.
+    for location, sentence, is_note_final in _located_note_sentences(
+        sections, key_points
+    ):
+        # The medication-scope check is ungated: a status claim misleads from
+        # any section (the reproduced specimen sits in Subjective).
+        review_reasons.extend(
+            _medication_scope_reasons(location, sentence, source_rows)
+        )
+        # The remaining patterns judge note-final state/action claims only;
+        # Subjective narration is history, not a final state assertion.
+        if not is_note_final:
+            continue
+        review_reasons.extend(
+            _state_superseded_reasons(location, sentence, source_rows)
+        )
+        review_reasons.extend(
+            _action_completion_reasons(location, sentence, source_rows)
+        )
+        review_reasons.extend(_time_range_reasons(location, sentence, source_rows))
+
+    return review_reasons
+
+
+def _located_note_sentences(
+    sections: list[dict[str, Any]],
+    key_points: list[str],
+) -> list[tuple[str, str, bool]]:
+    """Yield every visible note sentence with its location and lane gate."""
+    located: list[tuple[str, str, bool]] = []
+    # Every section sentence is judged where the clinician reads it.
+    for section in sections:
+        heading = str(section.get("heading", ""))
+        is_note_final = heading.strip().lower() in _NOTE_FINAL_HEADINGS
+        for sentence in _sentences(str(section.get("content", ""))):
+            located.append((f"section '{heading}'", sentence, is_note_final))
+    # Key points always speak in the note's final voice.
+    for key_point in key_points:
+        for sentence in _sentences(str(key_point)):
+            located.append(("key_points", sentence, True))
+    return located
+
+
+def _meaningful_object_tokens(text: str) -> set[str]:
+    """Nouns-ish tokens that can identify an action object in source rows."""
+    return {
+        _singular_token(token)
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _ACTION_OBJECT_STOPWORDS
+    }
+
+
+def _singular_token(token: str) -> str:
+    """Fold trailing plurals so 'tests' finds the spoken 'test'."""
+    return token[:-1] if len(token) > 3 and token.endswith("s") else token
+
+
+def _rows_with_any_token(
+    source_rows: list[dict[str, str]], object_tokens: set[str]
+) -> list[int]:
+    """Indexes of source rows containing at least one object token."""
+    matching_indexes: list[int] = []
+    for row_index, row in enumerate(source_rows):
+        row_tokens = {
+            _singular_token(token) for token in re.findall(r"[a-z0-9]+", row["text"])
+        }
+        # Any shared object token makes this row part of the action's evidence.
+        if row_tokens & object_tokens:
+            matching_indexes.append(row_index)
+    return matching_indexes
+
+
+def _window_text(source_rows: list[dict[str, str]], row_index: int, radius: int) -> str:
+    """Join a row with its neighbors; split questions/answers stay together."""
+    window_start = max(0, row_index - radius)
+    return " ".join(
+        row["text"] for row in source_rows[window_start : row_index + radius + 1]
+    )
+
+
+def _state_superseded_reasons(
+    location: str,
+    sentence: str,
+    source_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Flag a note-final absence claim whose object a later row affirms."""
+    absence_match = _STATE_ABSENCE_CLAIM_PATTERN.search(sentence)
+    # Sentences that assert no absence have no state to supersede.
+    if absence_match is None:
+        return []
+    # A claim narrating the reversal itself is the honest form.
+    if _STATE_NARRATIVE_MARKER_PATTERN.search(sentence):
+        return []
+
+    object_text = (
+        absence_match.group("object") or absence_match.group("object_have") or ""
+    )
+    object_tokens = _meaningful_object_tokens(object_text)
+    # An absence without a nameable object cannot be traced to rows.
+    if not object_tokens:
+        return []
+
+    object_row_indexes = _rows_with_any_token(source_rows, object_tokens)
+    absence_indexes = [
+        row_index
+        for row_index in object_row_indexes
+        if _STATE_NEGATION_PATTERN.search(_window_text(source_rows, row_index, 2))
+    ]
+    affirmation_indexes = [
+        row_index
+        for row_index in object_row_indexes
+        if _STATE_AFFIRMATION_PATTERN.search(_window_text(source_rows, row_index, 2))
+    ]
+    # The state is superseded only when an affirmation follows an absence.
+    if not absence_indexes or not affirmation_indexes:
+        return []
+    if max(affirmation_indexes) <= min(absence_indexes):
+        return []
+
+    return [
+        {
+            "section": location,
+            "sentence": sentence,
+            "reason": STATE_SUPERSEDED_REASON,
+            "detail": "a later source row reverses the asserted absence",
+            "segment_ids": [
+                source_rows[row_index]["segment_id"]
+                for row_index in (min(absence_indexes), max(affirmation_indexes))
+            ],
+        }
+    ]
+
+
+def _action_completion_reasons(
+    location: str,
+    sentence: str,
+    source_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Flag completion claims whose source only promises or instructs."""
+    completion_spans: list[tuple[int, str]] = []
+    # Past completion verbs assert the action happened.
+    for verb_match in _ACTION_COMPLETION_VERB_PATTERN.finditer(sentence):
+        preceding_words = re.findall(r"[a-z']+", sentence[: verb_match.start()].lower())
+        # "to call", "instructed to book" frame the future, not completion.
+        if preceding_words and preceding_words[-1] in _ACTION_FUTURE_FRAME_WORDS:
+            continue
+        completion_spans.append((verb_match.start(), verb_match.group(0)))
+    # "included ... administration" asserts the medication was given.
+    administration_match = _ACTION_ADMINISTRATION_PATTERN.search(sentence)
+    if administration_match is not None:
+        completion_spans.append(
+            (administration_match.start(), administration_match.group(0))
+        )
+
+    review_reasons: list[dict[str, Any]] = []
+    if completion_spans:
+        object_tokens = _meaningful_object_tokens(
+            _PARENTHETICAL_PATTERN.sub(" ", sentence)
+        )
+        object_row_indexes = _rows_with_any_token(source_rows, object_tokens)
+        promise_indexes = [
+            row_index
+            for row_index in object_row_indexes
+            if _ACTION_PROMISE_FORM_PATTERN.search(
+                _window_text(source_rows, row_index, 1)
+            )
+        ]
+        # Evidence of completion must sit in the object's own row: a
+        # neighboring row's "arranging a GP follow-up" is about ITS objects,
+        # not this claim's.
+        completion_evidence = any(
+            _ACTION_COMPLETION_EVIDENCE_PATTERN.search(source_rows[row_index]["text"])
+            for row_index in object_row_indexes
+        )
+        # Promised/instructed but never confirmed done: the claim overreaches.
+        if promise_indexes and not completion_evidence:
+            review_reasons.append(
+                {
+                    "section": location,
+                    "sentence": sentence,
+                    "reason": ACTION_NOT_CONFIRMED_DONE_REASON,
+                    "detail": "source rows promise or instruct this action;"
+                    " none confirms it was completed",
+                    "segment_ids": [
+                        source_rows[row_index]["segment_id"]
+                        for row_index in promise_indexes[:4]
+                    ],
+                }
+            )
+
+    review_reasons.extend(_arrangement_content_reasons(location, sentence, source_rows))
+    return review_reasons
+
+
+def _arrangement_content_reasons(
+    location: str,
+    sentence: str,
+    source_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Flag actor-future arrangements whose content was never spoken."""
+    arrangement_match = _ARRANGEMENT_CONTENT_CLAIM_PATTERN.search(sentence)
+    # Sentences without a "to arrange X" plan make no arrangement claim.
+    if arrangement_match is None:
+        return []
+
+    unhedged_content = _PARENTHETICAL_PATTERN.sub(
+        " ", arrangement_match.group("content")
+    )
+    content_tokens = _meaningful_object_tokens(unhedged_content)
+    if not content_tokens:
+        return []
+
+    spoken_tokens: set[str] = set()
+    # The arrangement may be spoken anywhere in the visit, not only nearby.
+    for row in source_rows:
+        spoken_tokens.update(
+            _singular_token(token) for token in re.findall(r"[a-z0-9]+", row["text"])
+        )
+    unsupported_tokens = sorted(content_tokens - spoken_tokens)
+    # Fully spoken arrangement content is a faithful plan restatement.
+    if not unsupported_tokens:
+        return []
+
+    return [
+        {
+            "section": location,
+            "sentence": sentence,
+            "reason": ACTION_NOT_CONFIRMED_DONE_REASON,
+            "detail": "arrangement content never spoken: "
+            + ", ".join(unsupported_tokens),
+            "segment_ids": [],
+        }
+    ]
+
+
+def _word_quantity(quantity_text: str) -> int | None:
+    """Parse '24', 'forty', or 'twenty-four'; None when not a quantity.
+
+    The range capture can drag a leading filler word along ("about
+    twenty-four"), so the longest all-number suffix is the spoken quantity.
+    """
+    parts = [part for part in re.split(r"[- ]", quantity_text.strip().lower()) if part]
+    number_start = len(parts)
+    # Walk backward while every part still reads as a number.
+    for part_index in range(len(parts) - 1, -1, -1):
+        if parts[part_index] not in _NUMBER_WORDS and not parts[part_index].isdigit():
+            break
+        number_start = part_index
+
+    number_parts = parts[number_start:]
+    if not number_parts:
+        return None
+
+    total = sum(
+        int(part) if part.isdigit() else _NUMBER_WORDS[part] for part in number_parts
+    )
+    return total if total > 0 else None
+
+
+def _time_range_reasons(
+    location: str,
+    sentence: str,
+    source_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Flag a claimed time range that alters the spoken range."""
+    review_reasons: list[dict[str, Any]] = []
+    for claim_match in _TIME_RANGE_CLAIM_PATTERN.finditer(sentence):
+        claim_range = (
+            int(claim_match.group(1)),
+            int(claim_match.group(2)),
+            claim_match.group(3).lower().rstrip("s"),
+        )
+        source_ranges: list[tuple[int, int, str, str]] = []
+        # A spoken range often splits across rows ("twenty-four to" /
+        # "forty hours"), so each row is scanned joined with its neighbors.
+        for row_index, row in enumerate(source_rows):
+            joined_text = _window_text(source_rows, row_index, 1)
+            for source_match in _SOURCE_TIME_RANGE_PATTERN.finditer(joined_text):
+                low_value = _word_quantity(source_match.group(1))
+                high_value = _word_quantity(source_match.group(2))
+                # Non-quantity words ("go to sleep hours") are not a range.
+                if low_value is None or high_value is None:
+                    continue
+                source_ranges.append(
+                    (
+                        low_value,
+                        high_value,
+                        source_match.group(3).lower().rstrip("s"),
+                        row["segment_id"],
+                    )
+                )
+        same_unit_ranges = [
+            source_range
+            for source_range in source_ranges
+            if source_range[2] == claim_range[2]
+        ]
+        # With no spoken range there is nothing bounded to compare against.
+        if not same_unit_ranges:
+            continue
+        # An exactly matching spoken range supports the claim.
+        if any(
+            source_range[0] == claim_range[0] and source_range[1] == claim_range[1]
+            for source_range in same_unit_ranges
+        ):
+            continue
+        review_reasons.append(
+            {
+                "section": location,
+                "sentence": sentence,
+                "reason": TEMPORAL_CONTEXT_LOST_REASON,
+                "detail": "claimed range %d-%d %s differs from the spoken range"
+                % (claim_range[0], claim_range[1], claim_range[2]),
+                "segment_ids": sorted(
+                    {source_range[3] for source_range in same_unit_ranges}
+                ),
+            }
+        )
+    return review_reasons
+
+
+def _medication_scope_reasons(
+    location: str,
+    sentence: str,
+    source_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Flag 'no current medications' when the patient described taking some."""
+    # Sentences without the status phrase make no medication-scope claim.
+    if _NO_MEDICATIONS_CLAIM_PATTERN.search(sentence) is None:
+        return []
+
+    intake_row_ids = []
+    # Intake statements split across rows ("I I've" / "been taking some"), so
+    # each patient row is judged joined with its neighbors.
+    for row_index, row in enumerate(source_rows):
+        # Only the patient's own intake statements contradict the status.
+        if row["role"] not in ("", "PATIENT"):
+            continue
+        joined_text = _window_text(source_rows, row_index, 1)
+        # A denial of intake ("there isn't anything that I'm taking") is the
+        # answer the claim summarized, not intake evidence against it.
+        if _INTAKE_DENIAL_CONTEXT_PATTERN.search(joined_text):
+            continue
+        if _FIRST_PERSON_INTAKE_PATTERN.search(joined_text):
+            intake_row_ids.append(row["segment_id"])
+    if not intake_row_ids:
+        return []
+
+    return [
+        {
+            "section": location,
+            "sentence": sentence,
+            "reason": TEMPORAL_CONTEXT_LOST_REASON,
+            "detail": "the patient described taking medication; the denial"
+            " answered only the regular-treatment question",
+            "segment_ids": intake_row_ids[:4],
+        }
+    ]
+
+
+# --- M05 family 2: paired mental-health/risk answer review reasons ----------
+# Internal reason lane only. Bounded per M05-detector-family-specs.md: a screen
+# is a DOCTOR question matching the form list; the paired answer is the
+# patient's full uninterrupted turn (spec amendment: the six-row bound was too
+# tight for fragmented ASR - c01's answer spans eleven consecutive rows and
+# the qualifier sits at its tail; the natural turn boundary is the bound).
+
+RISK_ANSWER_CONTEXT_LOST_REASON = "risk_answer_context_lost"
+
+# Bounded risk/mental-health screen forms; anything else (e.g. the a20
+# concentration-or-tiredness branch question) is deliberately out of scope.
+_RISK_SCREEN_QUESTION_PATTERN = re.compile(
+    r"\bmood\b[^.;?]{0,60}\b(?:so\s+)?low\b"
+    r"|\bcouldn'?t carry on\b"
+    r"|\bsuicid"
+    r"|\bself[- ]harm\b"
+    r"|\bharm(?:ing)? (?:yourself|others)\b"
+    r"|\bpanic attacks?\b"
+    r"|\bso overwhelmed\b",
+    re.IGNORECASE,
+)
+# Topic phrases a claim must contain before it counts as representing the
+# screen's answer; descriptive uses ("morning panic about being late") do not.
+_RISK_TOPIC_CLAIM_PATTERNS = {
+    "suicidal": re.compile(r"\bsuicid(?:al|e)?\b", re.IGNORECASE),
+    "self-harm": re.compile(r"\bself[- ]harm\b", re.IGNORECASE),
+    "panic attack": re.compile(r"\bpanic attacks?\b", re.IGNORECASE),
+}
+_RISK_TOPIC_ANSWER_PATTERNS = {
+    "suicidal": re.compile(r"\bsuicid", re.IGNORECASE),
+    "self-harm": re.compile(r"\bself[- ]harm\b", re.IGNORECASE),
+    "panic attack": re.compile(r"\bpanic attacks?\b", re.IGNORECASE),
+}
+_RISK_DENIAL_PATTERN = re.compile(
+    r"\bno\b|\bnot\b|\bhaven'?t\b|\bnever\b|\bdon'?t\b", re.IGNORECASE
+)
+_RISK_CLAIM_NEGATION_PATTERN = re.compile(
+    r"\bno\b|\bnot\b|\bdenie[sd]\b|\bnegative\b|\bwithout\b", re.IGNORECASE
+)
+# Hedges that soften a risk answer; "wouldn't say so" is the standalone
+# anaphoric form - "wouldn't say that I've had any suicidal thoughts" is a
+# full denial complement and deliberately not a hedge.
+_RISK_HEDGE_PATTERN = re.compile(
+    r"\bi think\b|\bmaybe\b|\bnot sure\b|\bi guess\b|\bwouldn'?t say so\b"
+    r"|\bnot that i recall\b",
+    re.IGNORECASE,
+)
+# A qualifier is a contrast marker followed by first-person content in the
+# same answer turn ("It's just that I don't want to go on like this").
+_RISK_QUALIFIER_PATTERN = re.compile(
+    r"(?:\bbut\b|\bit'?s just\b|\bjust that\b)\s+(?P<clause>[^.?]{5,90})",
+    re.IGNORECASE,
+)
+_RISK_FIRST_PERSON_PATTERN = re.compile(r"\bi\b|\bi'm\b|\bi'?ve\b", re.IGNORECASE)
+# How many consecutive qualifier tokens must survive into the note before the
+# qualifier counts as preserved.
+_RISK_QUALIFIER_MATCH_TOKENS = 4
+# Safety cap on the patient's uninterrupted answer turn.
+_RISK_ANSWER_TURN_MAX_ROWS = 12
+
+
+def risk_pair_review_reasons(
+    sections: list[dict[str, Any]],
+    key_points: list[str],
+    transcript_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Machine-readable reasons for risk-screen answers a note misrepresents.
+
+    Use downstream (M05/M06 review surfaces): the browser payload is
+    unchanged and nothing here retries generation. Notes and visits without a
+    detected risk screen produce no reasons.
+
+    Args:
+        sections: Generated SOAP sections; empty means nothing to review.
+        key_points: TL;DR lines; empty means the strip is hidden.
+        transcript_rows: The note's selected source rows; empty means no
+            screen can be detected, so nothing can be honestly flagged.
+
+    Returns:
+        One entry per failing claim: {section, sentence, reason, detail,
+        segment_ids}; empty means every screen answer is represented intact.
+    """
+    if not transcript_rows:
+        return []
+
+    source_rows = [
+        {
+            "segment_id": str(row.get("segment_id", "")),
+            "role": str(row.get("role", "")).upper(),
+            "text": str(row.get("text", "") or "").lower(),
+        }
+        for row in transcript_rows
+    ]
+    screen_pairs = _risk_screen_pairs(source_rows)
+    # No detected screen means this family has nothing to judge.
+    if not screen_pairs:
+        return []
+
+    note_tokens = _whole_note_tokens(sections, key_points)
+    review_reasons: list[dict[str, Any]] = []
+    for location, sentence, _is_note_final in _located_note_sentences(
+        sections, key_points
+    ):
+        for screen_pair in screen_pairs:
+            review_reasons.extend(
+                _risk_claim_reasons(location, sentence, screen_pair, note_tokens)
+            )
+    return review_reasons
+
+
+def _whole_note_tokens(
+    sections: list[dict[str, Any]], key_points: list[str]
+) -> tuple[str, ...]:
+    """All note words in reading order, for qualifier-preservation checks."""
+    note_texts = [str(section.get("content", "")) for section in sections]
+    note_texts.extend(str(key_point) for key_point in key_points)
+    return _normalized_lexical_tokens(" ".join(note_texts))
+
+
+def _risk_screen_pairs(source_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Detect answered risk screens: question rows plus the patient's turn.
+
+    Question forms split across rows are found on +-1 joined windows; the
+    answer is the following uninterrupted run of PATIENT rows.
+    """
+    screen_pairs: list[dict[str, Any]] = []
+    claimed_answer_starts: set[int] = set()
+    for row_index, row in enumerate(source_rows):
+        # Only the clinician's wording can open a screen.
+        if row["role"] != "DOCTOR":
+            continue
+        if not _RISK_SCREEN_QUESTION_PATTERN.search(
+            _window_text(source_rows, row_index, 1)
+        ):
+            continue
+
+        answer_start = _next_patient_row_index(source_rows, row_index)
+        # An unanswered screen is the coverage lane's concern, not this one.
+        if answer_start is None or answer_start in claimed_answer_starts:
+            continue
+        claimed_answer_starts.add(answer_start)
+
+        answer_rows = []
+        for answer_row in source_rows[
+            answer_start : answer_start + _RISK_ANSWER_TURN_MAX_ROWS
+        ]:
+            # The turn ends when another speaker takes over.
+            if answer_row["role"] != "PATIENT":
+                break
+            answer_rows.append(answer_row)
+
+        answer_text = " ".join(answer_row["text"] for answer_row in answer_rows)
+        pair_text = f"{_window_text(source_rows, row_index, 1)} {answer_text}"
+        topics = {
+            topic
+            for topic, pattern in _RISK_TOPIC_ANSWER_PATTERNS.items()
+            if pattern.search(pair_text)
+        }
+        qualifier_match = None
+        # The LAST contrast clause in the turn carries the closing qualifier.
+        for candidate in _RISK_QUALIFIER_PATTERN.finditer(answer_text):
+            if _RISK_FIRST_PERSON_PATTERN.search(candidate.group("clause")):
+                qualifier_match = candidate
+
+        screen_pairs.append(
+            {
+                "segment_ids": [row["segment_id"]]
+                + [answer_row["segment_id"] for answer_row in answer_rows],
+                "topics": topics,
+                "denied": bool(_RISK_DENIAL_PATTERN.search(answer_text)),
+                "hedged": bool(_RISK_HEDGE_PATTERN.search(answer_text)),
+                "qualifier_tokens": _normalized_lexical_tokens(
+                    qualifier_match.group("clause")
+                )
+                if qualifier_match
+                else (),
+            }
+        )
+    return screen_pairs
+
+
+def _next_patient_row_index(
+    source_rows: list[dict[str, str]], question_index: int
+) -> int | None:
+    """First PATIENT row after the question; None when the visit ends first."""
+    for row_index in range(question_index + 1, len(source_rows)):
+        if source_rows[row_index]["role"] == "PATIENT":
+            return row_index
+        # A substantive clinician continuation means the question moved on.
+        if (
+            source_rows[row_index]["role"] == "DOCTOR"
+            and row_index > question_index + 3
+        ):
+            return None
+    return None
+
+
+def _risk_claim_reasons(
+    location: str,
+    sentence: str,
+    screen_pair: dict[str, Any],
+    note_tokens: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Judge one note claim against one answered risk screen."""
+    claimed_topics = {
+        topic
+        for topic in screen_pair["topics"]
+        if _RISK_TOPIC_CLAIM_PATTERNS[topic].search(sentence)
+    }
+    # Claims that never name the screened topic do not represent its answer.
+    if not claimed_topics:
+        return []
+
+    dropped_details: list[str] = []
+    # A denied topic asserted positively inverts the patient's answer.
+    if screen_pair["denied"] and not _RISK_CLAIM_NEGATION_PATTERN.search(sentence):
+        dropped_details.append("denial_inverted")
+    # A hedged answer cannot become an unhedged claim.
+    if screen_pair["hedged"] and not _contains_any_phrase(
+        sentence.lower(), _NOTE_UNCERTAINTY_MARKERS
+    ):
+        dropped_details.append("hedge_dropped")
+    # The answer's closing qualifier must survive somewhere in the note.
+    qualifier_tokens = screen_pair["qualifier_tokens"]
+    if qualifier_tokens and not _tokens_contain_run(
+        note_tokens, qualifier_tokens, _RISK_QUALIFIER_MATCH_TOKENS
+    ):
+        dropped_details.append("qualifier_dropped")
+
+    if not dropped_details:
+        return []
+
+    return [
+        {
+            "section": location,
+            "sentence": sentence,
+            "reason": RISK_ANSWER_CONTEXT_LOST_REASON,
+            "detail": ", ".join(dropped_details),
+            "segment_ids": screen_pair["segment_ids"][:6],
+        }
+    ]
+
+
+def _tokens_contain_run(
+    note_tokens: tuple[str, ...],
+    qualifier_tokens: tuple[str, ...],
+    run_length: int,
+) -> bool:
+    """Whether any qualifier token run of the given length survives verbatim."""
+    # Short qualifiers must survive whole; longer ones by any full-length run.
+    window = min(run_length, len(qualifier_tokens))
+    if window == 0:
+        return True
+    for start in range(len(qualifier_tokens) - window + 1):
+        if _contains_token_sequence(
+            note_tokens, qualifier_tokens[start : start + window]
+        ):
+            return True
+    return False
+
+
+# --- M05 family 5a: unsupported demographic review reasons -------------------
+# Internal reason lane only. Exact age needs a SPOKEN age statement (spoken DOB
+# alone cannot derive age - CONTRACTS section 3; 0.4.0 has no trusted encounter
+# metadata); sex needs an explicit statement or a clinician address term.
+
+UNSUPPORTED_DEMOGRAPHIC_REASON = "unsupported_demographic"
+
+_AGE_CLAIM_PATTERN = re.compile(r"\b(\d{1,3})[- ]year[- ]old\b", re.IGNORECASE)
+# The sex word must sit in the descriptor position right after the age.
+_DESCRIPTOR_SEX_PATTERN = re.compile(
+    r"year[- ]old\s+(?:\w+\s+){0,2}?(male|female|man|woman)\b", re.IGNORECASE
+)
+_MALE_EVIDENCE_PATTERN = re.compile(
+    r"\bsir\b|\bmr\b|\bi'?m a man\b|\bi'?m male\b", re.IGNORECASE
+)
+_FEMALE_EVIDENCE_PATTERN = re.compile(
+    r"\bmadam\b|\bma'am\b|\bmrs\b|\bms\b|\bmiss\b|\bi'?m a woman\b|\bi'?m female\b",
+    re.IGNORECASE,
+)
+_TENS_WORDS = {
+    20: "twenty",
+    30: "thirty",
+    40: "forty",
+    50: "fifty",
+    60: "sixty",
+    70: "seventy",
+    80: "eighty",
+    90: "ninety",
+}
+_UNITS_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+}
+
+
+def unsupported_demographic_review_reasons(
+    sections: list[dict[str, Any]],
+    key_points: list[str],
+    transcript_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Machine-readable reasons for demographics no source statement supports.
+
+    Use downstream (M05/M06 review surfaces): the browser payload is
+    unchanged. A DOB restatement without derivation is exempt; only the
+    derived descriptor ("NN-year-old woman") is judged.
+
+    Args:
+        sections: Generated SOAP sections; empty means nothing to review.
+        key_points: TL;DR lines; empty means the strip is hidden.
+        transcript_rows: The note's selected source rows; empty means no
+            support can exist, so any descriptor claim flags.
+
+    Returns:
+        One entry per failing claim: {section, sentence, reason, detail,
+        segment_ids}; empty means every demographic descriptor is spoken.
+    """
+    source_rows = [
+        {
+            "segment_id": str(row.get("segment_id", "")),
+            "role": str(row.get("role", "")).upper(),
+            "text": str(row.get("text", "") or "").lower(),
+        }
+        for row in transcript_rows
+    ]
+
+    review_reasons: list[dict[str, Any]] = []
+    for location, sentence, _is_note_final in _located_note_sentences(
+        sections, key_points
+    ):
+        age_match = _AGE_CLAIM_PATTERN.search(sentence)
+        # Sentences without the derived descriptor make no demographic claim.
+        if age_match is None:
+            continue
+
+        unsupported_details: list[str] = []
+        if not _age_is_spoken(int(age_match.group(1)), source_rows):
+            unsupported_details.append(
+                "exact age is not spoken (a DOB alone cannot derive it)"
+            )
+
+        sex_match = _DESCRIPTOR_SEX_PATTERN.search(sentence)
+        if sex_match is not None and not _sex_is_supported(
+            sex_match.group(1).lower(), source_rows
+        ):
+            unsupported_details.append(f"sex '{sex_match.group(1)}' is never stated")
+
+        if not unsupported_details:
+            continue
+
+        review_reasons.append(
+            {
+                "section": location,
+                "sentence": sentence,
+                "reason": UNSUPPORTED_DEMOGRAPHIC_REASON,
+                "detail": "; ".join(unsupported_details),
+                "segment_ids": [],
+            }
+        )
+    return review_reasons
+
+
+def _spoken_age_forms(age: int) -> list[str]:
+    """Digit and word forms a patient could have used for their age."""
+    forms = [str(age)]
+    if age in _TENS_WORDS:
+        forms.append(_TENS_WORDS[age])
+    tens, units = divmod(age, 10)
+    if tens * 10 in _TENS_WORDS and units in _UNITS_WORDS:
+        tens_word = _TENS_WORDS[tens * 10]
+        units_word = _UNITS_WORDS[units]
+        forms.extend([f"{tens_word}-{units_word}", f"{tens_word} {units_word}"])
+    return forms
+
+
+def _age_is_spoken(age: int, source_rows: list[dict[str, str]]) -> bool:
+    """Whether any patient row states this exact age directly."""
+    for row_index, row in enumerate(source_rows):
+        # Only the patient's own statement supports their age.
+        if row["role"] not in ("", "PATIENT"):
+            continue
+        window = _window_text(source_rows, row_index, 1)
+        for age_form in _spoken_age_forms(age):
+            if re.search(
+                rf"\bi'?m {re.escape(age_form)}\b"
+                rf"|\b{re.escape(age_form)} years? old\b",
+                window,
+            ):
+                return True
+    return False
+
+
+def _sex_is_supported(claimed_sex: str, source_rows: list[dict[str, str]]) -> bool:
+    """Whether an address term or explicit statement supports the sex claim."""
+    evidence_pattern = (
+        _MALE_EVIDENCE_PATTERN
+        if claimed_sex in ("male", "man")
+        else _FEMALE_EVIDENCE_PATTERN
+    )
+    return any(evidence_pattern.search(row["text"]) for row in source_rows)
+
+
+# --- M05 hedge lane: hedged patient statements stay hedged in the note ------
+# Visible lane (rule uncertainty-resolved, subtype hedge-dropped): a patient
+# statement softened by a bounded hedge cannot verify a definite note claim -
+# the claim needs an uncertainty marker or the verbatim patient quote. Hedges
+# are matched only in PATIENT rows, so clinician reasoning ("I think you
+# probably have...") never becomes patient uncertainty.
+
+_PATIENT_HEDGE_PATTERN = re.compile(
+    r"\bi think\b|\bmaybe\b|\bnot sure\b|\bi guess\b|\bwouldn'?t say so\b"
+    r"|\bnot that i recall\b|\bi don'?t think so\b",
+    re.IGNORECASE,
+)
+# Meaningful-token filter for hedge windows; grammar and hedge words per se
+# never identify the hedged clinical content.
+_HEDGE_CONTENT_STOPWORDS = frozenset(
+    "the and but for was were been has have had that this with just bit"
+    " sort um uh like really think guess maybe sure recall dont don so"
+    " probably less more feeling feel feels felt generally in your you"
+    " i'm im its it's".split()
+)
+# The hedge attaches locally: only tokens right beside it are the hedged
+# content ("headache, maybe" / "Irregular I think"). Window-wide overlap was
+# rejected in development - it flagged half of every hedge-rich consultation.
+_HEDGE_ADJACENT_TOKEN_RADIUS = 2
+# Equivocal denials hedge a NEGATION whose topic follows ("I don't think so
+# ... no no weight change, just a bit"); the topic sits after the negation.
+_EQUIVOCAL_DENIAL_HEDGE_PATTERN = re.compile(
+    r"\bi don'?t think so\b|\bnot that i recall\b", re.IGNORECASE
+)
+_HEDGE_WINDOW_NEGATION_PATTERN = re.compile(r"\b(?:no|not)\b", re.IGNORECASE)
+# Claim wording that already conveys approximation keeps the hedge honestly.
+_HEDGE_CLAIM_SOFTENERS = (
+    "approximately",
+    "estimates",
+    "estimated",
+    "around",
+    "about",
+    "possible",
+    "possibly",
+    "unable to provide",
+    "unable to say",
+)
+
+
+def _hedge_content_tokens(text: str) -> set[str]:
+    """Tokens that can tie a note claim to a hedged patient statement."""
+    return {
+        _singular_token(token)
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _HEDGE_CONTENT_STOPWORDS
+    }
+
+
+def _hedged_statement_violation(
+    sentence: str, normalized_rows: list[dict[str, str]]
+) -> tuple[str, str] | None:
+    """Check that a hedged patient statement is not resolved to definite.
+
+    Args:
+        sentence: Note sentence under review.
+        normalized_rows: Lowercased transcript rows with roles.
+
+    Returns:
+        (reason, subtype), or None when the sentence preserves the hedge,
+        quotes the patient verbatim, or restates nothing hedged.
+    """
+    lowered_sentence = sentence.lower()
+    # A claim carrying its own uncertainty marker preserves the hedge.
+    if _contains_any_phrase(lowered_sentence, _NOTE_UNCERTAINTY_MARKERS):
+        return None
+    # Approximation wording ("estimates 3-4 hours") also keeps the hedge.
+    if _contains_any_phrase(lowered_sentence, _HEDGE_CLAIM_SOFTENERS):
+        return None
+    # A claim attributing uncertainty or memory failure to the patient is not
+    # presenting definite content ("does not clearly recall ...").
+    if _PATIENT_STATE_MARKER_PATTERN.search(sentence) is not None:
+        return None
+    claim_tokens = _hedge_content_tokens(sentence)
+    # A claim with no substantive tokens cannot restate hedged content.
+    if not claim_tokens:
+        return None
+
+    for row_index, row in enumerate(normalized_rows):
+        # Only the patient's own hedges soften their statements.
+        if row["role"] != "PATIENT":
+            continue
+        # Per the frozen family spec, hedges count only in ANSWER position -
+        # a global scan flags conversational hedging all over the visit.
+        if not _hedge_row_answers_a_question(normalized_rows, row_index):
+            continue
+        for hedge_match in _PATIENT_HEDGE_PATTERN.finditer(row["text"]):
+            # Only the equivocal-denial shape ships; the general adjacent-hedge
+            # sub-pattern missed its precision gate on the development notes
+            # and is deferred per the family kill criterion (spec amendments).
+            if not _EQUIVOCAL_DENIAL_HEDGE_PATTERN.search(hedge_match.group(0)):
+                continue
+            # An equivocal denial hedges the negated topic that follows it.
+            hedged_tokens = _equivocal_denial_topic_tokens(
+                normalized_rows, row_index, hedge_match
+            )
+            # The claim must itself assert the negative to restate it.
+            if not _HEDGE_WINDOW_NEGATION_PATTERN.search(lowered_sentence):
+                continue
+            if not (claim_tokens & hedged_tokens):
+                continue
+            # Quoting the patient's own words preserves the hedge honestly.
+            if _has_patient_verbatim_quote(sentence, normalized_rows):
+                return None
+            return (
+                "the patient hedged this statement, but the sentence presents it"
+                " as definite - preserve the hedge or quote the patient",
+                "hedge-dropped",
+            )
+
+    return None
+
+
+def _equivocal_denial_topic_tokens(
+    normalized_rows: list[dict[str, str]],
+    row_index: int,
+    hedge_match: re.Match[str],
+) -> set[str]:
+    """The negated topic following an equivocal denial hedge.
+
+    "I don't think so ... but no no weight change, just a bit" hedges the
+    weight-change denial; the topic is the meaningful tokens right after the
+    last consecutive negation in the forward window.
+    """
+    window_after_hedge = (
+        normalized_rows[row_index]["text"][hedge_match.end() :]
+        + " "
+        + _hedge_row_window(normalized_rows, row_index + 1)
+    )
+    negation_matches = list(_HEDGE_WINDOW_NEGATION_PATTERN.finditer(window_after_hedge))
+    if not negation_matches:
+        return set()
+
+    trailing_text = window_after_hedge[negation_matches[-1].end() :]
+    topic_tokens = [
+        _singular_token(token)
+        for token in re.findall(r"[a-z0-9]+", trailing_text.lower())
+        if len(token) >= 3 and token not in _HEDGE_CONTENT_STOPWORDS
+    ]
+    return set(topic_tokens[:3])
+
+
+def _hedge_row_answers_a_question(
+    normalized_rows: list[dict[str, str]], row_index: int
+) -> bool:
+    """Whether this patient row sits in answer position after a question.
+
+    The hedged row must be within the first patient rows following a DOCTOR
+    question row, with no other clinician turn in between.
+    """
+    for earlier_index in range(row_index - 1, max(-1, row_index - 4), -1):
+        earlier_row = normalized_rows[earlier_index]
+        if earlier_row["role"] == "DOCTOR":
+            return "?" in earlier_row["text"]
+        # Anything but the patient's own continuation breaks answer position.
+        if earlier_row["role"] != "PATIENT":
+            return False
+    return False
+
+
+def _hedge_row_window(normalized_rows: list[dict[str, str]], row_index: int) -> str:
+    """The hedge row joined with its neighbors; hedged content splits rows.
+
+    The forward reach is two rows because a self-correction can trail that
+    far ("I don't think so." / "... but no no" / "weight change, just a bit").
+    """
+    window_start = max(0, row_index - 1)
+    return " ".join(
+        row["text"] for row in normalized_rows[window_start : row_index + 3]
+    )
+
+
+def _hedge_adjacent_tokens(row_text: str, hedge_match: re.Match[str]) -> set[str]:
+    """Meaningful tokens immediately around one hedge occurrence."""
+    before_tokens = re.findall(r"[a-z0-9]+", row_text[: hedge_match.start()].lower())
+    after_tokens = re.findall(r"[a-z0-9]+", row_text[hedge_match.end() :].lower())
+    neighborhood = (
+        before_tokens[-_HEDGE_ADJACENT_TOKEN_RADIUS:]
+        + after_tokens[:_HEDGE_ADJACENT_TOKEN_RADIUS]
+    )
+    return {
+        _singular_token(token)
+        for token in neighborhood
+        if len(token) >= 3 and token not in _HEDGE_CONTENT_STOPWORDS
+    }
+
+
+# --- M05 coverage lane: note-level critical-coverage reasons -----------------
+# Note-level reasons (reason lane; they also join the single bounded retry via
+# regeneration feedback in summary_generation): an answered mental-health
+# screen or a spoken emergency-disposition component missing from the whole
+# note must surface as review-required, never vanish silently.
+
+MENTAL_HEALTH_SCREEN_MISSING_REASON = "mental_health_screen_missing"
+EMERGENCY_DISPOSITION_INCOMPLETE_REASON = "emergency_disposition_incomplete"
+
+# The disposition check runs only in real emergency visits.
+_EMERGENCY_CONTEXT_PATTERN = re.compile(r"\b999\b|\b911\b|\bambulance\b", re.IGNORECASE)
+# (component, spoken form in DOCTOR windows, note form anywhere in the note)
+_EMERGENCY_COVERAGE_COMPONENTS = (
+    (
+        "emergency_number",
+        re.compile(r"\b999\b|\b911\b"),
+        re.compile(r"\b999\b|\b911\b|\bemergency (?:number|services)\b", re.IGNORECASE),
+    ),
+    (
+        "ambulance",
+        re.compile(r"\bambulance\b", re.IGNORECASE),
+        re.compile(r"\bambulance\b", re.IGNORECASE),
+    ),
+    (
+        "stay_with_person",
+        re.compile(
+            r"\bstay with\b|\bwith you (?:till|until)\b|\bperson'?s with you\b"
+            r"|\bmake sure (?:that )?(?:the )?person\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bstay(?:ing)? with\b|\bremain(?:s|ing)? with\b|\bpresent until\b"
+            r"|\baccompan",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "interim_medication",
+        re.compile(r"\bin the interim\b|\bin the meantime\b", re.IGNORECASE),
+        re.compile(
+            r"\binterim\b|\bmeantime\b|\bwhile await|\bpending ambulance\b"
+            r"|\bif available\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "follow_up",
+        re.compile(r"\bring back\b|\bcall back\b|\bfollow[- ]?up\b", re.IGNORECASE),
+        re.compile(
+            r"\bfollow[- ]?up\b|\bcall back\b|\bring back\b|\breview\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def note_coverage_review_reasons(
+    sections: list[dict[str, Any]],
+    key_points: list[str],
+    transcript_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Note-level reasons for spoken critical content the whole note omits.
+
+    Use after generation: these are note-scoped (sentence is empty), feed the
+    single bounded retry, and surface as review-required when they survive.
+
+    Args:
+        sections: Generated SOAP sections; empty means an empty note, which
+            omits everything the source spoke.
+        key_points: TL;DR lines joining the note text.
+        transcript_rows: The note's selected source rows; empty detects no
+            screens or dispositions, so nothing can be honestly demanded.
+
+    Returns:
+        Note-level entries: {section: "note", sentence: "", reason, detail,
+        segment_ids}; empty means every detected critical item is covered.
+    """
+    if not transcript_rows:
+        return []
+
+    source_rows = [
+        {
+            "segment_id": str(row.get("segment_id", "")),
+            "role": str(row.get("role", "")).upper(),
+            "text": str(row.get("text", "") or "").lower(),
+        }
+        for row in transcript_rows
+    ]
+    note_text = " ".join(
+        [str(section.get("content", "")) for section in sections]
+        + [str(key_point) for key_point in key_points]
+    )
+
+    review_reasons: list[dict[str, Any]] = []
+    review_reasons.extend(_screen_coverage_reasons(source_rows, note_text))
+    review_reasons.extend(_disposition_coverage_reasons(source_rows, note_text))
+    return review_reasons
+
+
+def _screen_coverage_reasons(
+    source_rows: list[dict[str, str]], note_text: str
+) -> list[dict[str, Any]]:
+    """An answered risk screen must be represented somewhere in the note."""
+    review_reasons: list[dict[str, Any]] = []
+    reported_topics: set[str] = set()
+    for screen_pair in _risk_screen_pairs(source_rows):
+        # Screens without a nameable topic cannot be demanded of the note.
+        for topic in screen_pair["topics"] - reported_topics:
+            # A claim naming the topic anywhere in the note covers the screen.
+            if _RISK_TOPIC_CLAIM_PATTERNS[topic].search(note_text):
+                continue
+            reported_topics.add(topic)
+            review_reasons.append(
+                {
+                    "section": "note",
+                    "sentence": "",
+                    "reason": MENTAL_HEALTH_SCREEN_MISSING_REASON,
+                    "detail": f"the answered '{topic}' screen is not represented"
+                    " anywhere in the note",
+                    "segment_ids": screen_pair["segment_ids"][:6],
+                }
+            )
+    return review_reasons
+
+
+def _disposition_coverage_reasons(
+    source_rows: list[dict[str, str]], note_text: str
+) -> list[dict[str, Any]]:
+    """Every spoken emergency-disposition component must reach the note."""
+    # Non-emergency visits have no disposition to demand.
+    if not any(
+        row["role"] == "DOCTOR" and _EMERGENCY_CONTEXT_PATTERN.search(row["text"])
+        for row in source_rows
+    ):
+        return []
+
+    missing_components: list[str] = []
+    evidence_ids: list[str] = []
+    for component, spoken_pattern, note_pattern in _EMERGENCY_COVERAGE_COMPONENTS:
+        spoken_row_ids = [
+            row["segment_id"]
+            for row_index, row in enumerate(source_rows)
+            # Disposition instructions are clinician speech; split phrases
+            # ("in the / interim") are found on joined windows.
+            if row["role"] == "DOCTOR"
+            and spoken_pattern.search(_window_text(source_rows, row_index, 1))
+        ]
+        if not spoken_row_ids:
+            continue
+        if note_pattern.search(note_text):
+            continue
+        missing_components.append(component)
+        evidence_ids.extend(spoken_row_ids[:2])
+
+    if not missing_components:
+        return []
+
+    return [
+        {
+            "section": "note",
+            "sentence": "",
+            "reason": EMERGENCY_DISPOSITION_INCOMPLETE_REASON,
+            "detail": "spoken disposition components missing from the note: "
+            + ", ".join(missing_components),
+            "segment_ids": evidence_ids[:6],
+        }
+    ]

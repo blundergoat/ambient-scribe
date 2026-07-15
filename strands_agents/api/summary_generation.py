@@ -18,6 +18,7 @@ from api.summary_confidence import add_low_confidence_note_flags
 from api.summary_fidelity import (
     FidelityViolation,
     find_fidelity_violations,
+    note_coverage_review_reasons,
     regeneration_feedback,
     summary_with_unverified_flags,
 )
@@ -132,6 +133,25 @@ def run_summary_generation(
                 [section.model_dump() for section in validated_summary.sections],
                 list(validated_summary.key_points),
                 transcript_segments or [],
+            )
+            # Note-level critical-coverage misses (an answered mental-health
+            # screen or a spoken emergency-disposition component absent from
+            # the whole note) join the same single bounded retry; their
+            # synthetic sentences match no note text, so the payload itself
+            # never carries them (M05 - the reason lane surfaces survivors).
+            violations.extend(
+                FidelityViolation(
+                    location="note",
+                    sentence=coverage_reason["detail"],
+                    rule="critical-coverage",
+                    reason=coverage_reason["detail"],
+                    subtype=coverage_reason["reason"],
+                )
+                for coverage_reason in note_coverage_review_reasons(
+                    [section.model_dump() for section in validated_summary.sections],
+                    list(validated_summary.key_points),
+                    transcript_segments or [],
+                )
             )
             drafts.append((validated_summary, violations, metric_fields))
             # A fidelity-clean draft is the note the clinician gets - done.

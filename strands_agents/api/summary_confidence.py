@@ -15,6 +15,12 @@ import re
 from typing import Any
 
 from api.summary_fidelity import _sentences as clinician_visible_sentences
+from api.summary_fidelity import (
+    note_coverage_review_reasons,
+    risk_pair_review_reasons,
+    temporal_action_review_reasons,
+    unsupported_demographic_review_reasons,
+)
 from medical_lexicon import default_medical_lexicon_path, load_medical_lexicon
 
 # Empirical threshold: `<0.78` catches both corrected calf/carp rows without a warning wall.
@@ -248,6 +254,57 @@ def low_confidence_review_reasons(
                 }
             )
 
+    return review_reasons
+
+
+def note_review_reasons(
+    summary_payload: dict[str, Any],
+    citation_rows: list[dict[str, Any]],
+    review_threshold: float = CORRECTED_NOTE_REVIEW_THRESHOLD,
+) -> list[dict[str, Any]]:
+    """Every machine-readable review reason for one generated note.
+
+    The M05 aggregation point M06 will consume: clinical-term confidence
+    reasons plus the temporal/action-state family, in note reading order per
+    family. The browser payload stays unchanged; human wording is owned by
+    M03/M06.
+
+    Args:
+        summary_payload: Generated note; empty produces no reasons.
+        citation_rows: The note's selected corrected source rows; empty
+            disables every source comparison.
+        review_threshold: Strict confidence boundary for the term lane.
+
+    Returns:
+        Reason entries ({section, sentence, reason, ...}); empty means no
+        automated review reason exists for this note.
+    """
+    review_reasons = low_confidence_review_reasons(
+        summary_payload, citation_rows, review_threshold
+    )
+
+    note_sections = summary_payload.get("sections", [])
+    # Malformed payloads reach the detectors as empty, never as a crash.
+    if not isinstance(note_sections, list):
+        note_sections = []
+    note_key_points = summary_payload.get("key_points", [])
+    if not isinstance(note_key_points, list):
+        note_key_points = []
+
+    review_reasons.extend(
+        temporal_action_review_reasons(note_sections, note_key_points, citation_rows)
+    )
+    review_reasons.extend(
+        risk_pair_review_reasons(note_sections, note_key_points, citation_rows)
+    )
+    review_reasons.extend(
+        unsupported_demographic_review_reasons(
+            note_sections, note_key_points, citation_rows
+        )
+    )
+    review_reasons.extend(
+        note_coverage_review_reasons(note_sections, note_key_points, citation_rows)
+    )
     return review_reasons
 
 

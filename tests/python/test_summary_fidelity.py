@@ -1899,3 +1899,408 @@ def test_manifest_quote_negatives_stay_verified() -> None:
             specimen["claim"], _normalized_specimen_rows(specimen)
         )
         assert violation is None, specimen_id
+
+
+# --- M05 family 3: temporal/action-state manifest specimens ---
+
+# Pre-declared 3c deferrals (temporal entailment; M05-detector-family-specs.md).
+_TEMPORAL_ACTION_DEFERRED_IDS = {"a09", "a11"}
+
+
+def _temporal_action_note_inputs(specimen: dict) -> tuple[list[dict], list[str]]:
+    """Build the note inputs one temporal/action specimen describes."""
+    location = str(specimen.get("location", ""))
+    if location == "key_points":
+        return [], [specimen["claim"]]
+    heading = location.split("'")[1] if "'" in location else "Plan"
+    return [{"heading": heading, "content": specimen["claim"]}], []
+
+
+def test_manifest_temporal_action_specimens_classify_as_frozen() -> None:
+    """Every shipped temporal/action specimen keeps its frozen label and code.
+
+    Positives must emit their expected reason (state_superseded,
+    action_not_confirmed_done, or temporal_context_lost); the frozen hard
+    negatives (instruction/future/conditional framings and the Subjective
+    narration exemption) must stay reason-silent.
+    """
+    from api.summary_fidelity import temporal_action_review_reasons
+
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    specimens = [
+        specimen
+        for specimen in manifest["specimens"]
+        if specimen["lane"] == "temporal_action"
+        and specimen["kind"] == "claim"
+        and specimen["id"] not in _TEMPORAL_ACTION_DEFERRED_IDS
+    ]
+    assert specimens, "manifest must supply the temporal/action lane"
+
+    for specimen in specimens:
+        sections, key_points = _temporal_action_note_inputs(specimen)
+        reasons = temporal_action_review_reasons(
+            sections, key_points, specimen["source_rows"]
+        )
+        if specimen["expected"] == "flag":
+            reason_codes = {reason["reason"] for reason in reasons}
+            assert specimen["expected_reason"] in reason_codes, specimen["id"]
+        else:
+            assert reasons == [], specimen["id"]
+
+
+def test_arranged_to_arrange_with_unspoken_content_is_flagged() -> None:
+    """The retained 3.1 replay's plan elaboration (audited TP, 2026-07-15).
+
+    'give us a ring back ... might need to sort you out with your injections'
+    is conditional; 'arranged ... to arrange prescriptions for epinephrine
+    injections' asserts arrangement content never spoken.
+    """
+    from api.summary_fidelity import temporal_action_review_reasons
+
+    reasons = temporal_action_review_reasons(
+        [
+            {
+                "heading": "Plan",
+                "content": (
+                    "Follow-up telephone consultation arranged after hospital"
+                    " assessment to arrange prescriptions for epinephrine"
+                    " injections and related treatments."
+                ),
+            }
+        ],
+        [],
+        [
+            {
+                "segment_id": "corrected-0268",
+                "role": "DOCTOR",
+                "text": (
+                    "and after you come up from the hospital, do you give us a"
+                    " ring back? We might need to"
+                ),
+            },
+            {
+                "segment_id": "corrected-0269",
+                "role": "DOCTOR",
+                "text": "sort you out um with your injections",
+            },
+            {
+                "segment_id": "corrected-0270",
+                "role": "DOCTOR",
+                "text": "and things like that. Okay,",
+            },
+        ],
+    )
+
+    assert any(reason["reason"] == "action_not_confirmed_done" for reason in reasons)
+
+
+# --- M05 family 2: risk-pair manifest specimens ---
+
+# Pre-declared deferral: the concentration-or-tiredness branch question is a
+# symptom either/or, not a risk screen (M05-detector-family-specs.md).
+_RISK_PAIR_DEFERRED_IDS = {"a20"}
+
+
+def test_manifest_risk_pair_specimens_classify_as_frozen() -> None:
+    """Every shipped risk-pair specimen keeps its frozen label.
+
+    c01 must flag its dropped qualifier and c05 its dropped hedge; the
+    preserved-context construction (c02) and the descriptive supported use of
+    'panic' (c06) must stay reason-silent.
+    """
+    from api.summary_fidelity import risk_pair_review_reasons
+
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    specimens = [
+        specimen
+        for specimen in manifest["specimens"]
+        if specimen["lane"] == "risk_pair"
+        and specimen["kind"] == "claim"
+        and specimen["id"] not in _RISK_PAIR_DEFERRED_IDS
+    ]
+    assert specimens, "manifest must supply the risk-pair lane"
+
+    for specimen in specimens:
+        location = str(specimen.get("location", ""))
+        if location == "key_points":
+            sections: list[dict] = []
+            key_points = [specimen["claim"]]
+        else:
+            heading = location.split("'")[1] if "'" in location else "Subjective"
+            sections = [{"heading": heading, "content": specimen["claim"]}]
+            key_points = []
+        reasons = risk_pair_review_reasons(
+            sections, key_points, specimen["source_rows"]
+        )
+        if specimen["expected"] == "flag":
+            assert reasons, specimen["id"]
+            assert all(
+                reason["reason"] == "risk_answer_context_lost" for reason in reasons
+            ), specimen["id"]
+        else:
+            assert reasons == [], specimen["id"]
+
+
+def test_inverted_risk_denial_is_flagged() -> None:
+    """A denied screen topic asserted positively inverts the patient's answer."""
+    from api.summary_fidelity import risk_pair_review_reasons
+
+    reasons = risk_pair_review_reasons(
+        [{"heading": "Subjective", "content": "Reports suicidal thoughts."}],
+        [],
+        [
+            {
+                "segment_id": "row-q",
+                "role": "DOCTOR",
+                "text": "has your mood ever been so low that you had suicidal thoughts?",
+            },
+            {
+                "segment_id": "row-a",
+                "role": "PATIENT",
+                "text": "no, never anything like that.",
+            },
+        ],
+    )
+
+    assert reasons
+    assert "denial_inverted" in reasons[0]["detail"]
+
+
+def test_preserved_qualifier_elsewhere_in_note_keeps_claims_silent() -> None:
+    """The M08 day5-c03 shape: the qualifier survives in another sentence.
+
+    The denial claim itself may omit the qualifier as long as the note
+    carries it - that note is the audited example of the safe form.
+    """
+    from api.summary_fidelity import risk_pair_review_reasons
+
+    rows = [
+        {
+            "segment_id": "row-q",
+            "role": "DOCTOR",
+            "text": "has your mood ever been so low you couldn't carry on?",
+        },
+        {
+            "segment_id": "row-a1",
+            "role": "PATIENT",
+            "text": "no, i haven't had any suicidal thoughts.",
+        },
+        {
+            "segment_id": "row-a2",
+            "role": "PATIENT",
+            "text": "it's just that i don't want to go on like this.",
+        },
+    ]
+    sections = [
+        {
+            "heading": "Subjective",
+            "content": (
+                "Denies suicidal thoughts. She states she does not want to go"
+                " on like this."
+            ),
+        }
+    ]
+
+    assert risk_pair_review_reasons(sections, [], rows) == []
+
+
+# --- M05 family 5: demographics/exam manifest specimens ---
+
+
+def test_manifest_demographics_exam_specimens_classify_as_frozen() -> None:
+    """Every demographics/exam specimen keeps its frozen label.
+
+    a01/c20 flag through the demographic lane (DOB alone cannot derive an
+    exact age; sex never stated); a06/c22 flag through the repaired exam rule
+    ('on examination' presupposes an exam; screening-as-exam); the spoken-age
+    (c19), DOB-restatement (c21), reported-denial (c23), and honest-absence
+    (c24) forms all stay silent.
+    """
+    from api.summary_fidelity import unsupported_demographic_review_reasons
+
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    specimens = [
+        specimen
+        for specimen in manifest["specimens"]
+        if specimen["lane"] == "demographics_exam" and specimen["kind"] == "claim"
+    ]
+    assert specimens, "manifest must supply the demographics/exam lane"
+
+    for specimen in specimens:
+        location = str(specimen.get("location", ""))
+        if location == "key_points":
+            sections: list[dict] = []
+            key_points = [specimen["claim"]]
+        else:
+            heading = (
+                location.split("'")[1]
+                if "'" in location and location != "constructed"
+                else "Objective"
+            )
+            sections = [{"heading": heading, "content": specimen["claim"]}]
+            key_points = []
+
+        demographic_reasons = unsupported_demographic_review_reasons(
+            sections, key_points, specimen["source_rows"]
+        )
+        exam_violations = [
+            violation
+            for violation in find_fidelity_violations(
+                sections, key_points, specimen["source_rows"]
+            )
+            if violation.rule == "exam-not-performed"
+        ]
+        flagged = bool(demographic_reasons or exam_violations)
+
+        if specimen["expected"] == "flag":
+            assert flagged, specimen["id"]
+            if specimen["expected_reason"] == "unsupported_demographic":
+                assert demographic_reasons, specimen["id"]
+            else:
+                assert exam_violations, specimen["id"]
+        else:
+            assert not flagged, specimen["id"]
+
+
+# --- M05 hedge lane: manifest specimens (shipped scope) ---
+
+# The general adjacent-hedge sub-pattern missed its 80% precision gate on the
+# development notes (~45% after the spec-prescribed answer scoping) and is
+# DEFERRED per the family kill criterion; c03 (HIGH) and a19 are its
+# documented misses for the human gate. Only the equivocal-denial shape ships.
+_HEDGE_DEFERRED_IDS = {"a19", "c03"}
+
+
+def test_manifest_hedge_specimens_classify_in_shipped_scope() -> None:
+    """The shipped equivocal-denial hedge check keeps its frozen labels.
+
+    a16's equivocal weight denial must flag; the preserved-hedge forms (c04,
+    c33) stay silent; the deferred adjacent-hedge specimens are excluded and
+    reported as false negatives by the final re-score instead.
+    """
+    manifest = json.loads(_DETECTOR_SPECIMEN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    specimens = [
+        specimen
+        for specimen in manifest["specimens"]
+        if specimen["lane"] == "hedge"
+        and specimen["kind"] == "claim"
+        and specimen["id"] not in _HEDGE_DEFERRED_IDS
+    ]
+    assert specimens, "manifest must supply the hedge lane"
+
+    for specimen in specimens:
+        found = find_fidelity_violations(
+            [{"heading": "Subjective", "content": specimen["claim"]}],
+            [],
+            specimen["source_rows"],
+        )
+        if specimen["expected"] == "flag":
+            assert any(violation.subtype == "hedge-dropped" for violation in found), (
+                specimen["id"]
+            )
+        else:
+            assert found == [], specimen["id"]
+
+
+# --- M05 coverage lane: note-level critical coverage (c29/c30/c31 shapes) ---
+
+_EMERGENCY_DISPOSITION_ROWS = [
+    {"segment_id": "d-01", "role": "DOCTOR", "text": "I'll call the ambulance."},
+    {
+        "segment_id": "d-02",
+        "role": "DOCTOR",
+        "text": "make sure that person's with you till the ambulance comes.",
+    },
+    {
+        "segment_id": "d-03",
+        "role": "DOCTOR",
+        "text": "mom, if you can call the 999, say there is a suspected reaction.",
+    },
+    {
+        "segment_id": "d-04",
+        "role": "DOCTOR",
+        "text": "take the antihistamines in the meantime, all right.",
+    },
+    {
+        "segment_id": "d-05",
+        "role": "DOCTOR",
+        "text": "after you come up from the hospital, do you give us a ring back?",
+    },
+]
+
+
+def test_complete_emergency_disposition_note_stays_silent() -> None:
+    """c29's shape: a Plan carrying all five spoken components needs no reason."""
+    from api.summary_fidelity import note_coverage_review_reasons
+
+    complete_plan = {
+        "heading": "Plan",
+        "content": (
+            "Emergency ambulance requested. Mother to call 999. Accompanying"
+            " person to remain with the patient until arrival. Antihistamines"
+            " in the interim. Follow-up call after hospital assessment."
+        ),
+    }
+
+    assert (
+        note_coverage_review_reasons([complete_plan], [], _EMERGENCY_DISPOSITION_ROWS)
+        == []
+    )
+
+
+def test_omitted_disposition_components_are_named() -> None:
+    """c30's shape: dropping 999 and stay-with must name exactly those parts."""
+    from api.summary_fidelity import note_coverage_review_reasons
+
+    partial_plan = {
+        "heading": "Plan",
+        "content": (
+            "Emergency ambulance requested. Antihistamines in the interim."
+            " Follow-up call after hospital assessment."
+        ),
+    }
+
+    reasons = note_coverage_review_reasons(
+        [partial_plan], [], _EMERGENCY_DISPOSITION_ROWS
+    )
+
+    assert len(reasons) == 1
+    assert reasons[0]["reason"] == "emergency_disposition_incomplete"
+    assert "emergency_number" in reasons[0]["detail"]
+    assert "stay_with_person" in reasons[0]["detail"]
+    # Components the note does carry are never reported as missing.
+    assert "ambulance" not in reasons[0]["detail"]
+    assert "interim_medication" not in reasons[0]["detail"]
+    assert "follow_up" not in reasons[0]["detail"]
+
+
+def test_answered_screen_missing_from_note_is_reported() -> None:
+    """c31's shape: the suicidal-thoughts answer absent from the whole note."""
+    from api.summary_fidelity import note_coverage_review_reasons
+
+    rows = [
+        {
+            "segment_id": "q-01",
+            "role": "DOCTOR",
+            "text": "has your mood ever been so low you couldn't carry on?",
+        },
+        {
+            "segment_id": "a-01",
+            "role": "PATIENT",
+            "text": "no, i haven't had any suicidal thoughts.",
+        },
+    ]
+    note_without_screen = {
+        "heading": "Subjective",
+        "content": "Reports anxiety about work and poor sleep.",
+    }
+    note_with_screen = {
+        "heading": "Subjective",
+        "content": "Reports anxiety. Denies suicidal thoughts.",
+    }
+
+    missing = note_coverage_review_reasons([note_without_screen], [], rows)
+    covered = note_coverage_review_reasons([note_with_screen], [], rows)
+
+    assert [reason["reason"] for reason in missing] == ["mental_health_screen_missing"]
+    assert covered == []

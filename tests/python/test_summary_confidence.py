@@ -389,3 +389,105 @@ def test_visible_marker_without_clinical_term_emits_no_reason() -> None:
     assert reviewed_note["sections"][0].get("low_confidence") == [c28["claim"]]
     # ...while the clinical-term reason lane has nothing to name.
     assert review_reasons == []
+
+
+def test_note_review_reasons_aggregates_term_and_temporal_families() -> None:
+    """The M05 aggregation point returns both families' reasons for one note."""
+    from api.summary_confidence import note_review_reasons
+
+    note_payload = {
+        "sections": [
+            {
+                "heading": "Plan",
+                "content": (
+                    "Trial of stronger antihistamine Fexaphenidine recommended. "
+                    "Blood tests ordered to exclude other causes."
+                ),
+                "citations": [{"segment_id": "corrected-0293"}],
+            }
+        ],
+        "key_points": [],
+    }
+    citation_rows = CONSULT12_MEDICATION_ROWS + [
+        _corrected_row(
+            "corrected-4001", "it's probably worth having a couple of blood tests", 0.9
+        )
+    ]
+
+    review_reasons = note_review_reasons(note_payload, citation_rows)
+
+    reason_codes = {reason["reason"] for reason in review_reasons}
+    assert "source_low_confidence" in reason_codes
+    assert "action_not_confirmed_done" in reason_codes
+
+
+def test_coverage_misses_feed_retry_but_never_the_payload() -> None:
+    """A surviving coverage miss stays in the reason lane, not the note payload.
+
+    The synthetic critical-coverage violation drives the bounded retry, but
+    its sentence matches no note text, so `unverified`/`unverified_key_points`
+    never carry it - the browser contract is unchanged (M05).
+    """
+    structured_note = SessionSummaryOutput(
+        title="Emergency review",
+        sections=[
+            SummarySectionOutput(
+                heading="Plan",
+                content="Emergency ambulance requested. Antihistamines in the interim.",
+                citations=[SummaryCitationOutput(segment_id="d-01")],
+            )
+        ],
+        key_points=[],
+    )
+    emergency_rows = [
+        {
+            "segment_id": "d-01",
+            "speaker_id": "speaker_0",
+            "role": "DOCTOR",
+            "text": "I'll call the ambulance.",
+            "start": 1.0,
+            "end": 2.0,
+            "confidence": 0.9,
+        },
+        {
+            "segment_id": "d-02",
+            "speaker_id": "speaker_0",
+            "role": "DOCTOR",
+            "text": "mom, if you can call the 999.",
+            "start": 3.0,
+            "end": 4.0,
+            "confidence": 0.9,
+        },
+    ]
+
+    with (
+        patch("api.summary_generation.retrieve_clinical_context", return_value=[]),
+        patch(
+            "api.summary_generation._generate_validated_draft",
+            return_value=(structured_note, {}),
+        ),
+    ):
+        generated_note = run_summary_generation(
+            "coverage-test-session",
+            "[DOCTOR] I'll call the ambulance.",
+            citation_segments=emergency_rows,
+            transcript_segments=emergency_rows,
+        )
+
+    assert generated_note is not None
+    # The 999 omission survived both drafts; the payload must stay clean.
+    note_text = json.dumps(
+        {key: value for key, value in generated_note.items() if key != "_agent_metrics"}
+    )
+    assert "critical-coverage" not in note_text
+    assert "emergency_number" not in note_text
+    assert "unverified" not in generated_note["sections"][0]
+    assert generated_note.get("unverified_key_points", []) == []
+    # The reason lane still reports the miss for M03/M06 surfacing.
+    from api.summary_confidence import note_review_reasons
+
+    survivor_reasons = note_review_reasons(generated_note, emergency_rows)
+    assert any(
+        reason["reason"] == "emergency_disposition_incomplete"
+        for reason in survivor_reasons
+    )

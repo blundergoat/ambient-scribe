@@ -1728,6 +1728,24 @@
       ],
       "source_rows": [
         {
+          "segment_id": "corrected-0060",
+          "role": "DOCTOR",
+          "confidence": 0.9437,
+          "text": "Any change"
+        },
+        {
+          "segment_id": "corrected-0061",
+          "role": "DOCTOR",
+          "confidence": 0.9632,
+          "text": "in your weight"
+        },
+        {
+          "segment_id": "corrected-0062",
+          "role": "DOCTOR",
+          "confidence": 0.9261,
+          "text": "at all?"
+        },
+        {
           "segment_id": "corrected-0063",
           "role": "PATIENT",
           "confidence": 0.8125,
