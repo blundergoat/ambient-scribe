@@ -236,11 +236,21 @@ async function renderSummaryTranscriptView() {
     const isCorrectedAvailable = Array.isArray(correctedRows) && correctedRows.length > 0;
     const transcriptRows = isCorrectedAvailable ? correctedRows : readVisibleTranscriptSegments();
 
-    transcriptStatus.classList.toggle('hidden', isCorrectedAvailable && transcriptRows.length > 0);
-    if (!isCorrectedAvailable) {
-        transcriptStatus.textContent = transcriptRows.length > 0
-            ? 'Corrected transcript unavailable - showing the live transcript.'
-            : 'No transcript rows yet.';
+    // The lane label always states whether this text fed the note or may
+    // still change - the note's actual source stays explicit while reading.
+    transcriptStatus.classList.remove('hidden');
+    if (transcriptRows.length === 0) {
+        transcriptStatus.textContent = 'No transcript rows yet.';
+    } else if (isCorrectedAvailable) {
+        transcriptStatus.textContent = typeof TRANSCRIPT_LANE_LABELS !== 'undefined'
+            ? TRANSCRIPT_LANE_LABELS.corrected
+            : 'Corrected transcript — used for note';
+    } else {
+        const liveLaneLabel = typeof transcriptLaneLabelForLiveRows === 'function'
+            ? transcriptLaneLabelForLiveRows()
+            : 'Live preview — may change';
+        transcriptStatus.textContent =
+            `${liveLaneLabel} — corrected transcript unavailable.`;
     }
 
     const visibleTranscriptLane = isCorrectedAvailable

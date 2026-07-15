@@ -15,10 +15,17 @@ import re
 from typing import Any
 
 from api.summary_fidelity import _sentences as clinician_visible_sentences
+from medical_lexicon import default_medical_lexicon_path, load_medical_lexicon
 
 # Empirical threshold: `<0.78` catches both corrected calf/carp rows without a warning wall.
 CORRECTED_NOTE_REVIEW_THRESHOLD = 0.78
 LOW_CONFIDENCE_NOTE_FIELD = "low_confidence"
+# Machine-readable reason consumed by later review milestones; the browser
+# payload itself never changes shape for this lane.
+SOURCE_LOW_CONFIDENCE_REASON = "source_low_confidence"
+
+# Clinical link tokens are cached per process; the lexicon file is static.
+_clinical_link_tokens_cache: dict[str, frozenset[str]] | None = None
 
 # Generic prose must not connect an unrelated citation to a sentence merely because both say
 # "patient reports". Clinical/detail words remain available for the local evidence match.
@@ -131,6 +138,110 @@ def add_low_confidence_note_flags(
             note_section[LOW_CONFIDENCE_NOTE_FIELD] = sentences_to_review
 
     return note_for_review
+
+
+def _clinical_link_tokens() -> dict[str, frozenset[str]]:
+    """Return single-word clinical terms the lexicon knows, split by kind.
+
+    Use for sentence-to-row linkage: a drug or condition name is specific
+    enough that sharing it alone ties a note sentence to its source row -
+    consult 1.2's "Fexaphenidine" Plan item shared only that one word with its
+    row and was never linked, so it printed as a confident prescription.
+
+    Returns:
+        {"canonical": ..., "variant": ...} casefolded single-word tokens;
+        both empty when no lexicon is available, which disables the rule.
+    """
+    global _clinical_link_tokens_cache
+    # The lexicon file is static per process, so one load serves every note.
+    if _clinical_link_tokens_cache is not None:
+        return _clinical_link_tokens_cache
+
+    canonical_tokens: set[str] = set()
+    variant_tokens: set[str] = set()
+    for phrase in load_medical_lexicon(default_medical_lexicon_path()):
+        # Multiword entries (e.g. "metro pro lol") contain ordinary words that
+        # must never link on their own; only whole single-word terms qualify.
+        if " " not in phrase.canonical and len(phrase.canonical) >= 4:
+            canonical_tokens.add(phrase.canonical.casefold())
+        for variant in phrase.variants:
+            if " " not in variant and len(variant) >= 4:
+                variant_tokens.add(variant.casefold())
+
+    # Canonical spellings are not "non-canonical wording"; keep the sets disjoint.
+    variant_tokens -= canonical_tokens
+    _clinical_link_tokens_cache = {
+        "canonical": frozenset(canonical_tokens),
+        "variant": frozenset(variant_tokens),
+    }
+    return _clinical_link_tokens_cache
+
+
+def low_confidence_review_reasons(
+    summary_payload: dict[str, Any],
+    citation_rows: list[dict[str, Any]],
+    review_threshold: float = CORRECTED_NOTE_REVIEW_THRESHOLD,
+) -> list[dict[str, Any]]:
+    """Return machine-readable reasons for flagged non-canonical clinical wording.
+
+    Use downstream (M05/M06 review surfaces) when a flagged sentence needs a
+    reason code, the offending terms, and the exact source rows - the browser
+    payload stays unchanged; this is an internal reason lane only.
+
+    Args:
+        summary_payload: Generated note; empty produces no reasons.
+        citation_rows: Corrected source rows; empty means nothing can be traced.
+        review_threshold: Same strict boundary the visible markers use.
+
+    Returns:
+        One entry per flagged sentence containing a known non-canonical term:
+        {section, sentence, reason, terms, segment_ids}; empty means every
+        flagged sentence used ordinary or canonical wording.
+    """
+    reviewed_note = add_low_confidence_note_flags(
+        summary_payload, citation_rows, review_threshold
+    )
+    variant_tokens = _clinical_link_tokens()["variant"]
+    source_rows_by_id = _citation_rows_by_id(citation_rows)
+    review_reasons: list[dict[str, Any]] = []
+
+    for note_section in reviewed_note.get("sections", []):
+        # Sections without flagged sentences have nothing to explain downstream.
+        if not isinstance(note_section, dict):
+            continue
+
+        section_citation_rows = _section_citation_rows(note_section, source_rows_by_id)
+        for flagged_sentence in note_section.get(LOW_CONFIDENCE_NOTE_FIELD, []):
+            sentence_terms = sorted(
+                _meaningful_note_words(flagged_sentence) & variant_tokens
+            )
+            # Ordinary low-confidence wording is already visibly marked; only
+            # known non-canonical clinical terms need the machine reason.
+            if not sentence_terms:
+                continue
+
+            supporting_segment_ids = [
+                str(citation_row.get("segment_id", ""))
+                for citation_row in _rows_relevant_to_sentence(
+                    flagged_sentence, section_citation_rows
+                )
+                if (
+                    _finite_row_confidence(citation_row.get("confidence")) is not None
+                    and _finite_row_confidence(citation_row.get("confidence"))
+                    < float(review_threshold)
+                )
+            ]
+            review_reasons.append(
+                {
+                    "section": str(note_section.get("heading", "")),
+                    "sentence": flagged_sentence,
+                    "reason": SOURCE_LOW_CONFIDENCE_REASON,
+                    "terms": sentence_terms,
+                    "segment_ids": supporting_segment_ids,
+                }
+            )
+
+    return review_reasons
 
 
 def _citation_rows_by_id(
@@ -263,6 +374,9 @@ def _rows_relevant_to_sentence(
     if not sentence_words:
         return relevant_rows
 
+    clinical_tokens = _clinical_link_tokens()
+    known_clinical_words = clinical_tokens["canonical"] | clinical_tokens["variant"]
+
     # Each cited row is considered locally instead of lending confidence across the whole section.
     for citation_row in section_citation_rows:
         row_words = _meaningful_note_words(str(citation_row.get("text", "")))
@@ -271,6 +385,13 @@ def _rows_relevant_to_sentence(
 
         # Conservative overlap keeps generic section citations from flagging unrelated sentences.
         if len(shared_words) >= minimum_shared_words:
+            relevant_rows.append(citation_row)
+            continue
+
+        # A shared clinical term links on its own: a drug name is specific
+        # enough that one word ties the Plan item to the row that said it -
+        # the consult-1.2 "Fexaphenidine" gap this rule closes.
+        if shared_words & known_clinical_words:
             relevant_rows.append(citation_row)
 
     return relevant_rows

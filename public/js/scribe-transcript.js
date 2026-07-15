@@ -443,11 +443,47 @@ function insertRowIntoCard(segment, segmentBlock, nextRow = null) {
     const textSpan = createRowTextSpan(segment);
 
     textContainer.insertBefore(textSpan, nextRow);
+    normalizeRowSeparators(textContainer);
     segmentBlock.dataset.end = Math.max(
         parseFloat(segmentBlock.dataset.end) || segment.end,
         segment.end
     );
     refreshSpeakerCardDisplay(segmentBlock);
+}
+
+/**
+ * Keeps exactly one real space between adjacent rows of a transcript card.
+ * Visible spacing and copied/searched/screen-reader text must be the same
+ * characters - CSS-only spacing silently vanished whenever a clinician
+ * copied a card into the clinical record. Safe to call after any row
+ * insertion, move, or card split; repeat calls are no-ops.
+ *
+ * @param {HTMLElement|null} textContainer - a card's row list; null (malformed
+ *   DOM fallback) means there is nothing to space.
+ * @returns {void} Rewrites only separator text nodes, never row spans.
+ */
+function normalizeRowSeparators(textContainer) {
+    // A card shell that lost its row list has no spacing to maintain.
+    if (!textContainer) {
+        return;
+    }
+
+    let childNode = textContainer.firstChild;
+    // Drop every existing separator first: rows moving between cards leave
+    // stray leading/trailing spaces behind, and doubles would widen copies.
+    while (childNode) {
+        const nextNode = childNode.nextSibling;
+        if (childNode.nodeType === Node.TEXT_NODE) {
+            childNode.remove();
+        }
+        childNode = nextNode;
+    }
+
+    const rowSpans = textContainer.querySelectorAll('.segment__text');
+    // Every row after the first gets one real space the clipboard keeps.
+    for (let rowIndex = 1; rowIndex < rowSpans.length; rowIndex += 1) {
+        textContainer.insertBefore(document.createTextNode(' '), rowSpans[rowIndex]);
+    }
 }
 
 /**
@@ -478,6 +514,9 @@ function splitSegmentCardAtRow(segmentBlock, firstTailRow) {
     const tailBlock = createSegmentBlockShell(speakerId, role, tailStart, tailEnd);
 
     tailBlock.querySelector('.segment__texts').append(...tailRows);
+    // Moving rows leaves their old separators behind; respace both cards.
+    normalizeRowSeparators(textContainer);
+    normalizeRowSeparators(tailBlock.querySelector('.segment__texts'));
     segmentBlock.after(tailBlock);
     trackSpeakerSegment(speakerId, tailBlock);
 
@@ -972,7 +1011,8 @@ function updateConfidenceBadge() {
     if (confidence >= 0.8 && isSpeakerIdentityStable()) {
         badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
         badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800';
-        badge.title = '';
+        // The percentage grades the doctor/patient mapping, not each row's label.
+        badge.title = 'Confidence in the doctor/patient mapping overall - individual rows can still be mislabeled. Click a row to correct it.';
         return;
     }
 

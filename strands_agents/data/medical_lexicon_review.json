@@ -3,6 +3,56 @@
   "reviewer": "developer self-review for 0.3.0 PoC; external clinical sign-off pending",
   "entries": [
     {
+      "canonical": "loratadine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "Luratidine",
+      "expected_visible_phrase": "Loratadine",
+      "false_positive_guard": "Lurid tales aside, the rash itself is new.",
+      "provenance": "Observed in consult 1.2 corrected lane (m02-acceptance replay, row corrected-0268, confidence 0.656); official doctor TextGrid says Loratadine.",
+      "safety_rationale": "Single-word phonetic misspelling of one antihistamine; not a real word in the retained corpus sweep and no other medicine shares it."
+    },
+    {
+      "canonical": "Piriton",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "Pyritin",
+      "expected_visible_phrase": "Piriton",
+      "false_positive_guard": "There was pyrite in the rock sample.",
+      "provenance": "Observed in consult 1.2 corrected lane (m02-acceptance replay, row corrected-0269, confidence 0.7367); official doctor TextGrid says Piriton.",
+      "safety_rationale": "Single-word phonetic misspelling of one brand antihistamine; word-boundary matching leaves pyrite/peritoneum untouched and the corpus sweep is clean."
+    },
+    {
+      "canonical": "fexofenadine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "Fexaphenidine",
+      "expected_visible_phrase": "Fexofenadine",
+      "false_positive_guard": "The fax of the referral arrived late.",
+      "provenance": "Observed in consult 1.2 corrected lane (m02-acceptance replay, row corrected-0293, confidence 0.6478); official doctor TextGrid says Fexofenadine.",
+      "safety_rationale": "Single-word phonetic misspelling of one antihistamine; no ordinary word or other medicine is within word-boundary reach and the corpus sweep is clean."
+    },
+    {
+      "canonical": "emollients",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_phrase": "emolons",
+      "expected_visible_phrase": "emollients",
+      "false_positive_guard": "She brought melons from the market.",
+      "provenance": "Observed in consult 1.2 corrected lane (m02-acceptance replay, row corrected-0297, confidence 0.7696); official doctor TextGrid says emollients.",
+      "safety_rationale": "Single-word garble of one treatment class the doctor named repeatedly; word-boundary matching cannot touch melons and the corpus sweep is clean."
+    },
+    {
+      "canonical": "steroid cream",
+      "status": "rejected",
+      "category": "ambiguous_product",
+      "raw_phrase": "steroid cream",
+      "expected_visible_phrase": "steroid cream",
+      "false_positive_guard": "Try an over-the-counter steroid cream first.",
+      "provenance": "Consult 1.2 discusses an unnamed over-the-counter steroid cream; no specific product is identifiable from the audio.",
+      "safety_rationale": "REJECTED: mapping ambiguous product-class wording to any named product would be a guess, not a correction. The wording stays uncertain and rides the source_low_confidence review lane instead."
+    },
+    {
       "canonical": "metoprolol",
       "status": "active",
       "category": "asr_variant",

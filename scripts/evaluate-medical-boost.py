@@ -20,7 +20,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MEDICAL_LEXICON_MODULE_PATH = REPO_ROOT / "strands_agents" / "medical_lexicon.py"
 LEXICON_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon.txt"
 REVIEW_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon_review.json"
-ALLOWED_CATEGORIES = {"asr_variant", "abbreviation_acronym", "semantic_synonym"}
+ALLOWED_CATEGORIES = {
+    "asr_variant",
+    "abbreviation_acronym",
+    "semantic_synonym",
+    # Wording too ambiguous to map to any product; documented, never corrected.
+    "ambiguous_product",
+}
 
 
 class LexiconPhrase(Protocol):
@@ -154,15 +160,25 @@ def validate_review_entries(review_entries: list[ReviewEntry]) -> list[str]:
             or entry.provenance == ""
             or entry.safety_rationale == ""
         ):
-            issues.append(f"{entry.canonical or '<missing>'}: missing required review field")
+            issues.append(
+                f"{entry.canonical or '<missing>'}: missing required review field"
+            )
 
         # Categories are intentionally narrow so synonyms cannot hide as ASR variants.
         if entry.category not in ALLOWED_CATEGORIES:
             issues.append(f"{entry.canonical}: unknown category {entry.category!r}")
 
-        # Only explicit active/disabled statuses are accepted for visible corrections.
-        if entry.status not in {"active", "disabled"}:
+        # Rejected rows document why a candidate is unsafe without correcting anything;
+        # only active/disabled/rejected statuses are accepted for visible corrections.
+        if entry.status not in {"active", "disabled", "rejected"}:
             issues.append(f"{entry.canonical}: unknown status {entry.status!r}")
+
+        # A rejected mapping must never change what the clinician sees.
+        if (
+            entry.status == "rejected"
+            and entry.raw_phrase != entry.expected_visible_phrase
+        ):
+            issues.append(f"{entry.canonical}: rejected row must not rewrite wording")
 
         # Active semantic synonyms would rewrite the patient's wording into a diagnosis.
         if entry.status == "active" and entry.category == "semantic_synonym":
@@ -225,7 +241,9 @@ def score_review_entries(
     issues: list[str] = []
     # Each row proves either an active correction or a disabled risky correction.
     for entry in review_entries:
-        corrected_phrase = MEDICAL_LEXICON.correct_medical_terms(entry.raw_phrase, phrases)
+        corrected_phrase = MEDICAL_LEXICON.correct_medical_terms(
+            entry.raw_phrase, phrases
+        )
         corrected_guard = MEDICAL_LEXICON.correct_medical_terms(
             entry.false_positive_guard,
             phrases,
@@ -240,9 +258,7 @@ def score_review_entries(
 
         # The guard sentence should not be altered unless it deliberately contains the raw phrase.
         if corrected_guard != entry.false_positive_guard:
-            issues.append(
-                f"{entry.canonical}: guard changed to {corrected_guard!r}"
-            )
+            issues.append(f"{entry.canonical}: guard changed to {corrected_guard!r}")
 
     return issues
 

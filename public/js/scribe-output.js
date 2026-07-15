@@ -14,6 +14,9 @@ let summaryRequestSessionId = null;
 let correctionRequestPromise = null;
 let correctionSessionId = null;
 let correctionOutcomeForVisibleSession = null;
+// The rendered note payload backs the Copy draft note export and the status
+// axes; null means no note artifact exists for the visible session.
+let latestRenderedSummaryPayload = null;
 
 /**
  * Decodes a WAV file, plays it locally, and streams its PCM to live transcription.
@@ -441,6 +444,7 @@ async function requestSummary() {
 
     summaryPanel.classList.remove('hidden');
     setSummaryStatus('generating');
+    renderNoteStatusAxes({ phase: 'generating' });
     summaryLoading.classList.remove('hidden');
     clearElement(summaryContent);
 
@@ -456,6 +460,10 @@ async function requestSummary() {
             && correctionOutcomeForVisibleSession.status === 'blocked'
         ) {
             setSummaryStatus('failed');
+            renderNoteStatusAxes({
+                phase: 'blocked',
+                blockedReason: correctionOutcomeForVisibleSession.reasonCategory,
+            });
             showSummaryMessage(
                 blockedSourceMessage(correctionOutcomeForVisibleSession.reasonCategory)
             );
@@ -511,6 +519,7 @@ function showSummaryWaitingForSource() {
 
     summaryPanel.classList.remove('hidden');
     setSummaryStatus('pending');
+    renderNoteStatusAxes({ phase: 'waiting' });
 
     // The pending row explains the wait instead of implying generation began.
     if (summaryPendingText) {
@@ -555,6 +564,107 @@ function blockedSourceMessage(reason) {
 }
 
 /**
+ * Gathers the note's current state for the three status axes.
+ * Use when a note has just rendered or is being copied, so screen and
+ * clipboard describe the same source, flags, and clinician-review truth.
+ *
+ * @param {object|null} summaryPayload - the rendered note; null means no
+ *   artifact exists and callers should use a non-generated phase instead.
+ * @returns {object} statusModel accepted by deriveNoteStatusLines.
+ */
+function collectNoteStatusModel(summaryPayload) {
+    let unverifiedCount = (summaryPayload?.unverified_key_points ?? []).length;
+    let lowConfidenceCount = 0;
+
+    // Section-level flags add to the review count the axes announce.
+    for (const section of summaryPayload?.sections ?? []) {
+        unverifiedCount += (section.unverified ?? []).length;
+        lowConfidenceCount += (section.low_confidence ?? []).length;
+    }
+
+    return {
+        phase: 'generated',
+        sourceState: summaryPayload?.source_state ?? null,
+        // A frozen role settlement travels from the finalized event into review.
+        roleSettlement: typeof terminalAttestation !== 'undefined' && terminalAttestation
+            ? terminalAttestation.roleSettlement ?? null
+            : null,
+        unverifiedCount,
+        lowConfidenceCount,
+    };
+}
+
+/**
+ * Renders the three status axes and gates the Copy draft note action.
+ * Use on every note lifecycle change: the axes are always-visible text
+ * (never tooltip-only), and copying stays disabled until an honest note
+ * artifact exists - an unavailable state can never reach the clipboard.
+ *
+ * @param {object} statusModel - see deriveNoteStatusLines; phase decides
+ *   which axes render. Null lines hide the strip (transient failure UI).
+ * @returns {void} Updates badges, the review-reason list, and the copy button.
+ */
+function renderNoteStatusAxes(statusModel) {
+    const axesStrip = document.getElementById('noteStatusAxes');
+
+    // Test pages without the axes strip or the copy module skip quietly.
+    if (!axesStrip || typeof deriveNoteStatusLines !== 'function') {
+        return;
+    }
+
+    const statusLines = deriveNoteStatusLines(statusModel);
+    const sourceBadge = document.getElementById('noteAxisSource');
+    const automatedBadge = document.getElementById('noteAxisAutomated');
+    const clinicianBadge = document.getElementById('noteAxisClinician');
+    const reasonsList = document.getElementById('noteReviewReasons');
+    const copyNoteButton = document.getElementById('copyNoteBtn');
+
+    // No source line means a transient failure owns the panel; hide the strip.
+    if (!statusLines.sourceLine) {
+        axesStrip.classList.add('hidden');
+        reasonsList?.classList.add('hidden');
+    } else {
+        axesStrip.classList.remove('hidden');
+        sourceBadge.textContent = statusLines.sourceLine;
+        // A live-fallback source renders as caution, not plain provenance.
+        sourceBadge.dataset.reviewRequired =
+            statusModel?.sourceState === 'whole_visit_live_fallback' ? '1' : '0';
+
+        // The review axes only exist once a note artifact exists.
+        automatedBadge.classList.toggle('hidden', !statusLines.automatedReviewLine);
+        if (statusLines.automatedReviewLine) {
+            automatedBadge.textContent = statusLines.automatedReviewLine;
+            automatedBadge.dataset.reviewRequired =
+                statusLines.reviewReasons.length > 0 ? '1' : '0';
+        }
+        clinicianBadge.classList.toggle('hidden', !statusLines.clinicianReviewLine);
+        if (statusLines.clinicianReviewLine) {
+            clinicianBadge.textContent = statusLines.clinicianReviewLine;
+        }
+
+        // Each reason is readable text under the badges, and copies with the note.
+        if (reasonsList) {
+            reasonsList.replaceChildren(
+                ...statusLines.reviewReasons.map((reviewReason) =>
+                    createElement('li', { text: reviewReason }))
+            );
+            reasonsList.classList.toggle('hidden', statusLines.reviewReasons.length === 0);
+        }
+    }
+
+    // The copy action follows note availability; its label says why when disabled.
+    if (copyNoteButton) {
+        copyNoteButton.disabled = !statusLines.noteAvailable;
+        copyNoteButton.setAttribute(
+            'aria-label',
+            statusLines.noteAvailable
+                ? 'Copy draft note with its source and review status'
+                : `Copy draft note — unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
+        );
+    }
+}
+
+/**
  * Resets post-visit correction state for the next visible consultation.
  * Use when New Session clears the transcript; otherwise a prior corrected
  * artifact could make the next summary skip correction.
@@ -563,6 +673,9 @@ function resetPostVisitCorrectionState() {
     correctionRequestPromise = null;
     correctionSessionId = null;
     correctionOutcomeForVisibleSession = null;
+    // A new visit starts with no note artifact: nothing to copy, no axes yet.
+    latestRenderedSummaryPayload = null;
+    renderNoteStatusAxes({ phase: 'reset' });
     setSummarySourceNotice(null);
 
     // The Transcript tab caches corrected rows per session; test pages load without it.
@@ -696,6 +809,7 @@ function renderSummaryResponse(response, summaryPayload) {
     // transcript stays reviewable and the panel explains the specific reason.
     if (response.ok && summaryPayload.status === 'blocked') {
         setSummaryStatus('failed');
+        renderNoteStatusAxes({ phase: 'blocked', blockedReason: summaryPayload.reason });
         showSummaryMessage(blockedSourceMessage(summaryPayload.reason));
         return;
     }
@@ -754,13 +868,18 @@ function renderSummary(summaryPayload) {
 
     // Empty summary payloads should explain that no content is available.
     if (renderedBlocks.length === 0) {
+        latestRenderedSummaryPayload = null;
         setSummaryStatus('failed');
+        renderNoteStatusAxes({ phase: 'failed' });
         showSummaryMessage('No summary content available.');
         return;
     }
 
     summaryContent.replaceChildren(...renderedBlocks);
+    // The rendered payload becomes the copy source and the axes' input.
+    latestRenderedSummaryPayload = summaryPayload;
     setSummaryStatus('generated');
+    renderNoteStatusAxes(collectNoteStatusModel(summaryPayload));
     setSummarySourceNotice(summaryPayload);
     setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.
@@ -866,7 +985,10 @@ function showSummaryMessage(message) {
  * clinician sees the likely cause and how to recover while the transcript stays visible.
  */
 function showSummaryFailure(detail) {
+    // A failure replaces any rendered note, so copying must disable with it.
+    latestRenderedSummaryPayload = null;
     setSummaryStatus('failed');
+    renderNoteStatusAxes({ phase: 'failed' });
 
     const summaryContent = document.getElementById('summaryContent');
     const failureMessage = createElement('p', {

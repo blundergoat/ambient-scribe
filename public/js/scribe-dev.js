@@ -338,7 +338,11 @@ class DevPanel {
             segmentIndex,
             // Received-vs-stored exposes delivery gaps: fewer received rows
             // than the quality record stored means the browser missed events.
-            segmentsReceivedVsStored: `${segmentIndex}/${latestQualityRecord?.stored_segments ?? '?'}`,
+            // Before terminal quality exists, saying "pending" is honest -
+            // a bare "?" invited reading normal in-visit lag as row loss.
+            segmentsReceivedVsStored: latestQualityRecord
+                ? `${segmentIndex} received / ${latestQualityRecord.stored_segments} stored`
+                : `${segmentIndex} received / stored count pending`,
             roleMapping,
             confidence,
             roleStability,

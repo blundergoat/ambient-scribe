@@ -45,3 +45,7 @@ endometriosis|endo metriosis|endometreosis
 myocardial infarction|my cardial infarction
 atrial fibrillation|a trial fibrillation|a fib
 gestational diabetes|gestation diabetes
+loratadine|Luratidine
+Piriton|Pyritin
+fexofenadine|Fexaphenidine
+emollients|emolons

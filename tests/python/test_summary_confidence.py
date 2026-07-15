@@ -162,3 +162,123 @@ def test_generation_junction_adds_flag_after_validation() -> None:
     assert generated_note is not None
     assert generated_note["sections"][0]["low_confidence"] == [sentence]
     assert generated_note["sections"][0]["content"] == sentence
+
+
+# The four consult-1.2 medication rows exactly as the corrected lane stored
+# them (m02-acceptance replay, session 7fce47c4): known misspellings below the
+# 0.78 corrected-lane threshold, plus the correctly spelled emollients row
+# ABOVE threshold that must never be flagged.
+CONSULT12_MEDICATION_ROWS = [
+    _corrected_row("corrected-0268", "like Luratidine or", 0.656),
+    _corrected_row(
+        "corrected-0269", "Pyritin, which can help with the itchiness", 0.7367
+    ),
+    _corrected_row(
+        "corrected-0293", "Um something like Fexaphenidine, which I", 0.6478
+    ),
+    _corrected_row(
+        "corrected-0297",
+        "I certainly think using the steroids and the emolons um on a regular",
+        0.7696,
+    ),
+    _corrected_row(
+        "corrected-0259",
+        "as I'm gonna give you something some emollients, which helps to moisturize",
+        0.7956,
+    ),
+]
+
+
+def test_consult12_plan_medication_sentences_reach_the_review_lane() -> None:
+    """A misspelled low-confidence medication cannot be an unmarked definite Plan item.
+
+    The Plan sentence shares only ONE meaningful word with its source row - the
+    drug name itself - so the generic two-word overlap rule never linked it and
+    consult 1.2's note printed "Fexaphenidine" as a confident prescription.
+    """
+    plan_section = {
+        "heading": "Plan",
+        "content": (
+            "Trial of stronger antihistamine Fexaphenidine recommended. "
+            "Antihistamines such as Luratidine may help with itching. "
+            "Pyritin suggested for night-time itch relief. "
+            "Regular use of steroids and emolons advised."
+        ),
+        "citations": [
+            {"segment_id": "corrected-0268"},
+            {"segment_id": "corrected-0269"},
+            {"segment_id": "corrected-0293"},
+            {"segment_id": "corrected-0297"},
+        ],
+    }
+
+    reviewed_note = add_low_confidence_note_flags(
+        {"sections": [plan_section]}, CONSULT12_MEDICATION_ROWS
+    )
+
+    flagged_sentences = reviewed_note["sections"][0].get("low_confidence", [])
+    # Every one of the four observed misspellings must carry the review cue.
+    assert any("Fexaphenidine" in sentence for sentence in flagged_sentences)
+    assert any("Luratidine" in sentence for sentence in flagged_sentences)
+    assert any("Pyritin" in sentence for sentence in flagged_sentences)
+    assert any("emolons" in sentence for sentence in flagged_sentences)
+
+
+def test_consult12_canonical_term_above_threshold_stays_unflagged() -> None:
+    """A correctly spelled term backed by an above-threshold row keeps plain prose."""
+    plan_section = {
+        "heading": "Plan",
+        "content": "Emollients recommended to moisturize the affected skin.",
+        "citations": [{"segment_id": "corrected-0259"}],
+    }
+
+    reviewed_note = add_low_confidence_note_flags(
+        {"sections": [plan_section]}, CONSULT12_MEDICATION_ROWS
+    )
+
+    # 0.7956 is above the 0.78 lane threshold: no warning wall over good rows.
+    assert "low_confidence" not in reviewed_note["sections"][0]
+
+
+def test_multiword_variant_fragments_do_not_become_link_tokens() -> None:
+    """Ordinary words inside multiword variants (e.g. "metro pro lol") never link.
+
+    A sentence about the metro line must not inherit a drug row's low
+    confidence just because the lexicon knows "metro pro lol" as a variant.
+    """
+    section = {
+        "heading": "Subjective",
+        "content": "Patient commutes by metro and reports no chest pain.",
+        "citations": [{"segment_id": "row-metro"}],
+    }
+    rows = [_corrected_row("row-metro", "started metro pro lol last month", 0.5)]
+
+    reviewed_note = add_low_confidence_note_flags({"sections": [section]}, rows)
+
+    assert "low_confidence" not in reviewed_note["sections"][0]
+
+
+def test_review_reasons_are_machine_readable_for_downstream_milestones() -> None:
+    """Flagged non-canonical terms expose `source_low_confidence` internally.
+
+    M05/M06 consume this reason lane; the browser payload itself is unchanged.
+    """
+    from api.summary_confidence import low_confidence_review_reasons
+
+    plan_section = {
+        "heading": "Plan",
+        "content": "Trial of stronger antihistamine Fexaphenidine recommended.",
+        "citations": [{"segment_id": "corrected-0293"}],
+    }
+
+    review_reasons = low_confidence_review_reasons(
+        {"sections": [plan_section]}, CONSULT12_MEDICATION_ROWS
+    )
+
+    assert review_reasons, "the misspelled Plan medication must produce a reason"
+    reason_row = review_reasons[0]
+    assert reason_row["reason"] == "source_low_confidence"
+    assert reason_row["section"] == "Plan"
+    assert "Fexaphenidine" in reason_row["sentence"]
+    assert "fexaphenidine" in reason_row["terms"]
+    assert reason_row["segment_ids"] == ["corrected-0293"]

@@ -331,9 +331,8 @@
         .segment__text {
             display: inline;
         }
-        .segment__text + .segment__text::before {
-            content: ' ';
-        }
+        /* Row spacing is a real text node (normalizeRowSeparators) so copied,
+           searched, and screen-reader text keeps the same spaces users see. */
         /* Rows with a stable ID are individually correctable by clicking. */
         .segment__text[data-segment-id] {
             cursor: pointer;
@@ -444,6 +443,67 @@
             font-size: 0.875rem;
             color: var(--text-strong);
         }
+        /* Copy actions serialize application state; the buttons themselves and
+           other control chrome must never be harvested by a drag-select copy. */
+        .copy-button,
+        .summary-tabs,
+        .summary-provenance__toggle,
+        .summary-status__retry,
+        .summary-status__badge {
+            user-select: none;
+        }
+        .copy-button {
+            margin-left: auto;
+            padding: 0.25rem 0.625rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-strong);
+            background: transparent;
+            border: 1px solid var(--border, currentColor);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .copy-button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .copy-button--transcript {
+            margin: 0 0 0.625rem 0;
+            display: inline-block;
+        }
+        /* The three status axes are always-visible text, one badge per truth. */
+        .note-status-axes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.375rem;
+            margin-bottom: 0.625rem;
+        }
+        .note-status-axes.hidden { display: none; }
+        .note-status-axes__badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.125rem 0.5rem;
+            font-size: 0.6875rem;
+            font-weight: 500;
+            border-radius: 999px;
+            border: 1px solid var(--border, currentColor);
+            color: var(--text-subtle);
+        }
+        .note-status-axes__badge.hidden { display: none; }
+        /* Review-required and fallback states read as caution, not decoration. */
+        .note-status-axes__badge--automated[data-review-required="1"],
+        .note-status-axes__badge--source[data-review-required="1"] {
+            color: var(--warning-strong, #92400e);
+            border-color: currentColor;
+        }
+        .note-review-reasons {
+            margin: 0 0 0.625rem 1rem;
+            padding: 0;
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            list-style: disc;
+        }
+        .note-review-reasons.hidden { display: none; }
         .summary-panel__body {
             padding: 0 1rem 1rem;
             display: block;
@@ -1296,6 +1356,10 @@
                                     aria-selected="false" aria-controls="summaryTranscriptView" tabindex="-1"
                                     onclick="selectSummaryTab('transcript')">Transcript</button>
                         </div>
+                        {# Default export: the draft note always copies WITH its source/review status. #}
+                        <button id="copyNoteBtn" type="button" class="copy-button" disabled
+                                aria-label="Copy draft note — unavailable until a note is generated"
+                                onclick="copyDraftNote(this)">Copy draft note</button>
                     </div>
                     <div id="summaryBody" class="summary-panel__body">
                         <div id="summaryNoteView" role="tabpanel" aria-labelledby="summaryTabNote">
@@ -1317,9 +1381,21 @@
                                 <span id="summarySourceNotice" class="summary-status__notice hidden"></span>
                                 <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
+                            {# Three independent truths about the note: where its text came from,
+                               what automated checks flagged, and that no clinician reviewed it.
+                               Always visible text - never tooltip-only. #}
+                            <div id="noteStatusAxes" class="note-status-axes hidden">
+                                <span id="noteAxisSource" class="note-status-axes__badge note-status-axes__badge--source"></span>
+                                <span id="noteAxisAutomated" class="note-status-axes__badge note-status-axes__badge--automated hidden"></span>
+                                <span id="noteAxisClinician" class="note-status-axes__badge note-status-axes__badge--clinician hidden"></span>
+                            </div>
+                            <ul id="noteReviewReasons" class="note-review-reasons hidden"></ul>
                             <div id="summaryContent"></div>
                         </div>
                         <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">
+                            {# Copies the displayed lane with per-row timestamps and speakers. #}
+                            <button id="copyTranscriptBtn" type="button" class="copy-button copy-button--transcript"
+                                    onclick="copyActiveTranscriptLane(this)">Copy transcript</button>
                             <p id="summaryTranscriptStatus" class="summary-transcript__status hidden"></p>
                             <p id="summaryTranscriptNotice" class="summary-transcript__status hidden" role="status" aria-live="polite"></p>
                             <div id="summaryTranscript" class="summary-transcript"></div>
@@ -1422,6 +1498,7 @@
     <script src="/js/scribe-recording.js"></script>
     <script src="/js/scribe-transcript.js"></script>
     <script src="/js/scribe-stitch.js"></script>
+    <script src="/js/scribe-copy.js"></script>
     <script src="/js/scribe-output.js"></script>
     <script src="/js/scribe-summary-tabs.js"></script>
     <script src="/js/scribe-provenance.js"></script>

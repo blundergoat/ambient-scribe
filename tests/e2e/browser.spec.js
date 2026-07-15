@@ -194,6 +194,237 @@ test.describe("Transcript controls", () => {
   });
 });
 
+test.describe("Semantic copy separators (M03)", () => {
+  test("selection across adjacent same-speaker rows keeps literal spaces", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectCoalescedCardSegments(page);
+
+    // Select the coalesced card exactly like a user dragging across two rows.
+    const selectedText = await page.evaluate(() => {
+      const rowContainer = document.querySelector(".segment .segment__texts");
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(rowContainer);
+      selection.addRange(range);
+      return selection.toString();
+    });
+
+    // CSS-only separators vanish here, pasting "lasted?About" into the record.
+    expect(selectedText).toContain("lasted? About two weeks");
+
+    // The lesson's owning-component assertion: combined DOM text equals the
+    // rows joined by single spaces - what copy, search, and screen readers see.
+    const combinedText = await page.evaluate(
+      () => document.querySelector(".segment .segment__texts").textContent
+    );
+    expect(combinedText).toBe(
+      "How long have the headaches lasted? About two weeks now, mostly mornings."
+    );
+  });
+});
+
+test.describe("Semantic copy and status axes (M03)", () => {
+  /** A note payload shaped like consult 1.2: cited sections whose count
+   *  buttons ("11/1/2/6") once leaked into whole-panel copies. */
+  const citedSummaryBody = {
+    title: "Session Summary",
+    key_points: ["Sore red skin on both forearms."],
+    unverified_key_points: ["Sore red skin on both forearms."],
+    sections: [
+      {
+        heading: "Subjective",
+        content: "Patient reports sore, red skin for two weeks.",
+        citations: Array.from({ length: 11 }, (_, i) => ({
+          segment_id: `seg-c${i}`,
+          text: "cited row",
+        })),
+      },
+      {
+        heading: "Plan",
+        content: "Emollients and follow-up in two weeks.",
+        citations: Array.from({ length: 6 }, (_, i) => ({
+          segment_id: `seg-d${i}`,
+          text: "cited row",
+        })),
+      },
+    ],
+  };
+
+  /** Runs the real stop flow until the stubbed note renders. */
+  async function renderNoteThroughStopFlow(page, summaryBody, finalizedEvent = {}) {
+    const requestOrder = [];
+    await stubCorrectionRoute(page, [], requestOrder);
+    await page.route("**/session/*/summary", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(summaryBody),
+      });
+    });
+    await injectFakeSegments(page, 3);
+    await page.evaluate(() => showRecordingUi());
+    await page.evaluate(() => stopRecording());
+    await page.evaluate((extraFinalizedFields) => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-m03-1",
+        ...extraFinalizedFields,
+      });
+    }, finalizedEvent);
+    await page.waitForSelector("#summaryContent .summary-section");
+  }
+
+  test("copy draft note carries the status axes and never provenance counts", async ({
+    page,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await loadScribePage(page);
+    await renderNoteThroughStopFlow(page, citedSummaryBody);
+
+    // The rendered panel shows count buttons; the copy button must not.
+    await expect(page.locator("#copyNoteBtn")).toBeEnabled();
+    await page.click("#copyNoteBtn");
+    await expect(page.locator("#copyNoteBtn")).toHaveText("Copied");
+    const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
+
+    expect(copiedNote).toContain("Source: Draft generated from corrected transcript");
+    expect(copiedNote).toContain("Clinician review: Not clinician reviewed");
+    expect(copiedNote).toContain("- [Unverified] Sore red skin on both forearms.");
+    expect(copiedNote).toContain("Plan:\nEmollients and follow-up in two weeks.");
+    // The 1.2 leak specimen: no count text, no control wording.
+    expect(copiedNote).not.toContain("11");
+    expect(copiedNote).not.toContain("View source");
+    expect(copiedNote).not.toContain("utterance");
+  });
+
+  test("copy transcript keeps per-row timestamps, speakers, and lane label", async ({
+    page,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await loadScribePage(page);
+    await page.route("**/session/*/corrected-transcript", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          segments: [
+            { segment_id: "c-1", speaker_id: "spk_0", role: "DOCTOR", text: "How long have the headaches lasted?", start: 0.0, end: 1.5 },
+            { segment_id: "c-2", speaker_id: "spk_0", role: "DOCTOR", text: "About two weeks now, mostly mornings.", start: 62.0, end: 64.0 },
+            { segment_id: "c-3", speaker_id: "spk_1", role: "PATIENT", text: "Any visual changes with them?", start: 65.0, end: 66.5 },
+          ],
+        }),
+      });
+    });
+    await renderNoteThroughStopFlow(page, citedSummaryBody);
+
+    await page.click("#summaryTabTranscript");
+    await expect(page.locator("#summaryTranscriptStatus")).toHaveText(
+      "Corrected transcript — used for note"
+    );
+    await page.click("#copyTranscriptBtn");
+    const copiedTranscript = await page.evaluate(() => navigator.clipboard.readText());
+
+    expect(copiedTranscript).toContain("Transcript — Corrected transcript — used for note");
+    expect(copiedTranscript).toContain("[00:00] Doctor: How long have the headaches lasted?");
+    expect(copiedTranscript).toContain("[01:02] Doctor: About two weeks now, mostly mornings.");
+    expect(copiedTranscript).toContain("[01:05] Patient: Any visual changes with them?");
+  });
+
+  test("unavailable source states disable note copying with the specific reason", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+
+    // The Stop wait ended without attestation: waiting state, nothing to copy.
+    await page.evaluate(() => showSummaryWaitingForSource());
+    await expect(page.locator("#noteAxisSource")).toHaveText(
+      "Source still finalizing — note unavailable"
+    );
+    await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+
+    // An over-cap visit blocks with its own explicit wording.
+    await page.evaluate(() =>
+      renderNoteStatusAxes({ phase: "blocked", blockedReason: "source_exceeds_note_limit" })
+    );
+    await expect(page.locator("#noteAxisSource")).toHaveText(
+      "Source exceeds note limit — note unavailable"
+    );
+    await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+
+    // A transcript that changed after finalization reads as incomplete.
+    await page.evaluate(() =>
+      renderNoteStatusAxes({ phase: "blocked", blockedReason: "stale_lineage" })
+    );
+    await expect(page.locator("#noteAxisSource")).toHaveText(
+      "Source incomplete — note unavailable"
+    );
+    await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+
+    // A failed correction pass keeps the note unavailable, not degraded.
+    await page.evaluate(() =>
+      renderNoteStatusAxes({ phase: "blocked", blockedReason: "correction_pending" })
+    );
+    await expect(page.locator("#noteAxisSource")).toHaveText(
+      "Correction unavailable — note unavailable"
+    );
+    await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+  });
+
+  test("a frozen role settlement renders and copies as review-required", async ({
+    page,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await loadScribePage(page);
+    await renderNoteThroughStopFlow(
+      page,
+      {
+        title: "Session Summary",
+        key_points: [],
+        sections: [{ heading: "Subjective", content: "Patient reports symptoms." }],
+      },
+      { role_settlement: "failed_frozen" }
+    );
+
+    // The frozen settlement is a visible review reason, never tooltip-only.
+    await expect(page.locator("#noteAxisAutomated")).toHaveText("Review required (1)");
+    await expect(page.locator("#noteReviewReasons")).toContainText("frozen");
+    await page.click("#copyNoteBtn");
+    const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedNote).toContain("Automated review: Review required (1)");
+    expect(copiedNote).toContain("frozen");
+  });
+
+  test("a live-fallback note is labelled review-required on screen and in the copy", async ({
+    page,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await loadScribePage(page);
+    await renderNoteThroughStopFlow(page, {
+      title: "Session Summary",
+      key_points: [],
+      sections: [{ heading: "Subjective", content: "Patient reports symptoms." }],
+      source_state: "whole_visit_live_fallback",
+      fallback_reason: "retention_window",
+    });
+
+    await expect(page.locator("#noteAxisSource")).toHaveText(
+      "Complete live fallback — review required"
+    );
+    await expect(page.locator("#noteAxisSource")).toHaveAttribute(
+      "data-review-required",
+      "1"
+    );
+    await page.click("#copyNoteBtn");
+    const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedNote).toContain("Source: Complete live fallback — review required");
+    expect(copiedNote).toContain("note built from the live transcript");
+  });
+});
+
 test.describe("Role confidence badge stability gating", () => {
   /**
    * Sends one role update through the same browser function Mercure uses.

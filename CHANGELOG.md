@@ -15,6 +15,21 @@ setup.
   meaningful row is rejected instead of stored, over-limit visits get an explicit note-unavailable
   state instead of a silently shortened note, and a late role result can no longer relabel a
   finished draft. When finalization arrives after the wait, the note now starts automatically.
+- **Copies that paste what you see** - Copying the transcript no longer glues adjacent rows
+  together, and new Copy transcript / Copy draft note buttons produce clean plain text built from
+  the real note and rows: provenance counters, buttons, and developer text can never leak into
+  pasted clinical text, review markers survive as readable text, and a note that cannot be
+  honestly generated cannot be copied at all.
+- **Three separate note status truths** - Every note now shows where its text came from (corrected
+  transcript or clearly labelled live fallback), what automated checks flagged with visible
+  reasons, and that it is not clinician reviewed - three independent labels that copy with the
+  note and can never be mistaken for clinical approval.
+- **Misheard medication names can no longer pose as prescriptions** - Four observed medication
+  mishearings (Luratidine, Pyritin, Fexaphenidine, emolons) now normalize to their reviewed
+  correct names in the live transcript, and any low-confidence misheard clinical term that
+  reaches the note is visibly flagged for review instead of printing as a confident Plan item.
+  Ordinary words, correct spellings, and ambiguous product mentions are never rewritten, proven
+  against the full official consultation corpus.
 - **More reliable correction checks** - Batch checks now continue after safe failures, report clear
   totals, and use a more reliable browser test server.
 - **Better denial checks** - Note checks now consider the clinician's full question and the
