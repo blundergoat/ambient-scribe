@@ -159,12 +159,15 @@ def _clinical_link_tokens() -> dict[str, frozenset[str]]:
 
     canonical_tokens: set[str] = set()
     variant_tokens: set[str] = set()
+    # Every reviewed lexicon row can contribute link tokens of both kinds.
     for phrase in load_medical_lexicon(default_medical_lexicon_path()):
         # Multiword entries (e.g. "metro pro lol") contain ordinary words that
         # must never link on their own; only whole single-word terms qualify.
         if " " not in phrase.canonical and len(phrase.canonical) >= 4:
             canonical_tokens.add(phrase.canonical.casefold())
+        # Known misspellings become the tokens that mark non-canonical wording.
         for variant in phrase.variants:
+            # The same single-word/length bar keeps ordinary words out.
             if " " not in variant and len(variant) >= 4:
                 variant_tokens.add(variant.casefold())
 
@@ -205,12 +208,14 @@ def low_confidence_review_reasons(
     source_rows_by_id = _citation_rows_by_id(citation_rows)
     review_reasons: list[dict[str, Any]] = []
 
+    # Each SOAP section is walked the same way the panel renders it.
     for note_section in reviewed_note.get("sections", []):
-        # Sections without flagged sentences have nothing to explain downstream.
+        # Malformed sections carry no flagged sentences to explain downstream.
         if not isinstance(note_section, dict):
             continue
 
         section_citation_rows = _section_citation_rows(note_section, source_rows_by_id)
+        # Every visibly flagged sentence is checked for a known misspelled term.
         for flagged_sentence in note_section.get(LOW_CONFIDENCE_NOTE_FIELD, []):
             sentence_terms = sorted(
                 _meaningful_note_words(flagged_sentence) & variant_tokens
@@ -220,6 +225,8 @@ def low_confidence_review_reasons(
             if not sentence_terms:
                 continue
 
+            # The reason names the exact sub-threshold rows behind the sentence
+            # so a reviewer can jump straight to the uncertain audio moments.
             supporting_segment_ids = [
                 str(citation_row.get("segment_id", ""))
                 for citation_row in _rows_relevant_to_sentence(
@@ -381,6 +388,7 @@ def _rows_relevant_to_sentence(
     for citation_row in section_citation_rows:
         row_words = _meaningful_note_words(str(citation_row.get("text", "")))
         shared_words = sentence_words.intersection(row_words)
+        # Very short texts can only ever share one word, so one match suffices.
         minimum_shared_words = 1 if min(len(sentence_words), len(row_words)) <= 3 else 2
 
         # Conservative overlap keeps generic section citations from flagging unrelated sentences.

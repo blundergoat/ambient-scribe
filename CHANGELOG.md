@@ -30,6 +30,12 @@ setup.
   reaches the note is visibly flagged for review instead of printing as a confident Plan item.
   Ordinary words, correct spellings, and ambiguous product mentions are never rewritten, proven
   against the full official consultation corpus.
+- **Five misattributed transcript rows keep their true speaker** - A patient offering more detail
+  ("do you want to know more about it?") no longer flips to Doctor, the doctor's "I've got to
+  say..." aside no longer reads as a patient complaint, and three doctor question fragments in
+  the corrected transcript no longer inherit the patient's label from the answer sitting next to
+  them. Genuine complaints, short patient continuations, and manual corrections keep their
+  existing protections.
 - **More reliable correction checks** - Batch checks now continue after safe failures, report clear
   totals, and use a more reliable browser test server.
 - **Better denial checks** - Note checks now consider the clinician's full question and the

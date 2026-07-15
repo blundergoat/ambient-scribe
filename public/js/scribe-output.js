@@ -573,25 +573,45 @@ function blockedSourceMessage(reason) {
  * @returns {object} statusModel accepted by deriveNoteStatusLines.
  */
 function collectNoteStatusModel(summaryPayload) {
-    let unverifiedCount = (summaryPayload?.unverified_key_points ?? []).length;
+    // A missing payload still produces a valid zero-flag model.
+    const {
+        unverified_key_points: unverifiedKeyPoints = [],
+        sections = [],
+        source_state: sourceState = null,
+    } = summaryPayload ?? {};
+    let unverifiedCount = unverifiedKeyPoints.length;
     let lowConfidenceCount = 0;
 
     // Section-level flags add to the review count the axes announce.
-    for (const section of summaryPayload?.sections ?? []) {
+    for (const section of sections) {
         unverifiedCount += (section.unverified ?? []).length;
         lowConfidenceCount += (section.low_confidence ?? []).length;
     }
 
     return {
         phase: 'generated',
-        sourceState: summaryPayload?.source_state ?? null,
-        // A frozen role settlement travels from the finalized event into review.
-        roleSettlement: typeof terminalAttestation !== 'undefined' && terminalAttestation
-            ? terminalAttestation.roleSettlement ?? null
-            : null,
+        sourceState,
+        roleSettlement: attestedRoleSettlement(),
         unverifiedCount,
         lowConfidenceCount,
     };
+}
+
+/**
+ * Reads the visit's role-settlement outcome from the held attestation.
+ * Use when the axes need to know whether speaker labels finished settling -
+ * a frozen settlement becomes a visible review reason on the note.
+ *
+ * @returns {string|null} 'settled', 'failed_frozen', or null when no
+ *   finalized attestation exists yet (test pages, or a visit still running).
+ */
+function attestedRoleSettlement() {
+    // Test pages load without the transcript module's attestation state.
+    if (typeof terminalAttestation === 'undefined' || !terminalAttestation) {
+        return null;
+    }
+
+    return terminalAttestation.roleSettlement ?? null;
 }
 
 /**
@@ -613,11 +633,7 @@ function renderNoteStatusAxes(statusModel) {
     }
 
     const statusLines = deriveNoteStatusLines(statusModel);
-    const sourceBadge = document.getElementById('noteAxisSource');
-    const automatedBadge = document.getElementById('noteAxisAutomated');
-    const clinicianBadge = document.getElementById('noteAxisClinician');
     const reasonsList = document.getElementById('noteReviewReasons');
-    const copyNoteButton = document.getElementById('copyNoteBtn');
 
     // No source line means a transient failure owns the panel; hide the strip.
     if (!statusLines.sourceLine) {
@@ -625,43 +641,99 @@ function renderNoteStatusAxes(statusModel) {
         reasonsList?.classList.add('hidden');
     } else {
         axesStrip.classList.remove('hidden');
-        sourceBadge.textContent = statusLines.sourceLine;
-        // A live-fallback source renders as caution, not plain provenance.
-        sourceBadge.dataset.reviewRequired =
-            statusModel?.sourceState === 'whole_visit_live_fallback' ? '1' : '0';
-
-        // The review axes only exist once a note artifact exists.
-        automatedBadge.classList.toggle('hidden', !statusLines.automatedReviewLine);
-        if (statusLines.automatedReviewLine) {
-            automatedBadge.textContent = statusLines.automatedReviewLine;
-            automatedBadge.dataset.reviewRequired =
-                statusLines.reviewReasons.length > 0 ? '1' : '0';
-        }
-        clinicianBadge.classList.toggle('hidden', !statusLines.clinicianReviewLine);
-        if (statusLines.clinicianReviewLine) {
-            clinicianBadge.textContent = statusLines.clinicianReviewLine;
-        }
-
-        // Each reason is readable text under the badges, and copies with the note.
-        if (reasonsList) {
-            reasonsList.replaceChildren(
-                ...statusLines.reviewReasons.map((reviewReason) =>
-                    createElement('li', { text: reviewReason }))
-            );
-            reasonsList.classList.toggle('hidden', statusLines.reviewReasons.length === 0);
-        }
+        renderAxisBadges(statusLines, statusModel);
+        renderReviewReasonList(reasonsList, statusLines.reviewReasons);
     }
 
-    // The copy action follows note availability; its label says why when disabled.
-    if (copyNoteButton) {
-        copyNoteButton.disabled = !statusLines.noteAvailable;
-        copyNoteButton.setAttribute(
-            'aria-label',
-            statusLines.noteAvailable
-                ? 'Copy draft note with its source and review status'
-                : `Copy draft note — unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
-        );
+    setCopyNoteAvailability(statusLines);
+}
+
+/**
+ * Writes the three axis badges the clinician reads above the note.
+ * Use from renderNoteStatusAxes whenever the strip is visible, so source,
+ * automated-review, and clinician-review truths stay independently worded.
+ *
+ * @param {object} statusLines - derived axis wording; null review lines mean
+ *   those badges hide (no note artifact exists yet).
+ * @param {object} statusModel - the state the wording came from; the fallback
+ *   source state styles its badge as caution.
+ * @returns {void} Updates badge text, visibility, and caution styling.
+ */
+function renderAxisBadges(statusLines, statusModel) {
+    const sourceBadge = document.getElementById('noteAxisSource');
+    const automatedBadge = document.getElementById('noteAxisAutomated');
+    const clinicianBadge = document.getElementById('noteAxisClinician');
+
+    sourceBadge.textContent = statusLines.sourceLine;
+    // A live-fallback source renders as caution, not plain provenance.
+    sourceBadge.dataset.reviewRequired =
+        statusModel?.sourceState === 'whole_visit_live_fallback' ? '1' : '0';
+
+    // The automated-review axis only exists once a note artifact exists.
+    automatedBadge.classList.toggle('hidden', !statusLines.automatedReviewLine);
+    if (statusLines.automatedReviewLine) {
+        automatedBadge.textContent = statusLines.automatedReviewLine;
+        // Any flagged item styles the badge as a review demand, not decoration.
+        automatedBadge.dataset.reviewRequired =
+            statusLines.reviewReasons.length > 0 ? '1' : '0';
     }
+
+    // The clinician-review axis likewise appears only with a real note.
+    clinicianBadge.classList.toggle('hidden', !statusLines.clinicianReviewLine);
+    if (statusLines.clinicianReviewLine) {
+        clinicianBadge.textContent = statusLines.clinicianReviewLine;
+    }
+}
+
+/**
+ * Renders the readable list of review reasons under the axis badges.
+ * Use with the badges so "Review required (n)" is always explained on
+ * screen with the same reasons that copy into the note.
+ *
+ * @param {HTMLElement|null} reasonsList - the list element; null (test pages)
+ *   skips rendering safely.
+ * @param {string[]} reviewReasons - reasons to show; empty hides the list.
+ * @returns {void} Replaces the list items and toggles visibility.
+ */
+function renderReviewReasonList(reasonsList, reviewReasons) {
+    // Test pages without the list element cannot show reasons.
+    if (!reasonsList) {
+        return;
+    }
+
+    // Each reason is readable text under the badges, and copies with the note.
+    reasonsList.replaceChildren(
+        ...reviewReasons.map((reviewReason) =>
+            createElement('li', { text: reviewReason }))
+    );
+    reasonsList.classList.toggle('hidden', reviewReasons.length === 0);
+}
+
+/**
+ * Enables or disables the Copy draft note action to match note availability.
+ * Use on every axes render: an unavailable source must never be copyable,
+ * and the disabled button explains exactly why.
+ *
+ * @param {object} statusLines - derived axis state; noteAvailable false
+ *   disables the button with the specific reason as its accessible label.
+ * @returns {void} Updates the button's disabled state and aria-label.
+ */
+function setCopyNoteAvailability(statusLines) {
+    const copyNoteButton = document.getElementById('copyNoteBtn');
+
+    // Test pages without the copy button have nothing to gate.
+    if (!copyNoteButton) {
+        return;
+    }
+
+    copyNoteButton.disabled = !statusLines.noteAvailable;
+    // The label says why copying is unavailable, for keyboard and AT users too.
+    copyNoteButton.setAttribute(
+        'aria-label',
+        statusLines.noteAvailable
+            ? 'Copy draft note with its source and review status'
+            : `Copy draft note — unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
+    );
 }
 
 /**

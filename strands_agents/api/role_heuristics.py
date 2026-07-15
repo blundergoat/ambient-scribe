@@ -106,8 +106,10 @@ ROW_PATIENT_CUES: dict[str, re.Pattern[str]] = {
         re.I,
     ),
     # "I've just got..." - patient opens by describing the presenting complaint.
+    # "got to say/ask" is clinician discourse ("I must say"), never a complaint,
+    # so the infinitive form is excluded (consult 1.2 doctor remark).
     "presenting_complaint": re.compile(
-        r"\bi'?ve (just )?(got|had) +(a |an )?"
+        r"\bi'?ve (just )?(got|had) +(?!to\b)(a |an )?"
         r"|\bi (just )?feel like\b"
         r"|\bi need to (vomit|throw up)\b",
         re.I,
@@ -127,6 +129,12 @@ ROW_SINGLE_CUE_FLIPS_WITH_QUESTION = {"second_person_body"}
 # A '?' followed by a yes/no token means one row holds a question AND its
 # answer (a seam blend); the answer tail is the freshest speaker.
 _ROW_BLENDED_ANSWER = re.compile(r"\?\s*['\"]?\s*(no|yes|yeah|yep|nope)\b", re.I)
+# A patient OFFERING information ("do you want to know more about it?") is
+# question-shaped but role-neutral: both speakers offer detail this way. The
+# stutter form "want to, to know" from the official audio is included.
+_ROW_PATIENT_OFFER_FORM = re.compile(
+    r"\b(?:do|would) you (?:want|like)(?:,?\s+to)+\s+(?:know|hear|see)\b", re.I
+)
 _ROW_SECOND_PERSON = re.compile(r"\byou(r|'re)?\b", re.I)
 _ROW_POSSESSIVE_SELF = re.compile(r"\bmy\b", re.I)
 
@@ -221,6 +229,13 @@ def decide_row_role_exception(text: str, mapped_role: str) -> tuple[str, str]:
 
     doctor_hits = _row_cue_hits(judged_text, ROW_DOCTOR_CUES)
     patient_hits = _row_cue_hits(judged_text, ROW_PATIENT_CUES)
+
+    # An information offer on a Patient row is not clinical interviewing; its
+    # question-form cues (one question can fire both) are struck as Doctor
+    # evidence so the offer cannot flip the patient's own card (consult 1.2).
+    if mapped_role == "PATIENT" and _ROW_PATIENT_OFFER_FORM.search(judged_text):
+        doctor_hits -= {"you_question", "clinical_question_mark"}
+
     opposite_role = "PATIENT" if mapped_role == "DOCTOR" else "DOCTOR"
     same_hits = doctor_hits if mapped_role == "DOCTOR" else patient_hits
     opposite_hits = patient_hits if mapped_role == "DOCTOR" else doctor_hits
@@ -349,7 +364,10 @@ def _add_orphan_speaker_exceptions(
 
     ordered_rows = sorted(
         stored_segments,
-        key=lambda row: (float(row.get("start", 0.0) or 0.0), float(row.get("end", 0.0) or 0.0)),
+        key=lambda row: (
+            float(row.get("start", 0.0) or 0.0),
+            float(row.get("end", 0.0) or 0.0),
+        ),
     )
     # Each orphan row is judged with its immediate same-speaker neighbors only,
     # so a patient's one-word answer can never inherit the doctor's question cues.

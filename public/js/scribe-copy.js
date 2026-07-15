@@ -5,15 +5,10 @@
  * lands on the clipboard must be built from application state - never from
  * container textContent, which harvests control chrome (provenance counts
  * like "11/1/2/6"), drops CSS-only spacing, and loses review meaning. The
- * pure serializers here produce exactly the approved default export: the
- * note always travels with its source/review status lines, and the
- * transcript keeps per-row timestamps, speakers, and exact wording.
- *
- * Loaded as a classic script; the module.exports guard lets node:test pin
- * the leak specimens without a browser DOM.
+ * pure serializers here produce the approved default export: the note always
+ * travels with its source/review status lines, and the transcript keeps
+ * per-row timestamps, speakers, and exact wording.
  */
-
-/* eslint-disable no-unused-vars */
 
 // Contract wording for the lifecycle/source axis (CONTRACTS.md section 2).
 // Blocked reasons from the backend map onto these fixed clinician-facing lines.
@@ -55,10 +50,12 @@ const TRANSCRIPT_LANE_LABELS = {
  * Formats seconds as the [MM:SS] stamp used across the transcript UI.
  * Use in transcript exports so pasted rows keep their spoken moment.
  *
- * @param {number} seconds - spoken start time; missing/invalid renders 00:00.
+ * @param {number} seconds - spoken row start; missing or invalid means the row
+ *   had no usable timing and pastes as 00:00 rather than breaking the line.
  * @returns {string} zero-padded MM:SS text.
  */
 function formatCopyTimestamp(seconds) {
+    // A row without usable timing still needs a readable stamp in the paste.
     const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
     const wholeMinutes = Math.floor(safeSeconds / 60);
     const remainingSeconds = Math.floor(safeSeconds % 60);
@@ -96,6 +93,86 @@ function serializeTranscriptRows(rowModels, laneLabel = '') {
 }
 
 /**
+ * Builds the axes shape for every state where no honest note exists yet.
+ * Use for waiting/generating/blocked states: only the source axis speaks,
+ * and the Copy draft note action stays disabled.
+ *
+ * @param {string|null} sourceLine - lifecycle wording to show; null hides the
+ *   whole strip (a transient failure keeps the existing failure UI instead).
+ * @returns {object} axes with no review lines and noteAvailable false.
+ */
+function noteUnavailableAxes(sourceLine) {
+    return {
+        sourceLine,
+        automatedReviewLine: null,
+        clinicianReviewLine: null,
+        reviewReasons: [],
+        noteAvailable: false,
+    };
+}
+
+/**
+ * Collects the automated-review reasons and flagged-item total for one note.
+ * Use when a note has rendered: the visible "(n)" must always equal the
+ * breakdown beneath it - "(2)" above a 1+3 item list misled the reader.
+ *
+ * @param {object} statusModel - see deriveNoteStatusLines; missing counts act as zero.
+ * @returns {object} {reviewReasons, flaggedItemCount}; both empty/zero means
+ *   the note carries no automated flags at all.
+ */
+function automatedReviewSummaryFor(statusModel) {
+    // A missing model means a note somehow rendered without state; zero flags.
+    const {
+        unverifiedCount = 0,
+        lowConfidenceCount = 0,
+        roleSettlement,
+        sourceState,
+    } = statusModel ?? {};
+    const reviewReasons = [];
+    let flaggedItemCount = unverifiedCount + lowConfidenceCount;
+
+    // Unsupported statements are the first thing a reviewer should check.
+    if (unverifiedCount > 0) {
+        reviewReasons.push(
+            `${countedNoun(unverifiedCount, 'statement')} not supported by the transcript`
+        );
+    }
+    // Low-confidence wording flags sentences built on uncertain audio.
+    if (lowConfidenceCount > 0) {
+        reviewReasons.push(
+            `${countedNoun(lowConfidenceCount, 'sentence')} from low-confidence wording`
+        );
+    }
+    // A frozen role settlement means speaker labels never finished settling.
+    if (roleSettlement === 'failed_frozen') {
+        reviewReasons.push('speaker labels were frozen before role checks completed');
+        flaggedItemCount += 1;
+    }
+    // A live-fallback source is itself a review reason, even with no text flags.
+    if (sourceState === 'whole_visit_live_fallback') {
+        reviewReasons.push('note built from the live transcript, not the corrected pass');
+        flaggedItemCount += 1;
+    }
+
+    return { reviewReasons, flaggedItemCount };
+}
+
+/**
+ * Formats a count with its correctly pluralized noun for review wording.
+ * Use in the review-reason lines so "1 statement" and "3 sentences" both
+ * read naturally in the panel and the pasted note.
+ *
+ * @param {number} itemCount - flagged-item count; zero never reaches here
+ *   because zero-count reasons are not emitted.
+ * @param {string} noun - singular noun, e.g. 'statement'.
+ * @returns {string} "<count> <noun>" with an s appended when plural.
+ */
+function countedNoun(itemCount, noun) {
+    // One item keeps the singular noun; anything else pluralizes.
+    return `${itemCount} ${noun}${itemCount === 1 ? '' : 's'}`;
+}
+
+/**
  * Derives the three independent status axes for the note panel and export.
  * Use wherever note state is shown or copied, so screen, clipboard, and
  * keyboard users all read the same three truths: where the text came from,
@@ -109,85 +186,40 @@ function serializeTranscriptRows(rowModels, laneLabel = '') {
  *   unverifiedCount / lowConfidenceCount: automated flags; missing counts as zero.
  * @returns {object} {sourceLine, automatedReviewLine, clinicianReviewLine,
  *   reviewReasons, noteAvailable} - null lines mean that axis is not shown
- *   (e.g. a transient failure keeps the existing failure UI instead).
+ *   (a transient failure keeps the existing failure UI instead).
  */
 function deriveNoteStatusLines(statusModel) {
+    // A missing phase is treated as failure so nothing unavailable looks copyable.
     const phase = statusModel?.phase ?? 'failed';
 
-    // Before any artifact exists only the source axis has something to say.
+    // The note request is in flight; the panel shows progress, nothing copyable.
     if (phase === 'generating') {
-        return {
-            sourceLine: SOURCE_AXIS_LINES.generating,
-            automatedReviewLine: null,
-            clinicianReviewLine: null,
-            reviewReasons: [],
-            noteAvailable: false,
-        };
+        return noteUnavailableAxes(SOURCE_AXIS_LINES.generating);
     }
+    // The Stop wait released the UI but the backend has not attested the visit.
     if (phase === 'waiting') {
-        return {
-            sourceLine: SOURCE_AXIS_LINES.waiting,
-            automatedReviewLine: null,
-            clinicianReviewLine: null,
-            reviewReasons: [],
-            noteAvailable: false,
-        };
+        return noteUnavailableAxes(SOURCE_AXIS_LINES.waiting);
     }
+    // The backend refused the source; the user sees the specific reason.
     if (phase === 'blocked') {
-        return {
-            // Unknown reasons stay on the safe "incomplete" wording.
-            sourceLine: SOURCE_LINE_BY_BLOCKED_REASON[statusModel?.blockedReason]
-                ?? SOURCE_AXIS_LINES.incomplete,
-            automatedReviewLine: null,
-            clinicianReviewLine: null,
-            reviewReasons: [],
-            noteAvailable: false,
-        };
+        // Unknown blocked reasons stay on the safe "incomplete" wording.
+        return noteUnavailableAxes(
+            SOURCE_LINE_BY_BLOCKED_REASON[statusModel?.blockedReason]
+                ?? SOURCE_AXIS_LINES.incomplete
+        );
     }
     // Transient failures keep the existing failed badge and retry button.
     if (phase !== 'generated') {
-        return {
-            sourceLine: null,
-            automatedReviewLine: null,
-            clinicianReviewLine: null,
-            reviewReasons: [],
-            noteAvailable: false,
-        };
+        return noteUnavailableAxes(null);
     }
 
+    // A fallback-sourced note announces itself; everything else is corrected.
     const sourceLine = statusModel?.sourceState === 'whole_visit_live_fallback'
         ? SOURCE_AXIS_LINES.live_fallback
         : SOURCE_AXIS_LINES.corrected;
 
-    const reviewReasons = [];
-    const unverifiedCount = statusModel?.unverifiedCount ?? 0;
-    const lowConfidenceCount = statusModel?.lowConfidenceCount ?? 0;
-    // The visible (n) counts every flagged item, so it always matches the
-    // breakdown beneath it - "(2)" above a 1+3 item list misled the reader.
-    let flaggedItemCount = unverifiedCount + lowConfidenceCount;
-
-    // Each reason is user-readable text; the panel and the copy show the same list.
-    if (unverifiedCount > 0) {
-        reviewReasons.push(
-            `${unverifiedCount} statement${unverifiedCount === 1 ? '' : 's'} not supported by the transcript`
-        );
-    }
-    if (lowConfidenceCount > 0) {
-        reviewReasons.push(
-            `${lowConfidenceCount} sentence${lowConfidenceCount === 1 ? '' : 's'} from low-confidence wording`
-        );
-    }
-    // A frozen role settlement means speaker labels never finished settling.
-    if (statusModel?.roleSettlement === 'failed_frozen') {
-        reviewReasons.push('speaker labels were frozen before role checks completed');
-        flaggedItemCount += 1;
-    }
-    // A live-fallback source is itself a review reason, even with no text flags.
-    if (statusModel?.sourceState === 'whole_visit_live_fallback') {
-        reviewReasons.push('note built from the live transcript, not the corrected pass');
-        flaggedItemCount += 1;
-    }
-
+    const { reviewReasons, flaggedItemCount } = automatedReviewSummaryFor(statusModel);
+    // Any flagged item turns the axis into an explicit review demand.
     const automatedReviewLine = flaggedItemCount > 0
         ? `Review required (${flaggedItemCount})`
         : `No automated review flags. ${NO_FLAGS_LIMITATION_TEXT}`;
@@ -213,27 +245,94 @@ function deriveNoteStatusLines(statusModel) {
  * @returns {string} prose with markers, never silently unmarked.
  */
 function markFlaggedSentencesForCopy(sectionContent, flaggedSentences, markerText) {
+    // Absent prose means the section has nothing the reader could mark.
     let markedContent = sectionContent ?? '';
     const unmatchedSentences = [];
 
+    // Each flagged sentence is marked exactly where the reader sees the claim.
     for (const flaggedSentence of flaggedSentences ?? []) {
-        // Exact matches get the marker right where the reader sees the claim.
+        // An exact match gets the marker inline, beside the claim itself.
         if (flaggedSentence && markedContent.includes(flaggedSentence)) {
             markedContent = markedContent.replace(
                 flaggedSentence,
                 `${flaggedSentence} ${markerText}`
             );
         } else if (flaggedSentence) {
+            // The prose no longer contains this sentence; remember it so its
+            // review state still reaches the pasted text.
             unmatchedSentences.push(flaggedSentence);
         }
     }
 
-    // Sentences the prose no longer contains still surface their review state.
+    // Sentences the prose lost still surface their review state at the end.
     for (const unmatchedSentence of unmatchedSentences) {
         markedContent += `\n${markerText} ${unmatchedSentence}`;
     }
 
     return markedContent;
+}
+
+/**
+ * Builds the status header lines of the note export.
+ * Use at the top of Copy draft note output: the three axes always travel
+ * with the text (the approved default export has no status-free variant).
+ *
+ * @param {object} noteModel - export model; missing status lines are skipped.
+ * @returns {string[]} header lines ending with one blank spacer line.
+ */
+function noteStatusHeaderLines(noteModel) {
+    const headerLines = [];
+    const statusLines = noteModel?.statusLines ?? {};
+
+    // Where the note's text came from (corrected transcript or fallback).
+    if (statusLines.sourceLine) {
+        headerLines.push(`Source: ${statusLines.sourceLine}`);
+    }
+    // What the automated checks flagged, with the actionable breakdown.
+    if (statusLines.automatedReviewLine) {
+        headerLines.push(`Automated review: ${statusLines.automatedReviewLine}`);
+        // The reasons make "Review required (n)" actionable in the pasted text.
+        for (const reviewReason of noteModel?.reviewReasons ?? []) {
+            headerLines.push(`  - ${reviewReason}`);
+        }
+    }
+    // The fixed reminder that no clinician has signed this text off.
+    if (statusLines.clinicianReviewLine) {
+        headerLines.push(`Clinician review: ${statusLines.clinicianReviewLine}`);
+    }
+    headerLines.push('');
+
+    return headerLines;
+}
+
+/**
+ * Builds the Key Points block of the note export.
+ * Use after the status header: unverified points keep their marker exactly
+ * where the panel shows it.
+ *
+ * @param {Array<object>} keyPoints - [{text, unverified}]; empty means the
+ *   sections alone carry the note and no block is emitted.
+ * @returns {string[]} block lines, or empty when there are no key points.
+ */
+function keyPointLines(keyPoints) {
+    // No key points means the sections alone carry the generated note.
+    if (keyPoints.length === 0) {
+        return [];
+    }
+
+    const blockLines = ['Key Points:'];
+    // Every point keeps its review marker in front of the claim it flags.
+    for (const keyPoint of keyPoints) {
+        // An unverified point is marked so the paste cannot read as checked fact.
+        blockLines.push(
+            keyPoint.unverified
+                ? `- [Unverified] ${keyPoint.text}`
+                : `- ${keyPoint.text}`
+        );
+    }
+    blockLines.push('');
+
+    return blockLines;
 }
 
 /**
@@ -251,40 +350,12 @@ function markFlaggedSentencesForCopy(sectionContent, flaggedSentences, markerTex
 function serializeDraftNote(noteModel) {
     const noteLines = [];
 
+    // A missing title still gives the paste a recognizable heading.
     noteLines.push(noteModel?.title || 'Draft note', '');
+    noteLines.push(...noteStatusHeaderLines(noteModel));
+    noteLines.push(...keyPointLines(noteModel?.keyPoints ?? []));
 
-    const statusLines = noteModel?.statusLines ?? {};
-    // The three axes always travel with the text (approved default export).
-    if (statusLines.sourceLine) {
-        noteLines.push(`Source: ${statusLines.sourceLine}`);
-    }
-    if (statusLines.automatedReviewLine) {
-        noteLines.push(`Automated review: ${statusLines.automatedReviewLine}`);
-        // The reasons make "Review required (n)" actionable in the pasted text.
-        for (const reviewReason of noteModel?.reviewReasons ?? []) {
-            noteLines.push(`  - ${reviewReason}`);
-        }
-    }
-    if (statusLines.clinicianReviewLine) {
-        noteLines.push(`Clinician review: ${statusLines.clinicianReviewLine}`);
-    }
-    noteLines.push('');
-
-    const keyPoints = noteModel?.keyPoints ?? [];
-    // Key points keep their unverified marker exactly where the panel shows it.
-    if (keyPoints.length > 0) {
-        noteLines.push('Key Points:');
-        for (const keyPoint of keyPoints) {
-            noteLines.push(
-                keyPoint.unverified
-                    ? `- [Unverified] ${keyPoint.text}`
-                    : `- ${keyPoint.text}`
-            );
-        }
-        noteLines.push('');
-    }
-
-    // Sections render as heading + prose with review markers inline.
+    // Each SOAP section renders as heading + prose with review markers inline.
     for (const section of noteModel?.sections ?? []) {
         noteLines.push(`${section.heading ?? ''}:`);
         let sectionContent = markFlaggedSentencesForCopy(
@@ -304,32 +375,66 @@ function serializeDraftNote(noteModel) {
 }
 
 /**
+ * Maps one backend key point onto the export's marker-aware shape.
+ * Use while building the note model so unverified points stay marked in copies.
+ *
+ * @param {string} keyPointText - one TL;DR line from the note payload.
+ * @param {string[]} unverifiedKeyPoints - lines the checks could not support;
+ *   empty means every point copies plain.
+ * @returns {object} {text, unverified} consumed by keyPointLines.
+ */
+function keyPointModelFrom(keyPointText, unverifiedKeyPoints) {
+    return {
+        text: keyPointText,
+        unverified: unverifiedKeyPoints.includes(keyPointText),
+    };
+}
+
+/**
+ * Maps one backend note section onto the export's section shape.
+ * Use while building the note model: citations and any UI-only fields are
+ * dropped here, so counts can never leak into the pasted text.
+ *
+ * @param {object} section - backend SOAP section; missing flag arrays mean
+ *   the prose copies unmarked.
+ * @returns {object} section model consumed by serializeDraftNote.
+ */
+function sectionModelFrom(section) {
+    return {
+        heading: section.heading,
+        content: section.content,
+        unverifiedSentences: section.unverified ?? [],
+        lowConfidenceSentences: section.low_confidence ?? [],
+    };
+}
+
+/**
  * Maps a backend summary payload onto the export's note model.
  * Use before serializing: only clinical text and review meaning survive the
- * mapping - citations, counts, and any UI-only fields are dropped here, so
- * the export cannot leak them no matter how the panel renders.
+ * mapping, so the export cannot leak counts no matter how the panel renders.
  *
  * @param {object} summaryPayload - backend note payload; missing arrays act empty.
  * @param {object} statusLines - output of deriveNoteStatusLines for this note.
  * @returns {object} noteModel accepted by serializeDraftNote.
  */
 function noteModelFromSummaryPayload(summaryPayload, statusLines) {
-    const unverifiedKeyPoints = summaryPayload?.unverified_key_points ?? [];
+    // A missing payload still yields a valid, clearly empty note model.
+    const {
+        title,
+        unverified_key_points: unverifiedKeyPoints = [],
+        key_points: keyPoints = [],
+        sections = [],
+    } = summaryPayload ?? {};
 
     return {
-        title: summaryPayload?.title || 'Draft note',
+        title: title || 'Draft note',
         statusLines,
         reviewReasons: statusLines?.reviewReasons ?? [],
-        keyPoints: (summaryPayload?.key_points ?? []).map((keyPointText) => ({
-            text: keyPointText,
-            unverified: unverifiedKeyPoints.includes(keyPointText),
-        })),
-        sections: (summaryPayload?.sections ?? []).map((section) => ({
-            heading: section.heading,
-            content: section.content,
-            unverifiedSentences: section.unverified ?? [],
-            lowConfidenceSentences: section.low_confidence ?? [],
-        })),
+        // Key points and sections are reduced to clinical text + review flags.
+        keyPoints: keyPoints.map(
+            (keyPointText) => keyPointModelFrom(keyPointText, unverifiedKeyPoints)
+        ),
+        sections: sections.map(sectionModelFrom),
     };
 }
 
@@ -343,11 +448,14 @@ function noteModelFromSummaryPayload(summaryPayload, statusLines) {
  * Use during transcript export; the pasted label must match what the
  * clinician sees after global role mapping and their own row corrections.
  *
- * @param {object} segment - visible row {segment_id, speaker_id}; missing IDs
- *   fall back to the raw speaker label.
- * @returns {string} Doctor, Patient, Unknown, or the raw speaker id.
+ * @param {object} segment - visible row {segment_id, speaker_id}; a missing
+ *   row ID means no per-row correction can apply and the card mapping decides.
+ * @returns {string} Doctor, Patient, Unknown, or the raw speaker id when no
+ *   role was ever mapped.
  */
 function effectiveSpeakerLabelForCopy(segment) {
+    // The clinician's own row correction wins, then automatic exceptions,
+    // then the visit-wide speaker mapping.
     const rowRole = rowRoleOverrides.get(segment.segment_id)
         ?? autoRowRoles.get(segment.segment_id)
         ?? roleMapping[segment.speaker_id];
@@ -364,13 +472,19 @@ function effectiveSpeakerLabelForCopy(segment) {
  * Copies text to the clipboard with a visible confirmation on the button.
  * Use from both copy actions; the textarea fallback covers browsers or
  * test pages where the async clipboard API is unavailable.
+ *
+ * @param {string} copyText - the finished export text.
+ * @param {HTMLElement|null} copyButton - button that shows "Copied"; null
+ *   (test pages) skips the confirmation but still writes the clipboard.
+ * @returns {Promise<void>} resolves once the text is on the clipboard.
  */
 async function copyTextToClipboard(copyText, copyButton) {
     try {
         // Example: the clinician clicks Copy draft note after reviewing the panel.
         await navigator.clipboard.writeText(copyText);
     } catch (clipboardError) {
-        // Example: a non-secure context or denied permission rejects the API.
+        // Example: a non-secure context or denied permission rejects the API;
+        // the hidden-textarea path still gets the text onto the clipboard.
         const fallbackArea = document.createElement('textarea');
         fallbackArea.value = copyText;
         fallbackArea.setAttribute('readonly', '');
@@ -384,6 +498,7 @@ async function copyTextToClipboard(copyText, copyButton) {
 
     // The button itself confirms, so no toast can cover clinical text.
     if (copyButton) {
+        // The resting label is kept so repeated copies always restore it.
         const restingLabel = copyButton.dataset.restingLabel ?? copyButton.textContent;
         copyButton.dataset.restingLabel = restingLabel;
         copyButton.textContent = 'Copied';
@@ -397,19 +512,27 @@ async function copyTextToClipboard(copyText, copyButton) {
  * Copies the summary panel's Transcript tab lane exactly as displayed.
  * Use from the Copy transcript button; the export lane label states whether
  * this text fed the note or is the changeable live preview.
+ *
+ * @param {HTMLElement|null} copyButton - the clicked button; null skips the
+ *   visible "Copied" confirmation.
+ * @returns {Promise<void>} resolves once the lane text is on the clipboard.
  */
 async function copyActiveTranscriptLane(copyButton) {
     // The tab's own selection logic decides corrected-vs-live; reuse it.
     const correctedRows = await fetchCorrectedTranscriptRows();
     const isCorrectedLane = Array.isArray(correctedRows) && correctedRows.length > 0;
+    // Without a corrected artifact the user is reading the live rows.
     const laneRows = isCorrectedLane ? correctedRows : readVisibleTranscriptSegments();
 
+    // The header names the lane so the paste says whether it fed the note.
     const laneLabel = isCorrectedLane
         ? TRANSCRIPT_LANE_LABELS.corrected
         : transcriptLaneLabelForLiveRows();
 
+    // Each stored row becomes one export line with its effective speaker.
     const rowModels = laneRows.map((laneRow) => ({
         startSeconds: parseFloat(laneRow.start) || 0,
+        // Corrected rows carry their own role; live rows resolve overrides.
         speakerLabel: isCorrectedLane && laneRow.role
             ? getRoleLabel(laneRow.role)
             : effectiveSpeakerLabelForCopy(laneRow),
@@ -423,6 +546,8 @@ async function copyActiveTranscriptLane(copyButton) {
  * Chooses the live lane's label from the last note's source state.
  * Use for lane headers: a live-fallback note makes the live lane the note
  * source (review required); otherwise it is just the changeable preview.
+ *
+ * @returns {string} the lane wording shown beside and copied with live rows.
  */
 function transcriptLaneLabelForLiveRows() {
     // A live-fallback note means these live rows ARE the note's source.
@@ -436,6 +561,10 @@ function transcriptLaneLabelForLiveRows() {
  * Copies the rendered draft note using the approved default export.
  * Use from the Copy draft note button; disabled states never reach here
  * because the button is only enabled once a note artifact exists.
+ *
+ * @param {HTMLElement|null} copyButton - the clicked button; null skips the
+ *   visible "Copied" confirmation.
+ * @returns {Promise<void>} resolves once the note text is on the clipboard.
  */
 async function copyDraftNote(copyButton) {
     // No rendered note means nothing honest to copy; the button should be disabled.

@@ -20,24 +20,69 @@ from api.role_heuristics import (
 # 58-83s - the slice the clinician reported as confidently inverted. The
 # run's global mapping was speaker_0 -> PATIENT, speaker_1 -> DOCTOR.
 CONSULT03_SLICE_ROWS = [
-    {"segment_id": "seg-0020", "speaker_id": "speaker_0", "start": 58.34, "end": 58.42,
-     "text": "I"},
-    {"segment_id": "seg-0021", "speaker_id": "speaker_1", "start": 58.48, "end": 60.64,
-     "text": "really, it just happened okay. And are you"},
-    {"segment_id": "seg-0022", "speaker_id": "speaker_0", "start": 60.78, "end": 66.38,
-     "text": "are you able to describe what kind of headache it was? For example, was it throbbing or was it"},
-    {"segment_id": "seg-0023", "speaker_id": "speaker_1", "start": 67.0, "end": 70.84,
-     "text": "I guess it's throbbing on that left side. And"},
-    {"segment_id": "seg-0024", "speaker_id": "speaker_1", "start": 71.16, "end": 72.68,
-     "text": "is it moving"},
-    {"segment_id": "seg-0025", "speaker_id": "speaker_1", "start": 72.98, "end": 74.90,
-     "text": "is it moving anywhere else at"},
-    {"segment_id": "seg-0026", "speaker_id": "speaker_1", "start": 75.70, "end": 77.86,
-     "text": "all? No, but it's worse when"},
-    {"segment_id": "seg-0027", "speaker_id": "speaker_0", "start": 78.64, "end": 80.96,
-     "text": "Okay. Is that when you move your neck?"},
-    {"segment_id": "seg-0028", "speaker_id": "speaker_1", "start": 81.98, "end": 83.01,
-     "text": ""},
+    {
+        "segment_id": "seg-0020",
+        "speaker_id": "speaker_0",
+        "start": 58.34,
+        "end": 58.42,
+        "text": "I",
+    },
+    {
+        "segment_id": "seg-0021",
+        "speaker_id": "speaker_1",
+        "start": 58.48,
+        "end": 60.64,
+        "text": "really, it just happened okay. And are you",
+    },
+    {
+        "segment_id": "seg-0022",
+        "speaker_id": "speaker_0",
+        "start": 60.78,
+        "end": 66.38,
+        "text": "are you able to describe what kind of headache it was? For example, was it throbbing or was it",
+    },
+    {
+        "segment_id": "seg-0023",
+        "speaker_id": "speaker_1",
+        "start": 67.0,
+        "end": 70.84,
+        "text": "I guess it's throbbing on that left side. And",
+    },
+    {
+        "segment_id": "seg-0024",
+        "speaker_id": "speaker_1",
+        "start": 71.16,
+        "end": 72.68,
+        "text": "is it moving",
+    },
+    {
+        "segment_id": "seg-0025",
+        "speaker_id": "speaker_1",
+        "start": 72.98,
+        "end": 74.90,
+        "text": "is it moving anywhere else at",
+    },
+    {
+        "segment_id": "seg-0026",
+        "speaker_id": "speaker_1",
+        "start": 75.70,
+        "end": 77.86,
+        "text": "all? No, but it's worse when",
+    },
+    {
+        "segment_id": "seg-0027",
+        "speaker_id": "speaker_0",
+        "start": 78.64,
+        "end": 80.96,
+        "text": "Okay. Is that when you move your neck?",
+    },
+    {
+        "segment_id": "seg-0028",
+        "speaker_id": "speaker_1",
+        "start": 81.98,
+        "end": 83.01,
+        "text": "",
+    },
 ]
 CONSULT03_MAPPING = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
 
@@ -75,9 +120,7 @@ class TestDecideRowRoleException:
 
     def test_agreeing_question_row_is_kept(self) -> None:
         """A doctor-sounding row already labeled Doctor needs no exception."""
-        action, _ = decide_row_role_exception(
-            CONSULT03_SLICE_ROWS[5]["text"], "DOCTOR"
-        )
+        action, _ = decide_row_role_exception(CONSULT03_SLICE_ROWS[5]["text"], "DOCTOR")
         assert action == "keep"
 
     def test_short_rows_are_left_alone(self) -> None:
@@ -140,11 +183,11 @@ class TestConsult03SliceRegression:
 
         # The five target rows and their TextGrid-expected roles.
         target_expectations = {
-            "seg-0022": "DOCTOR",   # 60.78s doctor question shown as Patient
+            "seg-0022": "DOCTOR",  # 60.78s doctor question shown as Patient
             "seg-0023": "PATIENT",  # 67.00s patient answer shown as Doctor
             "seg-0024": "PATIENT",  # 71.16s smeared fragment
             "seg-0026": "PATIENT",  # 75.70s blended question+answer row
-            "seg-0027": "DOCTOR",   # 78.64s doctor question shown as Patient
+            "seg-0027": "DOCTOR",  # 78.64s doctor question shown as Patient
         }
         corrected_rows = sum(
             1
@@ -188,9 +231,7 @@ class TestConsult03SliceRegression:
             }
             for index in range(ROW_EXCEPTIONS_MAX + 20)
         ]
-        exceptions = compute_row_role_exceptions(
-            flood_rows, {"speaker_0": "PATIENT"}
-        )
+        exceptions = compute_row_role_exceptions(flood_rows, {"speaker_0": "PATIENT"})
         assert len(exceptions) == ROW_EXCEPTIONS_MAX
 
 
@@ -200,46 +241,146 @@ class TestConsult03SliceRegression:
 # doctor fragments rendered on Patient cards. Padding rows keep the realistic
 # row-count ordering (speaker_1 43 > speaker_0 23 > speaker_2 12 in the run).
 CONSULT08_ORPHAN_ROWS = [
-    {"segment_id": "seg-0100", "speaker_id": "speaker_0", "start": 1.28, "end": 2.0,
-     "text": "Okay. Oh, I can't do"},
-    {"segment_id": "seg-0101", "speaker_id": "speaker_2", "start": 3.60, "end": 3.65,
-     "text": "that."},
-    {"segment_id": "seg-0102", "speaker_id": "speaker_2", "start": 4.72, "end": 4.77,
-     "text": "Hello."},
-    {"segment_id": "seg-0103", "speaker_id": "speaker_2", "start": 8.72, "end": 8.77,
-     "text": "Right, so just before"},
-    {"segment_id": "seg-0104", "speaker_id": "speaker_2", "start": 9.52, "end": 11.19,
-     "text": "Any further? Can I confirm your name and age"},
-    {"segment_id": "seg-0105", "speaker_id": "speaker_2", "start": 11.52, "end": 11.57,
-     "text": "please?"},
-    {"segment_id": "seg-0106", "speaker_id": "speaker_2", "start": 17.36, "end": 17.41,
-     "text": "it, okay, and how can I"},
-    {"segment_id": "seg-0107", "speaker_id": "speaker_2", "start": 18.16, "end": 18.21,
-     "text": "help you this afternoon?"},
-    {"segment_id": "seg-0108", "speaker_id": "speaker_0", "start": 22.4, "end": 23.0,
-     "text": "I've been working"},
-    {"segment_id": "seg-0109", "speaker_id": "speaker_0", "start": 24.3, "end": 25.0,
-     "text": "for the past few days"},
-    {"segment_id": "seg-0110", "speaker_id": "speaker_0", "start": 26.3, "end": 28.4,
-     "text": "and I've realized that I've got really dry"},
-    {"segment_id": "seg-0111", "speaker_id": "speaker_0", "start": 28.5, "end": 28.9,
-     "text": "itchy skin"},
-    {"segment_id": "seg-0112", "speaker_id": "speaker_0", "start": 43.1, "end": 43.9,
-     "text": "all over my arms"},
-    {"segment_id": "seg-0113", "speaker_id": "speaker_0", "start": 45.2, "end": 45.9,
-     "text": "and my"},
-    {"segment_id": "seg-0114", "speaker_id": "speaker_0", "start": 46.0, "end": 46.5,
-     "text": "hands mainly."},
-    {"segment_id": "seg-0119", "speaker_id": "speaker_0", "start": 57.8, "end": 58.4,
-     "text": "I think it started"},
-    {"segment_id": "seg-0115", "speaker_id": "speaker_1", "start": 47.6, "end": 49.0,
-     "text": "Okay, and is this something you've had before?"},
-    {"segment_id": "seg-0116", "speaker_id": "speaker_1", "start": 55.4, "end": 56.3,
-     "text": "or was it more kind of a gradual thing?"},
-    {"segment_id": "seg-0117", "speaker_id": "speaker_1", "start": 150.4, "end": 152.9,
-     "text": "okay and did your symptoms start after you went swimming"},
-    {"segment_id": "seg-0118", "speaker_id": "speaker_2", "start": 156.32, "end": 156.37,
-     "text": "yes"},
+    {
+        "segment_id": "seg-0100",
+        "speaker_id": "speaker_0",
+        "start": 1.28,
+        "end": 2.0,
+        "text": "Okay. Oh, I can't do",
+    },
+    {
+        "segment_id": "seg-0101",
+        "speaker_id": "speaker_2",
+        "start": 3.60,
+        "end": 3.65,
+        "text": "that.",
+    },
+    {
+        "segment_id": "seg-0102",
+        "speaker_id": "speaker_2",
+        "start": 4.72,
+        "end": 4.77,
+        "text": "Hello.",
+    },
+    {
+        "segment_id": "seg-0103",
+        "speaker_id": "speaker_2",
+        "start": 8.72,
+        "end": 8.77,
+        "text": "Right, so just before",
+    },
+    {
+        "segment_id": "seg-0104",
+        "speaker_id": "speaker_2",
+        "start": 9.52,
+        "end": 11.19,
+        "text": "Any further? Can I confirm your name and age",
+    },
+    {
+        "segment_id": "seg-0105",
+        "speaker_id": "speaker_2",
+        "start": 11.52,
+        "end": 11.57,
+        "text": "please?",
+    },
+    {
+        "segment_id": "seg-0106",
+        "speaker_id": "speaker_2",
+        "start": 17.36,
+        "end": 17.41,
+        "text": "it, okay, and how can I",
+    },
+    {
+        "segment_id": "seg-0107",
+        "speaker_id": "speaker_2",
+        "start": 18.16,
+        "end": 18.21,
+        "text": "help you this afternoon?",
+    },
+    {
+        "segment_id": "seg-0108",
+        "speaker_id": "speaker_0",
+        "start": 22.4,
+        "end": 23.0,
+        "text": "I've been working",
+    },
+    {
+        "segment_id": "seg-0109",
+        "speaker_id": "speaker_0",
+        "start": 24.3,
+        "end": 25.0,
+        "text": "for the past few days",
+    },
+    {
+        "segment_id": "seg-0110",
+        "speaker_id": "speaker_0",
+        "start": 26.3,
+        "end": 28.4,
+        "text": "and I've realized that I've got really dry",
+    },
+    {
+        "segment_id": "seg-0111",
+        "speaker_id": "speaker_0",
+        "start": 28.5,
+        "end": 28.9,
+        "text": "itchy skin",
+    },
+    {
+        "segment_id": "seg-0112",
+        "speaker_id": "speaker_0",
+        "start": 43.1,
+        "end": 43.9,
+        "text": "all over my arms",
+    },
+    {
+        "segment_id": "seg-0113",
+        "speaker_id": "speaker_0",
+        "start": 45.2,
+        "end": 45.9,
+        "text": "and my",
+    },
+    {
+        "segment_id": "seg-0114",
+        "speaker_id": "speaker_0",
+        "start": 46.0,
+        "end": 46.5,
+        "text": "hands mainly.",
+    },
+    {
+        "segment_id": "seg-0119",
+        "speaker_id": "speaker_0",
+        "start": 57.8,
+        "end": 58.4,
+        "text": "I think it started",
+    },
+    {
+        "segment_id": "seg-0115",
+        "speaker_id": "speaker_1",
+        "start": 47.6,
+        "end": 49.0,
+        "text": "Okay, and is this something you've had before?",
+    },
+    {
+        "segment_id": "seg-0116",
+        "speaker_id": "speaker_1",
+        "start": 55.4,
+        "end": 56.3,
+        "text": "or was it more kind of a gradual thing?",
+    },
+    {
+        "segment_id": "seg-0117",
+        "speaker_id": "speaker_1",
+        "start": 150.4,
+        "end": 152.9,
+        "text": "okay and did your symptoms start after you went swimming",
+    },
+    {
+        "segment_id": "seg-0118",
+        "speaker_id": "speaker_2",
+        "start": 156.32,
+        "end": 156.37,
+        "text": "yes",
+    },
 ]
 CONSULT08_ORPHAN_MAPPING = {
     "speaker_0": "PATIENT",
@@ -298,10 +439,20 @@ class TestOrphanSpeakerRowLane:
     def test_two_speaker_sessions_have_no_orphans(self) -> None:
         """A within-cap dyad gets zero orphan-lane exceptions on short rows."""
         rows = [
-            {"segment_id": "seg-0200", "speaker_id": "speaker_0", "start": 1.0,
-             "end": 2.0, "text": "please?"},
-            {"segment_id": "seg-0201", "speaker_id": "speaker_1", "start": 3.0,
-             "end": 4.0, "text": "My name's Isa and I'm 26."},
+            {
+                "segment_id": "seg-0200",
+                "speaker_id": "speaker_0",
+                "start": 1.0,
+                "end": 2.0,
+                "text": "please?",
+            },
+            {
+                "segment_id": "seg-0201",
+                "speaker_id": "speaker_1",
+                "start": 3.0,
+                "end": 4.0,
+                "text": "My name's Isa and I'm 26.",
+            },
         ]
         mapping = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
         assert compute_row_role_exceptions(rows, mapping) == {}
@@ -314,3 +465,55 @@ class TestOrphanSpeakerRowLane:
                 row["role_source"] = "user_row"
         exceptions = compute_row_role_exceptions(rows, CONSULT08_ORPHAN_MAPPING)
         assert "seg-0105" not in exceptions
+
+
+# --- M05: consult 1.2 live-lane role targets (official TextGrid wording) ---
+
+
+def test_patient_offer_question_is_not_flipped_to_doctor() -> None:
+    """Consult 1.2: a patient OFFERING detail stays Patient.
+
+    "do you want to know more about it?" is the patient asking whether the
+    clinician wants more history - an offer, not clinical interviewing. The
+    single `you_question` cue flipped it to Doctor on the live card.
+    """
+    action, role = decide_row_role_exception(
+        "do you want to know more about it?", "PATIENT"
+    )
+
+    assert (action, role) == ("keep", "PATIENT")
+
+
+def test_patient_offer_question_with_stutter_is_not_flipped() -> None:
+    """The official ground-truth form stutters ("want to, to know") and must
+    receive the same protection as the clean form."""
+    action, role = decide_row_role_exception(
+        "I mean, do you want to, to know more about it?", "PATIENT"
+    )
+
+    assert (action, role) == ("keep", "PATIENT")
+
+
+def test_doctor_discourse_ive_got_to_say_stays_doctor() -> None:
+    """Consult 1.2: "I've got to say ..." is clinician discourse, not a complaint.
+
+    The presenting-complaint cue treated "got to say" like "got a rash" and
+    pushed the doctor's remark toward Patient evidence.
+    """
+    action, role = decide_row_role_exception(
+        "I've got to say, at this stage this sound quality is not great.",
+        "DOCTOR",
+    )
+
+    assert (action, role) == ("keep", "DOCTOR")
+
+
+def test_real_presenting_complaints_still_count_as_patient_evidence() -> None:
+    """Guarding "got to say" must not weaken genuine complaint wording."""
+    # A genuine complaint on a doctor-mapped row still contradicts the label.
+    action, role = decide_row_role_exception(
+        "I've got a really itchy rash on my arms and it just started.",
+        "DOCTOR",
+    )
+
+    assert action != "keep"

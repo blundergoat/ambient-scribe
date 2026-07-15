@@ -1992,3 +1992,57 @@ def test_source_integrity_fixture_full_input_can_still_drop_the_reversal_row() -
         if str(row["segment_id"]) == variant["dropped_segment_id"]
     )
     assert "we do" in str(dropped_row["text"]).lower()
+
+
+def test_role_cues_keep_doctor_question_tail_do_for_you() -> None:
+    """Consult 5.3: the question tail `do for you?` must not borrow the answer's label.
+
+    The patient cue lived entirely in the NEXT row's text; the fragment itself
+    contributed nothing, yet it was reassigned to Patient.
+    """
+    role = infer_role_from_corrected_text(
+        "do for you?",
+        next_text="I've been feeling very anxious for months.",
+        next_role="PATIENT",
+    )
+
+    assert role is None
+
+
+def test_role_cues_keep_doctor_question_tail_else_outside_work() -> None:
+    """Consult 5.3: `else outside work?` is the doctor's question tail, not an answer."""
+    role = infer_role_from_corrected_text(
+        "else outside work?",
+        next_text="I have hobbies but no time for them lately.",
+        next_role="PATIENT",
+    )
+
+    assert role is None
+
+
+def test_role_cues_keep_doctor_recap_say_were_going() -> None:
+    """Consult 5.3: `say were going` must not inherit Patient from a neighbor row
+    whose cue words the fragment does not share."""
+    role = infer_role_from_corrected_text(
+        "say were going",
+        previous_text="when I get stressed I just can't sleep.",
+        previous_role="PATIENT",
+    )
+
+    assert role is None
+
+
+def test_role_cues_still_join_patient_continuations_that_share_cue_words() -> None:
+    """A fragment completing the patient's own cue phrase keeps its borrowed label.
+
+    "had a headache" after "I've" continues the patient's "ive had" wording -
+    the fragment contributes the cue's own words, which is the positive
+    same-turn evidence the 5.3 question tails lacked.
+    """
+    role = infer_role_from_corrected_text(
+        "had a headache since",
+        previous_text="Um, I've",
+        previous_role="PATIENT",
+    )
+
+    assert role == "PATIENT"
