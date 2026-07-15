@@ -27,7 +27,7 @@ import api.server as api_server
 import post_visit_correction as correction_module
 from api import source_integrity
 from api.server import app, lifecycle, sessions
-from corrected_role_cues import infer_role_from_corrected_text
+from corrected_role_cues import apply_role_cue_cleanup, infer_role_from_corrected_text
 from nemo_pipeline import NemoPipeline
 from nemo_session import TranscriptionSession
 from corrected_role_cues import prepare_corrected_source_segments
@@ -2046,3 +2046,54 @@ def test_role_cues_still_join_patient_continuations_that_share_cue_words() -> No
     )
 
     assert role == "PATIENT"
+
+
+# --- M05: consult 3.1 corrected-lane role no-regression pin ---
+
+_DAY3C01_ROLE_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "scribe"
+    / "role-noregression-day3c01.json"
+)
+
+
+def test_role_cue_cleanup_is_idempotent_on_retained_day3c01_tail() -> None:
+    """Re-running cue cleanup over the retained 3.1 corrected tail changes nothing.
+
+    The tail holds the availability reversal, the mother/999 instruction, the
+    stay-with advice, and the folded 'antihistamines around? Yes, yes.' debt
+    row. A cue edit that starts moving any of them must fail here instead of
+    silently relabelling the frozen visit.
+    """
+    fixture = json.loads(_DAY3C01_ROLE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    retained_roles = {
+        row["segment_id"]: row["role"] for row in fixture["corrected_tail_rows"]
+    }
+
+    cleaned_rows = apply_role_cue_cleanup(
+        [dict(row) for row in fixture["corrected_tail_rows"]]
+    )
+
+    assert {row["segment_id"]: row["role"] for row in cleaned_rows} == retained_roles
+
+
+def test_day3c01_corrected_tail_ownership_is_pinned() -> None:
+    """Emergency-tail rows stay DOCTOR; the reversal stays PATIENT-owned.
+
+    corrected-0250 is the documented exception: the patient side's 'Yes, yes.'
+    folded onto the clinician's question row - upstream identity debt this
+    fixture preserves as DOCTOR rather than hiding behind a confident flip.
+    """
+    fixture = json.loads(_DAY3C01_ROLE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    rows_by_id = {row["segment_id"]: row for row in fixture["corrected_tail_rows"]}
+
+    # The spoken emergency disposition is clinician speech end to end.
+    for segment_id in fixture["anchors"]["corrected_emergency_tail_doctor"]:
+        assert rows_by_id[segment_id]["role"] == "DOCTOR", segment_id
+
+    # The availability reversal belongs to the patient side, except the
+    # folded answer row documented as debt.
+    for segment_id in fixture["anchors"]["corrected_availability_reversal"]:
+        expected_role = "DOCTOR" if segment_id == "corrected-0250" else "PATIENT"
+        assert rows_by_id[segment_id]["role"] == expected_role, segment_id

@@ -10,6 +10,9 @@ uncertain.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from api.role_heuristics import (
     ROW_EXCEPTIONS_MAX,
     compute_row_role_exceptions,
@@ -517,3 +520,76 @@ def test_real_presenting_complaints_still_count_as_patient_evidence() -> None:
     )
 
     assert action != "keep"
+
+
+# --- M05: consult 3.1 role no-regression/diagnostic fixture ---
+
+_DAY3C01_ROLE_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "scribe"
+    / "role-noregression-day3c01.json"
+)
+
+
+def _day3c01_role_fixture() -> dict:
+    """Load the frozen consult 3.1 role pin; a missing file fails loudly.
+
+    Returns:
+        Parsed fixture dict; never empty because the freeze asserted every
+        anchor id resolves before the file was written.
+    """
+    with open(_DAY3C01_ROLE_FIXTURE_PATH, encoding="utf-8") as fixture_file:
+        return json.load(fixture_file)
+
+
+class TestDay3C01RoleNoRegression:
+    """Consult 3.1 stays honestly messy.
+
+    The retained M02-acceptance replay carries the visit's identity debt:
+    three speaker IDs, eight phantom-speaker merges, 0.806 final confidence,
+    and sub-5-word overlap rows holding the other speaker's words. The five
+    phase-1 narrow guards do NOT solve that upstream debt; these pins make
+    sure no later cue edit hides it behind confident labels or moves the
+    emergency tail.
+    """
+
+    def test_live_cue_lanes_leave_the_retained_tail_alone(self) -> None:
+        """Zero cue exceptions on the retained emergency tail at HEAD."""
+        fixture = _day3c01_role_fixture()
+
+        exceptions = compute_row_role_exceptions(
+            fixture["live_tail_rows"], fixture["terminal_mapping"]
+        )
+
+        assert exceptions == {}
+
+    def test_emergency_tail_and_interjections_keep_recorded_ownership(self) -> None:
+        """Doctor disposition rows stay DOCTOR; interjections stay PATIENT."""
+        fixture = _day3c01_role_fixture()
+        rows_by_id = {row["segment_id"]: row for row in fixture["live_tail_rows"]}
+
+        # The complete emergency disposition is clinician speech end to end.
+        for segment_id in fixture["anchors"]["emergency_tail_doctor"]:
+            assert rows_by_id[segment_id]["role"] == "DOCTOR", segment_id
+        # The patient's real interjections keep their own card.
+        for segment_id in fixture["anchors"]["patient_interjections"]:
+            assert rows_by_id[segment_id]["role"] == "PATIENT", segment_id
+
+    def test_identity_debt_is_documented_not_silently_relabelled(self) -> None:
+        """Overlap-debt rows are seam territory the cue lane must keep leaving alone."""
+        fixture = _day3c01_role_fixture()
+        rows_by_id = {row["segment_id"]: row for row in fixture["live_tail_rows"]}
+
+        # The diagnostic numbers this fixture exists to preserve.
+        assert fixture["quality_pins"]["phantom_speaker_merges"] == 8
+        assert fixture["quality_pins"]["final_confidence"] == 0.806
+        assert len(fixture["terminal_mapping"]) == 3
+
+        # Each debt row is sub-5-word seam smear: kept, never confidently flipped.
+        for segment_id in fixture["anchors"]["identity_overlap_debt"]:
+            debt_row = rows_by_id[segment_id]
+            action, _ = decide_row_role_exception(
+                str(debt_row["text"]), str(debt_row["role"])
+            )
+            assert action == "keep", segment_id

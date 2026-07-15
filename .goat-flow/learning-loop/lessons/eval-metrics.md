@@ -266,3 +266,23 @@ same report-owned cutoffs.
 reference, and hypothesis count with the exact diagnostic cutoff. Then disclose annotation-token,
 word-timing, and multi-reference/single-stream sensitivity; do not turn raw WER directly into a
 clinical-word-loss claim.
+
+## Lesson: Check role_source before attributing a wrong role label to the scaffold
+
+**Created:** 2026-07-15
+**What happened:** The M05 role-fixture sweep first classified 5.3 `corrected-0216` ("else
+outside work?" duplicated on a PATIENT row) as a scaffold/crosstalk echo the cue lanes never
+touched. The role re-score then read the row's provenance: `role_source=post_visit_alignment`,
+proving the PRE-GUARD cleanup borrow assigned that PATIENT label (the exact phase-1 failure
+class, already fixed at HEAD by `_fragment_shares_patient_cue_words`). Only the row DUPLICATION
+itself is upstream identity debt; the label was cue-lane. The sweep document was corrected the
+same day.
+**Evidence:** `var/quality/m05-role-rescore-20260715T/role-rescore.json` (search:
+"corrected-0216") and the corrected paragraph in
+`var/quality/m05-role-fixture-sweep-20260715T/classification.md` (search: "role_source check
+disproved").
+**Prevention:** A corrected-row role label has two possible authors: the live scaffold or the
+cleanup lane. `role_source=post_visit_alignment` names the cleanup; its absence names the
+scaffold (or a live-lane exception inherited through it — check the live twin's stored role
+too). Read the provenance field before classifying any wrong label as upstream debt, because the
+two classes route to different fixes.
