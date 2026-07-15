@@ -228,6 +228,7 @@ if [[ "$INCLUDE_BROWSER" == "true" ]]; then
         APP_PORT="$APP_PORT" \
         MERCURE_PORT="$MERCURE_PORT" \
         npx playwright test "${REPO_ROOT}/tests/e2e/browser.spec.js" \
+            "${REPO_ROOT}/tests/e2e/confidence-styling.spec.js" \
             --reporter=list
 
         BROWSER_EXIT=$?

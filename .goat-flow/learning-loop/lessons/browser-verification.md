@@ -109,3 +109,32 @@ Playwright strict-mode violation: the class now resolves in BOTH the popover and
 **Prevention:** When a component builder is reused across views, scope e2e locators to
 the owning container (`#summaryTranscript .summary-transcript__block`). Audit existing
 locators for a class the moment a second consumer of its builder lands.
+
+## Lesson: Unmapped speakers stitch into one UNKNOWN block - map roles before block-level assertions
+
+**Created:** 2026-07-16
+**What happened:** M06's first deep-link e2e test injected three alternating-speaker rows and
+asserted that citing two of them highlights exactly two transcript blocks. It highlighted ONE:
+with no role mapping, every speaker resolves to UNKNOWN and consecutive same-role rows stitch
+into a single block, so the block-level highlight covered all three rows. The unit suite even
+names this ("rows without a role stitch under the UNKNOWN label") - the e2e author didn't look.
+**Evidence:** `tests/e2e/browser.spec.js` (search: "Mapped\n    // roles keep the alternating").
+**Prevention:** Any e2e assertion about stitched-block boundaries must first send a
+`handleRoleUpdate` mapping so speakers resolve to distinct roles; grep the unit-test names for
+stitching behaviour before asserting block counts.
+
+## Lesson: A new hard gate orphans older tests that enter the flow mid-way
+
+**Created:** 2026-07-16
+**What happened:** M02 added two hard gates in front of note generation - the browser refuses
+`requestSummary()` without a terminal attestation, and an unstubbed correction request now
+returns a blocked source from the real agent. Six older summary-flow e2e tests entered the flow
+mid-way (bare `requestSummary()` calls, no correction stub) and had been failing since, unnoticed
+because the full browser suite wasn't rerun at the M02/M03 gates. The failures surfaced only when
+M06's browser work ran the whole file; a stash-run against clean HEAD proved them pre-existing.
+**Evidence:** `tests/e2e/browser.spec.js` (search: "the finalized event both attests"); stash-run
+2026-07-16 (6 failed on clean HEAD, same list).
+**Prevention:** When a milestone adds a gate in front of an existing flow, grep the e2e specs for
+every direct entry into that flow (function calls, route stubs) and rerun the FULL spec file at
+that milestone's own Testing Gate - a gate change is a breaking API change for tests that bypass
+the front door.

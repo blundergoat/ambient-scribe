@@ -1354,7 +1354,15 @@ test.describe("Summary input provenance (M08)", () => {
     );
     await injectFakeSegments(page, 2);
 
-    await page.evaluate(() => requestSummary());
+    // The M02 gate requires an attested terminal transcript before any note;
+    // the finalized event both attests the source and starts the summary.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-e2e-terminal",
+      });
+    });
 
     const summaryStatus = page.locator("#summaryStatus");
     const notice = page.locator("#summaryTruncationNotice");
@@ -1420,7 +1428,15 @@ test.describe("Post-visit correction before summary", () => {
     await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 2);
 
-    await page.evaluate(() => requestSummary());
+    // The M02 gate requires an attested terminal transcript before any note;
+    // the finalized event both attests the source and starts the summary.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-e2e-terminal",
+      });
+    });
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     expect(correctionCalls).toHaveLength(1);
@@ -1443,7 +1459,15 @@ test.describe("Post-visit correction before summary", () => {
     await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 1);
 
-    await page.evaluate(() => requestSummary());
+    // The M02 gate requires an attested terminal transcript before any note;
+    // the finalized event both attests the source and starts the summary.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-e2e-terminal",
+      });
+    });
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     expect(correctionCalls).toHaveLength(1);
@@ -1482,7 +1506,15 @@ test.describe("Post-visit correction before summary", () => {
     );
     await injectFakeSegments(page, 1);
 
-    await page.evaluate(() => requestSummary());
+    // The M02 gate requires an attested terminal transcript before any note;
+    // the finalized event both attests the source and starts the summary.
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-e2e-terminal",
+      });
+    });
 
     const sourceNotice = page.locator("#summarySourceNotice");
     await expect(sourceNotice).toBeVisible();
@@ -1646,6 +1678,9 @@ test.describe("Live-stop finalize drain (M21)", () => {
   }) => {
     const summaryCalls = [];
     await loadScribePage(page);
+    // An unstubbed correction request would reach the real agent, which
+    // has no session for these injected rows and would block the note.
+    await stubCorrectionRoute(page, [], []);
     await stubSummaryRoute(page, summaryCalls);
     await enterLiveRecordingState(page);
 
@@ -1767,6 +1802,9 @@ test.describe("Live-stop finalize drain (M21)", () => {
   }) => {
     const summaryCalls = [];
     await loadScribePage(page);
+    // An unstubbed correction request would reach the real agent, which
+    // has no session for these injected rows and would block the note.
+    await stubCorrectionRoute(page, [], []);
     await stubSummaryRoute(page, summaryCalls);
     await injectCoalescedCardSegments(page);
 
@@ -1990,5 +2028,261 @@ test.describe("Row confidence passthrough (M06)", () => {
     const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
     expect(summaryRows[0].confidence).toBe(0.71);
     expect(summaryRows[1]).not.toHaveProperty("confidence");
+  });
+});
+
+test.describe("Claim-level provenance (schema v2, M06)", () => {
+  /**
+   * A hydrated v2 payload in the server's exact shape: a cited claim whose
+   * unit carries display context, a second claim citing the same unit, an
+   * uncited claim, and an absence-based key point. Context rows exist
+   * precisely so the count-inflation assertion means something.
+   */
+  function v2SummaryPayload() {
+    return {
+      schema_version: 2,
+      title: "Session Summary",
+      source_state: "whole_visit_corrected",
+      sections: [
+        {
+          heading: "Subjective",
+          claims: [
+            {
+              claim_id: "subjective-01",
+              text: "Palpitations are most noticeable in the morning.",
+              evidence_basis: "source_unit",
+              source_unit_ids: ["unit-0001-0002"],
+              quote_state: "no_quote",
+              wording_review: false,
+              review_reasons: [],
+            },
+            {
+              claim_id: "subjective-02",
+              text: "The patient is 45 years old.",
+              evidence_basis: "none",
+              source_unit_ids: [],
+              quote_state: "no_quote",
+              wording_review: false,
+              review_reasons: [],
+            },
+          ],
+        },
+      ],
+      key_points: [
+        {
+          claim_id: "key-point-01",
+          text: "No chest pain was reported.",
+          evidence_basis: "transcript_absence",
+          source_unit_ids: [],
+          quote_state: "no_quote",
+          wording_review: false,
+          review_reasons: [],
+        },
+      ],
+      source_units: [
+        {
+          unit_id: "unit-0001-0002",
+          role: "PATIENT",
+          start: 0.0,
+          end: 3.5,
+          rows: [
+            { segment_id: "seg-0001", start: 0.0, end: 1.5, text: "Test segment number 1" },
+            { segment_id: "seg-0002", start: 2.0, end: 3.5, text: "Test segment number 2" },
+          ],
+          context_before: [
+            { segment_id: "seg-0000", start: -2.0, end: -0.5, text: "Earlier neighbouring words" },
+          ],
+          context_after: [
+            { segment_id: "seg-0003", start: 4.0, end: 5.5, text: "Test segment number 3" },
+          ],
+        },
+      ],
+      note_review_reasons: [],
+    };
+  }
+
+  /** Renders a note payload through the same function Mercure delivery uses. */
+  async function renderNoteDirectly(page, summaryPayload) {
+    await page.evaluate((notePayload) => renderSummary(notePayload), summaryPayload);
+  }
+
+  test("claims render claim-scoped counts that context rows never inflate", async ({ page }) => {
+    await loadScribePage(page);
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    // The cited claim counts its OWN unit: one turn, despite two context rows.
+    const citedToggle = page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle');
+    await expect(citedToggle).toHaveText("1");
+    await expect(citedToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Uncited and absence-based claims read as wording, never a count or link.
+    await expect(
+      page.locator('[data-claim-id="subjective-02"] .summary-claim__toggle')
+    ).toHaveText("No cited evidence");
+    await expect(
+      page.locator('[data-claim-id="key-point-01"] .summary-claim__toggle')
+    ).toHaveText("Absence-based");
+
+    // The v1 adapter label belongs to v1 payloads only.
+    await expect(page.locator(".summary-v1-sources-note")).toHaveCount(0);
+  });
+
+  test("the evidence disclosure is complete, non-modal, and keyboard-dismissable", async ({ page }) => {
+    await loadScribePage(page);
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    const citedToggle = page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle');
+    await citedToggle.click();
+    await expect(citedToggle).toHaveAttribute("aria-expanded", "true");
+
+    // The complete turn text derives from its ordered rows; context is
+    // visibly separated and labelled as reading aid only.
+    const disclosure = page.locator("#claimEvidence-subjective-01");
+    await expect(disclosure).toBeVisible();
+    await expect(disclosure.locator(".summary-claim__unit-text")).toHaveText(
+      "Test segment number 1 Test segment number 2"
+    );
+    await expect(disclosure.locator(".summary-claim__context")).toHaveCount(2);
+    await expect(disclosure.locator(".summary-claim__context").first()).toContainText(
+      "Context (not evidence)"
+    );
+    await expect(disclosure.locator(".summary-claim__state")).toContainText("paraphrases");
+    await expect(disclosure.locator(".summary-claim__help")).toContainText(
+      "not clinical review or approval"
+    );
+
+    // Non-modal: no dialog role and the page behind stays interactive.
+    await expect(disclosure).not.toHaveAttribute("role", "dialog");
+    await expect(page.locator("#summaryTabNote")).toBeEnabled();
+
+    // Escape closes the disclosure and anchors focus back on the toggle.
+    await page.keyboard.press("Escape");
+    await expect(disclosure).toBeHidden();
+    await expect(citedToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(citedToggle).toBeFocused();
+
+    // The explicit Close control does the same for pointer users.
+    await citedToggle.click();
+    await disclosure.locator(".summary-claim__close").click();
+    await expect(disclosure).toBeHidden();
+    await expect(citedToggle).toBeFocused();
+  });
+
+  test("Open in transcript highlights exactly the claim's cited rows", async ({ page }) => {
+    await loadScribePage(page);
+    // Three live rows exist; the claim cites only the first two. Mapped
+    // roles keep the alternating speakers in separate stitched blocks -
+    // unmapped rows would merge into one UNKNOWN block and blur the check.
+    await injectFakeSegments(page, 3);
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
+      });
+    });
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    await page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle').click();
+    await page.locator("#claimEvidence-subjective-01 .summary-claim__open").click();
+
+    // The tab switched and only the cited blocks carry the highlight
+    // (locators scoped to the transcript body - a block class rendered in
+    // two views broke bare locators before).
+    await expect(page.locator("#summaryTabTranscript")).toHaveAttribute("aria-selected", "true");
+    const citedBlocks = page.locator("#summaryTranscript .summary-transcript__block--cited");
+    await expect(citedBlocks).toHaveCount(2);
+    await expect(citedBlocks.first()).toContainText("Test segment number 1");
+    await expect(page.locator("#summaryTranscriptNotice")).toBeHidden();
+  });
+
+  test("uncited and absence-based claims expose no transcript link", async ({ page }) => {
+    await loadScribePage(page);
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    // The uncited claim's disclosure explains itself and offers no jump.
+    await page.locator('[data-claim-id="subjective-02"] .summary-claim__toggle').click();
+    const uncitedDisclosure = page.locator("#claimEvidence-subjective-02");
+    await expect(uncitedDisclosure.locator(".summary-claim__state")).toContainText(
+      "No transcript evidence was cited"
+    );
+    await expect(uncitedDisclosure.locator(".summary-claim__open")).toHaveCount(0);
+
+    // Opening the absence-based key point closes the first (one at a time).
+    await page.locator('[data-claim-id="key-point-01"] .summary-claim__toggle').click();
+    await expect(uncitedDisclosure).toBeHidden();
+    const absenceDisclosure = page.locator("#claimEvidence-key-point-01");
+    await expect(absenceDisclosure.locator(".summary-claim__state")).toContainText(
+      "based on absence"
+    );
+    await expect(absenceDisclosure.locator(".summary-claim__open")).toHaveCount(0);
+  });
+
+  test("a v1 payload keeps the section renderer behind its honest label", async ({ page }) => {
+    await loadScribePage(page);
+    await renderNoteDirectly(page, {
+      title: "Session Summary",
+      key_points: ["Sore red skin on both forearms."],
+      sections: [
+        {
+          heading: "Subjective",
+          content: "Patient reports sore, red skin for two weeks.",
+          citations: [{ segment_id: "seg-0001", text: "my arms are quite sore", start: 1.0 }],
+        },
+      ],
+    });
+
+    // The fixed adapter wording names the v1 provenance form.
+    await expect(page.locator(".summary-v1-sources-note")).toHaveText(
+      "Section sources — not mapped to individual claims"
+    );
+    // No claim affordances exist for a v1 note - nothing is fabricated.
+    await expect(page.locator(".summary-claim")).toHaveCount(0);
+    await expect(page.locator("#summaryContent .summary-section__content")).toContainText(
+      "Patient reports sore, red skin"
+    );
+  });
+
+  test("v2 axes and the copied note agree on claim-scoped review flags", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await loadScribePage(page);
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    // One uncited claim is the note's single automated flag.
+    await expect(page.locator("#noteAxisAutomated")).toHaveText("Review required (1)");
+    await expect(page.locator("#noteReviewReasons")).toContainText(
+      "1 claim without cited transcript evidence"
+    );
+
+    await expect(page.locator("#copyNoteBtn")).toBeEnabled();
+    await page.click("#copyNoteBtn");
+    const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
+
+    expect(copiedNote).toContain("Source: Draft generated from corrected transcript");
+    expect(copiedNote).toContain("Automated review: Review required (1)");
+    expect(copiedNote).toContain(
+      "The patient is 45 years old. [No cited evidence — review]"
+    );
+    expect(copiedNote).toContain("- No chest pain was reported. [Based on transcript absence]");
+    // Counts, controls, and disclosure text never reach the clipboard.
+    expect(copiedNote).not.toContain("View evidence");
+    expect(copiedNote).not.toContain("Open in transcript");
+    expect(copiedNote).not.toContain("Context (not evidence)");
+    expect(copiedNote).not.toContain("unit-0001-0002");
+  });
+
+  test("the disclosure wraps inside narrow viewports without page overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 720 });
+    await loadScribePage(page);
+    await renderNoteDirectly(page, v2SummaryPayload());
+
+    await page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle').click();
+    const disclosureBox = await page.locator("#claimEvidence-subjective-01").boundingBox();
+    expect(disclosureBox.width).toBeLessThanOrEqual(360);
+
+    // The note body never forces a horizontal page scroll at phone width.
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+    );
+    expect(hasHorizontalOverflow).toBe(false);
   });
 });

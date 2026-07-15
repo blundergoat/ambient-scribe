@@ -688,6 +688,124 @@
             border-bottom: 2px dotted #d97706;
             cursor: help;
         }
+        /* ---- Claim-level provenance (M06, schema v2) ---- */
+        .summary-v1-sources-note {
+            /* Honest label for the v1 adapter path: section-level sources. */
+            margin: 0 0 0.625rem;
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            font-style: italic;
+        }
+        .summary-claim__text--review {
+            /* A claim needing review: visible but non-destructive; the
+               explanation lives in the claim's disclosure, never a bare word. */
+            border-bottom: 2px dotted #d97706;
+            cursor: help;
+        }
+        .summary-claim__toggle {
+            display: inline-block;
+            margin-left: 0.25rem;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            line-height: 1;
+            vertical-align: super;
+            padding: 0.0625rem 0.375rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            background: var(--surface-bg-alt);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .summary-claim__toggle--basis {
+            /* Uncited/absence chips read as wording, not a citation count. */
+            font-weight: 600;
+            color: var(--text-subtle);
+        }
+        .summary-claim__toggle:hover,
+        .summary-claim__toggle[aria-expanded="true"] {
+            background: var(--surface-hover);
+            border-color: color-mix(in srgb, var(--accent) 35%, var(--surface-border));
+        }
+        .summary-claim__disclosure {
+            /* Non-modal, in-flow: expands below its claim and pushes the note
+               down. No overlay, no focus trap - the page stays interactive. */
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            margin: 0.375rem 0 0.5rem;
+            padding: 0.5rem;
+            border: 1px solid var(--surface-border);
+            border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--surface-border));
+            border-radius: 0.5rem;
+            background: var(--surface-bg-alt);
+            font-size: 0.8125rem;
+            overflow-wrap: anywhere;
+        }
+        .summary-claim__disclosure.hidden { display: none; }
+        .summary-claim__state {
+            margin: 0;
+            font-weight: 600;
+            color: var(--text-strong);
+        }
+        .summary-claim__reasons {
+            margin: 0;
+            padding-left: 1.125rem;
+            color: var(--color-review);
+        }
+        .summary-claim__evidence {
+            /* The disclosure's single internal scroll region: long turns
+               scroll here instead of stretching the page. */
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            max-height: 16rem;
+            overflow-y: auto;
+        }
+        .summary-claim__unit {
+            padding: 0.375rem 0.5rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.375rem;
+            background: var(--surface-bg);
+        }
+        .summary-claim__unit-meta {
+            display: block;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            color: var(--text-subtle);
+        }
+        .summary-claim__unit-text { color: var(--text-strong); }
+        .summary-claim__context {
+            /* Display-only neighbours: visibly separated reading aid that
+               never joins the evidence or its count. */
+            font-size: 0.75rem;
+            font-style: italic;
+            color: var(--text-subtle);
+        }
+        .summary-claim__actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+        .summary-claim__open,
+        .summary-claim__close {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.625rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            background: var(--surface-bg-alt);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .summary-claim__close { color: var(--text-subtle); }
+        .summary-claim__open:hover,
+        .summary-claim__close:hover { background: var(--surface-hover); }
+        .summary-claim__help {
+            margin: 0;
+            font-size: 0.6875rem;
+            color: var(--text-subtle);
+        }
         .summary-low-confidence {
             position: relative;
             border-radius: 3px;

@@ -212,3 +212,228 @@ test('generated notes always carry all three axes and fallback is review-require
     assert.equal(mixed.automatedReviewLine, 'Review required (4)');
     assert.equal(mixed.reviewReasons.length, 2);
 });
+
+// ---------------------------------------------------------------------------
+// Schema v2 (M06): claim-scoped review counts and the claim-prose export.
+// ---------------------------------------------------------------------------
+
+const {
+    claimReviewFlags,
+    v2ClaimExportText,
+    v2ReviewCountsFrom,
+} = require('../../public/js/scribe-copy.js');
+
+// A representative v2 note: one cited claim, one uncited claim, one
+// absence-based key point, a quote-mismatch reason, and a note-level
+// coverage finding - the shapes hydrated_v2_payload actually emits.
+function v2StylePayload() {
+    return {
+        schema_version: 2,
+        title: 'Session Summary',
+        sections: [
+            {
+                heading: 'Subjective',
+                claims: [
+                    {
+                        claim_id: 'subjective-01',
+                        text: 'Palpitations are most noticeable in the morning.',
+                        evidence_basis: 'source_unit',
+                        source_unit_ids: ['unit-0139-0153'],
+                        quote_state: 'no_quote',
+                        wording_review: false,
+                        review_reasons: [],
+                    },
+                    {
+                        claim_id: 'subjective-02',
+                        text: 'The patient is 45 years old.',
+                        evidence_basis: 'none',
+                        source_unit_ids: [],
+                        quote_state: 'no_quote',
+                        wording_review: false,
+                        review_reasons: [],
+                    },
+                ],
+            },
+            {
+                heading: 'Assessment',
+                claims: [
+                    {
+                        claim_id: 'assessment-01',
+                        text: 'The doctor said palpitations are "more likely to be associated with anxiety".',
+                        evidence_basis: 'source_unit',
+                        source_unit_ids: ['unit-0416-0423'],
+                        quote_state: 'not_matched',
+                        wording_review: true,
+                        review_reasons: [
+                            {
+                                sentence: 'The doctor said palpitations are "more likely to be associated with anxiety".',
+                                reason: 'quote_not_matched',
+                                detail: 'Quoted wording could not be matched to the cited transcript — verify manually',
+                                segment_ids: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+        key_points: [
+            {
+                claim_id: 'key-point-01',
+                text: 'No chest pain was reported.',
+                evidence_basis: 'transcript_absence',
+                source_unit_ids: [],
+                quote_state: 'no_quote',
+                wording_review: false,
+                review_reasons: [],
+            },
+        ],
+        source_units: [
+            {
+                unit_id: 'unit-0139-0153',
+                role: 'PATIENT',
+                start: 139.0,
+                end: 153.2,
+                rows: [{ segment_id: 'corrected-0139', start: 139.0, end: 153.2, text: 'They are worse in the mornings.' }],
+                context_before: [],
+                context_after: [],
+            },
+            {
+                unit_id: 'unit-0416-0423',
+                role: 'DOCTOR',
+                start: 416.0,
+                end: 443.1,
+                rows: [{ segment_id: 'corrected-0416', start: 416.0, end: 443.1, text: 'These are most likely to be associated with anxiety.' }],
+                context_before: [],
+                context_after: [],
+            },
+        ],
+        note_review_reasons: [
+            {
+                reason: 'coverage_missing_step',
+                detail: 'An emergency-plan step from the visit is not represented in the note.',
+                segment_ids: [],
+            },
+        ],
+        source_state: 'whole_visit_corrected',
+    };
+}
+
+test('claim review flags read basis, reasons, and wording independently', () => {
+    assert.deepEqual(
+        claimReviewFlags({ evidence_basis: 'source_unit', review_reasons: [], wording_review: false }),
+        { uncited: false, reasonFlagged: false, wordingReview: false }
+    );
+    // A claim without a stated basis is uncited, never silently supported.
+    assert.equal(claimReviewFlags({}).uncited, true);
+    assert.equal(claimReviewFlags({ evidence_basis: 'transcript_absence' }).uncited, false);
+    assert.equal(
+        claimReviewFlags({ evidence_basis: 'source_unit', review_reasons: [{ reason: 'hedge-dropped' }] }).reasonFlagged,
+        true
+    );
+    assert.equal(claimReviewFlags({ evidence_basis: 'source_unit', wording_review: true }).wordingReview, true);
+});
+
+test('v2 review counts walk every claim and keep note-level reasons verbatim', () => {
+    const reviewCounts = v2ReviewCountsFrom(v2StylePayload());
+
+    assert.equal(reviewCounts.uncitedClaimCount, 1);
+    assert.equal(reviewCounts.reasonFlaggedClaimCount, 1);
+    assert.equal(reviewCounts.wordingReviewClaimCount, 1);
+    assert.deepEqual(reviewCounts.noteReviewReasons, [
+        'An emergency-plan step from the visit is not represented in the note.',
+    ]);
+});
+
+test('v2 axes total always equals its own breakdown list', () => {
+    const statusLines = deriveNoteStatusLines({
+        phase: 'generated',
+        sourceState: 'whole_visit_corrected',
+        ...v2ReviewCountsFrom(v2StylePayload()),
+    });
+
+    // 1 uncited + 1 reason-flagged + 1 wording + 1 note-level = 4 flags.
+    assert.equal(statusLines.automatedReviewLine, 'Review required (4)');
+    assert.deepEqual(statusLines.reviewReasons, [
+        '1 claim without cited transcript evidence',
+        '1 claim flagged by automated review checks',
+        '1 claim from low-confidence wording',
+        'An emergency-plan step from the visit is not represented in the note.',
+    ]);
+    assert.equal(statusLines.noteAvailable, true);
+});
+
+test('a clean v2 note reads as no automated review flags', () => {
+    const cleanPayload = v2StylePayload();
+    cleanPayload.sections = [cleanPayload.sections[0]];
+    cleanPayload.sections[0].claims = [cleanPayload.sections[0].claims[0]];
+    cleanPayload.key_points = [];
+    cleanPayload.note_review_reasons = [];
+
+    const statusLines = deriveNoteStatusLines({
+        phase: 'generated',
+        sourceState: 'whole_visit_corrected',
+        ...v2ReviewCountsFrom(cleanPayload),
+    });
+    assert.ok(statusLines.automatedReviewLine.startsWith('No automated review flags.'));
+    assert.equal(statusLines.reviewReasons.length, 0);
+});
+
+test('v2 claim export text carries review meaning inline, never counts', () => {
+    // A supported claim copies as plain prose.
+    assert.equal(
+        v2ClaimExportText({ text: 'Plain claim.', evidence_basis: 'source_unit', source_unit_ids: ['unit-1-2'] }),
+        'Plain claim.'
+    );
+    // Uncited claims are marked with why they need review.
+    assert.equal(
+        v2ClaimExportText({ text: 'The patient is 45 years old.', evidence_basis: 'none' }),
+        'The patient is 45 years old. [No cited evidence — review]'
+    );
+    // Absence-based statements say so, or the paste reads as observed fact.
+    assert.equal(
+        v2ClaimExportText({ text: 'No chest pain was reported.', evidence_basis: 'transcript_absence' }),
+        'No chest pain was reported. [Based on transcript absence]'
+    );
+    // Deterministic reasons travel with their exact explanatory wording.
+    const flaggedExport = v2ClaimExportText({
+        text: 'Quoted claim.',
+        evidence_basis: 'source_unit',
+        review_reasons: [{ reason: 'quote_not_matched', detail: 'Quoted wording could not be matched to the cited transcript — verify manually' }],
+        wording_review: true,
+    });
+    assert.ok(flaggedExport.includes('[Review: Quoted wording could not be matched'));
+    assert.ok(flaggedExport.endsWith('[Low confidence]'));
+});
+
+test('the v2 draft note export is claim prose with axes and no control chrome', () => {
+    const summaryPayload = v2StylePayload();
+    const statusLines = deriveNoteStatusLines({
+        phase: 'generated',
+        sourceState: 'whole_visit_corrected',
+        ...v2ReviewCountsFrom(summaryPayload),
+    });
+    const exportedNote = serializeDraftNote(
+        noteModelFromSummaryPayload(summaryPayload, statusLines)
+    );
+
+    // The three axes and the note-level reason lead the export.
+    assert.ok(exportedNote.includes('Source: Draft generated from corrected transcript'));
+    assert.ok(exportedNote.includes('Automated review: Review required (4)'));
+    assert.ok(exportedNote.includes('  - An emergency-plan step from the visit is not represented in the note.'));
+    assert.ok(exportedNote.includes('Clinician review: Not clinician reviewed'));
+
+    // Claims copy as prose with inline review meaning.
+    assert.ok(exportedNote.includes('- No chest pain was reported. [Based on transcript absence]'));
+    assert.ok(exportedNote.includes(
+        'Palpitations are most noticeable in the morning. '
+        + 'The patient is 45 years old. [No cited evidence — review]'
+    ));
+    assert.ok(exportedNote.includes('[Review: Quoted wording could not be matched'));
+
+    // Citation counts, disclosure text, and control wording never paste.
+    assert.ok(!exportedNote.includes('View evidence'));
+    assert.ok(!exportedNote.includes('Open in transcript'));
+    assert.ok(!exportedNote.includes('Context (not evidence)'));
+    assert.ok(!exportedNote.includes('unit-0139-0153'));
+    assert.ok(!exportedNote.includes('source turn'));
+});

@@ -112,11 +112,70 @@ function noteUnavailableAxes(sourceLine) {
 }
 
 /**
+ * Reads which review flags one schema-v2 claim carries.
+ * Use for the axes counts and the export markers so both always agree.
+ *
+ * @param {object} claim - v2 claim; missing fields mean that flag is absent.
+ * @returns {object} {uncited, reasonFlagged, wordingReview} booleans.
+ */
+function claimReviewFlags(claim) {
+    return {
+        // An uncited claim has no transcript evidence at all - review required.
+        uncited: (claim?.evidence_basis ?? 'none') === 'none',
+        // Deterministic review reasons (M05 lanes, quote mismatch) travel per claim.
+        reasonFlagged: (claim?.review_reasons ?? []).length > 0,
+        // The M03 threshold cue: cited wording is predominantly low-confidence.
+        wordingReview: claim?.wording_review === true,
+    };
+}
+
+/**
+ * Walks every claim of a schema-v2 note and tallies its review flags.
+ * Use to build the status model for the axes and the copied header: the
+ * renderer and the clipboard must count from the same payload walk.
+ *
+ * @param {object} summaryPayload - v2 note payload; missing arrays act empty.
+ * @returns {object} additive per-flag claim counts plus the note-level
+ *   review reason details; all zero/empty means no automated flags.
+ */
+function v2ReviewCountsFrom(summaryPayload) {
+    const allClaims = [
+        ...(summaryPayload?.sections ?? []).flatMap((section) => section.claims ?? []),
+        ...(summaryPayload?.key_points ?? []),
+    ];
+    let uncitedClaimCount = 0;
+    let reasonFlaggedClaimCount = 0;
+    let wordingReviewClaimCount = 0;
+
+    // Counts are additive per flag (a claim can carry more than one), so the
+    // "(n)" total always equals the breakdown lines beneath it.
+    for (const claim of allClaims) {
+        const claimFlags = claimReviewFlags(claim);
+        uncitedClaimCount += claimFlags.uncited ? 1 : 0;
+        reasonFlaggedClaimCount += claimFlags.reasonFlagged ? 1 : 0;
+        wordingReviewClaimCount += claimFlags.wordingReview ? 1 : 0;
+    }
+
+    return {
+        uncitedClaimCount,
+        reasonFlaggedClaimCount,
+        wordingReviewClaimCount,
+        // Note-level findings (e.g. an unrepresented emergency-plan step) are
+        // readable sentences the reviewer sees verbatim.
+        noteReviewReasons: (summaryPayload?.note_review_reasons ?? []).map(
+            (noteReason) => String(noteReason.detail || noteReason.reason || '')
+        ).filter((reasonText) => reasonText !== ''),
+    };
+}
+
+/**
  * Collects the automated-review reasons and flagged-item total for one note.
  * Use when a note has rendered: the visible "(n)" must always equal the
  * breakdown beneath it - "(2)" above a 1+3 item list misled the reader.
  *
  * @param {object} statusModel - see deriveNoteStatusLines; missing counts act as zero.
+ *   v1 notes fill unverifiedCount/lowConfidenceCount; v2 notes fill the
+ *   claim-scoped counts from v2ReviewCountsFrom. Absent fields act as zero.
  * @returns {object} {reviewReasons, flaggedItemCount}; both empty/zero means
  *   the note carries no automated flags at all.
  */
@@ -125,11 +184,17 @@ function automatedReviewSummaryFor(statusModel) {
     const {
         unverifiedCount = 0,
         lowConfidenceCount = 0,
+        uncitedClaimCount = 0,
+        reasonFlaggedClaimCount = 0,
+        wordingReviewClaimCount = 0,
+        noteReviewReasons = [],
         roleSettlement,
         sourceState,
     } = statusModel ?? {};
     const reviewReasons = [];
-    let flaggedItemCount = unverifiedCount + lowConfidenceCount;
+    let flaggedItemCount = unverifiedCount + lowConfidenceCount
+        + uncitedClaimCount + reasonFlaggedClaimCount + wordingReviewClaimCount
+        + noteReviewReasons.length;
 
     // Unsupported statements are the first thing a reviewer should check.
     if (unverifiedCount > 0) {
@@ -143,6 +208,26 @@ function automatedReviewSummaryFor(statusModel) {
             `${countedNoun(lowConfidenceCount, 'sentence')} from low-confidence wording`
         );
     }
+    // Claims that cite nothing carry no evidence a reviewer could open.
+    if (uncitedClaimCount > 0) {
+        reviewReasons.push(
+            `${countedNoun(uncitedClaimCount, 'claim')} without cited transcript evidence`
+        );
+    }
+    // Claims with deterministic review reasons carry their exact wording in place.
+    if (reasonFlaggedClaimCount > 0) {
+        reviewReasons.push(
+            `${countedNoun(reasonFlaggedClaimCount, 'claim')} flagged by automated review checks`
+        );
+    }
+    // The claim-scoped M03 cue: cited wording came from uncertain audio.
+    if (wordingReviewClaimCount > 0) {
+        reviewReasons.push(
+            `${countedNoun(wordingReviewClaimCount, 'claim')} from low-confidence wording`
+        );
+    }
+    // Note-level findings read verbatim so the reviewer knows what to check.
+    reviewReasons.push(...noteReviewReasons);
     // A frozen role settlement means speaker labels never finished settling.
     if (roleSettlement === 'failed_frozen') {
         reviewReasons.push('speaker labels were frozen before role checks completed');
@@ -409,11 +494,47 @@ function sectionModelFrom(section) {
 }
 
 /**
+ * Serializes one schema-v2 claim for the export, review meaning inline.
+ * Use while building the v2 note model: markers are real text beside the
+ * claim they flag, exactly where the panel shows them, and citation counts
+ * or disclosure text can never appear because only claim state is read.
+ *
+ * @param {object} claim - v2 claim; missing flag fields copy the text plain.
+ * @returns {string} claim text followed by its plain-text review markers.
+ */
+function v2ClaimExportText(claim) {
+    const exportParts = [String(claim?.text ?? '')];
+    const claimFlags = claimReviewFlags(claim);
+
+    // An absence-based statement says so, or the paste reads as observed fact.
+    if (claim?.evidence_basis === 'transcript_absence') {
+        exportParts.push('[Based on transcript absence]');
+    }
+    // An uncited claim is marked with why it needs review, not a bare word.
+    if (claimFlags.uncited) {
+        exportParts.push('[No cited evidence — review]');
+    }
+    // Each deterministic reason travels with its exact explanatory wording.
+    for (const reviewReason of claim?.review_reasons ?? []) {
+        const reasonText = String(reviewReason.detail || reviewReason.reason || '');
+
+        // A reason without wording still may not vanish from the paste.
+        exportParts.push(`[Review: ${reasonText || 'automated review flag'}]`);
+    }
+    // The claim-scoped low-confidence cue keeps the established M03 marker.
+    if (claimFlags.wordingReview) {
+        exportParts.push('[Low confidence]');
+    }
+
+    return exportParts.join(' ');
+}
+
+/**
  * Maps a backend summary payload onto the export's note model.
  * Use before serializing: only clinical text and review meaning survive the
  * mapping, so the export cannot leak counts no matter how the panel renders.
  *
- * @param {object} summaryPayload - backend note payload; missing arrays act empty.
+ * @param {object} summaryPayload - backend note payload (v1 or v2); missing arrays act empty.
  * @param {object} statusLines - output of deriveNoteStatusLines for this note.
  * @returns {object} noteModel accepted by serializeDraftNote.
  */
@@ -425,6 +546,26 @@ function noteModelFromSummaryPayload(summaryPayload, statusLines) {
         key_points: keyPoints = [],
         sections = [],
     } = summaryPayload ?? {};
+
+    // A v2 note copies as claim prose: ordered claims joined per section,
+    // review markers already inline, so the shared serializer adds none.
+    if (summaryPayload?.schema_version === 2) {
+        return {
+            title: title || 'Draft note',
+            statusLines,
+            reviewReasons: statusLines?.reviewReasons ?? [],
+            keyPoints: keyPoints.map((claim) => ({
+                text: v2ClaimExportText(claim),
+                unverified: false,
+            })),
+            sections: sections.map((section) => ({
+                heading: section.heading,
+                content: (section.claims ?? []).map(v2ClaimExportText).join(' '),
+                unverifiedSentences: [],
+                lowConfidenceSentences: [],
+            })),
+        };
+    }
 
     return {
         title: title || 'Draft note',
@@ -586,11 +727,14 @@ if (typeof module !== 'undefined' && module.exports) {
         NOT_CLINICIAN_REVIEWED_TEXT,
         SOURCE_AXIS_LINES,
         TRANSCRIPT_LANE_LABELS,
+        claimReviewFlags,
         deriveNoteStatusLines,
         formatCopyTimestamp,
         markFlaggedSentencesForCopy,
         noteModelFromSummaryPayload,
         serializeDraftNote,
         serializeTranscriptRows,
+        v2ClaimExportText,
+        v2ReviewCountsFrom,
     };
 }
