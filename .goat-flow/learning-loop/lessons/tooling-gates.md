@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-13
+last_reviewed: 2026-07-15
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -327,3 +327,25 @@ attribute. Focused tests passed, but Gruff exposed the extra state on a class al
 attributes. Replacing it with a module policy constant kept the file at 999 lines and a
 `--diff HEAD` hook scan reported zero new findings. Prefer a constant for a fixed application
 contract; use Gruff's new-only diff to distinguish introduced findings from inherited symbol debt.
+
+## Lesson: A schema switch orphans every test stub beneath it - guard the provider boundary
+
+**Created:** 2026-07-15
+**What happened:** M06 replaced the summary generation path (`_generate_validated_draft` →
+`_generate_validated_v2_draft`). Two tests stubbed the OLD helper by name; after the switch the
+stubs patched dead code and the live path ran to `create_summary_agent()` — on a box carrying
+real AWS credentials for approved replay campaigns. An estimated 3-6 UNAUTHORIZED Bedrock
+generations occurred across two pytest invocations before the 8-19s suite runtimes exposed it
+(one test even PASSED on real model output). Root causes: name-based stubs one level above the
+boundary, and no fail-fast at the boundary itself.
+**Evidence:** `.goat-flow/logs/sessions/2026-07-14-prime-m01-source-integrity.md` (search:
+"UNAUTHORIZED"); the guard in `tests/python/conftest.py` (search: "_no_summary_provider_calls").
+**Prevention:** (1) A session-scoped autouse conftest guard replaces
+`agents.create_summary_agent` with a raiser, so any unpatched generation path fails fast and
+free; tests patch their helper OVER the stub. (2) When renaming/replacing a function, grep the
+TESTS for the old name before running anything — a stub that still patches the old name is a
+live-fire path, not a failing test. (3) Watch suite runtime: an 8s jump in a sub-second file
+means network. Bonus finding: a per-test autouse fixture perturbed event-loop timing enough to
+trip a latent grace-destroy/dead-executor race in the transcription tests two files away —
+prefer session-scoped single-setattr guards, and treat new order-dependent failures after a
+conftest change as YOUR change until bisected (`git stash push -- <file>` isolates it fast).

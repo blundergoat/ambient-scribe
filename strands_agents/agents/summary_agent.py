@@ -33,12 +33,16 @@ SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "4096"
 
 _SHARED_SUMMARY_RULES = """
 Rules:
-- Cite transcript timestamps in square brackets as MM:SS-MM:SS, e.g. [02:15-02:30].
-- Timestamps are minutes and seconds: the seconds field is always 00-59. Convert row times
-  given in seconds (a row at 196 seconds is [03:16], never [02:76] or [196]).
-- Square brackets contain timestamps only - never segment IDs; IDs belong solely in each
-  section's `citations` array.
-- When the prompt includes source IDs, cite only those IDs in each section's `citations` array.
+- Write every section and key point as ORDERED ATOMIC CLAIMS: one clinical assertion per
+  claim, in reading order. Never bundle unrelated facts into one claim.
+- Cite evidence ONLY as source unit IDs from the prompt's unit list, in each claim's
+  `source_unit_ids` array. Unit IDs are the only permitted citation form; never invent an ID
+  and never cite row, segment, or timestamp identifiers.
+- Set each claim's `evidence_basis`: `source_unit` when citing units, `transcript_absence`
+  for a bounded negative supported by what the transcript covers, or `none` when no evidence
+  exists. Claims with basis `transcript_absence` or `none` leave `source_unit_ids` empty.
+- Prose contains no bracketed references of any kind; provenance lives only in
+  `source_unit_ids`.
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
 - If the transcript is too short or uninformative, say so briefly rather than inventing content.
@@ -69,11 +73,22 @@ Output format:
     "sections": [
         {
             "heading": "Section Name",
-            "content": "Section content with [MM:SS-MM:SS] citations.",
-            "citations": [{"segment_id": "seg-0001"}]
+            "claims": [
+                {
+                    "text": "One atomic clinical assertion.",
+                    "evidence_basis": "source_unit",
+                    "source_unit_ids": ["unit-0416-0423"]
+                }
+            ]
         }
     ],
-    "key_points": ["Point 1", "Point 2"]
+    "key_points": [
+        {
+            "text": "One atomic key point.",
+            "evidence_basis": "source_unit",
+            "source_unit_ids": ["unit-0002-0009"]
+        }
+    ]
 }
 """
 
@@ -126,7 +141,9 @@ def create_summary_agent():
         )
     # Example: the clinician clicks Summarise while the configured provider is unavailable.
     except Exception as provider_error:
-        raise RuntimeError(f"Failed to create summary agent: {provider_error}") from provider_error
+        raise RuntimeError(
+            f"Failed to create summary agent: {provider_error}"
+        ) from provider_error
 
 
 def _create_summary_model():

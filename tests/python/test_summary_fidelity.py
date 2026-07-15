@@ -222,18 +222,32 @@ def test_empty_transcript_never_raises_violations() -> None:
     assert found == []
 
 
-def test_regeneration_and_flagging_pipeline(monkeypatch) -> None:
-    """A fabricated denial earns one redo; when the redo repeats it, the note ships flagged."""
-    from api import summary_generation as generation_module
-    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
+def _v2_note(*section_claim_texts: list[str]) -> "object":
+    """Build a v2 note whose Objective section carries the given claim texts."""
+    from api.summary_generation import (
+        ClaimOutput,
+        ClaimSectionOutput,
+        SessionSummaryV2Output,
+    )
 
-    fabricated = SessionSummaryOutput(
+    return SessionSummaryV2Output(
         title="Visit note",
         sections=[
-            SummarySectionOutput(heading="Objective", content="Patient denies dyspnea.")
+            ClaimSectionOutput(
+                heading="Objective",
+                claims=[ClaimOutput(text=text) for text in texts],
+            )
+            for texts in section_claim_texts
         ],
         key_points=[],
     )
+
+
+def test_regeneration_and_flagging_pipeline(monkeypatch) -> None:
+    """A fabricated denial earns one redo; when the redo repeats it, the note ships flagged."""
+    from api import summary_generation as generation_module
+
+    fabricated = _v2_note(["Patient denies dyspnea."])
     seen_prompts: list[str] = []
 
     class _StubbedResult:
@@ -271,26 +285,22 @@ def test_regeneration_and_flagging_pipeline(monkeypatch) -> None:
     assert "Patient denies dyspnea." in seen_prompts[1]
     assert "REJECTED" in seen_prompts[1]
 
-    # The surviving sentence ships visibly flagged, never silently stripped.
+    # The surviving claim ships visibly flagged, never silently stripped.
     assert payload is not None
-    assert payload["sections"][0]["content"] == "Patient denies dyspnea."
-    assert payload["sections"][0]["unverified"] == ["Patient denies dyspnea."]
+    flagged_claim = payload["sections"][0]["claims"][0]
+    assert flagged_claim["text"] == "Patient denies dyspnea."
+    assert any(
+        reason["reason"] == "negative-without-denial"
+        for reason in flagged_claim["review_reasons"]
+    )
 
 
 def test_clean_note_ships_without_flag_keys(monkeypatch) -> None:
     """A fidelity-clean note renders byte-identically to the pre-M07 payload shape."""
     from api import summary_generation as generation_module
-    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
 
-    honest = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(
-                heading="Objective",
-                content="No physical examination findings are documented in this transcript.",
-            )
-        ],
-        key_points=[],
+    honest = _v2_note(
+        ["No physical examination findings are documented in this transcript."]
     )
     calls: list[str] = []
 
@@ -324,11 +334,11 @@ def test_clean_note_ships_without_flag_keys(monkeypatch) -> None:
         transcript_segments=C03_ROWS,
     )
 
-    # One generation, no retry, and no unverified keys anywhere in the payload.
+    # One generation, no retry, and no review reasons anywhere in the payload.
     assert len(calls) == 1
     assert payload is not None
-    assert "unverified" not in payload["sections"][0]
-    assert "unverified_key_points" not in payload
+    assert payload["sections"][0]["claims"][0]["review_reasons"] == []
+    assert payload["note_review_reasons"] == []
 
 
 def test_violation_carries_location_and_reason_for_the_flag() -> None:
@@ -392,27 +402,14 @@ def test_worse_regeneration_never_replaces_a_better_first_draft(
     import logging
 
     from api import summary_generation as generation_module
-    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
 
-    one_violation = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(heading="Objective", content="Patient denies dyspnea.")
-        ],
-        key_points=[],
-    )
-    three_violations = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(
-                heading="Objective",
-                content=(
-                    "Patient denies dyspnea. Denies recent head injury. "
-                    "Neurological status normal on examination."
-                ),
-            )
-        ],
-        key_points=[],
+    one_violation = _v2_note(["Patient denies dyspnea."])
+    three_violations = _v2_note(
+        [
+            "Patient denies dyspnea.",
+            "Denies recent head injury.",
+            "Neurological status normal on examination.",
+        ]
     )
     _stub_agent_returning(monkeypatch, [one_violation, three_violations])
 
@@ -426,8 +423,12 @@ def test_worse_regeneration_never_replaces_a_better_first_draft(
 
     # The one-violation first draft ships, with exactly its one visible flag.
     assert payload is not None
-    assert payload["sections"][0]["content"] == "Patient denies dyspnea."
-    assert payload["sections"][0]["unverified"] == ["Patient denies dyspnea."]
+    shipped_claims = payload["sections"][0]["claims"]
+    assert [claim["text"] for claim in shipped_claims] == ["Patient denies dyspnea."]
+    assert any(
+        reason["reason"] == "negative-without-denial"
+        for reason in shipped_claims[0]["review_reasons"]
+    )
 
     # Selection is auditable: which attempt shipped and both violation counts.
     selection_records = [
@@ -445,24 +446,10 @@ def test_worse_regeneration_never_replaces_a_better_first_draft(
 def test_clean_retry_still_ships_and_no_third_generation_runs(monkeypatch) -> None:
     """Normal improvement shape: attempt 0 violates, attempt 1 is clean - attempt 1 ships."""
     from api import summary_generation as generation_module
-    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
 
-    fabricated = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(heading="Objective", content="Patient denies dyspnea.")
-        ],
-        key_points=[],
-    )
-    honest = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(
-                heading="Objective",
-                content="No physical examination findings are documented in this transcript.",
-            )
-        ],
-        key_points=[],
+    fabricated = _v2_note(["Patient denies dyspnea."])
+    honest = _v2_note(
+        ["No physical examination findings are documented in this transcript."]
     )
     seen_prompts = _stub_agent_returning(monkeypatch, [fabricated, honest])
 
@@ -475,10 +462,10 @@ def test_clean_retry_still_ships_and_no_third_generation_runs(monkeypatch) -> No
 
     assert len(seen_prompts) == 2
     assert payload is not None
-    assert payload["sections"][0]["content"].startswith(
+    assert payload["sections"][0]["claims"][0]["text"].startswith(
         "No physical examination findings"
     )
-    assert "unverified" not in payload["sections"][0]
+    assert payload["sections"][0]["claims"][0]["review_reasons"] == []
 
 
 def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> None:
@@ -486,16 +473,9 @@ def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> 
     import logging
 
     from api import summary_generation as generation_module
-    from api.summary_generation import SessionSummaryOutput, SummarySectionOutput
 
     fabricated_sentence = "Patient denies dyspnea."
-    fabricated = SessionSummaryOutput(
-        title="Visit note",
-        sections=[
-            SummarySectionOutput(heading="Objective", content=fabricated_sentence)
-        ],
-        key_points=[],
-    )
+    fabricated = _v2_note([fabricated_sentence])
     _stub_agent_returning(monkeypatch, [fabricated, fabricated])
 
     with caplog.at_level(logging.DEBUG, logger="api.summary_generation"):

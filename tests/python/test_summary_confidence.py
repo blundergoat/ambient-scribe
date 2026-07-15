@@ -17,9 +17,6 @@ from api.summary_confidence import (
     low_confidence_review_reasons,
 )
 from api.summary_generation import (
-    SessionSummaryOutput,
-    SummaryCitationOutput,
-    SummarySectionOutput,
     run_summary_generation,
 )
 
@@ -125,15 +122,30 @@ def test_low_high_tie_does_not_dominate_sentence_evidence() -> None:
 
 
 def test_generation_junction_adds_flag_after_validation() -> None:
-    """The real generation helper publishes the additive browser field."""
-    sentence = "Patient reports a rash on the back of his carp."
-    structured_note = SessionSummaryOutput(
+    """The real generation helper carries the claim-scoped wording-review cue.
+
+    The retained carp-garble class (hc12) must survive the v2 payload: a claim
+    citing a sub-threshold unit renders with `wording_review: true` even
+    though 'carp' is not a lexicon variant.
+    """
+    from api.summary_generation import (
+        ClaimOutput,
+        ClaimSectionOutput,
+        SessionSummaryV2Output,
+    )
+
+    structured_note = SessionSummaryV2Output(
         title="Skin review",
         sections=[
-            SummarySectionOutput(
+            ClaimSectionOutput(
                 heading="Subjective",
-                content=sentence,
-                citations=[SummaryCitationOutput(segment_id="corrected-0093")],
+                claims=[
+                    ClaimOutput(
+                        text="Patient reports a rash on the back of his carp.",
+                        evidence_basis="source_unit",
+                        source_unit_ids=["unit-0093-0093"],
+                    )
+                ],
             )
         ],
         key_points=[],
@@ -153,7 +165,7 @@ def test_generation_junction_adds_flag_after_validation() -> None:
     with (
         patch("api.summary_generation.retrieve_clinical_context", return_value=[]),
         patch(
-            "api.summary_generation._generate_validated_draft",
+            "api.summary_generation._generate_validated_v2_draft",
             return_value=(structured_note, {}),
         ),
         patch("api.summary_generation.find_fidelity_violations", return_value=[]),
@@ -166,8 +178,9 @@ def test_generation_junction_adds_flag_after_validation() -> None:
         )
 
     assert generated_note is not None
-    assert generated_note["sections"][0]["low_confidence"] == [sentence]
-    assert generated_note["sections"][0]["content"] == sentence
+    claim = generated_note["sections"][0]["claims"][0]
+    assert claim["wording_review"] is True
+    assert claim["source_unit_ids"] == ["unit-0093-0093"]
 
 
 # The four consult-1.2 medication rows exactly as the corrected lane stored
@@ -422,26 +435,37 @@ def test_note_review_reasons_aggregates_term_and_temporal_families() -> None:
 
 
 def test_coverage_misses_feed_retry_but_never_the_payload() -> None:
-    """A surviving coverage miss stays in the reason lane, not the note payload.
+    """A surviving coverage miss lands in note_review_reasons, never as prose.
 
-    The synthetic critical-coverage violation drives the bounded retry, but
-    its sentence matches no note text, so `unverified`/`unverified_key_points`
-    never carry it - the browser contract is unchanged (M05).
+    The synthetic critical-coverage violation drives the bounded retry; the
+    v2 payload surfaces the survivor through `note_review_reasons` only - no
+    claim text, no unverified field, no 'critical-coverage' rule leakage.
     """
-    structured_note = SessionSummaryOutput(
+    from api.summary_generation import (
+        ClaimOutput,
+        ClaimSectionOutput,
+        SessionSummaryV2Output,
+    )
+
+    structured_note = SessionSummaryV2Output(
         title="Emergency review",
         sections=[
-            SummarySectionOutput(
+            ClaimSectionOutput(
                 heading="Plan",
-                content="Emergency ambulance requested. Antihistamines in the interim.",
-                citations=[SummaryCitationOutput(segment_id="d-01")],
+                claims=[
+                    ClaimOutput(
+                        text="Emergency ambulance requested.",
+                        evidence_basis="source_unit",
+                        source_unit_ids=["unit-0001-0001"],
+                    )
+                ],
             )
         ],
         key_points=[],
     )
     emergency_rows = [
         {
-            "segment_id": "d-01",
+            "segment_id": "corrected-0001",
             "speaker_id": "speaker_0",
             "role": "DOCTOR",
             "text": "I'll call the ambulance.",
@@ -450,7 +474,7 @@ def test_coverage_misses_feed_retry_but_never_the_payload() -> None:
             "confidence": 0.9,
         },
         {
-            "segment_id": "d-02",
+            "segment_id": "corrected-0002",
             "speaker_id": "speaker_0",
             "role": "DOCTOR",
             "text": "mom, if you can call the 999.",
@@ -463,7 +487,7 @@ def test_coverage_misses_feed_retry_but_never_the_payload() -> None:
     with (
         patch("api.summary_generation.retrieve_clinical_context", return_value=[]),
         patch(
-            "api.summary_generation._generate_validated_draft",
+            "api.summary_generation._generate_validated_v2_draft",
             return_value=(structured_note, {}),
         ),
     ):
@@ -475,18 +499,17 @@ def test_coverage_misses_feed_retry_but_never_the_payload() -> None:
         )
 
     assert generated_note is not None
-    # The 999 omission survived both drafts; the payload must stay clean.
-    note_text = json.dumps(
-        {key: value for key, value in generated_note.items() if key != "_agent_metrics"}
-    )
-    assert "critical-coverage" not in note_text
-    assert "emergency_number" not in note_text
+    # The 999 omission survived both drafts; claims stay clean of it.
+    claim_texts = [
+        claim["text"]
+        for section in generated_note["sections"]
+        for claim in section["claims"]
+    ]
+    assert all("critical-coverage" not in text for text in claim_texts)
     assert "unverified" not in generated_note["sections"][0]
     assert generated_note.get("unverified_key_points", []) == []
-    # The reason lane still reports the miss for M03/M06 surfacing.
-    from api.summary_confidence import note_review_reasons
-
-    survivor_reasons = note_review_reasons(generated_note, emergency_rows)
+    # The v2 payload surfaces the survivor honestly at note level.
+    survivor_reasons = generated_note["note_review_reasons"]
     assert any(
         reason["reason"] == "emergency_disposition_incomplete"
         for reason in survivor_reasons

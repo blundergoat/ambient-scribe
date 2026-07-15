@@ -2,7 +2,9 @@
 Tests for the medical session summary agent and endpoint.
 """
 
+import json
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -72,7 +74,10 @@ class TestSummaryPrompts:
         assert "structured summary schema" in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_requires_citations(self):
-        assert "[" in MEDICAL_SUMMARY_PROMPT and "MM:SS" in MEDICAL_SUMMARY_PROMPT
+        """v2: citations are unit ids in each claim, never rows or timestamps."""
+        assert "source_unit_ids" in MEDICAL_SUMMARY_PROMPT
+        assert "ATOMIC CLAIMS" in MEDICAL_SUMMARY_PROMPT
+        assert "MM:SS" not in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_preserves_patient_uncertainty(self):
         """M00 fidelity: 'I don't know' must never become a definitive assertion."""
@@ -559,9 +564,11 @@ class TestRunSummaryGeneration:
         assert result is None
 
     def test_uses_structured_output_from_agent_response(self):
-        """Validated summary output becomes the browser payload."""
+        """Validated v2 summary output becomes the browser payload."""
+        from api.summary_generation import SessionSummaryV2Output
+
         mock_agent = MagicMock()
-        mock_agent.return_value.structured_output = SessionSummaryOutput(
+        mock_agent.return_value.structured_output = SessionSummaryV2Output(
             title="Test", sections=[], key_points=[]
         )
 
@@ -569,9 +576,10 @@ class TestRunSummaryGeneration:
             result = api_server._run_summary_generation("sid", "transcript")
 
         assert result["title"] == "Test"
+        assert result["schema_version"] == 2
         assert (
             mock_agent.call_args.kwargs["structured_output_model"]
-            is SessionSummaryOutput
+            is SessionSummaryV2Output
         )
 
     def test_returns_none_without_structured_output(self):
@@ -732,15 +740,26 @@ class TestRunSummaryGeneration:
         assert validated_summary.sections[0].citations == []
 
     def test_run_summary_generation_hydrates_valid_citations(self):
-        """The route helper returns trusted citation details in the payload."""
+        """The route helper hydrates cited units from storage, never the model."""
+        from api.summary_generation import (
+            ClaimOutput,
+            ClaimSectionOutput,
+            SessionSummaryV2Output,
+        )
+
         mock_agent = MagicMock()
-        mock_agent.return_value.structured_output = SessionSummaryOutput(
+        mock_agent.return_value.structured_output = SessionSummaryV2Output(
             title="Cited",
             sections=[
-                SummarySectionOutput(
+                ClaimSectionOutput(
                     heading="Plan",
-                    content="Use treatment.",
-                    citations=[SummaryCitationOutput(segment_id="corrected-0001")],
+                    claims=[
+                        ClaimOutput(
+                            text="Use treatment.",
+                            evidence_basis="source_unit",
+                            source_unit_ids=["unit-0001-0001"],
+                        )
+                    ],
                 )
             ],
             key_points=[],
@@ -761,13 +780,25 @@ class TestRunSummaryGeneration:
                 ],
             )
 
-        assert result["sections"][0]["citations"] == [
+        plan_claim = result["sections"][0]["claims"][0]
+        assert plan_claim["claim_id"] == "plan-01"
+        assert plan_claim["source_unit_ids"] == ["unit-0001-0001"]
+        assert result["source_units"] == [
             {
-                "segment_id": "corrected-0001",
+                "unit_id": "unit-0001-0001",
+                "role": "DOCTOR",
                 "start": 3.0,
                 "end": 4.0,
-                "role": "DOCTOR",
-                "text": "Use treatment.",
+                "rows": [
+                    {
+                        "segment_id": "corrected-0001",
+                        "start": 3.0,
+                        "end": 4.0,
+                        "text": "Use treatment.",
+                    }
+                ],
+                "context_before": [],
+                "context_after": [],
             }
         ]
 
@@ -972,3 +1003,136 @@ class TestSummaryDisplayTextCleaning:
         assert cleaned.sections[0].content == "Headache since midday, throbbing."
         assert cleaned.sections[0].citations[0].segment_id == "corrected-0012"
         assert cleaned.key_points == ["Left-sided headache"]
+
+
+class TestSchemaV2MidImplementationProof:
+    """M06 gate: the model cannot cite rows, and the 5.3 turn is one unit."""
+
+    def _palpitation_rows(self) -> list[dict]:
+        """The retained 5.3 quote rows plus their real neighbors' shape.
+
+        Texts for corrected-0416..0418 are the frozen manifest specimen rows
+        (c09/c10); the surrounding rows reproduce the artifact's role pattern
+        so unit construction sees the real turn boundaries.
+        """
+        manifest_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "scribe"
+            / "note-review-detector-specimens.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        c10 = next(s for s in manifest["specimens"] if s["id"] == "c10")
+        quote_rows = [
+            {
+                "segment_id": row["segment_id"],
+                "role": "DOCTOR",
+                "text": row["text"],
+                "start": row["confidence"] and 416.0 or 416.0,
+                "end": 443.0,
+            }
+            for row in c10["source_rows"]
+        ]
+        return [
+            {
+                "segment_id": "corrected-0413",
+                "role": "OTHER",
+                "text": "That's great. I look forward",
+                "start": 410.0,
+                "end": 412.0,
+            },
+            *quote_rows,
+        ]
+
+    def test_53_palpitation_turn_builds_one_complete_unit(self):
+        """The quote-bearing rows 0416-0418 land together in ONE DOCTOR unit."""
+        from api.summary_generation import build_source_units
+
+        units = build_source_units(self._palpitation_rows())
+
+        doctor_units = [unit for unit in units if unit["role"] == "DOCTOR"]
+        assert len(doctor_units) == 1
+        row_ids = [row["segment_id"] for row in doctor_units[0]["rows"]]
+        assert row_ids == ["corrected-0416", "corrected-0417", "corrected-0418"]
+
+    def test_model_cannot_cite_an_arbitrary_first_row(self):
+        """A row id like corrected-0416 is not a unit id: dropped + downgraded."""
+        from api.summary_generation import (
+            ClaimOutput,
+            ClaimSectionOutput,
+            SessionSummaryV2Output,
+            build_source_units,
+            validated_v2_summary,
+        )
+
+        source_units = build_source_units(self._palpitation_rows())
+        cited_by_row = SessionSummaryV2Output(
+            title="",
+            sections=[
+                ClaimSectionOutput(
+                    heading="Assessment",
+                    claims=[
+                        ClaimOutput(
+                            text="Palpitations discussed.",
+                            evidence_basis="source_unit",
+                            source_unit_ids=["corrected-0416"],
+                        )
+                    ],
+                )
+            ],
+            key_points=[],
+        )
+
+        validated = validated_v2_summary(cited_by_row, source_units)
+
+        claim = validated.sections[0].claims[0]
+        assert claim.source_unit_ids == []
+        assert claim.evidence_basis == "none"
+
+    def test_prompt_enumerates_units_never_row_ids(self):
+        """The v2 prompt's citation targets are unit ids only."""
+        from api.summary_generation import (
+            build_source_units,
+            summary_generation_prompt_v2,
+        )
+
+        source_units = build_source_units(self._palpitation_rows())
+        prompt = summary_generation_prompt_v2("[DOCTOR] text", [], source_units)
+
+        assert "[unit:unit-0416-0418" in prompt
+        assert "[source:" not in prompt
+        assert "segment_id" not in prompt
+
+    def test_verbatim_quote_verifies_inside_the_cited_unit(self):
+        """The full-turn quote produces quote_state verified, exact match only."""
+        from api.summary_generation import (
+            ClaimOutput,
+            build_source_units,
+            _claim_quote_state,
+        )
+
+        source_units = build_source_units(self._palpitation_rows())
+        unit_id = next(
+            unit["unit_id"] for unit in source_units if unit["role"] == "DOCTOR"
+        )
+        verified_claim = ClaimOutput(
+            text="The clinician said it is 'more likely to be associated with anxiety'.",
+            evidence_basis="source_unit",
+            source_unit_ids=[unit_id],
+        )
+        mismatched_claim = ClaimOutput(
+            text="The clinician said it is 'most likely associated with anxiety'.",
+            evidence_basis="source_unit",
+            source_unit_ids=[unit_id],
+        )
+
+        verified_state, verified_reasons = _claim_quote_state(
+            verified_claim, source_units
+        )
+        mismatch_state, mismatch_reasons = _claim_quote_state(
+            mismatched_claim, source_units
+        )
+
+        assert (verified_state, verified_reasons) == ("verified", [])
+        assert mismatch_state == "not_matched"
+        assert mismatch_reasons[0]["reason"] == "quote_not_matched"
