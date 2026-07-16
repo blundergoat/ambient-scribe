@@ -1402,9 +1402,10 @@ function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
 
     if (hasCitedEvidence) {
         const turnNoun = citedUnits.length === 1 ? 'source turn' : 'source turns';
-        // A wall of "1" chips is noise: the count renders only when it says
-        // something (>1); single-citation claims keep a quiet dot affordance.
-        toggleText = citedUnits.length > 1 ? String(citedUnits.length) : '·';
+        // Cited chips are a pure disclosure affordance (a CSS chevron); the
+        // unit count lives in the accessible label and the opened evidence
+        // list, so no number competes with the clinical text.
+        toggleText = '';
         toggleLabel = `View evidence for this claim, ${citedUnits.length} ${turnNoun}`;
     } else if (claim.evidence_basis === 'transcript_absence') {
         toggleText = 'Absence-based';
@@ -1417,7 +1418,7 @@ function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
 
     return createElement('button', {
         className: hasCitedEvidence
-            ? 'summary-claim__toggle'
+            ? 'summary-claim__toggle summary-claim__toggle--evidence'
             : 'summary-claim__toggle summary-claim__toggle--basis',
         attributes: {
             type: 'button',

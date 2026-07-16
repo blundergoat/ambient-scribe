@@ -694,6 +694,30 @@
             font-weight: 600;
             color: var(--text-subtle);
         }
+        /* Cited chips are a disclosure chevron: down when collapsed, up when
+           open, centered in a small round button. Drawn as pseudo-content so
+           selected/copied text never picks up a stray glyph. */
+        .summary-claim__toggle--evidence {
+            position: relative;
+            width: 1.125rem;
+            height: 1.125rem;
+            padding: 0;
+        }
+        .summary-claim__toggle--evidence::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 0.375rem;
+            height: 0.375rem;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: translate(-50%, -70%) rotate(45deg);
+            transition: transform 0.15s;
+        }
+        .summary-claim__toggle--evidence[aria-expanded="true"]::before {
+            transform: translate(-50%, -30%) rotate(225deg);
+        }
         .summary-claim__toggle:hover,
         .summary-claim__toggle[aria-expanded="true"] {
             background: var(--surface-hover);

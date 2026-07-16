@@ -1976,9 +1976,11 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     await renderNoteDirectly(page, v2SummaryPayload());
 
     // The cited claim counts its OWN unit: one turn, despite two context rows.
-    // A single citation renders the quiet dot; the count appears only when >1.
+    // The chip is a chevron-only disclosure control; the count lives in the
+    // accessible label, never as visible text competing with the note.
     const citedToggle = page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle');
-    await expect(citedToggle).toHaveText("·");
+    await expect(citedToggle).toHaveText("");
+    await expect(citedToggle).toHaveClass(/summary-claim__toggle--evidence/);
     await expect(citedToggle).toHaveAttribute("aria-label", /1 source turn/);
     await expect(citedToggle).toHaveAttribute("aria-expanded", "false");
 

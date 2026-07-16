@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-16
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -480,3 +480,23 @@ flagged items - a contradiction no synthetic fixture had encoded.
 artifacts and read the output as the reviewer would. Synthetic fixtures inherit the author's
 assumptions; real data contradicts them. Writing a unit expectation by observing the
 implementation's current output is recording, not testing.
+
+## Lesson: An adjacent answer does not prove which question it resolves
+
+**Created:** 2026-07-16
+**What happened:** While reviewing consult 5.3, the explicit doctor question "Have you ever
+had a panic attack?" followed by the patient's "No I wouldn't say so" was initially treated
+as a proven negative screen. Time-aligned cross-examination showed that the doctor had first
+asked whether anxiety had ever prevented the patient entering the office, the panic question
+overlapped only an unintelligible patient filler, and the later answer continued "I've always
+managed to make it to work." Its semantics therefore fit the earlier functional question more
+directly; at most, the panic response is ambiguous.
+**Evidence:**
+`tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.doctor.TextGrid`
+(search: `Have you ever <UNSURE>had a</UNSURE> panic attack?`) and
+`tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.patient.TextGrid`
+(search: `No I wouldn't say so, I think, I've always managed to make it to work.`).
+**Prevention:** Align answers using timing, overlap, and semantic fit across the complete
+bounded exchange. When consecutive questions compete for one delayed response, record
+"asked; response ambiguous" unless the answer directly identifies the topic; adjacency alone
+must not become a positive or negative clinical fact.
