@@ -1336,6 +1336,35 @@ async def generate_summary(
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
+    # An output-limit failure is not "model unavailable": the provider was
+    # up and generating. The reason field lets the browser show honest
+    # guidance instead of provider-restart instructions.
+    if isinstance(summary, dict) and summary.get("status") == "failed":
+        failure_reason = summary.get("reason", "generation_failed")
+        logger.warning(
+            "summary.generation_failed session_id=%s source=%s reason=%s duration_ms=%s",
+            session_id,
+            summary_context.source,
+            failure_reason,
+            duration_ms,
+            extra={
+                "session_id": session_id,
+                "duration_ms": duration_ms,
+                "source": summary_context.source,
+                "reason": failure_reason,
+            },
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": (
+                    "The visit's note exceeded the generation output limit — "
+                    "the transcript remains available for review."
+                ),
+                "reason": failure_reason,
+            },
+        )
+
     # A missing summary lets the browser show a retryable generation failure.
     if summary is None:
         logger.warning(

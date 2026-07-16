@@ -2286,3 +2286,59 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     expect(hasHorizontalOverflow).toBe(false);
   });
 });
+
+test.describe("Summary failure copy (M10)", () => {
+  /** Drives the attested stop flow into a stubbed 502 with the given body. */
+  async function failSummaryWith(page, failureBody) {
+    await stubCorrectionRoute(page, [], []);
+    await page.route("**/session/*/summary", (route) =>
+      route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify(failureBody),
+      })
+    );
+    await injectFakeSegments(page, 2);
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-m10-copy",
+      });
+    });
+    await page.waitForSelector("#summaryStatusBadge:has-text('Summary unavailable')");
+  }
+
+  test("an output-limit failure shows honest copy and no model-unavailable banner", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await failSummaryWith(page, {
+      detail:
+        "The visit's note exceeded the generation output limit — the transcript remains available for review.",
+      reason: "note_output_limit",
+    });
+
+    // The cause is named honestly; nothing tells the operator to restart
+    // a model that was up and generating.
+    await expect(page.locator("#summaryContent")).toContainText(
+      "exceeded the generation output limit"
+    );
+    await expect(page.locator("#summaryContent")).toContainText(
+      "retrying is unlikely to help"
+    );
+    await expect(page.locator("#summaryContent")).not.toContainText("check-ai-model");
+    await expect(page.locator("#systemBanner")).toBeHidden();
+    // Retry stays available for the operator's judgement.
+    await expect(page.locator("#summaryRetryBtn")).toBeVisible();
+  });
+
+  test("a generic 502 keeps the provider-unavailable guidance", async ({ page }) => {
+    await loadScribePage(page);
+    await failSummaryWith(page, { detail: "Summary generation failed" });
+
+    await expect(page.locator("#summaryContent")).toContainText("check-ai-model");
+    await expect(page.locator("#systemBanner")).toBeVisible();
+    await expect(page.locator("#systemBanner")).toContainText("AI model unavailable");
+  });
+});

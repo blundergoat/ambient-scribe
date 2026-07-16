@@ -49,3 +49,39 @@ last_reviewed: 2026-07-10
 - **What broke:** The three summary context paths truncated INCONSISTENTLY (the original "all three keep the first 8000 characters" wording was wrong): `browser_visible_segments` kept only the first 8000 characters (the field-proven head slice), `session_store` kept a 500-character head plus the tail (losing the middle), and `corrected_segments` built an 8000-character head-plus-tail string that fed retrieval while the normal cited prompt bypassed the cap entirely through the uncapped citation source index. The clinically decisive Assessment and Plan are normally spoken last, so a long consultation on the browser-visible lane could produce a fluent note that falsely said those sections were not documented. No warning or browser-visible metadata exposed the omitted input.
 - **Evidence:** The 2026-07-08 full day5-consultation09 run lost suspected Lyme disease, support-line booking, and the one-week follow-up after logging exactly 8000 characters. M08 replayed the same 306 captured browser rows in fresh session `b4d40534-818b-4672-8d3e-5ffea855e09b`; all 9,705 characters reached generation and the note retained Lyme assessment, blood/Lyme testing, support-line booking, and one-week phone follow-up (`.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md`, search: "Phase 5 evidence").
 - **Resolution:** All corrected, browser-visible, and stored lanes now use one measured 32,768-character whole-row selector. Every measured consultation fits in full; larger future inputs keep complete opening and closing rows with an explicit non-row elision marker. Prompt text, citations, retrieval input, and fidelity evidence use the same selected rows. Real elision emits a structured warning and additive HTTP/Mercure metadata, and the browser keeps a persistent accessible notice beside the note status.
+
+## Fidelity-retry regeneration can exceed max_tokens on long visits (v2 structured output)
+
+- **Files:** `strands_agents/agents/summary_agent.py` (search: "SUMMARY_AGENT_MAX_TOKENS")
+- **Files:** `strands_agents/api/summary_generation.py` (search: "regeneration_feedback")
+- **What broke:** M07 certification request 2 (consult 5.3, 776 s of audio, 435 corrected rows,
+  30,825 prompt chars): attempt 0 completed but carried 3 fidelity violations, and the bounded
+  retry - base prompt PLUS per-violation feedback - pushed the v2 structured output past the
+  frozen 4,096-token cap. Strands raised MaxTokensReachedException mid-JSON, the route returned
+  502, and the frozen campaign rules stopped the whole certification. The M06 spike had flagged
+  exactly this ceiling (tokens_out 3,923/4,096 on the same consult's biggest draft) as a watch
+  item; the fresh replay's retry crossed it.
+- **Evidence:** `var/quality/m07-campaign-20260715T222402Z/consult-5.3-request2-failure.log`;
+  spike telemetry `var/quality/m06-schema-spike-*/spike-report.json` (gen 3: tokens_out 3923).
+- **Resolution:** M10 (2026-07-16, post-campaign, user-approved): `SUMMARY_AGENT_MAX_TOKENS`
+  default raised 4096→8192 (2x headroom over the largest observed clean draft; model ceiling
+  64K), and `MaxTokensReachedException` now maps to an honest `note_output_limit` 502 instead
+  of the generic "model unavailable" path. Live-proven on a fresh 5.3 replay: both generations
+  incl. the previously-fatal retry completed (session b717aa5f, 45.5 s, 48 claims). The M07
+  campaign artifacts and FAIL verdict are unchanged; re-certification needs a new campaign.
+
+## Claim-level wording cue majority-votes across the unit and masks medication rows
+
+- **Files:** `strands_agents/api/summary_generation.py` (search: "_sentence_needs_wording_review")
+- **What broke:** M07 note 1 (consult 1.2) stated "Piriteze" where the official track says
+  "Piriton" - a different antihistamine product. The source rows ("Luratidine" 0.656, "Pyritin"
+  0.737) are BELOW the 0.78 corrected review threshold, but the claim cites a ~10-row unit whose
+  other rows are confident, and the per-claim wording cue requires the cited wording to be
+  PREDOMINANTLY low-confidence - so no cue rendered on an unmarked definite medication
+  misidentification. Unit-level majority is the wrong denominator when the risk lives in one or
+  two rows; medication names are exactly where that happens.
+- **Evidence:** `var/quality/m07-campaign-20260715T222402Z/consult-1.2/worksheet-scored.json`
+  (claim plan-04); corrected rows 0268/0269 in the same campaign's replay dir.
+- **Resolution:** none inside M07 (detector changes are frozen). Candidate re-scope: row-scoped
+  cue for medication-bearing tokens, or M04 lexicon-gated per-row threshold - needs its own
+  precision gate per the M05 detector contract.

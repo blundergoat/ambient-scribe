@@ -362,6 +362,38 @@ class TestSummaryEndpoint:
 
         assert response.status_code == 502
 
+    def test_summary_502_carries_reason_on_output_limit(self):
+        """An output-limit failure names itself so the browser can be honest.
+
+        A generic 502 means "provider problem"; this one must carry
+        reason=note_output_limit and a detail that never suggests the model
+        is unavailable (M10; M07 blocker B3).
+        """
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "Hello",
+                "start": 0.0,
+                "end": 1.0,
+            },
+        )
+
+        self._attest_summary_source()
+
+        with patch(
+            "api.server._run_summary_generation",
+            return_value={"status": "failed", "reason": "note_output_limit"},
+        ):
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(f"/session/{TEST_SESSION_ID}/summary")
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["reason"] == "note_output_limit"
+        assert "output limit" in body["detail"]
+        assert "unavailable" not in body["detail"].lower()
+
     def test_summary_invalid_session_id_returns_400(self):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post("/session/not-a-uuid/summary")
@@ -1136,3 +1168,29 @@ class TestSchemaV2MidImplementationProof:
         assert (verified_state, verified_reasons) == ("verified", [])
         assert mismatch_state == "not_matched"
         assert mismatch_reasons[0]["reason"] == "quote_not_matched"
+
+
+def test_run_summary_generation_maps_output_limit_to_named_failure(monkeypatch):
+    """MaxTokensReachedException becomes the named marker, not a bare None.
+
+    The generic catch-all keeps returning None for everything else, so only
+    the output-limit case earns the honest browser copy.
+    """
+    from strands.types.exceptions import MaxTokensReachedException
+
+    from api import summary_generation
+
+    def _raise_output_limit(session_id, prompt, source_units):
+        raise MaxTokensReachedException("Model stopped generating due to maximum token limit.")
+
+    monkeypatch.setattr(
+        summary_generation, "_generate_validated_v2_draft", _raise_output_limit
+    )
+    result = summary_generation.run_summary_generation("m10-test", "DOCTOR: hello", [], [], None)
+    assert result == {"status": "failed", "reason": "note_output_limit"}
+
+    def _raise_generic(session_id, prompt, source_units):
+        raise RuntimeError("anything else")
+
+    monkeypatch.setattr(summary_generation, "_generate_validated_v2_draft", _raise_generic)
+    assert summary_generation.run_summary_generation("m10-test", "DOCTOR: hello", [], [], None) is None

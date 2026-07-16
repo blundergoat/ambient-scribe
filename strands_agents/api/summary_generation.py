@@ -29,6 +29,7 @@ from api.summary_fidelity import (
 from clinical_context import retrieve_clinical_context
 
 from pydantic import BaseModel, Field
+from strands.types.exceptions import MaxTokensReachedException
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,10 @@ def run_summary_generation(
             formatting, while a truncation marker can separate selected opening/tail runs.
 
     Returns:
-        Parsed summary payload; `None` means the browser should show a generation failure.
+        Parsed summary payload. `None` means the browser should show a
+        retryable generation failure; `{"status": "failed", "reason": ...}`
+        names a specific non-retryable failure (currently only
+        `note_output_limit`) for honest browser copy.
     """
     try:
         context_snippets = retrieve_clinical_context(transcript)
@@ -239,6 +243,22 @@ def run_summary_generation(
         )
         parsed_summary["_agent_metrics"] = metric_fields
         return parsed_summary
+    except MaxTokensReachedException as exc:
+        # The provider was reachable and generating - the visit's draft (or
+        # its feedback-laden retry) simply exceeded the output budget. This
+        # is its own honest failure, so the browser never blames an
+        # unavailable model for it.
+        logger.error(
+            "summary.output_limit session_id=%s %s: %s",
+            session_id,
+            type(exc).__name__,
+            str(exc)[:200],
+            extra={
+                "session_id": session_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return {"status": "failed", "reason": "note_output_limit"}
     except Exception as exc:
         # Example: the clinician presses Summarise while provider output fails schema validation.
         logger.error(

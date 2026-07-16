@@ -910,7 +910,10 @@ function renderSummaryResponse(response, summaryPayload) {
         return;
     }
 
-    showSummaryFailure(summaryPayload.detail || 'Summary generation failed.');
+    showSummaryFailure(
+        summaryPayload.detail || 'Summary generation failed.',
+        summaryPayload.reason ?? null,
+    );
 }
 
 /**
@@ -1615,11 +1618,17 @@ function showSummaryMessage(message) {
 }
 
 /**
- * Renders a summary failure with an actionable fix note and a page-level warning.
- * Use for provider/service errors (Ollama or Bedrock unreachable, 502/503, network) so the
- * clinician sees the likely cause and how to recover while the transcript stays visible.
+ * Renders a summary failure with guidance matched to its actual cause.
+ * A named reason from the backend gets honest, specific copy; everything
+ * else keeps the provider-unavailable guidance (Ollama or Bedrock
+ * unreachable, 502/503, network) so the clinician sees the likely cause
+ * and how to recover while the transcript stays visible.
+ *
+ * @param {string} detail - clinician-facing failure sentence from the backend.
+ * @param {string|null} failureReason - machine reason from the 502 body;
+ *   null/unknown means the generic provider guidance applies.
  */
-function showSummaryFailure(detail) {
+function showSummaryFailure(detail, failureReason = null) {
     // A failure replaces any rendered note, so copying must disable with it.
     latestRenderedSummaryPayload = null;
     setSummaryStatus('failed');
@@ -1631,6 +1640,23 @@ function showSummaryFailure(detail) {
         text: detail,
         style: 'color:var(--text-strong); margin:0 0 0.5rem',
     });
+
+    // An output-limit failure is not a provider outage: the model was up
+    // and generating. Telling the operator to restart it wastes their time,
+    // so this path gets its own copy and no page-level model warning.
+    if (failureReason === 'note_output_limit') {
+        const limitNote = createElement('p', {
+            className: 'text-xs',
+            text: 'This visit’s note is longer than the current generation limit, so retrying is unlikely to help. The transcript remains available for review.',
+            style: 'color:var(--text-subtle); margin:0; line-height:1.5',
+        });
+        summaryContent.replaceChildren(failureMessage, limitNote);
+        // A stale model-unavailable banner from an earlier failure would
+        // contradict this message; the model demonstrably responded.
+        hideSystemBanner();
+        return;
+    }
+
     const fixNote = createElement('p', {
         className: 'text-xs',
         text: 'The AI model is unavailable. Run  ./scripts/check-ai-model.sh  to start it, then use Retry Summary.',
