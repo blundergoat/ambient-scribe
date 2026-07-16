@@ -14,7 +14,7 @@ const LIVE_TRANSCRIPT_LANE = 'live';
 const CORRECTED_TRANSCRIPT_LANE = 'corrected';
 const REVIEW_WORDING_CLASS = 'transcript-wording--review';
 const REVIEW_WORDING_HELP_ID = 'confidenceWordingHelp';
-const REVIEW_WORDING_MESSAGE = 'Lower-confidence transcription — check wording against audio.';
+const REVIEW_WORDING_MESSAGE = 'Lower-confidence transcription — double-check this wording.';
 
 /**
  * Returns the corpus-derived review threshold for the transcript view the clinician opened.

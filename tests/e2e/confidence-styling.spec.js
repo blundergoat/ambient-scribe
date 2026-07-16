@@ -63,7 +63,7 @@ test('live rows use the strict live threshold without changing card roles or hei
     await expect(liveRows.nth(0)).toHaveAttribute('aria-describedby', 'confidenceWordingHelp');
     await expect(liveRows.nth(0)).toHaveAttribute(
         'data-confidence-tooltip',
-        'Lower-confidence transcription — check wording against audio.',
+        'Lower-confidence transcription — double-check this wording.',
     );
     await expect(liveRows.nth(1)).not.toHaveClass(/transcript-wording--review/);
     await expect(liveRows.nth(2)).not.toHaveClass(/transcript-wording--review/);

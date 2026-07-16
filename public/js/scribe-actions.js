@@ -14,7 +14,11 @@ function revealPostVisitActions() {
     // Replayed transcript text can be summarized like live text.
     if (segmentIndex > 0) {
         setElementHidden('resetBtn', false);
-        setSummaryPendingText('Consultation ended - generating summary now.');
+        // The note is on demand (M11): say what is actually true - either
+        // the transcript is ready for the button, or it is still finalizing.
+        if (typeof refreshSummaryPendingCopy === 'function') {
+            refreshSummaryPendingCopy();
+        }
     }
 }
 

@@ -95,7 +95,7 @@ function serializeTranscriptRows(rowModels, laneLabel = '') {
 /**
  * Builds the axes shape for every state where no honest note exists yet.
  * Use for waiting/generating/blocked states: only the source axis speaks,
- * and the Copy draft note action stays disabled.
+ * and the Copy summary action stays disabled.
  *
  * @param {string|null} sourceLine - lifecycle wording to show; null hides the
  *   whole strip (a transient failure keeps the existing failure UI instead).
@@ -359,7 +359,7 @@ function markFlaggedSentencesForCopy(sectionContent, flaggedSentences, markerTex
 
 /**
  * Builds the status header lines of the note export.
- * Use at the top of Copy draft note output: the three axes always travel
+ * Use at the top of Copy summary output: the three axes always travel
  * with the text (the approved default export has no status-free variant).
  *
  * @param {object} noteModel - export model; missing status lines are skipped.
@@ -422,7 +422,7 @@ function keyPointLines(keyPoints) {
 
 /**
  * Serializes the draft note into the approved default export.
- * Use for the Copy draft note action: title, the three status axes, key
+ * Use for the Copy summary action: title, the three status axes, key
  * points, and SOAP prose with review markers as real text. Provenance
  * counts, buttons, tabs, tooltips, and Dev Panel text can never appear
  * because the serializer reads the note payload, not the DOM.
@@ -621,7 +621,7 @@ function effectiveSpeakerLabelForCopy(segment) {
  */
 async function copyTextToClipboard(copyText, copyButton) {
     try {
-        // Example: the clinician clicks Copy draft note after reviewing the panel.
+        // Example: the clinician clicks Copy summary after reviewing the panel.
         await navigator.clipboard.writeText(copyText);
     } catch (clipboardError) {
         // Example: a non-secure context or denied permission rejects the API;
@@ -699,15 +699,15 @@ function transcriptLaneLabelForLiveRows() {
 }
 
 /**
- * Copies the rendered draft note using the approved default export.
- * Use from the Copy draft note button; disabled states never reach here
+ * Copies the rendered summary using the approved default export.
+ * Use from the Copy summary button; disabled states never reach here
  * because the button is only enabled once a note artifact exists.
  *
  * @param {HTMLElement|null} copyButton - the clicked button; null skips the
  *   visible "Copied" confirmation.
  * @returns {Promise<void>} resolves once the note text is on the clipboard.
  */
-async function copyDraftNote(copyButton) {
+async function copySummary(copyButton) {
     // No rendered note means nothing honest to copy; the button should be disabled.
     if (!latestRenderedSummaryPayload) {
         return;

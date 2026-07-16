@@ -275,6 +275,8 @@ test.describe("Semantic copy and status axes (M03)", () => {
         ...extraFinalizedFields,
       });
     }, finalizedEvent);
+    // Finalizing unlocks the on-demand note (M11); press it like the user.
+    await page.click("#generateSummaryBtn");
     await page.waitForSelector("#summaryContent .summary-section");
   }
 
@@ -340,38 +342,43 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await loadScribePage(page);
 
     // The Stop wait ended without attestation: waiting state, nothing to copy.
+    // The badge strip is gone, so the disabled button itself must carry the reason.
     await page.evaluate(() => showSummaryWaitingForSource());
-    await expect(page.locator("#noteAxisSource")).toHaveText(
-      "Source still finalizing — note unavailable"
-    );
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+    await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
+      "aria-label",
+      "Copy summary — unavailable: Source still finalizing — note unavailable"
+    );
 
     // An over-cap visit blocks with its own explicit wording.
     await page.evaluate(() =>
-      renderNoteStatusAxes({ phase: "blocked", blockedReason: "source_exceeds_note_limit" })
-    );
-    await expect(page.locator("#noteAxisSource")).toHaveText(
-      "Source exceeds note limit — note unavailable"
+      renderNoteStatus({ phase: "blocked", blockedReason: "source_exceeds_note_limit" })
     );
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+    await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
+      "aria-label",
+      "Copy summary — unavailable: Source exceeds note limit — note unavailable"
+    );
 
     // A transcript that changed after finalization reads as incomplete.
     await page.evaluate(() =>
-      renderNoteStatusAxes({ phase: "blocked", blockedReason: "stale_lineage" })
-    );
-    await expect(page.locator("#noteAxisSource")).toHaveText(
-      "Source incomplete — note unavailable"
+      renderNoteStatus({ phase: "blocked", blockedReason: "stale_lineage" })
     );
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+    await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
+      "aria-label",
+      "Copy summary — unavailable: Source incomplete — note unavailable"
+    );
 
     // A failed correction pass keeps the note unavailable, not degraded.
     await page.evaluate(() =>
-      renderNoteStatusAxes({ phase: "blocked", blockedReason: "correction_pending" })
-    );
-    await expect(page.locator("#noteAxisSource")).toHaveText(
-      "Correction unavailable — note unavailable"
+      renderNoteStatus({ phase: "blocked", blockedReason: "correction_pending" })
     );
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
+    await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
+      "aria-label",
+      "Copy summary — unavailable: Correction unavailable — note unavailable"
+    );
   });
 
   test("a frozen role settlement renders and copies as review-required", async ({
@@ -390,7 +397,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     );
 
     // The frozen settlement is a visible review reason, never tooltip-only.
-    await expect(page.locator("#noteAxisAutomated")).toHaveText("Review required (1)");
+    await expect(page.locator("#noteReviewReasons")).toBeVisible();
     await expect(page.locator("#noteReviewReasons")).toContainText("frozen");
     await page.click("#copyNoteBtn");
     const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
@@ -411,13 +418,9 @@ test.describe("Semantic copy and status axes (M03)", () => {
       fallback_reason: "retention_window",
     });
 
-    await expect(page.locator("#noteAxisSource")).toHaveText(
-      "Complete live fallback — review required"
-    );
-    await expect(page.locator("#noteAxisSource")).toHaveAttribute(
-      "data-review-required",
-      "1"
-    );
+    // A fallback source is itself an automated review reason on screen.
+    await expect(page.locator("#noteReviewReasons")).toBeVisible();
+    await expect(page.locator("#noteReviewReasons")).toContainText("live transcript");
     await page.click("#copyNoteBtn");
     const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
     expect(copiedNote).toContain("Source: Complete live fallback — review required");
@@ -1355,7 +1358,8 @@ test.describe("Summary input provenance (M08)", () => {
     await injectFakeSegments(page, 2);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // the finalized event both attests the source and starts the summary.
+    // finalizing unlocks the Generate summary button (M11), which the test
+    // presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1363,6 +1367,7 @@ test.describe("Summary input provenance (M08)", () => {
         attestation_id: "att-e2e-terminal",
       });
     });
+    await page.click("#generateSummaryBtn");
 
     const summaryStatus = page.locator("#summaryStatus");
     const notice = page.locator("#summaryTruncationNotice");
@@ -1429,7 +1434,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 2);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // the finalized event both attests the source and starts the summary.
+    // finalizing unlocks the Generate summary button (M11), which the test
+    // presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1437,6 +1443,7 @@ test.describe("Post-visit correction before summary", () => {
         attestation_id: "att-e2e-terminal",
       });
     });
+    await page.click("#generateSummaryBtn");
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     expect(correctionCalls).toHaveLength(1);
@@ -1460,7 +1467,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 1);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // the finalized event both attests the source and starts the summary.
+    // finalizing unlocks the Generate summary button (M11), which the test
+    // presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1468,6 +1476,7 @@ test.describe("Post-visit correction before summary", () => {
         attestation_id: "att-e2e-terminal",
       });
     });
+    await page.click("#generateSummaryBtn");
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     expect(correctionCalls).toHaveLength(1);
@@ -1507,7 +1516,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 1);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // the finalized event both attests the source and starts the summary.
+    // finalizing unlocks the Generate summary button (M11), which the test
+    // presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1515,6 +1525,7 @@ test.describe("Post-visit correction before summary", () => {
         attestation_id: "att-e2e-terminal",
       });
     });
+    await page.click("#generateSummaryBtn");
 
     const sourceNotice = page.locator("#summarySourceNotice");
     await expect(sourceNotice).toBeVisible();
@@ -1656,13 +1667,15 @@ test.describe("Live-stop finalize drain (M21)", () => {
       handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
     });
 
-    // Drain ends: tail row visible, visit closed, exactly one summary request
-    // whose body carries the tail row the pre-M21 race used to lose.
+    // Drain ends: tail row visible, visit closed. The note is on demand
+    // (M11); the click sends exactly one request whose body carries the
+    // tail row the pre-M21 race used to lose.
     await expect(page.locator("#status")).toContainText("Session ended");
     await expect(page.locator("#startBtn")).toBeVisible();
     await expect(
       page.locator('.segment__text[data-segment-id="seg-0004"]')
     ).toHaveCount(1);
+    await page.click("#generateSummaryBtn");
     await expect
       .poll(() => summaryCalls.length, { timeout: 5000 })
       .toBe(1);
@@ -1701,6 +1714,8 @@ test.describe("Live-stop finalize drain (M21)", () => {
 
     await expect(page.locator("#status")).toContainText("Session ended");
     await expect(page.locator("#startBtn")).toBeVisible();
+    // The drained rows unlock the on-demand note (M11).
+    await page.click("#generateSummaryBtn");
     await expect
       .poll(() => summaryCalls.length, { timeout: 5000 })
       .toBe(1);
@@ -1732,6 +1747,9 @@ test.describe("Live-stop finalize drain (M21)", () => {
     await expect(page.locator("#summaryPendingText")).toContainText(
       "Waiting for the final transcript",
     );
+    // The on-demand button must stay locked too - it can never authorize
+    // a note from a pre-terminal snapshot (M11 preserves the M02 gate).
+    await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
     await page.waitForTimeout(2000);
     expect(summaryCalls.length).toBe(0);
   });
@@ -1755,7 +1773,8 @@ test.describe("Live-stop finalize drain (M21)", () => {
     expect(summaryCalls.length).toBe(0);
 
     // The backend finally finishes (slow finalize/backlog): the attested
-    // terminal source arrives and the note the user is waiting on begins.
+    // terminal source arrives and UNLOCKS the on-demand note (M11) - it
+    // never starts one by itself.
     await page.evaluate(() =>
       handleRawSegment({
         type: "finalized",
@@ -1764,6 +1783,14 @@ test.describe("Live-stop finalize drain (M21)", () => {
         terminal_row_count: 2,
       }),
     );
+    await expect(page.locator("#generateSummaryBtn")).toBeEnabled();
+    await expect(page.locator("#summaryPendingText")).toContainText(
+      "Final transcript ready",
+    );
+    await page.waitForTimeout(1000);
+    expect(summaryCalls.length).toBe(0);
+
+    await page.click("#generateSummaryBtn");
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
   });
 
@@ -1822,6 +1849,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
       stopRecording();
       handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
     });
+    await page.click("#generateSummaryBtn");
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     const correctedRow = summaryCalls[0].segments.find(
@@ -1831,8 +1859,8 @@ test.describe("Live-stop finalize drain (M21)", () => {
   });
 });
 
-test.describe("Replay auto-summary", () => {
-  test("replay stop runs correction before generating the summary", async ({
+test.describe("Replay on-demand summary (M11)", () => {
+  test("replay stop unlocks the button; clicking runs correction before the summary", async ({
     page,
   }) => {
     const correctionCalls = [];
@@ -1849,6 +1877,7 @@ test.describe("Replay auto-summary", () => {
       handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
     });
 
+    await page.click("#generateSummaryBtn");
     await expect
       .poll(() => summaryCalls.length, { timeout: 5000 })
       .toBe(1);
@@ -2242,13 +2271,12 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     );
   });
 
-  test("v2 axes and the copied note agree on claim-scoped review flags", async ({ page }) => {
+  test("v2 review reasons and the copied note agree on claim-scoped review flags", async ({ page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await loadScribePage(page);
     await renderNoteDirectly(page, v2SummaryPayload());
 
     // One uncited claim is the note's single automated flag.
-    await expect(page.locator("#noteAxisAutomated")).toHaveText("Review required (1)");
     await expect(page.locator("#noteReviewReasons")).toContainText(
       "1 claim without cited transcript evidence"
     );
@@ -2306,6 +2334,7 @@ test.describe("Summary failure copy (M10)", () => {
         attestation_id: "att-m10-copy",
       });
     });
+    await page.click("#generateSummaryBtn");
     await page.waitForSelector("#summaryStatusBadge:has-text('Summary unavailable')");
   }
 
@@ -2340,5 +2369,178 @@ test.describe("Summary failure copy (M10)", () => {
     await expect(page.locator("#summaryContent")).toContainText("check-ai-model");
     await expect(page.locator("#systemBanner")).toBeVisible();
     await expect(page.locator("#systemBanner")).toContainText("AI model unavailable");
+  });
+});
+
+test.describe("Two-sided transcript + on-demand summary (M11)", () => {
+  test("doctor and patient turns sit on opposite sides; unknown stays neutral", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    // Mapped roles split the sides; an unmapped speaker must stay neutral.
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      });
+    });
+    await injectFakeSegments(page, 2);
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_9",
+        text: "unmapped third voice",
+        start: 8.0,
+        end: 9.0,
+        segment_id: "seg-0009",
+      });
+    });
+
+    const doctorBox = await page.locator(".segment--DOCTOR").first().boundingBox();
+    const patientBox = await page.locator(".segment--PATIENT").first().boundingBox();
+    const unknownBox = await page.locator(".segment--UNKNOWN").first().boundingBox();
+    const transcriptBox = await page.locator("#transcript").boundingBox();
+
+    // Patient bubbles hug the right of the doctor's left-aligned bubbles.
+    expect(patientBox.x).toBeGreaterThan(doctorBox.x + 40);
+    // True columns: neither sided bubble may cross the transcript midline.
+    expect(doctorBox.width).toBeLessThanOrEqual(transcriptBox.width / 2);
+    expect(patientBox.x).toBeGreaterThanOrEqual(transcriptBox.x + transcriptBox.width / 2 - 1);
+    // Unknown rows take the full row width - wider than either sided bubble.
+    expect(unknownBox.width).toBeGreaterThan(patientBox.width);
+    expect(unknownBox.x).toBeLessThanOrEqual(doctorBox.x + 1);
+  });
+
+  test("a silence longer than a few seconds renders as a labelled gap", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      });
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "Any other symptoms at all?",
+        start: 0.0,
+        end: 1.4,
+        segment_id: "seg-0001",
+      });
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_1",
+        text: "No, that is everything.",
+        start: 7.6,
+        end: 9.0,
+        segment_id: "seg-0002",
+      });
+    });
+
+    // Only the turn after the 6.2s of silence carries the gap marker.
+    const gapCard = page.locator(".segment--after-gap");
+    await expect(gapCard).toHaveCount(1);
+    await expect(gapCard).toHaveAttribute("data-flow-note", "6s silence");
+    await expect(page.locator(".segment").first()).not.toHaveClass(/segment--after-gap/);
+  });
+
+  test("a turn that starts before the previous one ends is marked as overlap", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await page.evaluate(() => {
+      handleRoleUpdate({
+        type: "role_update",
+        mapping: { spk_0: "DOCTOR", spk_1: "PATIENT" },
+      });
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_0",
+        text: "So tell me how the mornings usually begin for you.",
+        start: 0.0,
+        end: 4.0,
+        segment_id: "seg-0001",
+      });
+      handleRawSegment({
+        type: "segment",
+        speaker_id: "spk_1",
+        text: "Honestly they are the worst part of the day.",
+        start: 2.8,
+        end: 5.5,
+        segment_id: "seg-0002",
+      });
+    });
+
+    // The interrupting patient turn is pulled against the doctor turn and
+    // labelled with the measured overlap duration.
+    const overlapCard = page.locator(".segment--overlap");
+    await expect(overlapCard).toHaveCount(1);
+    await expect(overlapCard).toHaveAttribute("data-flow-note", "overlap · 1.2s");
+    await expect(page.locator(".segment").first()).not.toHaveClass(/segment--overlap/);
+  });
+
+  test("finalizing unlocks the button but never fires a summary by itself", async ({
+    page,
+  }) => {
+    const summaryCalls = [];
+    const correctionCalls = [];
+    const requestOrder = [];
+    await loadScribePage(page);
+    await stubCorrectionRoute(page, correctionCalls, requestOrder);
+    await stubSummaryRoute(page, summaryCalls, requestOrder);
+    await injectFakeSegments(page, 2);
+
+    // Before attestation the button is locked with its explanation.
+    await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
+
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-m11-gate",
+      });
+    });
+    await expect(page.locator("#generateSummaryBtn")).toBeEnabled();
+
+    // No click, no note - ever.
+    await page.waitForTimeout(1500);
+    expect(summaryCalls.length).toBe(0);
+
+    // The click drives the unchanged correction-then-summary flow.
+    await page.click("#generateSummaryBtn");
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
+  });
+});
+
+test.describe("Pause and continue (M11)", () => {
+  test("pause suspends the visit without finalizing; continue and stop still work", async ({
+    page,
+  }) => {
+    await loadScribePage(page);
+    await injectFakeSegments(page, 2);
+    // The real UI transition (Start hidden, Stop + Pause shown, isRecording set).
+    await page.evaluate(() => showRecordingUi());
+
+    // The pause control appears with the live session.
+    await expect(page.locator("#pauseBtn")).toBeVisible();
+
+    // Pause freezes the visit visibly but never finalizes it.
+    await page.click("#pauseBtn");
+    await expect(page.locator("#status")).toContainText("Paused");
+    await expect(page.locator("#pauseBtn")).toHaveText("Continue");
+    await page.waitForTimeout(800);
+    await expect(page.locator("#startBtn")).toBeHidden();
+    await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
+
+    // Continue restores the recording state on the same session.
+    await page.click("#pauseBtn");
+    await expect(page.locator("#status")).toContainText("Recording");
+    await expect(page.locator("#pauseBtn")).toHaveText("Pause");
+
+    // Stop stays terminal and takes the pause control with it.
+    await page.evaluate(() => stopRecording());
+    await expect(page.locator("#pauseBtn")).toBeHidden();
   });
 });

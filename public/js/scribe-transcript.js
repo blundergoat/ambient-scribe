@@ -181,6 +181,10 @@ function refreshSpeakerCardDisplay(segmentBlock) {
         segmentBlock.classList.add('segment--mixed');
     }
 
+    // Rebuilding the class list above dropped any gap/overlap marker, and a
+    // role update only moves a card sideways — its spoken time is unchanged.
+    applyFlowClassesFromDataset(segmentBlock);
+
     const labelElement = segmentBlock.querySelector('.segment__speaker');
     // Partial test DOMs may not render card labels.
     if (labelElement) {
@@ -205,6 +209,84 @@ function refreshSpeakerCardDisplay(segmentBlock) {
  */
 function refreshCardDisplayForRow(rowSpan) {
     refreshSpeakerCardDisplay(rowSpan.closest('.segment'));
+}
+
+/**
+ * Reads one card's spoken-time bounds from the rows it currently holds.
+ * Use when flow markers need real intervals after inserts, splits, or merges.
+ *
+ * @param {HTMLElement} segmentBlock - transcript card; a card without timed
+ *   rows falls back to its own dataset bounds, which may be unmeasured.
+ * @returns {{start: number, end: number}} bounds; NaN marks unmeasured cards.
+ */
+function transcriptCardInterval(segmentBlock) {
+    let startSeconds = Infinity;
+    let endSeconds = -Infinity;
+
+    // Rows are the truth: cards keep min/max as rows are inserted or split off.
+    for (const rowSpan of segmentBlock.querySelectorAll('.segment__text')) {
+        const rowStart = parseFloat(rowSpan.dataset.start);
+        const rowEnd = parseFloat(rowSpan.dataset.end);
+        if (Number.isFinite(rowStart)) {
+            startSeconds = Math.min(startSeconds, rowStart);
+        }
+        if (Number.isFinite(rowEnd)) {
+            endSeconds = Math.max(endSeconds, rowEnd);
+        }
+    }
+
+    return {
+        start: Number.isFinite(startSeconds) ? startSeconds : parseFloat(segmentBlock.dataset.start),
+        end: Number.isFinite(endSeconds) ? endSeconds : parseFloat(segmentBlock.dataset.end),
+    };
+}
+
+/**
+ * Applies the gap/overlap class a card's stored flow marker calls for.
+ * Use whenever a card's class list is rebuilt, so role updates and row
+ * corrections cannot silently drop the temporal markers.
+ *
+ * @param {HTMLElement} segmentBlock - transcript card; cards without a stored
+ *   marker just lose any stale flow class.
+ * @returns {void} Toggles only the two flow classes.
+ */
+function applyFlowClassesFromDataset(segmentBlock) {
+    segmentBlock.classList.toggle('segment--after-gap', segmentBlock.dataset.flowKind === 'gap');
+    segmentBlock.classList.toggle('segment--overlap', segmentBlock.dataset.flowKind === 'overlap');
+}
+
+/**
+ * Recomputes the silence-gap and overlap markers across the whole transcript.
+ * Use after any change that adds cards or re-times rows; one pass keeps the
+ * markers consistent when late rows land between existing turns.
+ *
+ * @returns {void} Stores each card's marker in its dataset and class list.
+ */
+function applyTranscriptFlowMarkers() {
+    const transcriptContainer = document.getElementById('transcript');
+
+    // Test pages may load this module without the flow classifier.
+    if (!transcriptContainer || typeof classifyTranscriptFlow !== 'function') {
+        return;
+    }
+
+    const speakerCards = Array.from(transcriptContainer.querySelectorAll('.segment'));
+    const flowEntries = classifyTranscriptFlow(speakerCards.map(transcriptCardInterval));
+
+    speakerCards.forEach((segmentBlock, cardIndex) => {
+        const flowNote = transcriptFlowNote(flowEntries[cardIndex]);
+
+        // The marker lives in the dataset so class rebuilds can restore it.
+        if (flowNote) {
+            segmentBlock.dataset.flowKind = flowEntries[cardIndex].kind;
+            segmentBlock.dataset.flowNote = flowNote;
+        } else {
+            delete segmentBlock.dataset.flowKind;
+            delete segmentBlock.dataset.flowNote;
+        }
+
+        applyFlowClassesFromDataset(segmentBlock);
+    });
 }
 
 /**
@@ -304,6 +386,7 @@ function appendSegment(segment, role) {
         && (lastCardStart === null || segment.start >= lastCardStart)
     ) {
         appendTextToExistingSegment(segment, transcriptContainer);
+        applyTranscriptFlowMarkers();
         return;
     }
 
@@ -313,6 +396,7 @@ function appendSegment(segment, role) {
     const lastRow = getLastTranscriptRow(transcriptContainer);
     if (lastRow && segment.start < parseFloat(lastRow.dataset.start)) {
         insertSegmentChronologically(segment, role, transcriptContainer);
+        applyTranscriptFlowMarkers();
         return;
     }
 
@@ -323,7 +407,7 @@ function appendSegment(segment, role) {
     lastSegmentBlock = segmentBlock;
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     document.getElementById('segmentCount').textContent = segmentIndex;
-
+    applyTranscriptFlowMarkers();
 }
 
 /**
@@ -625,7 +709,7 @@ function createRowTextSpan(segment) {
     }
 
     rowSpan.dataset.segmentId = segment.segment_id;
-    rowSpan.title = 'Click to correct who said this line';
+    rowSpan.title = 'Click to change speaker for this line';
     rowSpan.addEventListener('click', (clickEvent) => {
         // The card's speaker label has its own click behavior; keep them separate.
         clickEvent.stopPropagation();

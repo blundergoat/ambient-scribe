@@ -183,9 +183,10 @@
             gap: 0.875rem;
         }
 
-        /* Once the summary opens, transcript and summary split 5:5. */
+        /* Once the summary opens, the transcript keeps the wider track (M11):
+           the conversation is what the clinician reads most. */
         .consultation-workspace:has(.summary-panel:not(.hidden)) {
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
         }
 
         .summary-column {
@@ -301,6 +302,65 @@
         .segment--DOCTOR .segment__speaker { color: var(--color-speaker-a); }
         .segment--PATIENT .segment__speaker { color: var(--color-speaker-b); }
         .segment--UNKNOWN .segment__speaker { color: var(--color-unknown); }
+
+        /* ---- Two-column temporal transcript (M11 rework) ----
+           Doctor turns fill the left column, patient turns the right, so
+           simultaneous talk sits side by side instead of stacking. Vertical
+           spacing carries time: silence longer than a few seconds renders as
+           a labelled gap chip, and a turn that began before the previous one
+           finished pulls tight against it under an overlap chip. Sides follow
+           the card's role class, which refreshSpeakerCardDisplay re-applies
+           on every role update or row correction — an unknown or mixed card
+           stays full-width and neutral, never guessed onto a side. */
+        .segment {
+            position: relative;
+        }
+        .segment--DOCTOR,
+        .segment--PATIENT {
+            max-width: 48%;
+        }
+        .segment--PATIENT {
+            margin-left: auto;
+            flex-direction: row-reverse;
+        }
+        .segment--UNKNOWN {
+            max-width: 100%;
+            margin-left: 0;
+        }
+
+        /* Flow chips are generated from data-flow-note so the DOM stays flat
+           and chronological insertion logic never has to step over spacers. */
+        .segment--after-gap {
+            margin-top: 2.5rem;
+        }
+        .segment--after-gap::before,
+        .segment--overlap::before {
+            content: attr(data-flow-note);
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.0625rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        .segment--after-gap::before {
+            top: -1.9375rem;
+            color: var(--text-subtle);
+            border: 1px dashed var(--surface-border);
+            background: var(--surface-bg);
+        }
+        .segment--overlap {
+            margin-top: -0.25rem;
+        }
+        .segment--overlap::before {
+            top: -0.4375rem;
+            z-index: 5;
+            color: var(--warning-strong, #92400e);
+            border: 1px solid currentColor;
+            background: var(--surface-bg);
+        }
 
         .segment__speaker[style*="cursor: pointer"]:hover {
             background: color-mix(in srgb, currentColor 12%, transparent);
@@ -470,31 +530,6 @@
         .copy-button--transcript {
             margin: 0 0 0.625rem 0;
             display: inline-block;
-        }
-        /* The three status axes are always-visible text, one badge per truth. */
-        .note-status-axes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.375rem;
-            margin-bottom: 0.625rem;
-        }
-        .note-status-axes.hidden { display: none; }
-        .note-status-axes__badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.125rem 0.5rem;
-            font-size: 0.6875rem;
-            font-weight: 500;
-            border-radius: 999px;
-            border: 1px solid var(--border, currentColor);
-            color: var(--text-subtle);
-        }
-        .note-status-axes__badge.hidden { display: none; }
-        /* Review-required and fallback states read as caution, not decoration. */
-        .note-status-axes__badge--automated[data-review-required="1"],
-        .note-status-axes__badge--source[data-review-required="1"] {
-            color: var(--warning-strong, #92400e);
-            border-color: currentColor;
         }
         .note-review-reasons {
             margin: 0 0 0.625rem 1rem;
@@ -805,6 +840,15 @@
             margin: 0;
             font-size: 0.6875rem;
             color: var(--text-subtle);
+        }
+        .summary-generate {
+            /* The on-demand note trigger (M11) sits with the pending copy. */
+            margin-left: 0.75rem;
+            white-space: nowrap;
+        }
+        .summary-generate:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
         }
         .summary-low-confidence {
             position: relative;
@@ -1354,6 +1398,13 @@
                 padding: 1rem;
             }
 
+            /* Half-width columns get cramped on phones; the left/right offset
+               alone still says who is speaking. */
+            .segment--DOCTOR,
+            .segment--PATIENT {
+                max-width: 85%;
+            }
+
             .scribe-header,
             .status-cluster {
                 align-items: flex-start;
@@ -1422,6 +1473,11 @@
                 <span id="startBtnLabel">Start Consultation</span>
                 <span class="text-xs opacity-70">(Space)</span>
             </button>
+            {# Pause suspends audio streaming without finalizing (M11): the
+               visit continues on the same session when the user presses
+               Continue; Stop remains the only terminal action. #}
+            <button id="pauseBtn" onclick="togglePauseSession()" type="button" class="btn hidden"
+                    aria-label="Pause the recording without ending the session">Pause</button>
             <button id="stopBtn" onclick="stopCurrentSession()" class="btn btn--danger hidden" aria-label="Stop current session (Space or Escape)" title="Stop current session (Space / Esc)">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>
                 Stop
@@ -1474,10 +1530,10 @@
                                     aria-selected="false" aria-controls="summaryTranscriptView" tabindex="-1"
                                     onclick="selectSummaryTab('transcript')">Transcript</button>
                         </div>
-                        {# Default export: the draft note always copies WITH its source/review status. #}
+                        {# Default export: the summary always copies WITH its source/review status. #}
                         <button id="copyNoteBtn" type="button" class="copy-button" disabled
-                                aria-label="Copy draft note — unavailable until a note is generated"
-                                onclick="copyDraftNote(this)">Copy draft note</button>
+                                aria-label="Copy summary — unavailable until a note is generated"
+                                onclick="copySummary(this)">Copy summary</button>
                     </div>
                     <div id="summaryBody" class="summary-panel__body">
                         <div id="summaryNoteView" role="tabpanel" aria-labelledby="summaryTabNote">
@@ -1487,7 +1543,13 @@
                                     <span class="summary-pending__bar"></span>
                                     <span class="summary-pending__bar"></span>
                                 </span>
-                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress, the summary will generate once consultation ends.</span>
+                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress — press Generate summary when the consultation ends.</span>
+                                {# The note is generated on demand (M11): the button unlocks
+                                   only once the backend attests the finalized transcript, so
+                                   a pre-terminal snapshot can never feed a note. #}
+                                <button id="generateSummaryBtn" type="button" class="copy-button summary-generate" disabled
+                                        aria-label="Generate summary — available once the transcript is finalized"
+                                        onclick="requestSummary()">Generate summary</button>
                             </div>
                             <div id="summaryLoading" class="summary-panel__loading hidden">
                                 <span class="recording-dot recording-pulse"></span>
@@ -1499,14 +1561,8 @@
                                 <span id="summarySourceNotice" class="summary-status__notice hidden"></span>
                                 <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
-                            {# Three independent truths about the note: where its text came from,
-                               what automated checks flagged, and that no clinician reviewed it.
-                               Always visible text - never tooltip-only. #}
-                            <div id="noteStatusAxes" class="note-status-axes hidden">
-                                <span id="noteAxisSource" class="note-status-axes__badge note-status-axes__badge--source"></span>
-                                <span id="noteAxisAutomated" class="note-status-axes__badge note-status-axes__badge--automated hidden"></span>
-                                <span id="noteAxisClinician" class="note-status-axes__badge note-status-axes__badge--clinician hidden"></span>
-                            </div>
+                            {# Automated review reasons stay on screen when checks flag the
+                               note; full source/review status still travels with every copy. #}
                             <ul id="noteReviewReasons" class="note-review-reasons hidden"></ul>
                             <div id="summaryContent"></div>
                         </div>
@@ -1529,7 +1585,7 @@
         </div>
 
         <div id="srAnnounce" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
-        <span id="confidenceWordingHelp" class="sr-only">Lower-confidence transcription — check wording against audio.</span>
+        <span id="confidenceWordingHelp" class="sr-only">Lower-confidence transcription — double-check this wording.</span>
     </main>
 
     {# ===== DEV PANEL (RIGHT RAIL) ===== #}
@@ -1612,6 +1668,7 @@
     </script>
     <script src="/js/scribe.js"></script>
     <script src="/js/scribe-confidence.js"></script>
+    <script src="/js/scribe-flow.js"></script>
     <script src="/js/scribe-streaming.js"></script>
     <script src="/js/scribe-recording.js"></script>
     <script src="/js/scribe-transcript.js"></script>
