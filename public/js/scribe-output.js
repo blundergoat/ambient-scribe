@@ -698,6 +698,58 @@ function attestedRoleSettlement() {
 }
 
 /**
+ * Shows how much of the recording the rendered note covers.
+ * Use after every note render: partiality must be machine-stated chrome, not
+ * something the model remembers to mention (run 735cedec said "consultation
+ * appears to be continuing"; run 79266b51 said nothing).
+ *
+ * @returns {void} Fills and shows the coverage line, or hides it when no
+ *   note or no timed transcript rows exist.
+ */
+function refreshNoteCoverage() {
+    const coverageLine = document.getElementById('noteCoverage');
+
+    // Test pages without the coverage line have nothing to show.
+    if (!coverageLine) {
+        return;
+    }
+
+    const coverageText = transcriptCoverageText();
+    if (!latestRenderedSummaryPayload || !coverageText) {
+        coverageLine.classList.add('hidden');
+        return;
+    }
+
+    coverageLine.textContent = coverageText;
+    coverageLine.classList.remove('hidden');
+}
+
+/**
+ * Builds the "Covers 00:00 - MM:SS" wording from the visible transcript rows.
+ * Use for the note's coverage chrome and the copied note's header; an empty
+ * string means no timed rows are on screen.
+ *
+ * @returns {string} readable coverage span, or '' when nothing is timed.
+ */
+function transcriptCoverageText() {
+    let latestRowEnd = 0;
+
+    for (const rowSpan of document.querySelectorAll('#transcript .segment__text')) {
+        const rowEnd = Number.parseFloat(rowSpan.dataset.end);
+        if (Number.isFinite(rowEnd) && rowEnd > latestRowEnd) {
+            latestRowEnd = rowEnd;
+        }
+    }
+
+    // A note without any timed transcript rows has no honest span to state.
+    if (latestRowEnd <= 0 || typeof formatTime !== 'function') {
+        return '';
+    }
+
+    return `Covers 00:00 - ${formatTime(latestRowEnd)} of the recording`;
+}
+
+/**
  * Derives the note's status truths, shows review reasons, and gates copying.
  * Use on every note lifecycle change: automated review reasons stay visible
  * text (never tooltip-only), and copying stays disabled until an honest note
@@ -791,6 +843,7 @@ function resetPostVisitCorrectionState() {
     // and the Generate summary button locks until the next attestation.
     latestRenderedSummaryPayload = null;
     renderNoteStatus({ phase: 'reset' });
+    refreshNoteCoverage();
     updateGenerateSummaryAvailability();
     setSummarySourceNotice(null);
 
@@ -1015,6 +1068,7 @@ function renderSummary(summaryPayload) {
     latestRenderedSummaryPayload = summaryPayload;
     setSummaryStatus('generated');
     renderNoteStatus(collectNoteStatusModel(summaryPayload));
+    refreshNoteCoverage();
     setSummarySourceNotice(summaryPayload);
     setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.
@@ -1266,10 +1320,12 @@ function appendClaimNodes(claimContainer, claim, unitsById) {
     const citedUnits = resolvedClaimUnits(claim, unitsById);
     const evidenceToggle = createClaimEvidenceToggle(claim, citedUnits, disclosureId);
     const disclosureRegion = createClaimDisclosure(claim, citedUnits, disclosureId);
+    // The no-break space glues the chip to the claim's last word so a chip
+    // can never wrap onto a line of its own.
     const claimBody = createElement('span', {
         className: 'summary-claim',
         dataset: { claimId: String(claim.claim_id ?? '') },
-    }, [createClaimTextSpan(claim), evidenceToggle]);
+    }, [createClaimTextSpan(claim), document.createTextNode(' '), evidenceToggle]);
 
     evidenceToggle.addEventListener('click', () => {
         toggleClaimEvidence(evidenceToggle, disclosureRegion);
@@ -1346,7 +1402,9 @@ function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
 
     if (hasCitedEvidence) {
         const turnNoun = citedUnits.length === 1 ? 'source turn' : 'source turns';
-        toggleText = String(citedUnits.length);
+        // A wall of "1" chips is noise: the count renders only when it says
+        // something (>1); single-citation claims keep a quiet dot affordance.
+        toggleText = citedUnits.length > 1 ? String(citedUnits.length) : '·';
         toggleLabel = `View evidence for this claim, ${citedUnits.length} ${turnNoun}`;
     } else if (claim.evidence_basis === 'transcript_absence') {
         toggleText = 'Absence-based';

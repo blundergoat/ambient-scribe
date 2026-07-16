@@ -42,7 +42,7 @@ async function injectFakeSegments(page, count = 3) {
 /**
  * Injects rows shaped like the consult-03 failure: two consecutive rows from
  * one speaker (coalesced into one card) followed by the other speaker, so
- * row-level correction inside a multi-row card is testable.
+ * row-level exceptions inside a multi-row card are testable.
  */
 async function injectCoalescedCardSegments(page) {
   await page.evaluate(() => {
@@ -567,55 +567,8 @@ test.describe("Role confidence badge stability gating", () => {
   });
 });
 
-test.describe("Row-level role correction", () => {
-  test("row correction survives a conflicting role update and reaches the summary body", async ({
-    page,
-  }) => {
-    await loadScribePage(page);
-    await injectCoalescedCardSegments(page);
-
-    // The consult-03 shape: one card coalesces two same-speaker rows.
-    await expect(page.locator(".segment")).toHaveCount(2);
-    const secondRow = page.locator('.segment__text[data-segment-id="seg-0002"]');
-    const overridePosted = page.waitForRequest(
-      (request) =>
-        request.url().includes("/roles/override") &&
-        request.method() === "POST" &&
-        request.postDataJSON()?.segment_id === "seg-0002"
-    );
-
-    // Clinician clicks the one wrong line inside the card (Unknown -> Doctor).
-    await secondRow.click();
-    await overridePosted;
-    await expect(secondRow.locator(".segment__row-role")).toContainText("Dr ✓");
-
-    // A later conflicting unstable agent update relabels both speakers.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
-        confidence: 0.9,
-        role_stability: { level: "unstable", anchor_remaps: 12 },
-      });
-    });
-
-    // The corrected row keeps its pinned label chip inside the relabeled card.
-    await expect(secondRow.locator(".segment__row-role")).toContainText("Dr ✓");
-
-    // The summary body stays row-preserving: three records, the corrected row
-    // keeps DOCTOR while its card's speaker mapping says PATIENT, and the
-    // chip text never leaks into the spoken text.
-    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
-    expect(summaryRows).toHaveLength(3);
-    expect(summaryRows[0].segment_id).toBe("seg-0001");
-    expect(summaryRows[0].role).toBe("PATIENT");
-    expect(summaryRows[1].segment_id).toBe("seg-0002");
-    expect(summaryRows[1].role).toBe("DOCTOR");
-    expect(summaryRows[1].text).toBe("About two weeks now, mostly mornings.");
-    expect(summaryRows[2].role).toBe("DOCTOR");
-  });
-
-  test("automatic row exceptions render tentatively and yield to the clinician", async ({
+test.describe("Row-level role exceptions", () => {
+  test("automatic row exceptions render tentatively and clear when explained", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -645,7 +598,7 @@ test.describe("Row-level role correction", () => {
     );
 
     // The summary body uses the row-level judgment, not the card's mapping.
-    let summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
+    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
     expect(summaryRows[1].role).toBe("DOCTOR");
     expect(summaryRows[0].role).toBe("PATIENT");
 
@@ -662,92 +615,6 @@ test.describe("Row-level role correction", () => {
     await expect(mixedRoleCard.locator(".segment__speaker")).toContainText(
       "Doctor"
     );
-
-    // When the exception returns, the clinician's click still outranks it.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
-        confidence: 0.7,
-        row_exceptions: { "seg-0002": "UNKNOWN" },
-      });
-    });
-    await flaggedRow.click();
-    await expect(flaggedRow.locator(".segment__row-role")).toContainText("✓");
-
-    // Later automatic judgments cannot displace the clinician's chip.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
-        confidence: 0.7,
-        row_exceptions: { "seg-0002": "DOCTOR" },
-      });
-    });
-    await expect(flaggedRow.locator(".segment__row-role")).toContainText("✓");
-
-    summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
-    // The clicked correction (Unknown -> Doctor cycle landed on DOCTOR after
-    // the auto UNKNOWN) stays the row's reported role.
-    expect(summaryRows[1].role).toBe("DOCTOR");
-  });
-
-  test("row corrections from another tab render through the roles topic", async ({
-    page,
-  }) => {
-    await loadScribePage(page);
-    await injectCoalescedCardSegments(page);
-
-    // Another tab corrected row 1; this tab receives it via Mercure.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        mapping: {},
-        row_overrides: { "seg-0001": "PATIENT" },
-        confidence: 0.5,
-        manual_override: true,
-      });
-    });
-
-    const firstRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
-    await expect(firstRow.locator(".segment__row-role")).toContainText("Pt ✓");
-
-    const summaryRows = await page.evaluate(() => readVisibleTranscriptSegments());
-    expect(summaryRows[0].role).toBe("PATIENT");
-  });
-
-  test("post-visit row correction without role state keeps the earned badge", async ({
-    page,
-  }) => {
-    await loadScribePage(page);
-    await injectCoalescedCardSegments(page);
-
-    // The live visit earned a green badge before Stop.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        mapping: { spk_0: "PATIENT", spk_1: "DOCTOR" },
-        confidence: 0.9,
-      });
-    });
-    const badge = page.locator("#confidenceBadge");
-    await expect(badge).toContainText("Roles identified (90%)");
-
-    // A row fix after grace teardown broadcasts only the row signal - the
-    // server no longer includes mapping or confidence for a finished visit.
-    await page.evaluate(() => {
-      handleRoleUpdate({
-        type: "role_update",
-        row_overrides: { "seg-0001": "DOCTOR" },
-        flip_detected: false,
-        manual_override: true,
-      });
-    });
-
-    // The row chip applies while the badge keeps its earned confidence.
-    const firstRow = page.locator('.segment__text[data-segment-id="seg-0001"]');
-    await expect(firstRow.locator(".segment__row-role")).toContainText("Dr ✓");
-    await expect(badge).toContainText("Roles identified (90%)");
   });
 
   test("a fabricated empty-mapping override cannot wipe the badge to zero", async ({
@@ -1826,39 +1693,6 @@ test.describe("Live-stop finalize drain (M21)", () => {
     expect(summaryCalls).toHaveLength(0);
   });
 
-  test("a row correction made before Stop survives the drain into the summary body", async ({
-    page,
-  }) => {
-    const summaryCalls = [];
-    await loadScribePage(page);
-    // An unstubbed correction request would reach the real agent, which
-    // has no session for these injected rows and would block the note.
-    await stubCorrectionRoute(page, [], []);
-    await stubSummaryRoute(page, summaryCalls);
-    await injectCoalescedCardSegments(page);
-
-    // Clinician fixes one wrong row, then stops the visit.
-    const secondRow = page.locator('.segment__text[data-segment-id="seg-0002"]');
-    const overridePosted = page.waitForRequest(
-      (request) =>
-        request.url().includes("/roles/override") && request.method() === "POST"
-    );
-    await secondRow.click();
-    await overridePosted;
-
-    await enterLiveRecordingState(page);
-    await page.evaluate(() => {
-      stopRecording();
-      handleRawSegment({ type: "finalized", session_id: CONFIG.sessionId });
-    });
-    await page.click("#generateSummaryBtn");
-
-    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
-    const correctedRow = summaryCalls[0].segments.find(
-      (row) => row.segment_id === "seg-0002"
-    );
-    expect(correctedRow.role).toBe("DOCTOR");
-  });
 });
 
 test.describe("Replay on-demand summary (M11)", () => {
@@ -2142,8 +1976,10 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     await renderNoteDirectly(page, v2SummaryPayload());
 
     // The cited claim counts its OWN unit: one turn, despite two context rows.
+    // A single citation renders the quiet dot; the count appears only when >1.
     const citedToggle = page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle');
-    await expect(citedToggle).toHaveText("1");
+    await expect(citedToggle).toHaveText("·");
+    await expect(citedToggle).toHaveAttribute("aria-label", /1 source turn/);
     await expect(citedToggle).toHaveAttribute("aria-expanded", "false");
 
     // Uncited and absence-based claims read as wording, never a count or link.
@@ -2527,6 +2363,13 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
     expect(correctionCalls.length).toBe(1);
     expect(requestOrder).toEqual(["correction", "summary"]);
+
+    // The rendered note states its machine-computed coverage span (rows end
+    // at 3.5s), so a partial recording can never pose as a complete visit.
+    await expect(page.locator("#noteCoverage")).toBeVisible();
+    await expect(page.locator("#noteCoverage")).toHaveText(
+      "Covers 00:00 - 00:03 of the recording"
+    );
   });
 });
 

@@ -231,7 +231,7 @@ function togglePauseSession() {
 
         if (!isSessionPaused) {
             replayAudio.pause();
-            enterPausedSessionUi('Replay paused — press Continue to keep going');
+            enterPausedSessionUi('Replay paused - press Continue to keep going');
         } else {
             replayAudio.play().catch((playError) => {
                 console.warn('Replay resume blocked:', playError);
@@ -251,7 +251,7 @@ function togglePauseSession() {
         clearInterval(timerInterval);
         timerInterval = null;
         sessionPausedAt = Date.now();
-        enterPausedSessionUi('Paused — recording will continue');
+        enterPausedSessionUi('Paused - recording will continue');
     } else {
         pcmStreamer?.resume();
 
@@ -461,7 +461,6 @@ function resetVisitState() {
     latestQualityRecord = null;
     startTime = null;
     manualOverrides.clear();
-    rowRoleOverrides.clear();
     autoRowRoles.clear();
     segmentsBySpeaker.clear();
     lastSpeakerId = null;
@@ -510,7 +509,7 @@ function resetVisitUi() {
     document.getElementById('summaryLoading').classList.add('hidden');
     document.getElementById('summaryTitle').textContent = 'Session Summary';
     setSummaryStatus('pending');
-    setSummaryPendingText('Recording in progress — press Generate summary when the consultation ends.');
+    setSummaryPendingText('Recording in progress - press Generate summary when the consultation ends.');
 
     const confidenceBadge = document.getElementById('confidenceBadge');
 

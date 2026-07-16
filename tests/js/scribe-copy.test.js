@@ -59,7 +59,7 @@ test('transcript export keeps timestamp, speaker, and exact row boundaries', () 
         TRANSCRIPT_LANE_LABELS.corrected
     );
 
-    assert.ok(exportText.startsWith('Transcript — Corrected transcript — used for note\n'));
+    assert.ok(exportText.startsWith('Transcript - Corrected transcript - used for note\n'));
     assert.ok(exportText.includes('[00:00] Doctor: How long have the headaches lasted?'));
     assert.ok(exportText.includes('[01:02] Doctor: About two weeks now, mostly mornings.'));
     assert.ok(exportText.includes('[01:05] Patient: Any visual changes with them?'));
@@ -130,6 +130,22 @@ test('consult 5.3 note export keeps unresolved-review meaning without counts', (
     assert.ok(exportText.includes('Automated review: Review required (3)'));
 });
 
+test('a coverage line travels in the export header only when one exists', () => {
+    const coveredModel = {
+        title: 'Session Summary',
+        statusLines: { sourceLine: 'Draft generated from corrected transcript' },
+        coverageLine: 'Covers 00:00 - 03:41 of the recording',
+        keyPoints: [],
+        sections: [],
+    };
+    const coveredText = serializeDraftNote(coveredModel);
+    assert.ok(coveredText.includes('Coverage: Covers 00:00 - 03:41 of the recording'));
+
+    // A note without timed rows states no span rather than guessing one.
+    const uncoveredModel = { ...coveredModel, coverageLine: null };
+    assert.ok(!serializeDraftNote(uncoveredModel).includes('Coverage:'));
+});
+
 test('flagged sentences the prose no longer contains still surface review state', () => {
     const markedContent = markFlaggedSentencesForCopy(
         'Current prose without the flagged claim.',
@@ -146,28 +162,28 @@ test('status axes speak the contract wording for every lifecycle state', () => {
     );
     assert.equal(
         deriveNoteStatusLines({ phase: 'waiting' }).sourceLine,
-        'Source still finalizing — note unavailable'
+        'Source still finalizing - note unavailable'
     );
     assert.equal(
         deriveNoteStatusLines({ phase: 'blocked', blockedReason: 'source_not_terminal' }).sourceLine,
-        'Source still finalizing — note unavailable'
+        'Source still finalizing - note unavailable'
     );
     assert.equal(
         deriveNoteStatusLines({ phase: 'blocked', blockedReason: 'stale_lineage' }).sourceLine,
-        'Source incomplete — note unavailable'
+        'Source incomplete - note unavailable'
     );
     assert.equal(
         deriveNoteStatusLines({ phase: 'blocked', blockedReason: 'correction_pending' }).sourceLine,
-        'Correction unavailable — note unavailable'
+        'Correction unavailable - note unavailable'
     );
     assert.equal(
         deriveNoteStatusLines({ phase: 'blocked', blockedReason: 'source_exceeds_note_limit' }).sourceLine,
-        'Source exceeds note limit — note unavailable'
+        'Source exceeds note limit - note unavailable'
     );
     // Unknown blocked reasons stay on the safe incomplete wording.
     assert.equal(
         deriveNoteStatusLines({ phase: 'blocked', blockedReason: 'later_reason' }).sourceLine,
-        'Source incomplete — note unavailable'
+        'Source incomplete - note unavailable'
     );
     // No unavailable state may expose a copyable note.
     for (const phase of ['generating', 'waiting', 'blocked', 'failed']) {
@@ -189,7 +205,7 @@ test('generated notes always carry all three axes and fallback is review-require
         phase: 'generated',
         sourceState: 'whole_visit_live_fallback',
     });
-    assert.equal(fallback.sourceLine, 'Complete live fallback — review required');
+    assert.equal(fallback.sourceLine, 'Complete live fallback - review required');
     // A fallback source is itself an automated review reason.
     assert.equal(fallback.automatedReviewLine, 'Review required (1)');
 
@@ -268,7 +284,7 @@ function v2StylePayload() {
                             {
                                 sentence: 'The doctor said palpitations are "more likely to be associated with anxiety".',
                                 reason: 'quote_not_matched',
-                                detail: 'Quoted wording could not be matched to the cited transcript — verify manually',
+                                detail: 'Quoted wording could not be matched to the cited transcript - verify manually',
                                 segment_ids: [],
                             },
                         ],
@@ -387,7 +403,7 @@ test('v2 claim export text carries review meaning inline, never counts', () => {
     // Uncited claims are marked with why they need review.
     assert.equal(
         v2ClaimExportText({ text: 'The patient is 45 years old.', evidence_basis: 'none' }),
-        'The patient is 45 years old. [No cited evidence — review]'
+        'The patient is 45 years old. [No cited evidence - review]'
     );
     // Absence-based statements say so, or the paste reads as observed fact.
     assert.equal(
@@ -398,7 +414,7 @@ test('v2 claim export text carries review meaning inline, never counts', () => {
     const flaggedExport = v2ClaimExportText({
         text: 'Quoted claim.',
         evidence_basis: 'source_unit',
-        review_reasons: [{ reason: 'quote_not_matched', detail: 'Quoted wording could not be matched to the cited transcript — verify manually' }],
+        review_reasons: [{ reason: 'quote_not_matched', detail: 'Quoted wording could not be matched to the cited transcript - verify manually' }],
         wording_review: true,
     });
     assert.ok(flaggedExport.includes('[Review: Quoted wording could not be matched'));
@@ -426,7 +442,7 @@ test('the v2 draft note export is claim prose with axes and no control chrome', 
     assert.ok(exportedNote.includes('- No chest pain was reported. [Based on transcript absence]'));
     assert.ok(exportedNote.includes(
         'Palpitations are most noticeable in the morning. '
-        + 'The patient is 45 years old. [No cited evidence — review]'
+        + 'The patient is 45 years old. [No cited evidence - review]'
     ));
     assert.ok(exportedNote.includes('[Review: Quoted wording could not be matched'));
 

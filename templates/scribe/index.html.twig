@@ -374,20 +374,6 @@
         }
         /* Row spacing is a real text node (normalizeRowSeparators) so copied,
            searched, and screen-reader text keeps the same spaces users see. */
-        /* Rows with a stable ID are individually correctable by clicking. */
-        .segment__text[data-segment-id] {
-            cursor: pointer;
-        }
-        .segment__text[data-segment-id]:hover {
-            background: color-mix(in srgb, currentColor 8%, transparent);
-            border-radius: 3px;
-        }
-        /* A row the clinician corrected keeps a subtle marker even after
-           later automatic role updates restyle the surrounding card. */
-        .segment__text--corrected {
-            text-decoration: underline dotted;
-            text-underline-offset: 3px;
-        }
         .segment__row-role {
             display: inline-block;
             font-size: 0.625rem;
@@ -465,6 +451,13 @@
             margin: 0 0 0.625rem 0;
             display: inline-block;
         }
+        .summary-coverage {
+            margin: 0 0 0.625rem 0;
+            font-size: 0.6875rem;
+            color: var(--text-subtle);
+            font-variant-numeric: tabular-nums;
+        }
+        .summary-coverage.hidden { display: none; }
         .note-review-reasons {
             margin: 0 0 0.625rem 1rem;
             padding: 0;
@@ -561,15 +554,20 @@
             height: 5px;
             background: var(--color-speaker-b);
             border-radius: 2px;
+            /* Each bar has its own peak and parked height so the trio reads
+               as a small waveform instead of three identical lines. */
+            --bar-peak: 15px;
+            --bar-rest: 12px;
             animation: summary-eqbar 0.9s ease-in-out infinite;
         }
+        .summary-pending__bar:nth-child(1) { --bar-peak: 10px; --bar-rest: 7px; }
         .summary-pending__bar:nth-child(2) { animation-delay: 0.15s; }
-        .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; }
+        .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; --bar-peak: 12px; --bar-rest: 9px; }
         /* Bars pulse only while the transcript is still being produced; once
            the backend attests the final transcript they park still. */
         .summary-pending--ready .summary-pending__bar {
             animation: none;
-            height: 12px;
+            height: var(--bar-rest);
         }
         .summary-pending__text {
             font-size: 0.8125rem;
@@ -578,10 +576,10 @@
         }
         @keyframes summary-eqbar {
             0%, 100% { height: 5px; }
-            50% { height: 15px; }
+            50% { height: var(--bar-peak); }
         }
         @media (prefers-reduced-motion: reduce) {
-            .summary-pending__bar { animation: none; height: 12px; }
+            .summary-pending__bar { animation: none; height: var(--bar-rest); }
         }
         .summary-section { margin-bottom: 1rem; }
         .summary-section:last-child { margin-bottom: 0; }
@@ -1504,6 +1502,9 @@
                             {# Automated review reasons stay on screen when checks flag the
                                note; full source/review status still travels with every copy. #}
                             <ul id="noteReviewReasons" class="note-review-reasons hidden"></ul>
+                            {# Machine-stated coverage: a partial recording must say so
+                               deterministically, never only when the model mentions it. #}
+                            <p id="noteCoverage" class="summary-coverage hidden"></p>
                             <div id="summaryContent"></div>
                         </div>
                         <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">

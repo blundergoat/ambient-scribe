@@ -14,12 +14,12 @@
 // Blocked reasons from the backend map onto these fixed clinician-facing lines.
 const SOURCE_AXIS_LINES = {
     generating: 'Generating',
-    waiting: 'Source still finalizing — note unavailable',
+    waiting: 'Source still finalizing - note unavailable',
     corrected: 'Draft generated from corrected transcript',
-    live_fallback: 'Complete live fallback — review required',
-    incomplete: 'Source incomplete — note unavailable',
-    correction_unavailable: 'Correction unavailable — note unavailable',
-    over_limit: 'Source exceeds note limit — note unavailable',
+    live_fallback: 'Complete live fallback - review required',
+    incomplete: 'Source incomplete - note unavailable',
+    correction_unavailable: 'Correction unavailable - note unavailable',
+    over_limit: 'Source exceeds note limit - note unavailable',
 };
 
 // Which fixed source line each backend blocked reason means for the user.
@@ -41,9 +41,9 @@ const NOT_CLINICIAN_REVIEWED_TEXT = 'Not clinician reviewed';
 
 // Lane wording shown beside the transcript and used by the transcript export.
 const TRANSCRIPT_LANE_LABELS = {
-    corrected: 'Corrected transcript — used for note',
-    live: 'Live preview — may change',
-    live_fallback: 'Complete live fallback — review required',
+    corrected: 'Corrected transcript - used for note',
+    live: 'Live preview - may change',
+    live_fallback: 'Complete live fallback - review required',
 };
 
 /**
@@ -78,7 +78,7 @@ function serializeTranscriptRows(rowModels, laneLabel = '') {
 
     // The lane header tells the reader whether this text fed the note.
     if (laneLabel) {
-        transcriptLines.push(`Transcript — ${laneLabel}`, '');
+        transcriptLines.push(`Transcript - ${laneLabel}`, '');
     }
 
     // One row per line: exact wording, never re-stitched or re-spaced.
@@ -373,6 +373,10 @@ function noteStatusHeaderLines(noteModel) {
     if (statusLines.sourceLine) {
         headerLines.push(`Source: ${statusLines.sourceLine}`);
     }
+    // How much of the recording the note covers (partial visits must say so).
+    if (noteModel?.coverageLine) {
+        headerLines.push(`Coverage: ${noteModel.coverageLine}`);
+    }
     // What the automated checks flagged, with the actionable breakdown.
     if (statusLines.automatedReviewLine) {
         headerLines.push(`Automated review: ${statusLines.automatedReviewLine}`);
@@ -512,7 +516,7 @@ function v2ClaimExportText(claim) {
     }
     // An uncited claim is marked with why it needs review, not a bare word.
     if (claimFlags.uncited) {
-        exportParts.push('[No cited evidence — review]');
+        exportParts.push('[No cited evidence - review]');
     }
     // Each deterministic reason travels with its exact explanatory wording.
     for (const reviewReason of claim?.review_reasons ?? []) {
@@ -595,10 +599,9 @@ function noteModelFromSummaryPayload(summaryPayload, statusLines) {
  *   role was ever mapped.
  */
 function effectiveSpeakerLabelForCopy(segment) {
-    // The clinician's own row correction wins, then automatic exceptions,
-    // then the visit-wide speaker mapping.
-    const rowRole = rowRoleOverrides.get(segment.segment_id)
-        ?? autoRowRoles.get(segment.segment_id)
+    // Automatic row exceptions win for their line, then the visit-wide
+    // speaker mapping.
+    const rowRole = autoRowRoles.get(segment.segment_id)
         ?? roleMapping[segment.speaker_id];
 
     // Unmapped speakers keep their raw id so the paste never invents a role.
@@ -716,6 +719,11 @@ async function copySummary(copyButton) {
     const summaryPayload = latestRenderedSummaryPayload;
     const statusLines = deriveNoteStatusLines(collectNoteStatusModel(summaryPayload));
     const noteModel = noteModelFromSummaryPayload(summaryPayload, statusLines);
+
+    // The paste states the same coverage span the panel shows.
+    if (typeof transcriptCoverageText === 'function') {
+        noteModel.coverageLine = transcriptCoverageText() || null;
+    }
 
     await copyTextToClipboard(serializeDraftNote(noteModel), copyButton);
 }

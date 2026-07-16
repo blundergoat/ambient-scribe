@@ -36,11 +36,31 @@ SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "8192"
 
 _SHARED_SUMMARY_RULES = """
 Rules:
-- Write every section and key point as ORDERED ATOMIC CLAIMS: one clinical assertion per
-  claim, in reading order. Never bundle unrelated facts into one claim.
+- Write like a clinician, not a transcriber. Each SECTION contains 3-6 concise clinical
+  sentences (claims), clinically ordered: presenting complaint first, then history and
+  characteristics, then associated symptoms and screening answers, then psychosocial and
+  functional impact. Each claim synthesises the RELATED facts of one theme (for example,
+  all sleep findings in one claim) and cites EVERY source unit that supports any part of
+  it. Never write one sentence per transcript utterance, and never bundle UNRELATED
+  themes into one claim - one theme, one claim.
+- Key Points are 3-5 bullets. Each bullet is ONE decision-relevant takeaway on ONE theme
+  - never merge unrelated themes into one bullet to save space. Key Points follow every
+  fidelity rule in this list, especially hedges: a patient's "probably coincides with"
+  must never compress into "triggered by" or "caused by".
+- Prefer the patient's own symptom words over clinical paraphrase ("heart racing", not
+  "palpitations"; "worried", not "racing thoughts") unless the clinician used the term.
+- Do not start every sentence with "Patient reports": the Subjective section is
+  implicitly patient-reported. Attribute explicitly only where the speaker matters
+  (a relative's account, or contrast with the clinician's observation).
+- Document pertinent negatives for screening questions the clinician asked and the
+  patient answered (sleep, appetite, mood, risk), preserving the patient's certainty
+  exactly ("probably no significant change in eating") - never firmer than spoken, and
+  only when the patient's answer exists in the transcript.
 - Cite evidence ONLY as source unit IDs from the prompt's unit list, in each claim's
-  `source_unit_ids` array. Unit IDs are the only permitted citation form; never invent an ID
-  and never cite row, segment, or timestamp identifiers.
+  `source_unit_ids` array. COPY each ID exactly as it appears in the list, character for
+  character - never retype from memory, never merge two IDs into one, never invent an ID,
+  and never cite row, segment, or timestamp identifiers. A claim synthesising several
+  units lists each unit's ID separately.
 - Set each claim's `evidence_basis`: `source_unit` when citing units, `transcript_absence`
   for a bounded negative supported by what the transcript covers, or `none` when no evidence
   exists. Claims with basis `transcript_absence` or `none` leave `source_unit_ids` empty.
@@ -82,7 +102,7 @@ Output format:
             "heading": "Section Name",
             "claims": [
                 {
-                    "text": "One atomic clinical assertion.",
+                    "text": "One concise clinical sentence synthesising the related findings of one theme.",
                     "evidence_basis": "source_unit",
                     "source_unit_ids": ["unit-0416-0423"]
                 }
@@ -91,7 +111,7 @@ Output format:
     ],
     "key_points": [
         {
-            "text": "One atomic key point.",
+            "text": "One concise key point.",
             "evidence_basis": "source_unit",
             "source_unit_ids": ["unit-0002-0009"]
         }

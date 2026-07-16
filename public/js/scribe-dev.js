@@ -346,7 +346,6 @@ class DevPanel {
             roleMapping,
             confidence,
             roleStability,
-            rowRoleOverrides: Object.fromEntries(rowRoleOverrides),
             autoRowRoles: Object.fromEntries(autoRowRoles),
             latestQualityRecord,
             reconnectAttempts,

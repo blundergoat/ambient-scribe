@@ -76,7 +76,8 @@ class TestSummaryPrompts:
     def test_medical_prompt_requires_citations(self):
         """v2: citations are unit ids in each claim, never rows or timestamps."""
         assert "source_unit_ids" in MEDICAL_SUMMARY_PROMPT
-        assert "ATOMIC CLAIMS" in MEDICAL_SUMMARY_PROMPT
+        # M13: sections are clinician-register synthesis, one theme per claim.
+        assert "one theme, one claim" in MEDICAL_SUMMARY_PROMPT
         assert "MM:SS" not in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_preserves_patient_uncertainty(self):
@@ -1144,6 +1145,26 @@ class TestSchemaV2MidImplementationProof:
         assert "`none` for every statement about what WAS said" in prompt
         assert "strictly for bounded negatives" in prompt
         assert "Never mark a positive clinical statement" in prompt
+
+    def test_system_prompt_demands_clinician_register_sections(self):
+        """Sections must read as clinical synthesis, not per-utterance extraction.
+
+        The 22-sentence "Patient reports..." wall was rejected by the user
+        (M13); the Key Points register - compressed, clinically ordered,
+        multi-unit citations - is the contract for sections too.
+        """
+        from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
+
+        assert "Write like a clinician, not a transcriber" in MEDICAL_SUMMARY_PROMPT
+        assert "Never write one sentence per transcript utterance" in MEDICAL_SUMMARY_PROMPT
+        assert "cites EVERY source unit that supports any part" in MEDICAL_SUMMARY_PROMPT
+        assert "pertinent negatives" in MEDICAL_SUMMARY_PROMPT
+        assert "ORDERED ATOMIC CLAIMS" not in MEDICAL_SUMMARY_PROMPT
+        # Key Points keep their own count and hedge discipline (first live run
+        # compressed four takeaways into two bullets and revived "triggered by").
+        assert "Key Points are 3-5 bullets" in MEDICAL_SUMMARY_PROMPT
+        assert 'must never compress into "triggered by"' in MEDICAL_SUMMARY_PROMPT
+        assert "the patient's own symptom words" in MEDICAL_SUMMARY_PROMPT
 
     def test_system_prompt_summarises_partial_visits_instead_of_refusing(self):
         """A short or interrupted transcript must still yield a real note.

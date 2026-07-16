@@ -86,12 +86,7 @@ function rowTextFromSpan(rowSpan) {
 function resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId) {
     const segmentId = rowSpan.dataset.segmentId ?? '';
 
-    // A clinician-pinned row is the strongest visible evidence.
-    if (rowRoleOverrides.has(segmentId)) {
-        return rowRoleOverrides.get(segmentId);
-    }
-
-    // Automatic row cues are used when the clinician has not corrected that line.
+    // Automatic row cues outrank the card's speaker mapping for that line.
     if (autoRowRoles.has(segmentId)) {
         return autoRowRoles.get(segmentId);
     }
@@ -675,11 +670,10 @@ function createSegmentBlockShell(speakerId, role, start, end) {
 }
 
 /**
- * Builds one correctable transcript row span for a card.
+ * Builds one transcript row span for a card.
  * Cards coalesce same-speaker rows, so this is where each row keeps its own
- * server row ID - letting the clinician fix exactly the line that is wrong
- * (e.g. one doctor question rendered inside a Patient card) without
- * relabeling the whole speaker.
+ * server row ID - citations deep-link to it and automatic row exceptions
+ * restyle exactly the line they flag.
  */
 function createRowTextSpan(segment) {
     const rowSpan = createElement('span', {
@@ -693,100 +687,19 @@ function createRowTextSpan(segment) {
         rowSpan.dataset.confidence = segment.confidence;
     }
 
-    // Rows without a server row ID (older histories) cannot be corrected individually.
+    // Rows without a server row ID (older histories) carry no row identity.
     if (!segment.segment_id) {
         return rowSpan;
     }
 
     rowSpan.dataset.segmentId = segment.segment_id;
-    rowSpan.title = 'Click to change speaker for this line';
-    rowSpan.addEventListener('click', (clickEvent) => {
-        // The card's speaker label has its own click behavior; keep them separate.
-        clickEvent.stopPropagation();
-        cycleRowRole(rowSpan);
-    });
 
-    // A correction may already exist when history rows re-render after replay.
-    const existingRowRole = rowRoleOverrides.get(segment.segment_id);
-    if (existingRowRole !== undefined) {
-        renderRowRoleMarker(rowSpan, existingRowRole);
-    } else if (autoRowRoles.has(segment.segment_id)) {
-        // A known automatic exception restyles the row as soon as it renders.
+    // A known automatic exception restyles the row as soon as it renders.
+    if (autoRowRoles.has(segment.segment_id)) {
         renderAutoRowMarker(rowSpan, autoRowRoles.get(segment.segment_id));
     }
 
     return rowSpan;
-}
-
-/**
- * Cycles one transcript row through Doctor, Patient, and Unknown labels.
- * Use when the clinician clicks a row whose speaker is wrong; Unknown marks
- * the row explicitly uncertain instead of guessing.
- */
-function cycleRowRole(rowSpan) {
-    const segmentId = rowSpan.dataset.segmentId;
-    const cardSpeakerId = rowSpan.closest('.segment')?.dataset.speakerId ?? '';
-    const currentRowRole = rowRoleOverrides.get(segmentId)
-        ?? autoRowRoles.get(segmentId)
-        ?? roleMapping[cardSpeakerId]
-        ?? 'UNKNOWN';
-    const currentRoleIndex = MEDICAL_ROLE_CYCLE.indexOf(currentRowRole);
-    let nextRole;
-
-    // Unknown or unexpected labels move to the first medical role.
-    if (currentRoleIndex === -1) {
-        nextRole = MEDICAL_ROLE_CYCLE[0];
-    } else if (currentRoleIndex === MEDICAL_ROLE_CYCLE.length - 1) {
-        // The last medical role wraps to Unknown so users can mark a row uncertain.
-        nextRole = 'UNKNOWN';
-    } else {
-        nextRole = MEDICAL_ROLE_CYCLE[currentRoleIndex + 1];
-    }
-
-    rowRoleOverrides.set(segmentId, nextRole);
-    renderRowRoleMarker(rowSpan, nextRole);
-    announce(`Row corrected to ${nextRole === 'UNKNOWN' ? 'unknown speaker' : getRoleLabel(nextRole)}`);
-    sendRowRoleOverride(segmentId, nextRole);
-}
-
-/**
- * Shows the corrected-row chip ("Dr ✓") on one transcript row.
- * The chip survives later speaker-level relabeling, so the clinician can see
- * which rows they personally pinned.
- */
-function renderRowRoleMarker(rowSpan, role) {
-    rowSpan.classList.add('segment__text--corrected');
-    rowSpan.querySelector('.segment__row-role')?.remove();
-
-    const chipLabel = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
-    rowSpan.appendChild(createElement('span', {
-        className: 'segment__row-role',
-        text: `${chipLabel} ✓`,
-        attributes: { title: 'Corrected by you' },
-    }));
-    refreshCardDisplayForRow(rowSpan);
-}
-
-/**
- * Sends a per-row role correction to the Python row-correction store.
- * Reports save failures as warnings because the visible row label already changed.
- */
-async function sendRowRoleOverride(segmentId, role) {
-    try {
-        const response = await fetch(`/scribe/${CONFIG.sessionId}/roles/override`, {
-            method: 'POST',
-            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ segment_id: segmentId, role }),
-        });
-
-        // A rejected save leaves the local row label visible but not protected server-side.
-        if (!response.ok) {
-            console.warn('Row role override save failed:', response.status);
-        }
-    } catch (overrideError) {
-        // Example: the clinician corrects one row while the same-origin save proxy disconnects.
-        console.warn('Row role override failed:', overrideError);
-    }
 }
 
 /**
@@ -890,7 +803,6 @@ function handleRoleUpdate(roleUpdateEvent) {
     // A missing stability field means no new identity evidence (older server
     // or post-disconnect drain), so the badge keeps the last known state.
     roleStability = roleUpdateEvent.role_stability ?? roleStability;
-    applyRowRoleOverrides(roleUpdateEvent.row_overrides ?? {});
 
     // Automatic row exceptions arrive as the full current set for this
     // mapping, so stale markers from the previous mapping are cleared.
@@ -947,29 +859,6 @@ function applySpeakerRoleMapping(speakerRoleMapping) {
 }
 
 /**
- * Applies row-scoped role overrides from this tab or another tab.
- * Use when one transcript line has a stronger user correction than its
- * surrounding speaker card.
- *
- * @param {object} rowOverrides - row-to-role map; empty means no row chips are changed.
- * @returns {void} Updates visible row chips and their owning card headers.
- */
-function applyRowRoleOverrides(rowOverrides) {
-    // Row overrides pin exactly one row; they never relabel the rest of the speaker's rows.
-    for (const [segmentId, rowRole] of Object.entries(rowOverrides)) {
-        rowRoleOverrides.set(segmentId, rowRole);
-        const rowSpan = document.querySelector(
-            `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
-        );
-
-        // The row may not be rendered yet on a freshly reconnected tab.
-        if (rowSpan) {
-            renderRowRoleMarker(rowSpan, rowRole);
-        }
-    }
-}
-
-/**
  * Replaces the automatic row-exception markers with the server's latest set.
  * These flag rows whose wording contradicts their card's role (e.g. a doctor
  * question inside a Patient card) - relabeled or shown uncertain per row,
@@ -993,11 +882,6 @@ function applyAutoRowExceptions(rowExceptions) {
     for (const [segmentId, rowRole] of Object.entries(rowExceptions)) {
         autoRowRoles.set(segmentId, rowRole);
 
-        // The clinician's own correction chip stays authoritative on screen.
-        if (rowRoleOverrides.has(segmentId)) {
-            continue;
-        }
-
         const rowSpan = document.querySelector(
             `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
         );
@@ -1009,7 +893,7 @@ function applyAutoRowExceptions(rowExceptions) {
 }
 
 /**
- * Removes any row marker (auto or corrected) from one transcript row.
+ * Removes the automatic row marker from one transcript row.
  * Use when a new mapping explains a row the previous mapping contradicted.
  */
 function removeRowRoleMarker(segmentId) {
@@ -1017,24 +901,22 @@ function removeRowRoleMarker(segmentId) {
         `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
     );
 
-    // Rows corrected by the clinician keep their own chip.
-    if (!rowSpan || rowRoleOverrides.has(segmentId)) {
+    // The row may not be rendered yet on a freshly reconnected tab.
+    if (!rowSpan) {
         return;
     }
 
-    rowSpan.classList.remove('segment__text--corrected');
     rowSpan.querySelector('.segment__row-role')?.remove();
     refreshCardDisplayForRow(rowSpan);
 }
 
 /**
  * Shows the automatic row-exception chip ("Dr auto" / "?") on one row.
- * Unlike the clinician's "✓" chip, this marks a machine judgment the
- * clinician can still override by clicking the row.
+ * This marks a machine judgment; the speaker label on the card remains the
+ * clinician's control for relabeling.
  */
 function renderAutoRowMarker(rowSpan, rowRole) {
     rowSpan.querySelector('.segment__row-role')?.remove();
-    rowSpan.classList.remove('segment__text--corrected');
 
     const isUncertain = rowRole === 'UNKNOWN';
     rowSpan.appendChild(createElement('span', {

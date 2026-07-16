@@ -2,14 +2,14 @@
 // Ambient Scribe temporal-flow classification for the two-column transcript.
 // Vertical spacing between turn cards carries time: silence longer than a
 // few seconds becomes a visible labelled gap, and a turn that starts before
-// the previous one finished is marked as talking-over. Pure functions only —
+// the previous one finished is marked as talking-over. Pure functions only -
 // the DOM pass in scribe-transcript.js applies the classes this returns.
 // =========================================================================
 
 // Silence between turns must exceed this before the transcript shows a gap.
 const FLOW_SILENCE_GAP_SECONDS = 3;
 // Consecutive turns within this tolerance count as normal turn-taking, not
-// overlap — NeMo row boundaries jitter by roughly a hundred milliseconds.
+// overlap - NeMo row boundaries jitter by roughly a hundred milliseconds.
 const FLOW_OVERLAP_TOLERANCE_SECONDS = 0.15;
 
 /**
