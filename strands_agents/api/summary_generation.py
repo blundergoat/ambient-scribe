@@ -977,9 +977,14 @@ def summary_generation_prompt_v2(
         prompt_parts.append(unit_index_text(source_units))
     else:
         prompt_parts.append(
-            "No citable source units exist for this visit: set every claim's"
-            " `evidence_basis` to `transcript_absence` or `none` and leave"
-            " `source_unit_ids` empty."
+            "No citable source units exist for this visit, so no claim may cite"
+            " evidence and every claim's `source_unit_ids` stays empty. Set"
+            " `evidence_basis` to `none` for every statement about what WAS said,"
+            " reported, or observed. Reserve `transcript_absence` strictly for"
+            " bounded negatives - statements that something is NOT documented or"
+            " NOT mentioned in the transcript (for example an absent examination,"
+            " assessment, or plan). Never mark a positive clinical statement as"
+            " `transcript_absence`."
         )
         prompt_parts.append(transcript)
     return "\n\n".join(prompt_parts)

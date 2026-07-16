@@ -48,7 +48,11 @@ Rules:
   `source_unit_ids`.
 - Keep the summary concise - aim for 200-400 words.
 - Use the speaker role names (DOCTOR, PATIENT, etc.), not raw speaker IDs.
-- If the transcript is too short or uninformative, say so briefly rather than inventing content.
+- A partial or interrupted transcript is still summarised: write claims for the clinical
+  content it does cover (typically the Subjective history) and state plainly, per section,
+  when nothing is documented yet. Declare the visit unsummarisable ONLY when the transcript
+  contains no clinical content at all (for example, only greetings or identity
+  confirmation) - never merely because examination, assessment, or plan are missing.
 - Never assert a clinical fact the transcript does not support.
 - When the patient expresses uncertainty ("I don't know", "maybe", "not sure"), document the
   point explicitly as unclear or not established - never resolve it to one side, and never
@@ -97,8 +101,10 @@ Output format:
 
 MEDICAL_SUMMARY_PROMPT = f"""You are a medical documentation agent.
 
-You receive a complete, role-attributed consultation transcript.
-Generate a SOAP note summarising the encounter.
+You receive a role-attributed consultation transcript. It may cover only part
+of the visit - recordings can stop mid-consultation - so treat it as everything
+captured so far, not as proof the visit is over.
+Generate a SOAP note summarising what the transcript covers.
 
 Required sections:
 - **Subjective**: Patient's chief complaint, symptoms, history as reported. State each

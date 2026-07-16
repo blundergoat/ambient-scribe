@@ -244,13 +244,13 @@ async function renderSummaryTranscriptView() {
     } else if (isCorrectedAvailable) {
         transcriptStatus.textContent = typeof TRANSCRIPT_LANE_LABELS !== 'undefined'
             ? TRANSCRIPT_LANE_LABELS.corrected
-            : 'Corrected transcript — used for note';
+            : 'Corrected transcript - used for note';
     } else {
         const liveLaneLabel = typeof transcriptLaneLabelForLiveRows === 'function'
             ? transcriptLaneLabelForLiveRows()
-            : 'Live preview — may change';
+            : 'Live preview - may change';
         transcriptStatus.textContent =
-            `${liveLaneLabel} — corrected transcript unavailable.`;
+            `${liveLaneLabel} - corrected transcript unavailable.`;
     }
 
     const visibleTranscriptLane = isCorrectedAvailable
@@ -398,15 +398,6 @@ function createSummaryTranscriptWording(
         // Measured corrected rows keep their value for inspection and browser tests.
         if (Number.isFinite(sourceRow.confidence)) {
             sourceRowWording.dataset.confidence = sourceRow.confidence;
-
-            // The shared classifier applies the lane-specific threshold and accessibility cue.
-            if (typeof markTranscriptWordingForReview === 'function') {
-                markTranscriptWordingForReview(
-                    sourceRowWording,
-                    sourceRow.confidence,
-                    transcriptLane,
-                );
-            }
         }
 
         transcriptWording.appendChild(sourceRowWording);

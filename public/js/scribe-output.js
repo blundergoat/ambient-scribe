@@ -530,9 +530,10 @@ function showSummaryWaitingForSource() {
     // The pending row explains the wait instead of implying generation began.
     if (summaryPendingText) {
         summaryPendingText.textContent =
-            'Waiting for the final transcript — Generate summary will unlock when it is ready.';
+            'Waiting for the final transcript - Generate summary will unlock when it is ready.';
     }
 
+    refreshSummaryPendingMotion();
     updateGenerateSummaryAvailability();
 }
 
@@ -566,8 +567,29 @@ function refreshSummaryPendingCopy() {
         && !!terminalAttestation
         && segmentIndex > 0;
     summaryPendingText.textContent = noteIsPossible
-        ? 'Final transcript ready — press Generate summary when you are.'
-        : 'Waiting for the final transcript — Generate summary will unlock when it is ready.';
+        ? 'Final transcript ready - press Generate summary when you are.'
+        : 'Waiting for the final transcript - Generate summary will unlock when it is ready.';
+    refreshSummaryPendingMotion();
+}
+
+/**
+ * Matches the pending-row bars' motion to whether the transcript is done.
+ * Use with every pending-copy change: the bars pulse while the visit is
+ * still producing transcript and park once the backend attests the final
+ * transcript, so motion never claims work that is not happening.
+ *
+ * @returns {void} Toggles one modifier class on the pending row.
+ */
+function refreshSummaryPendingMotion() {
+    const pendingRow = document.getElementById('summaryPending');
+
+    // Test pages without the pending row have no bars to sync.
+    if (!pendingRow) {
+        return;
+    }
+
+    const transcriptIsFinal = typeof terminalAttestation !== 'undefined' && !!terminalAttestation;
+    pendingRow.classList.toggle('summary-pending--ready', transcriptIsFinal);
 }
 
 /**
@@ -592,7 +614,7 @@ function updateGenerateSummaryAvailability() {
         'aria-label',
         noteIsPossible
             ? 'Generate the draft note from the finalized transcript'
-            : 'Generate summary — available once the transcript is finalized'
+            : 'Generate summary - available once the transcript is finalized'
     );
 }
 
@@ -602,12 +624,12 @@ function updateGenerateSummaryAvailability() {
  */
 function blockedSourceMessage(reason) {
     const messages = {
-        source_not_terminal: 'Source still finalizing — note unavailable.',
-        stale_lineage: 'The transcript changed after finalization — note unavailable.',
-        unaccounted_meaningful_rows: 'Correction lost part of the visit — note unavailable.',
-        correction_pending: 'Transcript correction has not completed — note unavailable.',
-        source_exceeds_note_limit: 'The visit exceeds the note input limit — the transcript remains available.',
-        empty_visit: 'No usable audio was captured — note unavailable.',
+        source_not_terminal: 'Source still finalizing - note unavailable.',
+        stale_lineage: 'The transcript changed after finalization - note unavailable.',
+        unaccounted_meaningful_rows: 'Correction lost part of the visit - note unavailable.',
+        correction_pending: 'Transcript correction has not completed - note unavailable.',
+        source_exceeds_note_limit: 'The visit exceeds the note input limit - the transcript remains available.',
+        empty_visit: 'No usable audio was captured - note unavailable.',
     };
     return messages[reason] ?? 'The note source is unavailable for this visit.';
 }
@@ -751,8 +773,8 @@ function setCopyNoteAvailability(statusLines) {
     copyNoteButton.setAttribute(
         'aria-label',
         statusLines.noteAvailable
-            ? 'Copy summary with its source and review status'
-            : `Copy summary — unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
+            ? 'Copy the summary with its source and review status'
+            : `Copy - unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
     );
 }
 
@@ -1094,7 +1116,7 @@ let claimDisclosureSequence = 0;
 
 // The disclosure's fixed reminder that linkage is not clinical review (M06).
 const CLAIM_EVIDENCE_HELP_TEXT =
-    'Source links and quote matching are limited automated checks — not clinical review or approval.';
+    'Source links and quote matching are limited automated checks - not clinical review or approval.';
 
 /**
  * Says whether any v1 section carries citations worth labelling.
@@ -1116,7 +1138,7 @@ function v1SectionsCarryCitations(sections) {
 function createV1SectionSourcesNotice() {
     return createElement('p', {
         className: 'summary-v1-sources-note',
-        text: 'Section sources — not mapped to individual claims',
+        text: 'Section sources - not mapped to individual claims',
         attributes: { role: 'note' },
     });
 }
@@ -1274,7 +1296,7 @@ function createClaimTextSpan(claim) {
     const reviewExplanations = [];
 
     if (claimFlags.uncited) {
-        reviewExplanations.push('No cited transcript evidence — review required');
+        reviewExplanations.push('No cited transcript evidence - review required');
     }
     // Each deterministic reason explains itself in the reviewer's tooltip too.
     if (claimFlags.reasonFlagged) {
@@ -1328,11 +1350,11 @@ function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
         toggleLabel = `View evidence for this claim, ${citedUnits.length} ${turnNoun}`;
     } else if (claim.evidence_basis === 'transcript_absence') {
         toggleText = 'Absence-based';
-        toggleLabel = 'About this statement — based on absence from the transcript';
+        toggleLabel = 'About this statement - based on absence from the transcript';
     } else {
         // Basis none and anything unknown read as uncited, review required.
         toggleText = 'No cited evidence';
-        toggleLabel = 'About this statement — no transcript evidence cited, review required';
+        toggleLabel = 'About this statement - no transcript evidence cited, review required';
     }
 
     return createElement('button', {
@@ -1362,22 +1384,22 @@ function claimEvidenceStateText(claim, hasCitedEvidence) {
     // Uncited and absence-based claims explain themselves without a link.
     if (!hasCitedEvidence) {
         return claim.evidence_basis === 'transcript_absence'
-            ? 'This statement is based on absence: bounded automated checks found no mention in the selected visit transcript — verify manually.'
-            : 'No transcript evidence was cited for this statement — review required.';
+            ? 'This statement is based on absence: bounded automated checks found no mention in the selected visit transcript - verify manually.'
+            : 'No transcript evidence was cited for this statement - review required.';
     }
 
     if (claim.quote_state === 'verified') {
-        return 'Exact quoted wording matched the cited transcript — an automated check, not clinical approval.';
+        return 'Exact quoted wording matched the cited transcript - an automated check, not clinical approval.';
     }
     if (claim.quote_state === 'not_matched') {
-        return 'Quoted wording could not be matched to the cited transcript — verify manually.';
+        return 'Quoted wording could not be matched to the cited transcript - verify manually.';
     }
     if (claim.quote_state === 'wrong_role') {
-        return 'Quoted wording was found under a different speaker than cited — verify manually.';
+        return 'Quoted wording was found under a different speaker than cited - verify manually.';
     }
 
     // No quotation marks in the claim: linked wording is a paraphrase.
-    return 'Source linked — the claim paraphrases the cited transcript; wording is not a verbatim quote.';
+    return 'Source linked - the claim paraphrases the cited transcript; wording is not a verbatim quote.';
 }
 
 /**
@@ -1544,7 +1566,7 @@ function createContextRowLine(contextRow) {
 
     return createElement('div', {
         className: 'summary-claim__context',
-        text: `Context (not evidence) — ${contextTime}${String(contextRow.text ?? '')}`,
+        text: `Context (not evidence) - ${contextTime}${String(contextRow.text ?? '')}`,
     });
 }
 

@@ -5,6 +5,29 @@ last_reviewed: 2026-07-10
 
 # Summary / Note-Generation Footguns
 
+## Footgun: 30 s post-finalize grace destroys visit audio under the on-demand summary button
+
+**Added:** 2026-07-16 · **Evidence:** session `61747213` (real-time 5:38 consult-5.3 replay)
+**Mitigation shipped same day (M12):** finalized sessions keep audio for
+`SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS` (default 900) via
+`_stream_cleanup_grace_seconds`, and the browser warms the free correction on `finalized`.
+Pending the user's live re-proof before this entry moves to Resolved.
+
+`session_lifecycle.py:143` schedules session destruction 30 s after `finalized`
+(`destroy_scheduled` → `grace_period_expired`), taking the audio buffer with it. The
+correction endpoint's first availability check (`api/server.py:599`) then returns
+`audio_expired` → the note silently downgrades to the live lane. This was invisible while
+the summary AUTO-fired within milliseconds of finalize; M11's Generate-summary button made
+click delay a user variable, so any user who reads the transcript first (>30 s) loses the
+corrected pass. Proof: finalized 06:31:12.2, grace expired 06:31:42.2, user click 06:33:04
+→ `correction.segments_merged` then 200 in 1 ms with no GPU pass and no
+`correction.completed`. Yesterday's passes only worked because clicks/scripts came ≤7 s
+after finalize. The M11 pause investigation checked mid-visit gaps (WS idle, TTL 7200 s,
+audio-time windows) but never re-checked this post-finalize timer against the new
+user-controlled delay. Compounding trap: the uncited fallback lane then mislabels every
+claim (see the absence-mislabel entry in this file's backlog reference,
+`summary_request.py:268` + `summary_generation.py:973-981`).
+
 ## Footgun: Fidelity denial-verification remains row-shape sensitive across split questions
 
 **Status:** active | **Created:** 2026-07-09 | **Evidence:** ACTUAL_MEASURED

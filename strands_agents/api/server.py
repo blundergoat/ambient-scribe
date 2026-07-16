@@ -133,6 +133,12 @@ SESSION_STORAGE = os.environ.get("SESSION_STORAGE", "memory")
 SESSION_RECONNECT_GRACE_SECONDS = float(
     os.environ.get("SESSION_RECONNECT_GRACE_SECONDS", "30")
 )
+# A finalized visit's audio must outlive the clinician reading the transcript
+# before they press Generate summary; sized to the audio retention cap so a
+# lingering session costs at most one buffer (~29 MB).
+SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS = float(
+    os.environ.get("SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS", "900")
+)
 
 
 def _history_duration(segments: list[dict]) -> float:
@@ -410,6 +416,7 @@ def _streaming_services() -> StreamingServices:
         input_format=app.state.nemo_input_format,
         max_buffer_duration=NEMO_BUFFER_MAX_DURATION,
         reconnect_grace_seconds=SESSION_RECONNECT_GRACE_SECONDS,
+        post_visit_audio_retention_seconds=SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS,
         executor=nemo_executor,
         sessions=sessions,
         lifecycle=lifecycle,
@@ -1358,7 +1365,7 @@ async def generate_summary(
             status_code=502,
             content={
                 "detail": (
-                    "The visit's note exceeded the generation output limit — "
+                    "The visit's note exceeded the generation output limit - "
                     "the transcript remains available for review."
                 ),
                 "reason": failure_reason,

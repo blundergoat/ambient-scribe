@@ -5,7 +5,28 @@ last_reviewed: 2026-07-15
 
 # READ / SCOPE / VERIFY Lessons
 
-## Lesson: Decision evidence must name the branch that changed the outcome
+## Lesson: When a milestone makes timing user-controlled, re-verify every timer it now races
+
+**Added:** 2026-07-16 · **Trigger:** user-reported regression after M11 acceptance testing
+
+M11 replaced the instant auto-summary with an on-demand button, converting
+"time between finalize and summarize" from ~0 ms into an unbounded user decision. The
+milestone's RISKY investigation proved MID-VISIT pause tolerance (WS idle, `SESSION_TTL`,
+audio-time windows) but nobody re-checked POST-FINALIZE timers — and
+`session_lifecycle.py:143` destroys the audio 30 s after finalize, so a user who reads the
+transcript before clicking silently loses the corrected note source
+(session `61747213`: click +112 s → `audio_expired` → live fallback → all claims
+mislabelled Absence-based). The first live verification runs also masked it: agent scripts
+and quick demo clicks all summarized within 7 s.
+
+**Why:** an investigation scoped to "does the gap during the visit break anything" does not
+cover "what expires after the visit ends"; converting any automatic step to manual changes
+the reachable timing envelope on BOTH sides of it.
+
+**How to apply:** when a milestone moves a step from automatic to user-triggered, enumerate
+every timeout/TTL/grace between the old trigger point and its new latest-possible time
+(`rg "sleep|grace|ttl|expire" strands_agents/`) and test at a delay PAST each one; add the
+longest-delay case to the milestone's Manual gate.
 
 **Created:** 2026-07-12
 **What happened:** M04's first guarded replay correctly kept a dominant speaker visible, but

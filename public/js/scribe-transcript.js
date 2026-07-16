@@ -127,7 +127,6 @@ function visibleCardRoleState(segmentBlock) {
     if (rowRoles.size > 1) {
         return {
             roleClass: 'UNKNOWN',
-            avatar: '?',
             label: MIXED_ROW_ROLE_LABEL,
             isMixed: true,
             showManualConfirmation: false,
@@ -152,7 +151,6 @@ function displayStateForSingleRole(visibleRole, speakerId, followsSpeakerMapping
     const roleForDisplay = visibleRole === '' ? 'UNKNOWN' : (visibleRole ?? 'UNKNOWN');
     return {
         roleClass: roleForDisplay,
-        avatar: roleForDisplay === 'UNKNOWN' ? '?' : getAvatarLabel(roleForDisplay),
         label: roleForDisplay === 'UNKNOWN' ? speakerId : getRoleLabel(roleForDisplay),
         isMixed: false,
         showManualConfirmation: followsSpeakerMapping && manualOverrides.has(speakerId),
@@ -182,19 +180,13 @@ function refreshSpeakerCardDisplay(segmentBlock) {
     }
 
     // Rebuilding the class list above dropped any gap/overlap marker, and a
-    // role update only moves a card sideways — its spoken time is unchanged.
+    // role update only moves a card sideways - its spoken time is unchanged.
     applyFlowClassesFromDataset(segmentBlock);
 
     const labelElement = segmentBlock.querySelector('.segment__speaker');
     // Partial test DOMs may not render card labels.
     if (labelElement) {
         setSpeakerLabelContent(labelElement, displayState.label, displayState.showManualConfirmation);
-    }
-
-    const avatarElement = segmentBlock.querySelector('.segment__avatar');
-    // Partial test DOMs may not render avatars.
-    if (avatarElement) {
-        avatarElement.textContent = displayState.avatar;
     }
 
 }
@@ -321,6 +313,13 @@ function handleRawSegment(segmentEvent) {
             rowCount: segmentEvent.terminal_row_count ?? null,
             roleSettlement: segmentEvent.role_settlement ?? null,
         };
+        // Warm the free GPU correction now so however long the clinician reads
+        // before clicking Generate, the corrected lane is ready. The summary
+        // itself still never starts without their click (M11 gate), and a
+        // failed warm-up is retried by the click path.
+        if (typeof ensureCorrectedTranscriptReady === 'function') {
+            void ensureCorrectedTranscriptReady();
+        }
         if (isReplayActive) {
             endReplay();
         } else if (isLiveDraining) {
@@ -658,10 +657,6 @@ function createSegmentBlockShell(speakerId, role, start, end) {
             end,
         },
     });
-    const avatar = createElement('div', {
-        className: 'segment__avatar',
-        text: role === 'UNKNOWN' ? '?' : getAvatarLabel(role),
-    });
     const speakerLabel = createElement('span', { className: 'segment__speaker' });
     const displayLabel = role === 'UNKNOWN' ? speakerId : getRoleLabel(role);
     setSpeakerLabelContent(speakerLabel, displayLabel, manualOverrides.has(speakerId));
@@ -675,7 +670,7 @@ function createSegmentBlockShell(speakerId, role, start, end) {
     ]);
     const textContainer = createElement('div', { className: 'segment__texts' });
     const body = createElement('div', { className: 'segment__body' }, [header, textContainer]);
-    segmentBlock.append(avatar, body);
+    segmentBlock.append(body);
     return segmentBlock;
 }
 
@@ -693,14 +688,9 @@ function createRowTextSpan(segment) {
         dataset: { start: segment.start, end: segment.end },
     });
 
-    // Measured rows keep the same value for summary round-trips and the visible review cue.
+    // Measured rows keep the same value for summary round-trips.
     if (Number.isFinite(segment.confidence)) {
         rowSpan.dataset.confidence = segment.confidence;
-
-        // The live lane marks only wording below its corpus-derived threshold.
-        if (typeof markTranscriptWordingForReview === 'function') {
-            markTranscriptWordingForReview(rowSpan, segment.confidence, LIVE_TRANSCRIPT_LANE);
-        }
     }
 
     // Rows without a server row ID (older histories) cannot be corrected individually.

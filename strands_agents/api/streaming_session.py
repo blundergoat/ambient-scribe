@@ -54,6 +54,8 @@ class StreamingServices:
         input_format: Browser audio format expected by the session buffer.
         max_buffer_duration: Safety cap for one recording buffer.
         reconnect_grace_seconds: Time a stopped socket can resume its session.
+        post_visit_audio_retention_seconds: Time a finalized visit's audio stays
+            available for on-demand correction after the socket closes.
         executor: Shared NeMo executor; GPU work must not run on the event loop.
         sessions: Transcript storage read by history and summary views.
         lifecycle: Session registry used for reconnect and cleanup.
@@ -70,6 +72,7 @@ class StreamingServices:
     input_format: str
     max_buffer_duration: float
     reconnect_grace_seconds: float
+    post_visit_audio_retention_seconds: float
     executor: Any
     sessions: StorageBackend
     lifecycle: SessionLifecycle
@@ -470,12 +473,37 @@ async def _emit_session_quality_record(
 async def _schedule_stream_cleanup(
     session_id: str, services: StreamingServices
 ) -> None:
-    """Keep the session briefly resumable before role and audio state are cleaned."""
+    """Keep the session resumable, or correctable after finalize, before cleanup."""
     await services.lifecycle.schedule_destroy(
         session_id,
         services.close_role_inference,
-        grace_seconds=services.reconnect_grace_seconds,
+        grace_seconds=_stream_cleanup_grace_seconds(session_id, services),
     )
+
+
+def _stream_cleanup_grace_seconds(
+    session_id: str, services: StreamingServices
+) -> float:
+    """Choose how long a closed session's audio stays before cleanup.
+
+    A finalized visit keeps its audio for the post-visit retention window so the
+    clinician can read the transcript before pressing Generate summary without
+    losing the corrected pass (the pre-M11 auto-summary fired within the short
+    reconnect grace, which hid this). A visit that ended without a terminal
+    watermark keeps the short reconnect grace: that timer exists for socket
+    resumption, not for post-visit reading time.
+
+    Args:
+        session_id: Closed stream's session UUID.
+        services: Stream service container; both grace values live here.
+
+    Returns:
+        Seconds before the session and its audio are destroyed.
+    """
+    if source_integrity.get_terminal_watermark(session_id) is not None:
+        return services.post_visit_audio_retention_seconds
+
+    return services.reconnect_grace_seconds
 
 
 def _next_stream_event_id(session_id: str, services: StreamingServices) -> int:

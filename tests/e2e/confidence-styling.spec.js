@@ -1,8 +1,9 @@
 /**
- * Browser acceptance coverage for clinician-facing wording-confidence cues.
- * These tests render live and corrected rows through the production page,
- * proving strict thresholds, absent-confidence behavior, accessible wording,
- * label-free local review styling, and unchanged role-card geometry.
+ * Browser acceptance coverage for wording-confidence handling.
+ * Transcript rows carry their measured confidence as data for summary
+ * round-trips but render NO visible review cue (removed on user request:
+ * recordings have no audio artifact to check against). Note sentences keep
+ * their low-confidence markers - that surface still explains itself.
  */
 
 const { test, expect } = require('@playwright/test');
@@ -22,7 +23,7 @@ async function openConsultationWorkspace(page) {
     await page.waitForSelector('#startBtn');
 }
 
-test('live rows use the strict live threshold without changing card roles or height', async ({ page }) => {
+test('live rows keep measured confidence as data without any visible review cue', async ({ page }) => {
     await openConsultationWorkspace(page);
 
     await page.evaluate(() => {
@@ -58,15 +59,14 @@ test('live rows use the strict live threshold without changing card roles or hei
 
     const liveRows = page.locator('#transcript .segment__text');
     await expect(liveRows).toHaveCount(3);
-    await expect(liveRows.nth(0)).toHaveClass(/transcript-wording--review/);
-    await expect(liveRows.nth(0)).toHaveAttribute('tabindex', '0');
-    await expect(liveRows.nth(0)).toHaveAttribute('aria-describedby', 'confidenceWordingHelp');
-    await expect(liveRows.nth(0)).toHaveAttribute(
-        'data-confidence-tooltip',
-        'Lower-confidence transcription — double-check this wording.',
-    );
-    await expect(liveRows.nth(1)).not.toHaveClass(/transcript-wording--review/);
-    await expect(liveRows.nth(2)).not.toHaveClass(/transcript-wording--review/);
+    // Even the lowest-confidence row renders plain: no cue class, no tooltip,
+    // no focus stop, no help-text association.
+    await expect(page.locator('#transcript .transcript-wording--review')).toHaveCount(0);
+    await expect(liveRows.nth(0)).not.toHaveAttribute('tabindex', '0');
+    await expect(liveRows.nth(0)).not.toHaveAttribute('aria-describedby', 'confidenceWordingHelp');
+    await expect(liveRows.nth(0)).not.toHaveAttribute('data-confidence-tooltip', /./);
+    // The measured value itself still travels with each row.
+    await expect(liveRows.nth(0)).toHaveAttribute('data-confidence', '0.7599');
     await expect(liveRows.nth(2)).not.toHaveAttribute('data-confidence');
 
     const transcriptCards = page.locator('#transcript .segment');
@@ -134,58 +134,12 @@ test('corrected transcript keeps review styling local inside a stitched utteranc
     await expect(correctedBlock).toHaveCount(1);
     const correctedRows = correctedBlock.locator('.summary-transcript__row');
     await expect(correctedRows).toHaveCount(3);
-    await expect(correctedRows.nth(0)).toHaveClass(/transcript-wording--review/);
+    // Corrected rows match the live lane: confidence data, no visible cue.
+    await expect(correctedBlock.locator('.transcript-wording--review')).toHaveCount(0);
     await expect(correctedRows.nth(0)).toHaveAttribute('data-confidence', '0.77');
-    await expect(correctedRows.nth(1)).not.toHaveClass(/transcript-wording--review/);
-    await expect(correctedRows.nth(2)).not.toHaveClass(/transcript-wording--review/);
     await expect(correctedBlock.locator('.confidence-review-chip')).toHaveCount(0);
     await expect(correctedBlock).toContainText('The rash was on the back of my carp.');
     await expect(correctedBlock).toContainText('My wife noticed it.');
-});
-
-test('local confidence cue remains non-colour-only and keyboard visible without a label', async ({ page }) => {
-    await openConsultationWorkspace(page);
-    await page.evaluate(() => {
-        handleRawSegment({
-            type: 'segment',
-            speaker_id: 'speaker_0',
-            text: 'Focus this wording to see why it needs review.',
-            segment_id: 'seg-focus',
-            start: 0,
-            end: 1,
-            confidence: 0.7,
-        });
-    });
-
-    const reviewWording = page.locator('#transcript .transcript-wording--review');
-    await reviewWording.focus();
-    await expect(reviewWording).toBeFocused();
-    await expect(page.locator('#transcript .confidence-review-chip')).toHaveCount(0);
-
-    const lightThemeStyles = await reviewWording.evaluate((wording) => ({
-        background: getComputedStyle(wording).backgroundColor,
-        decoration: getComputedStyle(wording).textDecorationColor,
-        outline: getComputedStyle(wording).outlineStyle,
-        tooltipOpacity: getComputedStyle(wording, '::after').opacity,
-    }));
-    expect(lightThemeStyles.background).not.toBe('rgba(0, 0, 0, 0)');
-    expect(lightThemeStyles.decoration).not.toBe('currentcolor');
-    expect(lightThemeStyles.outline).toBe('solid');
-    await expect.poll(() => reviewWording.evaluate(
-        (wording) => getComputedStyle(wording, '::after').opacity
-    )).toBe('1');
-
-    await page.evaluate(() => applyTheme('dark'));
-    const darkThemeStyles = await reviewWording.evaluate((wording) => ({
-        background: getComputedStyle(wording).backgroundColor,
-        decoration: getComputedStyle(wording).textDecorationColor,
-        tooltipOpacity: getComputedStyle(wording, '::after').opacity,
-    }));
-    expect(darkThemeStyles.background).not.toBe(lightThemeStyles.background);
-    expect(darkThemeStyles.decoration).not.toBe(lightThemeStyles.decoration);
-    await expect.poll(() => reviewWording.evaluate(
-        (wording) => getComputedStyle(wording, '::after').opacity
-    )).toBe('1');
 });
 
 test('day5 note sentence shows low-confidence transcription without changing prose', async ({ page }) => {

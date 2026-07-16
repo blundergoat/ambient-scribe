@@ -12,9 +12,7 @@ const LIVE_TRANSCRIPT_REVIEW_THRESHOLD = 0.76;
 const CORRECTED_TRANSCRIPT_REVIEW_THRESHOLD = 0.78;
 const LIVE_TRANSCRIPT_LANE = 'live';
 const CORRECTED_TRANSCRIPT_LANE = 'corrected';
-const REVIEW_WORDING_CLASS = 'transcript-wording--review';
 const REVIEW_WORDING_HELP_ID = 'confidenceWordingHelp';
-const REVIEW_WORDING_MESSAGE = 'Lower-confidence transcription — double-check this wording.';
 
 /**
  * Returns the corpus-derived review threshold for the transcript view the clinician opened.
@@ -55,28 +53,6 @@ function shouldReviewTranscriptWording(rowConfidence, transcriptLane) {
     }
 
     return rowConfidence < reviewThreshold;
-}
-
-/**
- * Adds the accessible local review cue to one transcript row when its wording is uncertain.
- * Use as live or corrected text enters the page; false means the row stays visually unchanged.
- *
- * @param {HTMLElement|null} rowElement - visible wording span; null means no row reached the UI.
- * @param {number|null|undefined} rowConfidence - stored acoustic confidence; absent means no cue.
- * @param {string} transcriptLane - lane shown to the user; unknown means no cue.
- * @returns {boolean} true when the row was marked, false when it remains unchanged.
- */
-function markTranscriptWordingForReview(rowElement, rowConfidence, transcriptLane) {
-    // A missing element or an above-threshold row should not gain review semantics.
-    if (!rowElement || !shouldReviewTranscriptWording(rowConfidence, transcriptLane)) {
-        return false;
-    }
-
-    rowElement.classList.add(REVIEW_WORDING_CLASS);
-    rowElement.tabIndex = 0;
-    rowElement.setAttribute('aria-describedby', REVIEW_WORDING_HELP_ID);
-    rowElement.dataset.confidenceTooltip = REVIEW_WORDING_MESSAGE;
-    return true;
 }
 
 /**

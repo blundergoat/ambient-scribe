@@ -520,3 +520,43 @@ def test_role_result_in_flight_at_close_cannot_relabel_the_frozen_visit() -> Non
         assert role_queue.current_role_revision(session_id) == 0
     finally:
         _cleanup(session_id)
+
+
+def test_stream_cleanup_grace_prefers_post_visit_retention_after_finalize():
+    """A finalized visit's audio outlives the clinician's reading gap (M12).
+
+    The on-demand Generate button makes finalize-to-click delay unbounded, so a
+    finalized session keeps the long retention window; a socket that ended
+    WITHOUT a terminal watermark keeps the short reconnect grace, because that
+    timer exists for stream resumption, not post-visit reading time.
+    """
+    from api.streaming_session import _stream_cleanup_grace_seconds
+
+    services = SimpleNamespace(
+        reconnect_grace_seconds=30.0,
+        post_visit_audio_retention_seconds=900.0,
+    )
+    session_id = "wm-grace-selection-test"
+    source_integrity.discard_terminal_watermark(session_id)
+
+    # No terminal watermark: mid-visit reconnect semantics are unchanged.
+    assert _stream_cleanup_grace_seconds(session_id, services) == 30.0
+
+    source_integrity.record_terminal_watermark(
+        session_id,
+        [{
+            "segment_id": "s-1",
+            "speaker_id": "spk_0",
+            "text": "hello",
+            "start": 0.0,
+            "end": 1.0,
+        }],
+        audio_seconds=1.0,
+        trimmed_seconds=0.0,
+        role_revision=1,
+        role_settlement="settled",
+    )
+    try:
+        assert _stream_cleanup_grace_seconds(session_id, services) == 900.0
+    finally:
+        source_integrity.discard_terminal_watermark(session_id)

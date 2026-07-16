@@ -204,6 +204,8 @@
             min-height: 0;
             max-height: none;
             overflow-y: auto;
+            /* Nothing inside the transcript may ever force a horizontal scrollbar. */
+            overflow-x: hidden;
             padding: 0.5rem;
         }
 
@@ -254,32 +256,6 @@
             100% { opacity: 1; transform: translateX(0); }
         }
 
-        .segment__avatar {
-            width: 2.125rem;
-            height: 2.125rem;
-            border-radius: var(--radius);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 0.6875rem;
-            flex-shrink: 0;
-            text-transform: uppercase;
-            letter-spacing: 0.02em;
-        }
-        .segment--DOCTOR .segment__avatar {
-            background: var(--color-speaker-a-border);
-            color: var(--color-speaker-a);
-        }
-        .segment--PATIENT .segment__avatar {
-            background: var(--color-speaker-b-border);
-            color: var(--color-speaker-b);
-        }
-        .segment--UNKNOWN .segment__avatar {
-            background: var(--color-unknown-border);
-            color: var(--color-unknown);
-        }
-
         .segment__body { flex: 1; min-width: 0; }
 
         .segment__header {
@@ -310,7 +286,7 @@
            a labelled gap chip, and a turn that began before the previous one
            finished pulls tight against it under an overlap chip. Sides follow
            the card's role class, which refreshSpeakerCardDisplay re-applies
-           on every role update or row correction — an unknown or mixed card
+           on every role update or row correction - an unknown or mixed card
            stays full-width and neutral, never guessed onto a side. */
         .segment {
             position: relative;
@@ -319,9 +295,14 @@
         .segment--PATIENT {
             max-width: 48%;
         }
+        /* The squared corner points at the speaker's column, like a chat tail. */
+        .segment--DOCTOR {
+            border-top-left-radius: 0;
+        }
         .segment--PATIENT {
             margin-left: auto;
             flex-direction: row-reverse;
+            border-top-right-radius: 0;
         }
         .segment--UNKNOWN {
             max-width: 100%;
@@ -406,53 +387,6 @@
         .segment__text--corrected {
             text-decoration: underline dotted;
             text-underline-offset: 3px;
-        }
-        /* Low acoustic confidence asks for a wording check without changing the speaker colour. */
-        .transcript-wording--review {
-            position: relative;
-            border-radius: 3px;
-            background: color-mix(in srgb, var(--color-review-bg) 58%, transparent);
-            box-shadow: 0 2px 0 color-mix(in srgb, var(--color-review) 10%, transparent);
-            cursor: help;
-            outline: none;
-            text-decoration-line: underline;
-            text-decoration-style: dotted;
-            text-decoration-color: var(--color-review);
-            text-decoration-thickness: 2px;
-            text-underline-offset: 3px;
-        }
-        .segment__text[data-segment-id].transcript-wording--review {
-            cursor: help;
-        }
-        .transcript-wording--review::after {
-            position: absolute;
-            z-index: 40;
-            left: 0;
-            bottom: calc(100% + 8px);
-            width: max-content;
-            max-width: 220px;
-            padding: 7px 9px;
-            border: 1px solid var(--surface-border);
-            border-radius: 6px;
-            background: var(--surface-bg);
-            box-shadow: var(--shadow-md);
-            color: var(--text-strong);
-            content: attr(data-confidence-tooltip);
-            font-size: 0.7rem;
-            line-height: 1.35;
-            opacity: 0;
-            pointer-events: none;
-            transform: translateY(3px);
-            transition: opacity 0.14s, transform 0.14s;
-        }
-        .transcript-wording--review:hover::after,
-        .transcript-wording--review:focus-visible::after {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .transcript-wording--review:focus-visible {
-            outline: 2px solid var(--accent);
-            outline-offset: 2px;
         }
         .segment__row-role {
             display: inline-block;
@@ -631,6 +565,12 @@
         }
         .summary-pending__bar:nth-child(2) { animation-delay: 0.15s; }
         .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; }
+        /* Bars pulse only while the transcript is still being produced; once
+           the backend attests the final transcript they park still. */
+        .summary-pending--ready .summary-pending__bar {
+            animation: none;
+            height: 12px;
+        }
         .summary-pending__text {
             font-size: 0.8125rem;
             line-height: 1.5;
@@ -1532,8 +1472,8 @@
                         </div>
                         {# Default export: the summary always copies WITH its source/review status. #}
                         <button id="copyNoteBtn" type="button" class="copy-button" disabled
-                                aria-label="Copy summary — unavailable until a note is generated"
-                                onclick="copySummary(this)">Copy summary</button>
+                                aria-label="Copy - unavailable until a note is generated"
+                                onclick="copySummary(this)">Copy</button>
                     </div>
                     <div id="summaryBody" class="summary-panel__body">
                         <div id="summaryNoteView" role="tabpanel" aria-labelledby="summaryTabNote">
@@ -1543,12 +1483,12 @@
                                     <span class="summary-pending__bar"></span>
                                     <span class="summary-pending__bar"></span>
                                 </span>
-                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress — press Generate summary when the consultation ends.</span>
+                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress - press Generate summary when the consultation ends.</span>
                                 {# The note is generated on demand (M11): the button unlocks
                                    only once the backend attests the finalized transcript, so
                                    a pre-terminal snapshot can never feed a note. #}
                                 <button id="generateSummaryBtn" type="button" class="copy-button summary-generate" disabled
-                                        aria-label="Generate summary — available once the transcript is finalized"
+                                        aria-label="Generate summary - available once the transcript is finalized"
                                         onclick="requestSummary()">Generate summary</button>
                             </div>
                             <div id="summaryLoading" class="summary-panel__loading hidden">
@@ -1585,7 +1525,7 @@
         </div>
 
         <div id="srAnnounce" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
-        <span id="confidenceWordingHelp" class="sr-only">Lower-confidence transcription — double-check this wording.</span>
+        <span id="confidenceWordingHelp" class="sr-only">Lower-confidence transcription - double-check this wording.</span>
     </main>
 
     {# ===== DEV PANEL (RIGHT RAIL) ===== #}

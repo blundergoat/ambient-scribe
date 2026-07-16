@@ -33,6 +33,11 @@ function setSummaryPendingText(message) {
     if (pendingText) {
         pendingText.textContent = message;
     }
+
+    // Every state that changes this copy also decides whether the bars move.
+    if (typeof refreshSummaryPendingMotion === 'function') {
+        refreshSummaryPendingMotion();
+    }
 }
 
 /**

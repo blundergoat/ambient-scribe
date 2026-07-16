@@ -1891,7 +1891,7 @@ _ARRANGEMENT_CONTENT_CLAIM_PATTERN = re.compile(
 _PARENTHETICAL_PATTERN = re.compile(r"\([^)]*\)")
 
 _TIME_RANGE_CLAIM_PATTERN = re.compile(
-    r"\b(\d{1,3})\s*(?:-|–|—|to)\s*(\d{1,3})\s*(hours?|days?|weeks?)\b",
+    r"\b(\d{1,3})\s*(?:-|–|-|to)\s*(\d{1,3})\s*(hours?|days?|weeks?)\b",
     re.IGNORECASE,
 )
 _SOURCE_TIME_RANGE_PATTERN = re.compile(

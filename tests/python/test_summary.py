@@ -1135,6 +1135,31 @@ class TestSchemaV2MidImplementationProof:
         assert "[source:" not in prompt
         assert "segment_id" not in prompt
 
+    def test_no_units_prompt_reserves_absence_for_bounded_negatives(self):
+        """The uncited fallback prompt must not invite absence-labelled positives."""
+        from api.summary_generation import summary_generation_prompt_v2
+
+        prompt = summary_generation_prompt_v2("[DOCTOR] text", [], [])
+
+        assert "`none` for every statement about what WAS said" in prompt
+        assert "strictly for bounded negatives" in prompt
+        assert "Never mark a positive clinical statement" in prompt
+
+    def test_system_prompt_summarises_partial_visits_instead_of_refusing(self):
+        """A short or interrupted transcript must still yield a real note.
+
+        Weeks of v1 short-consult notes were good; the v2 claims frame made the
+        model refuse a 2.5-minute visit as "insufficient" (session 4a499eb7).
+        The system prompt now says partial coverage is normal and refusal is
+        reserved for transcripts with no clinical content at all.
+        """
+        from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
+
+        assert "may cover only part" in MEDICAL_SUMMARY_PROMPT
+        assert "A partial or interrupted transcript is still summarised" in MEDICAL_SUMMARY_PROMPT
+        assert "no clinical content at all" in MEDICAL_SUMMARY_PROMPT
+        assert "too short or uninformative" not in MEDICAL_SUMMARY_PROMPT
+
     def test_verbatim_quote_verifies_inside_the_cited_unit(self):
         """The full-turn quote produces quote_state verified, exact match only."""
         from api.summary_generation import (

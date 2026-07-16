@@ -325,12 +325,12 @@ test.describe("Semantic copy and status axes (M03)", () => {
 
     await page.click("#summaryTabTranscript");
     await expect(page.locator("#summaryTranscriptStatus")).toHaveText(
-      "Corrected transcript — used for note"
+      "Corrected transcript - used for note"
     );
     await page.click("#copyTranscriptBtn");
     const copiedTranscript = await page.evaluate(() => navigator.clipboard.readText());
 
-    expect(copiedTranscript).toContain("Transcript — Corrected transcript — used for note");
+    expect(copiedTranscript).toContain("Transcript - Corrected transcript - used for note");
     expect(copiedTranscript).toContain("[00:00] Doctor: How long have the headaches lasted?");
     expect(copiedTranscript).toContain("[01:02] Doctor: About two weeks now, mostly mornings.");
     expect(copiedTranscript).toContain("[01:05] Patient: Any visual changes with them?");
@@ -347,7 +347,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
     await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
       "aria-label",
-      "Copy summary — unavailable: Source still finalizing — note unavailable"
+      "Copy - unavailable: Source still finalizing - note unavailable"
     );
 
     // An over-cap visit blocks with its own explicit wording.
@@ -357,7 +357,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
     await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
       "aria-label",
-      "Copy summary — unavailable: Source exceeds note limit — note unavailable"
+      "Copy - unavailable: Source exceeds note limit - note unavailable"
     );
 
     // A transcript that changed after finalization reads as incomplete.
@@ -367,7 +367,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
     await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
       "aria-label",
-      "Copy summary — unavailable: Source incomplete — note unavailable"
+      "Copy - unavailable: Source incomplete - note unavailable"
     );
 
     // A failed correction pass keeps the note unavailable, not degraded.
@@ -377,7 +377,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await expect(page.locator("#copyNoteBtn")).toBeDisabled();
     await expect(page.locator("#copyNoteBtn")).toHaveAttribute(
       "aria-label",
-      "Copy summary — unavailable: Correction unavailable — note unavailable"
+      "Copy - unavailable: Correction unavailable - note unavailable"
     );
   });
 
@@ -423,7 +423,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     await expect(page.locator("#noteReviewReasons")).toContainText("live transcript");
     await page.click("#copyNoteBtn");
     const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
-    expect(copiedNote).toContain("Source: Complete live fallback — review required");
+    expect(copiedNote).toContain("Source: Complete live fallback - review required");
     expect(copiedNote).toContain("note built from the live transcript");
   });
 });
@@ -1479,8 +1479,10 @@ test.describe("Post-visit correction before summary", () => {
     await page.click("#generateSummaryBtn");
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
-    expect(correctionCalls).toHaveLength(1);
-    expect(requestOrder).toEqual(["correction", "summary"]);
+    // The finalize warm-up saw unavailable, and the click retried once (M12) -
+    // a transient failure at finalize must never lock the note into fallback.
+    expect(correctionCalls).toHaveLength(2);
+    expect(requestOrder).toEqual(["correction", "correction", "summary"]);
     expect(summaryCalls[0].segments[0].segment_id).toBe("seg-0001");
   });
 
@@ -2014,7 +2016,7 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
 });
 
 test.describe("Row confidence passthrough (M06)", () => {
-  test("a measured row keeps its value, review cue, and summary snapshot", async ({
+  test("a measured row keeps its value and summary snapshot without a review cue", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -2040,13 +2042,13 @@ test.describe("Row confidence passthrough (M06)", () => {
       });
     });
 
-    // Both rows keep safe text rendering; only the low measured row gains the additive review cue.
+    // Both rows keep safe text rendering; no row gains a visible review cue
+    // (removed on user request - recordings have no audio to check against).
     const rows = page.locator(".segment__text");
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toHaveText("I have terrible headaches");
     await expect(rows.nth(1)).toHaveText("How long has that been going on?");
-    await expect(rows.nth(0)).toHaveClass(/transcript-wording--review/);
-    await expect(rows.nth(1)).not.toHaveClass(/transcript-wording--review/);
+    await expect(page.locator(".transcript-wording--review")).toHaveCount(0);
 
     // The measured row carries its value; the unmeasured row stays bare.
     await expect(rows.nth(0)).toHaveAttribute("data-confidence", "0.71");
@@ -2262,7 +2264,7 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
 
     // The fixed adapter wording names the v1 provenance form.
     await expect(page.locator(".summary-v1-sources-note")).toHaveText(
-      "Section sources — not mapped to individual claims"
+      "Section sources - not mapped to individual claims"
     );
     // No claim affordances exist for a v1 note - nothing is fabricated.
     await expect(page.locator(".summary-claim")).toHaveCount(0);
@@ -2288,7 +2290,7 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     expect(copiedNote).toContain("Source: Draft generated from corrected transcript");
     expect(copiedNote).toContain("Automated review: Review required (1)");
     expect(copiedNote).toContain(
-      "The patient is 45 years old. [No cited evidence — review]"
+      "The patient is 45 years old. [No cited evidence - review]"
     );
     expect(copiedNote).toContain("- No chest pain was reported. [Based on transcript absence]");
     // Counts, controls, and disclosure text never reach the clipboard.
@@ -2344,7 +2346,7 @@ test.describe("Summary failure copy (M10)", () => {
     await loadScribePage(page);
     await failSummaryWith(page, {
       detail:
-        "The visit's note exceeded the generation output limit — the transcript remains available for review.",
+        "The visit's note exceeded the generation output limit - the transcript remains available for review.",
       reason: "note_output_limit",
     });
 
@@ -2409,6 +2411,13 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     // Unknown rows take the full row width - wider than either sided bubble.
     expect(unknownBox.width).toBeGreaterThan(patientBox.width);
     expect(unknownBox.x).toBeLessThanOrEqual(doctorBox.x + 1);
+
+    // Nothing in the transcript may create horizontal overflow (no h-scrollbar).
+    const horizontalOverflow = await page.evaluate(() => {
+      const transcriptPanel = document.getElementById("transcript");
+      return transcriptPanel.scrollWidth - transcriptPanel.clientWidth;
+    });
+    expect(horizontalOverflow).toBeLessThanOrEqual(0);
   });
 
   test("a silence longer than a few seconds renders as a labelled gap", async ({
@@ -2480,7 +2489,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     await expect(page.locator(".segment").first()).not.toHaveClass(/segment--overlap/);
   });
 
-  test("finalizing unlocks the button but never fires a summary by itself", async ({
+  test("finalizing unlocks the button and warms correction, but never fires a summary by itself", async ({
     page,
   }) => {
     const summaryCalls = [];
@@ -2491,8 +2500,10 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 2);
 
-    // Before attestation the button is locked with its explanation.
+    // Before attestation the button is locked with its explanation, and the
+    // pending bars pulse because the transcript is still being produced.
     await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
+    await expect(page.locator("#summaryPending")).not.toHaveClass(/summary-pending--ready/);
 
     await page.evaluate(() => {
       handleRawSegment({
@@ -2502,14 +2513,19 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
       });
     });
     await expect(page.locator("#generateSummaryBtn")).toBeEnabled();
+    // A finalized transcript parks the bars: motion never claims fake work.
+    await expect(page.locator("#summaryPending")).toHaveClass(/summary-pending--ready/);
 
-    // No click, no note - ever.
+    // No click, no note - ever. The free correction DOES warm up on finalize
+    // (M12) so a long reading pause cannot cost the corrected lane.
     await page.waitForTimeout(1500);
     expect(summaryCalls.length).toBe(0);
+    expect(correctionCalls.length).toBe(1);
 
-    // The click drives the unchanged correction-then-summary flow.
+    // The click reuses the warmed correction and only then starts the summary.
     await page.click("#generateSummaryBtn");
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    expect(correctionCalls.length).toBe(1);
     expect(requestOrder).toEqual(["correction", "summary"]);
   });
 });
