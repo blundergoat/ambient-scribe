@@ -381,7 +381,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
     );
   });
 
-  test("a frozen role settlement renders and copies as review-required", async ({
+  test("a frozen role settlement stays out of note chrome and copies as review-required", async ({
     page,
   }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -396,16 +396,15 @@ test.describe("Semantic copy and status axes (M03)", () => {
       { role_settlement: "failed_frozen" }
     );
 
-    // The frozen settlement is a visible review reason, never tooltip-only.
-    await expect(page.locator("#noteReviewReasons")).toBeVisible();
-    await expect(page.locator("#noteReviewReasons")).toContainText("frozen");
+    // Review metadata does not add a separate list above the note.
+    await expect(page.locator("#noteReviewReasons")).toHaveCount(0);
     await page.click("#copyNoteBtn");
     const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
     expect(copiedNote).toContain("Automated review: Review required (1)");
     expect(copiedNote).toContain("frozen");
   });
 
-  test("a live-fallback note is labelled review-required on screen and in the copy", async ({
+  test("a live-fallback note keeps review metadata in the copy without extra note chrome", async ({
     page,
   }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -418,9 +417,8 @@ test.describe("Semantic copy and status axes (M03)", () => {
       fallback_reason: "retention_window",
     });
 
-    // A fallback source is itself an automated review reason on screen.
-    await expect(page.locator("#noteReviewReasons")).toBeVisible();
-    await expect(page.locator("#noteReviewReasons")).toContainText("live transcript");
+    // A fallback source does not add a separate review-reason list to the UI.
+    await expect(page.locator("#noteReviewReasons")).toHaveCount(0);
     await page.click("#copyNoteBtn");
     const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
     expect(copiedNote).toContain("Source: Complete live fallback - review required");
@@ -632,12 +630,11 @@ test.describe("Row-level role exceptions", () => {
     });
 
     // The consult-03 regression shape: a role_update fabricated after grace
-    // teardown carried an empty mapping and zero confidence with the row fix.
+    // teardown carried an empty mapping and zero confidence.
     await page.evaluate(() => {
       handleRoleUpdate({
         type: "role_update",
         mapping: {},
-        row_overrides: { "seg-0001": "DOCTOR" },
         confidence: 0,
         manual_override: true,
       });
@@ -900,7 +897,7 @@ test.describe("Summary provenance (M5)", () => {
     );
   });
 
-  test("deep link highlights all cited blocks, fades, and skips uncited rows (M6)", async ({
+  test("deep link highlights cited blocks until Note is selected and skips uncited rows (M6)", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -981,8 +978,9 @@ test.describe("Summary provenance (M5)", () => {
     ).not.toHaveClass(/--cited/);
     await expect(page.locator("#summaryTranscriptNotice")).toBeHidden();
 
-    // The highlight is temporary: it clears after the fade window (~3s).
-    await expect(citedBlocks).toHaveCount(0, { timeout: 5000 });
+    // Returning to Note explicitly clears the selected transcript evidence.
+    await page.locator("#summaryTabNote").click();
+    await expect(citedBlocks).toHaveCount(0);
   });
 
   test("deep link shows a non-blocking notice when cited rows are missing (M6)", async ({
@@ -2037,8 +2035,17 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     await expect(citedToggle).toBeFocused();
   });
 
-  test("Open in transcript highlights exactly the claim's cited rows", async ({ page }) => {
+  test("Open in transcript keeps cited rows highlighted until Note is selected", async ({ page }) => {
     await loadScribePage(page);
+    // This synthetic visit has no corrected artifact. Pin the intended live
+    // fallback so a real agent request cannot delay the deep-link assertion.
+    await page.route("**/session/*/corrected-transcript", (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "No corrected transcript for this fixture" }),
+      })
+    );
     // Three live rows exist; the claim cites only the first two. Mapped
     // roles keep the alternating speakers in separate stitched blocks -
     // unmapped rows would merge into one UNKNOWN block and blur the check.
@@ -2062,6 +2069,15 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     await expect(citedBlocks).toHaveCount(2);
     await expect(citedBlocks.first()).toContainText("Test segment number 1");
     await expect(page.locator("#summaryTranscriptNotice")).toBeHidden();
+
+    // The old three-second fade must not clear the clinician's evidence focus.
+    await page.waitForTimeout(3500);
+    await expect(citedBlocks).toHaveCount(2);
+
+    // Returning to the note is the explicit reset boundary.
+    await page.locator("#summaryTabNote").click();
+    await expect(page.locator("#summaryTabNote")).toHaveAttribute("aria-selected", "true");
+    await expect(citedBlocks).toHaveCount(0);
   });
 
   test("uncited and absence-based claims expose no transcript link", async ({ page }) => {
@@ -2111,15 +2127,13 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
     );
   });
 
-  test("v2 review reasons and the copied note agree on claim-scoped review flags", async ({ page }) => {
+  test("v2 review reasons stay out of note chrome and remain in the copied note", async ({ page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await loadScribePage(page);
     await renderNoteDirectly(page, v2SummaryPayload());
 
-    // One uncited claim is the note's single automated flag.
-    await expect(page.locator("#noteReviewReasons")).toContainText(
-      "1 claim without cited transcript evidence"
-    );
+    // Claim-level cues carry review context without a duplicate summary list.
+    await expect(page.locator("#noteReviewReasons")).toHaveCount(0);
 
     await expect(page.locator("#copyNoteBtn")).toBeEnabled();
     await page.click("#copyNoteBtn");
@@ -2330,6 +2344,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
   test("finalizing unlocks the button and warms correction, but never fires a summary by itself", async ({
     page,
   }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     const summaryCalls = [];
     const correctionCalls = [];
     const requestOrder = [];
@@ -2366,12 +2381,12 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     expect(correctionCalls.length).toBe(1);
     expect(requestOrder).toEqual(["correction", "summary"]);
 
-    // The rendered note states its machine-computed coverage span (rows end
-    // at 3.5s), so a partial recording can never pose as a complete visit.
-    await expect(page.locator("#noteCoverage")).toBeVisible();
-    await expect(page.locator("#noteCoverage")).toHaveText(
-      "Covers 00:00 - 00:03 of the recording"
-    );
+    // Coverage no longer adds a standalone line above the note, but remains
+    // attached to the exported artifact (rows end at 3.5s).
+    await expect(page.locator("#noteCoverage")).toHaveCount(0);
+    await page.click("#copyNoteBtn");
+    const copiedNote = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedNote).toContain("Coverage: Covers 00:00 - 00:03 of the recording");
   });
 });
 

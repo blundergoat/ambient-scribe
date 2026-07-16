@@ -5,6 +5,25 @@ last_reviewed: 2026-07-10
 
 # Summary / Note-Generation Footguns
 
+## Footgun: A resumed visit's stale corrected artifact deadlocks the note as stale lineage
+
+**Added:** 2026-07-17 · **Evidence:** PR #5 Codex P2 finding, confirmed in-repo; regression tests in
+`tests/python/test_terminal_source_integrity.py` (search: "stale_corrected_artifact_cannot_block")
+**Mitigation shipped same day:** resume clears the corrected artifact with the watermark
+(`strands_agents/api/streaming_session.py`, search: "replace_corrected_segments(session_id, [])"),
+and corrected rows win summary source selection only when the current watermark attests them
+(`strands_agents/api/summary_request.py`, search: "_corrected_rows_are_current").
+
+Stop → Start on the same page is a resume: `startRecording` reuses `CONFIG.sessionId`, so
+`_resume_or_create_session` discards the terminal watermark - but the corrected artifact from
+the first finalize survived in storage. After the next Stop, any bounded correction failure
+(`audio_expired`, `gpu_transient`, timeout) authorized the live fallback, while
+`build_summary_context` still preferred the stale corrected rows;
+`_resolve_summary_source_state` then returned `stale_lineage` on every Generate click.
+Deadlock: the correction lane says "use the live transcript", the summary lane refuses it, and
+after the row-correction UI removal no reachable code path cleared the artifact. Rule: state
+derived from a terminal watermark must be invalidated everywhere the watermark is invalidated.
+
 ## Footgun: 30 s post-finalize grace destroys visit audio under the on-demand summary button
 
 **Added:** 2026-07-16 · **Evidence:** session `61747213` (real-time 5:38 consult-5.3 replay)

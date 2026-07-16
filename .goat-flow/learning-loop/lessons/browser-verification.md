@@ -1,6 +1,6 @@
 ---
 category: browser-verification
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-17
 ---
 
 # Browser verification lessons
@@ -118,10 +118,23 @@ asserted that citing two of them highlights exactly two transcript blocks. It hi
 with no role mapping, every speaker resolves to UNKNOWN and consecutive same-role rows stitch
 into a single block, so the block-level highlight covered all three rows. The unit suite even
 names this ("rows without a role stitch under the UNKNOWN label") - the e2e author didn't look.
-**Evidence:** `tests/e2e/browser.spec.js` (search: "Mapped\n    // roles keep the alternating").
+**Evidence:** `tests/e2e/browser.spec.js` (search: "roles keep the alternating speakers").
 **Prevention:** Any e2e assertion about stitched-block boundaries must first send a
 `handleRoleUpdate` mapping so speakers resolve to distinct roles; grep the unit-test names for
 stitching behaviour before asserting block counts.
+
+## Lesson: Synthetic transcript-tab tests must stub corrected-artifact lookup
+
+**Created:** 2026-07-17
+**What happened:** A claim deep-link test injected browser rows for a synthetic session but left
+`GET /session/{id}/corrected-transcript` unstubbed. The test sometimes reached the real agent,
+whose missing-session response could outlive Playwright's assertion timeout; the Transcript tab
+then appeared empty even though the live-row fallback and highlight logic were correct when the
+request completed.
+**Evidence:** `tests/e2e/browser.spec.js` (search: "No corrected transcript for this fixture").
+**Prevention:** Any synthetic browser test that opens the Transcript tab must stub the corrected-
+transcript route with either its exact corrected rows or an immediate unavailable response that
+deliberately exercises live fallback. Never let a fixture-only session depend on agent latency.
 
 ## Lesson: A new hard gate orphans older tests that enter the flow mid-way
 
@@ -132,7 +145,7 @@ returns a blocked source from the real agent. Six older summary-flow e2e tests e
 mid-way (bare `requestSummary()` calls, no correction stub) and had been failing since, unnoticed
 because the full browser suite wasn't rerun at the M02/M03 gates. The failures surfaced only when
 M06's browser work ran the whole file; a stash-run against clean HEAD proved them pre-existing.
-**Evidence:** `tests/e2e/browser.spec.js` (search: "the finalized event both attests"); stash-run
+**Evidence:** `tests/e2e/browser.spec.js` (search: "finalizing unlocks the button and warms correction"); stash-run
 2026-07-16 (6 failed on clean HEAD, same list).
 **Prevention:** When a milestone adds a gate in front of an existing flow, grep the e2e specs for
 every direct entry into that flow (function calls, route stubs) and rerun the FULL spec file at

@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from api import source_integrity
 from api.summary_generation import source_index_text
 from pydantic import BaseModel, Field
 from storage import StorageBackend
@@ -301,6 +302,31 @@ def _summary_context_from_segments(
     )
 
 
+def _corrected_rows_are_current(session_id: str) -> bool:
+    """Whether stored corrected rows belong to the visit the user just finished.
+
+    Example: the clinician pressed Stop (correction ran and stored rows), then
+    pressed Start to continue the visit and stopped again. The old artifact no
+    longer describes the full visit; letting it win source selection would make
+    every summary click show "note unavailable" even when the live transcript
+    is an authorized fallback.
+
+    Args:
+        session_id: Visit shown in the browser; unknown ids have no watermark.
+
+    Returns:
+        True when the current terminal watermark attests the corrected rows,
+        or when no watermark exists yet (the route then fails the request
+        closed before generation, so nothing stale can reach the clinician).
+    """
+    watermark = source_integrity.get_terminal_watermark(session_id)
+    # No watermark means the visit never finalized in this process; keep the
+    # legacy preference and let the summary route refuse the request itself.
+    if watermark is None:
+        return True
+    return watermark.correction_status == "attested_corrected"
+
+
 def build_summary_context(
     session_id: str,
     summary_request: SummaryRequest | None,
@@ -319,7 +345,7 @@ def build_summary_context(
     corrected_segments = sessions.get_corrected_segments(session_id)
     # Corrected rows are opt-in at the storage layer, but summary generation is
     # the first consumer that should prefer them once the slower pass exists.
-    if corrected_segments:
+    if corrected_segments and _corrected_rows_are_current(session_id):
         return _summary_context_from_segments(
             session_id,
             corrected_segments,

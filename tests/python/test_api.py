@@ -250,155 +250,6 @@ class TestSessionHistory:
         corrected_rows = sessions.get_corrected_segments(TEST_SESSION_ID)
         assert corrected_rows[0]["role"] == "PATIENT"
 
-    def test_row_override_invalidates_stale_corrected_artifact(
-        self, client, monkeypatch
-    ):
-        """A row fix cannot map onto corrected rows, so they must not go stale."""
-
-        async def fake_publish(topic, data, event_id=None):
-            """Publishing is not under test for corrected-row invalidation."""
-            return True
-
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-        sessions.append_segment(
-            TEST_SESSION_ID,
-            {
-                "speaker_id": "spk_0",
-                "text": "row the clinician fixes",
-                "start": 0.0,
-                "end": 1.0,
-                "segment_id": "seg-0001",
-            },
-        )
-        sessions.replace_corrected_segments(
-            TEST_SESSION_ID,
-            [
-                {
-                    "segment_id": "corrected-0001",
-                    "speaker_id": "spk_0",
-                    "role": "DOCTOR",
-                    "text": "corrected text",
-                    "start": 0.0,
-                    "end": 1.0,
-                    "source_model": "test-model",
-                }
-            ],
-        )
-
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "PATIENT"},
-        )
-        assert response.status_code == 200
-
-        # The next summary re-corrects from the updated scaffold instead of
-        # citing the pre-fix roles.
-        assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
-
-    def test_row_override_pins_one_row_without_touching_the_speaker(
-        self, client, monkeypatch
-    ):
-        """Correcting one row must not relabel the speaker's other rows."""
-        from tools.assign_roles import get_or_create_state
-
-        published_events = []
-
-        async def fake_publish(topic, data, event_id=None):
-            """Capture the roles-topic event the correction broadcasts."""
-            published_events.append((topic, data))
-            return True
-
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-
-        # Two rows from the same speaker; the clinician says row 2 is the patient.
-        for index in (1, 2):
-            sessions.append_segment(
-                TEST_SESSION_ID,
-                {
-                    "speaker_id": "spk_0",
-                    "text": f"row {index}",
-                    "start": float(index),
-                    "end": float(index) + 0.9,
-                    "segment_id": f"seg-{index:04d}",
-                },
-            )
-
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0002", "role": "PATIENT"},
-        )
-        assert response.status_code == 200
-        assert response.json() == {
-            "status": "ok",
-            "segment_id": "seg-0002",
-            "role": "PATIENT",
-        }
-
-        # A later agent-style speaker mapping cannot undo the row correction.
-        sessions.apply_role_mapping(TEST_SESSION_ID, {"spk_0": "DOCTOR"})
-        stored_rows = sessions.get_segments(TEST_SESSION_ID)
-        assert stored_rows[0]["role"] == "DOCTOR"
-        assert stored_rows[1]["role"] == "PATIENT"
-        assert stored_rows[1]["role_source"] == "user_row"
-
-        # The speaker-scoped stores stay untouched by a row correction.
-        state = get_or_create_state(TEST_SESSION_ID)
-        assert "spk_0" not in state.confirmed_overrides
-        assert "spk_0" not in state.current_mapping
-
-        # Other tabs learn about the row via the additive row_overrides field.
-        roles_topic, role_event = published_events[-1]
-        assert roles_topic.endswith("/roles")
-        assert role_event["row_overrides"] == {"seg-0002": "PATIENT"}
-        assert role_event["manual_override"] is True
-
-    def test_row_override_after_role_state_cleanup_publishes_no_fabricated_mapping(
-        self, client, monkeypatch
-    ):
-        """A post-visit row fix must not broadcast empty mapping or zero confidence."""
-        published_events = []
-
-        async def fake_publish(topic, data, event_id=None):
-            """Capture the roles-topic event the late correction broadcasts."""
-            published_events.append((topic, data))
-            return True
-
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-
-        # The visit ended: transcript rows persist in storage, but grace-window
-        # teardown already destroyed the session's role state.
-        sessions.append_segment(
-            TEST_SESSION_ID,
-            {
-                "speaker_id": "spk_0",
-                "text": "row the clinician reviews after the visit",
-                "start": 0.0,
-                "end": 0.9,
-                "segment_id": "seg-0001",
-            },
-        )
-        role_tools.cleanup_session(TEST_SESSION_ID)
-
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "PATIENT"},
-        )
-        assert response.status_code == 200
-
-        # The correction still sticks to the stored row.
-        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
-
-        # The broadcast carries only the row signal - no fabricated speaker state
-        # that would wipe another tab's earned confidence badge.
-        _, role_event = published_events[-1]
-        assert role_event["row_overrides"] == {"seg-0001": "PATIENT"}
-        assert role_event["manual_override"] is True
-        assert "mapping" not in role_event
-        assert "confidence" not in role_event
-
-        # The dead session gained no resurrected role state either.
-        assert TEST_SESSION_ID not in role_tools._session_states
-
     def test_speaker_override_after_role_state_cleanup_publishes_no_fabricated_state(
         self, client, monkeypatch
     ):
@@ -513,28 +364,21 @@ class TestSessionHistory:
         # A read is a read: the dead session gained no new state entry.
         assert TEST_SESSION_ID not in role_tools._session_states
 
-    def test_row_override_rejects_ambiguous_or_unknown_targets(self, client):
+    def test_role_override_rejects_incomplete_requests(self, client):
         """The UI gets clear validation errors instead of silent no-ops."""
-        # Neither scope: the server cannot know what the user corrected.
+        # No speaker: the server cannot know whose label the user clicked.
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
             json={"role": "DOCTOR"},
         )
         assert response.status_code == 400
 
-        # Both scopes at once is ambiguous and likely a client bug.
+        # No role: a click that never picked a label cannot relabel anything.
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"speaker_id": "spk_0", "segment_id": "seg-0001", "role": "DOCTOR"},
+            json={"speaker_id": "spk_0"},
         )
         assert response.status_code == 400
-
-        # A row correction for a session with no stored transcript cannot stick.
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "DOCTOR"},
-        )
-        assert response.status_code == 404
 
 
 class TestTranscriptionEndpoints:

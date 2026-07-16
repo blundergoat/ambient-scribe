@@ -130,9 +130,23 @@ def run_summary_generation(
             if violations:
                 prompt = base_prompt + regeneration_feedback(violations)
 
-            validated_summary, metric_fields = _generate_validated_v2_draft(
-                session_id, prompt, source_units
-            )
+            try:
+                validated_summary, metric_fields = _generate_validated_v2_draft(
+                    session_id, prompt, source_units
+                )
+            except MaxTokensReachedException:
+                # Example: a long visit's first draft fit the output budget but
+                # carried flags, and the feedback-laden redo overflowed it
+                # (consult 5.3 lost a 3-flag note this way). The clinician
+                # still gets the flagged first draft instead of an error.
+                if not drafts:
+                    raise
+                logger.warning(
+                    "summary.output_limit_retry_kept_first_draft session_id=%s",
+                    session_id,
+                    extra={"session_id": session_id},
+                )
+                break
             # Without a validated object, the browser should show a retryable failure.
             if validated_summary is None:
                 return None
@@ -210,27 +224,31 @@ def run_summary_generation(
         detector_sections, key_point_texts = _detector_sections_view(
             validated_summary, source_units
         )
-        lane_reasons = note_review_reasons(
-            {"sections": detector_sections, "key_points": key_point_texts},
-            citation_segments or [],
-        )
-        coverage_reasons = [
-            lane_reason
-            for lane_reason in lane_reasons
-            if lane_reason.get("section") == "note"
-        ]
         sentence_reasons = [
             lane_reason
-            for lane_reason in lane_reasons
+            for lane_reason in note_review_reasons(
+                {"sections": detector_sections, "key_points": key_point_texts},
+                citation_segments or [],
+            )
             if lane_reason.get("section") != "note"
         ]
+        # Note-level coverage verifies against the same rows the fidelity loop
+        # used, never the citation rows: an uncited live-fallback note has no
+        # citation rows, and a surviving critical miss (an answered risk screen
+        # absent from the whole note) must still reach the clinician as a cue.
+        coverage_reasons = note_coverage_review_reasons(
+            detector_sections,
+            key_point_texts,
+            transcript_segments or [],
+        )
+        review_reason_count = len(coverage_reasons) + len(sentence_reasons)
         # Counts only keep the reason lanes observable without clinical prose.
-        if lane_reasons:
+        if review_reason_count:
             logger.info(
                 "summary.review_reasons session_id=%s reasons=%s",
                 session_id,
-                len(lane_reasons),
-                extra={"session_id": session_id, "reasons": len(lane_reasons)},
+                review_reason_count,
+                extra={"session_id": session_id, "reasons": review_reason_count},
             )
 
         parsed_summary = hydrated_v2_payload(

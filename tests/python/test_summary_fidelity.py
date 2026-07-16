@@ -468,6 +468,141 @@ def test_clean_retry_still_ships_and_no_third_generation_runs(monkeypatch) -> No
     assert payload["sections"][0]["claims"][0]["review_reasons"] == []
 
 
+def test_output_limit_on_the_redo_ships_the_flagged_first_draft(monkeypatch) -> None:
+    """Consult 5.3's shape: the redo overflows the output budget - the note still ships.
+
+    The first draft was validated and merely flagged; the feedback-laden redo
+    hit the token cap. The clinician must get the flagged first draft, not the
+    note_output_limit error the browser shows when no draft exists at all.
+    """
+    from strands.types.exceptions import MaxTokensReachedException
+
+    from api import summary_generation as generation_module
+
+    fabricated = _v2_note(["Patient denies dyspnea."])
+    seen_prompts: list[str] = []
+
+    class _OverflowingRetryAgent:
+        """Return a flagged first draft, then exceed the budget on the redo.
+
+        This imitates a long visit whose redo prompt (base plus rejection
+        feedback) pushes the structured output past the frozen token cap.
+        """
+
+        def __call__(self, prompt, structured_output_model=None):
+            """Return the first draft; raise the provider cap error on the redo."""
+            seen_prompts.append(prompt)
+            # The clinician's redo overflows where the first draft fit.
+            if len(seen_prompts) > 1:
+                raise MaxTokensReachedException(
+                    "Model stopped generating due to maximum token limit."
+                )
+
+            class _Result:
+                """Wrap the flagged first draft in the model result shape."""
+
+                structured_output = fabricated
+
+            return _Result()
+
+    monkeypatch.setattr("agents.create_summary_agent", lambda: _OverflowingRetryAgent())
+
+    payload = generation_module.run_summary_generation(
+        "00000000-0000-4000-8000-000000000781",
+        "DOCTOR: your breathing is okay.",
+        citation_segments=[],
+        transcript_segments=C03_ROWS,
+    )
+
+    # Both attempts ran; the failure of the second never reached the browser.
+    assert len(seen_prompts) == 2
+    assert payload is not None
+    assert payload.get("status") != "failed"
+    # The first draft ships with its visible flag, never silently stripped.
+    flagged_claim = payload["sections"][0]["claims"][0]
+    assert flagged_claim["text"] == "Patient denies dyspnea."
+    assert any(
+        reason["reason"] == "negative-without-denial"
+        for reason in flagged_claim["review_reasons"]
+    )
+
+
+def test_output_limit_on_the_first_draft_still_fails_with_the_named_reason(
+    monkeypatch,
+) -> None:
+    """With no usable draft at all, the browser still gets the honest failure."""
+    from strands.types.exceptions import MaxTokensReachedException
+
+    from api import summary_generation as generation_module
+
+    class _AlwaysOverflowingAgent:
+        """Exceed the output budget on the very first generation."""
+
+        def __call__(self, prompt, structured_output_model=None):
+            """Raise the provider cap error before any draft exists."""
+            raise MaxTokensReachedException(
+                "Model stopped generating due to maximum token limit."
+            )
+
+    monkeypatch.setattr("agents.create_summary_agent", lambda: _AlwaysOverflowingAgent())
+
+    payload = generation_module.run_summary_generation(
+        "00000000-0000-4000-8000-000000000783",
+        "DOCTOR: hello.",
+        citation_segments=[],
+        transcript_segments=C03_ROWS,
+    )
+
+    assert payload == {"status": "failed", "reason": "note_output_limit"}
+
+
+def test_live_fallback_note_keeps_the_missing_screen_cue_without_citations(
+    monkeypatch,
+) -> None:
+    """An uncited fallback note that omits an answered risk screen keeps its cue.
+
+    Example: correction was unavailable, so the clinician's note builds from
+    live rows with no citation rows at all. The patient answered the suicide
+    screen; a note that drops it must still carry the note-level review cue
+    instead of shipping clean.
+    """
+    from api import summary_generation as generation_module
+
+    screen_rows = [
+        {
+            "segment_id": "q-01",
+            "role": "DOCTOR",
+            "text": "has your mood ever been so low you couldn't carry on?",
+        },
+        {
+            "segment_id": "a-01",
+            "role": "PATIENT",
+            "text": "no, i haven't had any suicidal thoughts.",
+        },
+    ]
+    note_without_screen = _v2_note(
+        ["No physical examination findings are documented in this transcript."]
+    )
+    # The redo repeats the omission, so the coverage miss survives the retry.
+    _stub_agent_returning(monkeypatch, [note_without_screen, note_without_screen])
+
+    payload = generation_module.run_summary_generation(
+        "00000000-0000-4000-8000-000000000782",
+        "DOCTOR: has your mood ever been so low you couldn't carry on?\n"
+        "PATIENT: no, i haven't had any suicidal thoughts.",
+        citation_segments=[],
+        transcript_segments=screen_rows,
+    )
+
+    # The answered screen is absent from the whole note; the uncited fallback
+    # lane must still surface the note-level cue the clinician acts on.
+    assert payload is not None
+    assert [reason["reason"] for reason in payload["note_review_reasons"]] == [
+        "mental_health_screen_missing"
+    ]
+    assert payload["note_review_reasons"][0]["segment_ids"] == ["q-01", "a-01"]
+
+
 def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> None:
     """Violation diagnostics identify rule/location/ordinal but never note prose."""
     import logging

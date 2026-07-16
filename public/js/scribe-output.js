@@ -636,8 +636,9 @@ function blockedSourceMessage(reason) {
 
 /**
  * Gathers the note's current state for the three status axes.
- * Use when a note has just rendered or is being copied, so screen and
- * clipboard describe the same source, flags, and clinician-review truth.
+ * Use when a note has just rendered or is being copied, so export status and
+ * copy availability describe the same source, flags, and clinician-review
+ * truth.
  *
  * @param {object|null} summaryPayload - the rendered note; null means no
  *   artifact exists and callers should use a non-generated phase instead.
@@ -683,7 +684,7 @@ function collectNoteStatusModel(summaryPayload) {
 /**
  * Reads the visit's role-settlement outcome from the held attestation.
  * Use when the axes need to know whether speaker labels finished settling -
- * a frozen settlement becomes a visible review reason on the note.
+ * a frozen settlement becomes a review reason in the copied note status.
  *
  * @returns {string|null} 'settled', 'failed_frozen', or null when no
  *   finalized attestation exists yet (test pages, or a visit still running).
@@ -698,36 +699,9 @@ function attestedRoleSettlement() {
 }
 
 /**
- * Shows how much of the recording the rendered note covers.
- * Use after every note render: partiality must be machine-stated chrome, not
- * something the model remembers to mention (run 735cedec said "consultation
- * appears to be continuing"; run 79266b51 said nothing).
- *
- * @returns {void} Fills and shows the coverage line, or hides it when no
- *   note or no timed transcript rows exist.
- */
-function refreshNoteCoverage() {
-    const coverageLine = document.getElementById('noteCoverage');
-
-    // Test pages without the coverage line have nothing to show.
-    if (!coverageLine) {
-        return;
-    }
-
-    const coverageText = transcriptCoverageText();
-    if (!latestRenderedSummaryPayload || !coverageText) {
-        coverageLine.classList.add('hidden');
-        return;
-    }
-
-    coverageLine.textContent = coverageText;
-    coverageLine.classList.remove('hidden');
-}
-
-/**
  * Builds the "Covers 00:00 - MM:SS" wording from the visible transcript rows.
- * Use for the note's coverage chrome and the copied note's header; an empty
- * string means no timed rows are on screen.
+ * Use for the copied note's header; an empty string means no timed rows are
+ * on screen.
  *
  * @returns {string} readable coverage span, or '' when nothing is timed.
  */
@@ -750,15 +724,14 @@ function transcriptCoverageText() {
 }
 
 /**
- * Derives the note's status truths, shows review reasons, and gates copying.
- * Use on every note lifecycle change: automated review reasons stay visible
- * text (never tooltip-only), and copying stays disabled until an honest note
- * artifact exists - an unavailable state can never reach the clipboard. The
- * full source/automated/clinician status still travels with every copy.
+ * Derives the note's status truths and gates copying.
+ * Use on every note lifecycle change: copying stays disabled until an honest
+ * note artifact exists, and the full source/automated/clinician status still
+ * travels with every copy without adding a separate status list to the UI.
  *
  * @param {object} statusModel - see deriveNoteStatusLines; phase decides
- *   which reasons render. Null lines hide the list (transient failure UI).
- * @returns {void} Updates the review-reason list and the copy button.
+ *   whether an honest note is available.
+ * @returns {void} Updates the copy button.
  */
 function renderNoteStatus(statusModel) {
     // Test pages without the copy module have no status wording to derive.
@@ -766,41 +739,7 @@ function renderNoteStatus(statusModel) {
         return;
     }
 
-    const statusLines = deriveNoteStatusLines(statusModel);
-    const reasonsList = document.getElementById('noteReviewReasons');
-
-    // No source line means a transient failure owns the panel; hide the reasons.
-    if (!statusLines.sourceLine) {
-        reasonsList?.classList.add('hidden');
-    } else {
-        renderReviewReasonList(reasonsList, statusLines.reviewReasons);
-    }
-
-    setCopyNoteAvailability(statusLines);
-}
-
-/**
- * Renders the readable list of review reasons above the note.
- * Use on every status render so automated flags are always explained on
- * screen with the same reasons that copy into the note.
- *
- * @param {HTMLElement|null} reasonsList - the list element; null (test pages)
- *   skips rendering safely.
- * @param {string[]} reviewReasons - reasons to show; empty hides the list.
- * @returns {void} Replaces the list items and toggles visibility.
- */
-function renderReviewReasonList(reasonsList, reviewReasons) {
-    // Test pages without the list element cannot show reasons.
-    if (!reasonsList) {
-        return;
-    }
-
-    // Each reason is readable text under the badges, and copies with the note.
-    reasonsList.replaceChildren(
-        ...reviewReasons.map((reviewReason) =>
-            createElement('li', { text: reviewReason }))
-    );
-    reasonsList.classList.toggle('hidden', reviewReasons.length === 0);
+    setCopyNoteAvailability(deriveNoteStatusLines(statusModel));
 }
 
 /**
@@ -843,7 +782,6 @@ function resetPostVisitCorrectionState() {
     // and the Generate summary button locks until the next attestation.
     latestRenderedSummaryPayload = null;
     renderNoteStatus({ phase: 'reset' });
-    refreshNoteCoverage();
     updateGenerateSummaryAvailability();
     setSummarySourceNotice(null);
 
@@ -1068,7 +1006,6 @@ function renderSummary(summaryPayload) {
     latestRenderedSummaryPayload = summaryPayload;
     setSummaryStatus('generated');
     renderNoteStatus(collectNoteStatusModel(summaryPayload));
-    refreshNoteCoverage();
     setSummarySourceNotice(summaryPayload);
     setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.

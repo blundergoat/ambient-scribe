@@ -15,10 +15,7 @@ let correctedTranscriptRowsCache = null;
 let correctedTranscriptCacheSessionId = null;
 // The deep link (M6) awaits the in-flight tab render before highlighting.
 let transcriptRenderPromise = null;
-// How long cited blocks stay highlighted before the fade begins.
-const CITED_HIGHLIGHT_MILLISECONDS = 3000;
 const MISSING_CITATION_NOTICE_MILLISECONDS = 4000;
-let citedHighlightTimeout = null;
 let missingCitationNoticeTimeout = null;
 
 /**
@@ -50,6 +47,11 @@ function selectSummaryTab(tabName) {
     activeSummaryTabName = tabName;
     const isNoteActive = tabName === 'note';
 
+    // Returning to the note ends the clinician's transcript evidence focus.
+    if (isNoteActive) {
+        clearCitedTranscriptHighlights();
+    }
+
     noteTab.setAttribute('aria-selected', String(isNoteActive));
     transcriptTab.setAttribute('aria-selected', String(!isNoteActive));
     // Roving tabindex: only the active tab sits in the page tab order.
@@ -71,8 +73,8 @@ function selectSummaryTab(tabName) {
 /**
  * Switches to the Transcript tab and highlights the cited utterance blocks.
  * Use from a provenance popover's "Open in transcript" action (M6): the
- * first cited block scrolls into view and every cited block holds a
- * temporary highlight that fades after CITED_HIGHLIGHT_MILLISECONDS.
+ * first cited block scrolls into view and every cited block stays highlighted
+ * until the clinician returns to the Note tab.
  * When no cited ID is present in the rendered transcript, a small
  * non-blocking notice appears instead - the tab still opens and never throws.
  */
@@ -103,10 +105,6 @@ async function openTranscriptDeepLink(citedSegmentIds) {
     for (const citedBlock of citedBlocks) {
         citedBlock.classList.add('summary-transcript__block--cited');
     }
-    citedHighlightTimeout = window.setTimeout(
-        clearCitedTranscriptHighlights,
-        CITED_HIGHLIGHT_MILLISECONDS
-    );
 }
 
 /**
@@ -132,16 +130,11 @@ function transcriptBlocksForSegmentIds(citedIds) {
 }
 
 /**
- * Removes the temporary citation highlight from every transcript block.
- * Use before a new deep link and when the fade timer fires, so repeated
- * jumps never stack stale highlights.
+ * Removes the citation highlight from every transcript block.
+ * Use before a new deep link, on Note-tab selection, and on New Session so
+ * repeated jumps and later visits never retain stale highlights.
  */
 function clearCitedTranscriptHighlights() {
-    if (citedHighlightTimeout !== null) {
-        window.clearTimeout(citedHighlightTimeout);
-        citedHighlightTimeout = null;
-    }
-
     for (const citedBlock of document.querySelectorAll('.summary-transcript__block--cited')) {
         citedBlock.classList.remove('summary-transcript__block--cited');
     }

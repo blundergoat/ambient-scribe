@@ -174,6 +174,11 @@ async def _resume_or_create_session(
         # Resuming means the visit keeps recording: any earlier "terminal"
         # identity is no longer true and must not authorize a note source.
         source_integrity.discard_terminal_watermark(session_id)
+        # The corrected artifact derives from that discarded identity. Example:
+        # the user pressed Stop, read the note, then pressed Start to continue
+        # the visit - kept, the old artifact would win summary source selection
+        # after the next Stop and block the note as stale lineage forever.
+        services.sessions.replace_corrected_segments(session_id, [])
     else:
         # M22: the process-level engine flag selects windowed (default) or
         # session-long streaming identity at session construction only.

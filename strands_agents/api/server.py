@@ -1049,43 +1049,35 @@ async def corrected_session_transcript(session_id: str) -> dict:
 
 @app.post("/session/{session_id}/roles/override")
 async def roles_override(session_id: str, request: Request) -> dict:
-    """Apply a manual role correction from the frontend.
+    """Apply a manual speaker role correction from the frontend.
 
-    Two scopes share this route. A `speaker_id` body relabels every row of
-    that speaker and becomes a confirmed override the agent must respect. A
-    `segment_id` body corrects exactly one transcript row; it is stored in the
-    row-scoped correction store and never touches the speaker mapping, so a
-    later agent update cannot undo it. Both publish to Mercure so all
-    connected clients see the correction immediately.
+    Relabels every row of the chosen speaker and becomes a confirmed override
+    the agent must respect, then publishes to Mercure so all connected clients
+    see the correction immediately. Row-scoped corrections were removed in
+    0.4.0 with their transcript UI.
 
     Args:
         session_id: UUID for the transcript the user corrected.
-        request: JSON body with `role` plus exactly one of `speaker_id` or
-            `segment_id` selected in the transcript UI.
+        request: JSON body with the `speaker_id` selected in the transcript UI
+            and the corrected `role`.
 
     Returns:
-        Updated role mapping (speaker scope) or the corrected row (row scope).
+        Updated role mapping for the corrected speaker.
 
     Raises:
-        HTTPException: When the scope/role is missing or ambiguous, or when a
-            row correction targets a session with no stored transcript.
+        HTTPException: When the speaker or role is missing.
     """
     _validate_session_id(session_id)
     body = await request.json()
     speaker_id = str(body.get("speaker_id", ""))
-    segment_id = str(body.get("segment_id", ""))
     role = str(body.get("role", "")).upper()
 
-    # Empty role selections cannot update the visible transcript labels.
-    if not role or bool(speaker_id) == bool(segment_id):
+    # Empty selections cannot update the visible transcript labels.
+    if not role or not speaker_id:
         raise HTTPException(
             status_code=400,
-            detail="role plus exactly one of speaker_id or segment_id required",
+            detail="speaker_id and role required",
         )
-
-    # Row scope: correct one visible transcript row without relabeling the speaker.
-    if segment_id:
-        return await _apply_row_role_override(session_id, segment_id, role)
 
     return await _apply_speaker_role_override(session_id, speaker_id, role)
 
@@ -1183,77 +1175,6 @@ async def _apply_speaker_role_override(
     )
 
     return {"status": "ok", "mapping": applied_mapping}
-
-
-async def _apply_row_role_override(session_id: str, segment_id: str, role: str) -> dict:
-    """Persist and broadcast a single-row role correction.
-
-    The clinician clicked one transcript row whose label was wrong (e.g. a
-    doctor question shown as Patient). The correction is stored row-scoped so
-    speaker-level mappings and finalize rebuilds cannot undo it, then published
-    on the roles topic so other tabs show the same corrected row.
-
-    Args:
-        session_id: Recording UUID the clinician is correcting.
-        segment_id: Stable row ID from the clicked transcript row.
-        role: Corrected role label for exactly that row.
-
-    Returns:
-        Confirmation payload with the corrected row for the browser.
-
-    Raises:
-        HTTPException: When no stored transcript exists for the session, so the
-            UI can tell the user the correction could not be saved.
-    """
-    applied = sessions.set_row_role(session_id, segment_id, role)
-
-    # A missing session means there is no stored row this correction could stick to.
-    if not applied:
-        raise HTTPException(
-            status_code=404,
-            detail="No stored transcript for this session; row correction not saved",
-        )
-
-    # Corrected rows use their own segmentation, so a live-row fix cannot be
-    # mapped onto them; drop the stale artifact and let the next summary
-    # re-correct from the updated scaffold instead of citing the old role.
-    if sessions.get_corrected_segments(session_id):
-        sessions.replace_corrected_segments(session_id, [])
-
-    # Peek only: after grace teardown there is no live role state, and creating
-    # one here would broadcast a fabricated empty mapping with zero confidence.
-    state = peek_state(session_id)
-    _mercure_event_ids.setdefault(session_id, 0)
-    _mercure_event_ids[session_id] += 1
-    # `row_overrides` is the additive row-scoped signal other tabs apply.
-    role_event: dict = {
-        "type": "role_update",
-        "row_overrides": {segment_id: role},
-        "flip_detected": False,
-        "manual_override": True,
-        "session_id": session_id,
-    }
-    # A still-live visit shares its unchanged speaker mapping so existing
-    # consumers keep working; a finished visit sends only the row signal.
-    if state is not None:
-        role_event["mapping"] = state.current_mapping
-        role_event["confidence"] = state.running_confidence
-    await publish_to_mercure(
-        f"scribe/session/{session_id}/roles",
-        role_event,
-        event_id=_mercure_event_ids[session_id],
-    )
-
-    logger.info(
-        "roles_override.row_applied",
-        extra={
-            "session_id": session_id,
-            "segment_id": segment_id,
-            "role": role,
-        },
-    )
-
-    return {"status": "ok", "segment_id": segment_id, "role": role}
 
 
 @app.post("/session/{session_id}/summary")

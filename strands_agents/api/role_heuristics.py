@@ -277,8 +277,7 @@ def compute_row_role_exceptions(
     """Find rows whose text contradicts their speaker-mapped role.
 
     Runs after every speaker-mapping application, so the exceptions always
-    describe the labels the clinician currently sees. Rows the clinician
-    corrected themselves are authoritative and never re-judged.
+    describe the labels the clinician currently sees.
 
     Args:
         stored_segments: Visible transcript rows from session storage.
@@ -299,10 +298,6 @@ def compute_row_role_exceptions(
 
         # Rows without identity cannot be individually relabeled.
         if segment_id == "":
-            continue
-
-        # The clinician's own row corrections outrank automatic judgment.
-        if segment.get("role_source") == "user_row":
             continue
 
         mapped_role = mapping.get(str(segment.get("speaker_id", "")), "")
@@ -381,10 +376,6 @@ def _add_orphan_speaker_exceptions(
         segment_id = str(segment.get("segment_id", ""))
         # Unidentifiable rows and rows already judged keep their current state.
         if segment_id == "" or segment_id in row_exceptions:
-            continue
-
-        # The clinician's own row corrections outrank automatic judgment.
-        if segment.get("role_source") == "user_row":
             continue
 
         mapped_role = mapping.get(speaker_id, "")

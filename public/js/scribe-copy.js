@@ -170,8 +170,8 @@ function v2ReviewCountsFrom(summaryPayload) {
 
 /**
  * Collects the automated-review reasons and flagged-item total for one note.
- * Use when a note has rendered: the visible "(n)" must always equal the
- * breakdown beneath it - "(2)" above a 1+3 item list misled the reader.
+ * Use when a note has rendered: the exported "(n)" must always equal its
+ * reason breakdown - "(2)" beside a 1+3 item list misled the reader.
  *
  * @param {object} statusModel - see deriveNoteStatusLines; missing counts act as zero.
  *   v1 notes fill unverifiedCount/lowConfidenceCount; v2 notes fill the
@@ -245,7 +245,7 @@ function automatedReviewSummaryFor(statusModel) {
 /**
  * Formats a count with its correctly pluralized noun for review wording.
  * Use in the review-reason lines so "1 statement" and "3 sentences" both
- * read naturally in the panel and the pasted note.
+ * read naturally in the pasted note.
  *
  * @param {number} itemCount - flagged-item count; zero never reaches here
  *   because zero-count reasons are not emitted.
@@ -258,10 +258,10 @@ function countedNoun(itemCount, noun) {
 }
 
 /**
- * Derives the three independent status axes for the note panel and export.
- * Use wherever note state is shown or copied, so screen, clipboard, and
- * keyboard users all read the same three truths: where the text came from,
- * what automated checks flagged, and that no clinician has reviewed it.
+ * Derives the three independent status axes for note availability and export.
+ * Use wherever note state is gated or copied, so the clipboard carries where
+ * the text came from, what automated checks flagged, and that no clinician
+ * has reviewed it.
  *
  * @param {object} statusModel - current note state:
  *   phase: 'waiting'|'generating'|'blocked'|'failed'|'generated'; unknown acts like 'failed'.
@@ -720,7 +720,7 @@ async function copySummary(copyButton) {
     const statusLines = deriveNoteStatusLines(collectNoteStatusModel(summaryPayload));
     const noteModel = noteModelFromSummaryPayload(summaryPayload, statusLines);
 
-    // The paste states the same coverage span the panel shows.
+    // Coverage stays in the exported note without adding separate UI chrome.
     if (typeof transcriptCoverageText === 'function') {
         noteModel.coverageLine = transcriptCoverageText() || null;
     }

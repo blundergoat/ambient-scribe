@@ -106,8 +106,12 @@ PRIMOCK57_CASE_FILE = re.compile(r"^(day\d+_consultation\d+)_(doctor|patient)\.w
 PRIMOCK57_EXCLUDED_CASE_IDS = frozenset(
     {
         "day1_consultation01",
+        "day1_consultation04",
         "day1_consultation09",
         "day1_consultation10",
+        "day2_consultation01",
+        "day2_consultation08",
+        "day3_consultation05",
     }
 )
 DEMO_CONSULTATIONS = (

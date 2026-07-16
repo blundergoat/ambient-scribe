@@ -5,6 +5,20 @@ last_reviewed: 2026-07-16
 
 # READ / SCOPE / VERIFY Lessons
 
+## Lesson: A truncated sweep grep ships an incomplete removal
+
+**Added:** 2026-07-17 · **Trigger:** VERIFY (full pytest) failed on a test the removal sweep never listed
+
+Removing row-level role corrections (PR #5 cleanup), the work-list came from
+`grep -rn "user_row|compute_row_role_exceptions" ... | head -20`; the truncation hid
+`test_clinician_corrected_orphan_rows_stay_untouched`, a second lane pinning the removed
+guard, so the first pytest run failed on a file the sweep had already "cleared". A feature's
+own test suite is never its whole surface: markers and side effects (`role_source ==
+"user_row"`) are pinned by other lanes' tests too.
+Prevention: never `head`-truncate the grep that builds a removal work-list - count the hits
+first (`grep -c`) or write them all to a file, and treat the full suite as part of the sweep,
+not a formality after it.
+
 ## Lesson: When a milestone makes timing user-controlled, re-verify every timer it now races
 
 **Added:** 2026-07-16 · **Trigger:** user-reported regression after M11 acceptance testing

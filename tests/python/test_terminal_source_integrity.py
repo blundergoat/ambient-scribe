@@ -560,3 +560,100 @@ def test_stream_cleanup_grace_prefers_post_visit_retention_after_finalize():
         assert _stream_cleanup_grace_seconds(session_id, services) == 900.0
     finally:
         source_integrity.discard_terminal_watermark(session_id)
+
+
+def test_stale_corrected_artifact_cannot_block_an_authorized_live_fallback() -> None:
+    """A leftover artifact from an earlier finalize must not deadlock the note.
+
+    Example: the clinician pressed Stop (correction stored rows), pressed
+    Start on the same page to continue the visit, and stopped again after the
+    audio retention lapsed. Correction authorizes the live fallback; the stale
+    artifact must not make the summary refuse it as stale lineage, or every
+    Generate click shows "note unavailable" with no way out.
+    """
+    session_id = "00000000-0000-4000-8000-0000000000b1"
+    client = TestClient(app)
+    try:
+        _visit_rows(session_id)
+        _attest_terminal(session_id)
+        # The artifact an earlier finalize left behind; the fresh terminal
+        # watermark never attested it.
+        sessions.replace_corrected_segments(
+            session_id,
+            [
+                {
+                    "segment_id": "old-0001",
+                    "speaker_id": "speaker_0",
+                    "role": "DOCTOR",
+                    "text": "stale corrected row",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        # No lifecycle session is registered, so correction sees expired audio
+        # and tells the browser to continue with the live transcript.
+        correction = client.post(f"/session/{session_id}/correction").json()
+        assert correction["status"] == "unavailable"
+        assert correction["source_state"] == "whole_visit_live_fallback"
+
+        # Startup-managed client: the publish step needs the app HTTP client.
+        with (
+            patch.object(
+                api_server,
+                "_run_summary_generation",
+                return_value={"title": "", "sections": [], "key_points": ["ok"]},
+            ),
+            TestClient(app) as started_client,
+        ):
+            summary = started_client.post(f"/session/{session_id}/summary").json()
+        # The note ships from the attested live rows, visibly review-required;
+        # the stale artifact stays out of the clinician's draft.
+        assert summary["source_state"] == "whole_visit_live_fallback"
+        assert summary["transcript_source"] == "session_store"
+    finally:
+        _cleanup(session_id)
+
+
+def test_resume_after_finalize_clears_the_stale_corrected_artifact() -> None:
+    """Pressing Start again after Stop discards the note source with the watermark.
+
+    Example: the clinician stopped, read the note (correction stored rows),
+    then pressed Start on the same page to continue the visit. The terminal
+    identity and the corrected artifact both describe a visit that no longer
+    exists, so both must go before new audio arrives.
+    """
+    from api.streaming_session import _resume_or_create_session
+
+    session_id = "00000000-0000-4000-8000-0000000000b2"
+    try:
+        _visit_rows(session_id)
+        _attest_terminal(session_id)
+        # The registered session is what makes the reconnect a resume.
+        _seed_retained_audio(session_id)
+        sessions.replace_corrected_segments(
+            session_id,
+            [
+                {
+                    "segment_id": "old-0001",
+                    "speaker_id": "speaker_0",
+                    "role": "DOCTOR",
+                    "text": "stale corrected row",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "source_model": "test-model",
+                }
+            ],
+        )
+
+        services = SimpleNamespace(sessions=sessions, lifecycle=lifecycle)
+        resumed_session = asyncio.run(_resume_or_create_session(session_id, services))
+
+        # The same buffer keeps recording, but nothing terminal remains.
+        assert resumed_session is lifecycle.get(session_id)
+        assert source_integrity.get_terminal_watermark(session_id) is None
+        assert sessions.get_corrected_segments(session_id) == []
+    finally:
+        _cleanup(session_id)

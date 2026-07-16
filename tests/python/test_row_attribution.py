@@ -208,14 +208,6 @@ class TestConsult03SliceRegression:
         # The blended question+answer row is explicitly uncertain, not wrong.
         assert exceptions["seg-0026"] == "UNKNOWN"
 
-    def test_user_corrected_rows_are_never_rejudged(self) -> None:
-        """A clinician's own row correction outranks the cue lane."""
-        rows = [dict(row) for row in CONSULT03_SLICE_ROWS]
-        rows[2]["role_source"] = "user_row"
-
-        exceptions = compute_row_role_exceptions(rows, CONSULT03_MAPPING)
-        assert "seg-0022" not in exceptions
-
     def test_rows_without_identity_or_mapping_are_skipped(self) -> None:
         """Old histories and unmapped sessions produce no exceptions."""
         unidentified_rows = [
@@ -459,15 +451,6 @@ class TestOrphanSpeakerRowLane:
         ]
         mapping = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
         assert compute_row_role_exceptions(rows, mapping) == {}
-
-    def test_clinician_corrected_orphan_rows_stay_untouched(self) -> None:
-        """A user row correction on an orphan row outranks the cue lane."""
-        rows = [dict(row) for row in CONSULT08_ORPHAN_ROWS]
-        for row in rows:
-            if row["segment_id"] == "seg-0105":
-                row["role_source"] = "user_row"
-        exceptions = compute_row_role_exceptions(rows, CONSULT08_ORPHAN_MAPPING)
-        assert "seg-0105" not in exceptions
 
 
 # --- M05: consult 1.2 live-lane role targets (official TextGrid wording) ---

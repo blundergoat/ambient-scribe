@@ -299,6 +299,14 @@ function announce(message) {
  * Use whenever the clinician should see new transcript text or final status.
  */
 function handleRawSegment(segmentEvent) {
+    // An event stamped for another visit is a stale delivery queued before the
+    // old stream closed; acting on it would mark the fresh visit terminal (or
+    // add ghost rows). Events without a session id keep working: older
+    // backends and dev replay payloads never carried one.
+    if (segmentEvent.session_id && segmentEvent.session_id !== CONFIG.sessionId) {
+        return;
+    }
+
     // Finalized events close replay or mark live transcription complete.
     if (segmentEvent.type === 'finalized') {
         // The backend just attested the terminal transcript; notes are now

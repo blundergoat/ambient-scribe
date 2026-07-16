@@ -451,21 +451,6 @@
             margin: 0 0 0.625rem 0;
             display: inline-block;
         }
-        .summary-coverage {
-            margin: 0 0 0.625rem 0;
-            font-size: 0.6875rem;
-            color: var(--text-subtle);
-            font-variant-numeric: tabular-nums;
-        }
-        .summary-coverage.hidden { display: none; }
-        .note-review-reasons {
-            margin: 0 0 0.625rem 1rem;
-            padding: 0;
-            font-size: 0.75rem;
-            color: var(--text-subtle);
-            list-style: disc;
-        }
-        .note-review-reasons.hidden { display: none; }
         .summary-panel__body {
             padding: 0 1rem 1rem;
             display: block;
@@ -699,9 +684,14 @@
            selected/copied text never picks up a stray glyph. */
         .summary-claim__toggle--evidence {
             position: relative;
-            width: 1.125rem;
-            height: 1.125rem;
+            width: 1lh;
+            height: 1lh;
+            margin-left: 0.125rem;
+            margin-right: 0.625rem;
             padding: 0;
+            font-size: inherit;
+            line-height: inherit;
+            vertical-align: top;
         }
         .summary-claim__toggle--evidence::before {
             content: '';
@@ -1523,12 +1513,6 @@
                                 <span id="summarySourceNotice" class="summary-status__notice hidden"></span>
                                 <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
-                            {# Automated review reasons stay on screen when checks flag the
-                               note; full source/review status still travels with every copy. #}
-                            <ul id="noteReviewReasons" class="note-review-reasons hidden"></ul>
-                            {# Machine-stated coverage: a partial recording must say so
-                               deterministically, never only when the model mentions it. #}
-                            <p id="noteCoverage" class="summary-coverage hidden"></p>
                             <div id="summaryContent"></div>
                         </div>
                         <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">
