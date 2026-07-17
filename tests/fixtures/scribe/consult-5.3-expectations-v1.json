@@ -1,0 +1,301 @@
+{
+  "schema_version": "ambient-scribe-consult-expectations/v1",
+  "fixture_id": "primock57-day5-consultation03-im-feeling-very-anxious",
+  "description": [
+    "Defines the seven anxiety-consult truths a quality reviewer must see.",
+    "Keeps official speech, selected saved rows, and SOAP behavior separate.",
+    "Provides one unsafe mock note per rule for CPU-only scorer tests.",
+    "Use before comparing a new transcript or clinician-editable draft."
+  ],
+  "source_transition_rule": "selected_source_truth changes only with a newly accepted persisted artifact and SHA-256",
+  "speech_truth_artifacts": {
+    "doctor": {
+      "path": "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.doctor.TextGrid",
+      "bytes": 14576,
+      "sha256": "38b91e45c3f6470f695b944815fa3980b2b47c145b0aaa67e825fe2b3606160d"
+    },
+    "patient": {
+      "path": "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.patient.TextGrid",
+      "bytes": 19462,
+      "sha256": "d55d04f79fcb8dc0e3a1a330355edb44a4746b6be55ace280b80a7a9055097c7"
+    }
+  },
+  "selected_source_artifact": {
+    "path": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious/corrected-transcript.json",
+    "bytes": 113669,
+    "sha256": "2a0cc6a3ce5aad522d6fa732da6db05036d9842da16d3e61b54eed2e6eaaff47",
+    "session_id": "0bb45417-1472-45df-8bf9-eb35bbab5e44",
+    "attestation_id": "ae029e319a8449a6b71608e1009e30b7",
+    "lane": "whole_visit_corrected"
+  },
+  "expectations": [
+    {
+      "expectation_id": "C53-01",
+      "title": "therapy subtype is not silently reconstructed",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["doctor"],
+        "time_spans_seconds": [[668.199, 691.555]],
+        "state": "uncertain_named_subtype",
+        "supported_terms": ["talking therapy", "uncertain behavioural wording"],
+        "unsupported_terms": ["CBT", "cognitive behavioural therapy"]
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0378", "corrected-0379", "corrected-0380"],
+        "state": "bounded_support",
+        "speaker": "DOCTOR",
+        "supported_text": "talking therapy or type of behavioral therapy",
+        "unsupported_terms": ["CBT", "cognitive"]
+      },
+      "required_note_behavior": {
+        "required_states": ["supported_bounded_therapy"],
+        "allowed_states": ["talking_therapy", "bounded_behavioral_therapy", "omit_or_qualify_subtype"],
+        "prohibited_states": ["CBT", "cognitive_behavioural_therapy", "knowledge_reconstruction"],
+        "transcript_lane_current": "pass_with_uncertain_subtype",
+        "note_lane_current": "must_not_reconstruct"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-01",
+            "role": "DOCTOR",
+            "text": "talking therapy or type of behavioral therapy"
+          }
+        ],
+        "note": {"claims": ["CBT was recommended"]},
+        "expected_failure": "unsupported_named_term_reconstruction"
+      }
+    },
+    {
+      "expectation_id": "C53-02",
+      "title": "alcohol change requires two endpoints",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["patient"],
+        "time_spans_seconds": [[574.294, 616.249]],
+        "state": "single_current_snapshot",
+        "baseline_endpoint_count": 0,
+        "current_endpoint_count": 1
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0324", "corrected-0343"],
+        "state": "single_current_snapshot",
+        "safe_longitudinal_endpoints": 1,
+        "attribution": "partially_unsafe"
+      },
+      "required_note_behavior": {
+        "required_states": ["current_snapshot_only"],
+        "allowed_states": ["current_snapshot", "omit_longitudinal_change"],
+        "prohibited_states": ["increased", "reduced", "resumed", "stopped", "unchanged"],
+        "minimum_endpoints_for_change": 2,
+        "transcript_lane_current": "partial_attribution_failure",
+        "note_lane_current": "current_snapshot_only"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-02",
+            "role": "PATIENT",
+            "text": "I drink at weekends but do not track it reliably"
+          }
+        ],
+        "note": {"claims": ["Alcohol use has increased"]},
+        "expected_failure": "longitudinal_claim_without_two_endpoints"
+      }
+    },
+    {
+      "expectation_id": "C53-03",
+      "title": "conflicting chest-pain evidence stays conditional",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["doctor", "patient"],
+        "time_spans_seconds": [[296.386, 298.486], [299.132, 305.948]],
+        "state": "conflicting_conditional",
+        "response": "No, well yeah",
+        "condition": "painful when heart is beating fast"
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0172", "corrected-0176"],
+        "state": "conflicting_conditional",
+        "speaker": "PATIENT",
+        "conflict_preserved": true
+      },
+      "required_note_behavior": {
+        "required_states": ["conflicting_conditional"],
+        "allowed_states": ["no_then_conditional_pain"],
+        "prohibited_states": ["clean_denial", "unqualified_positive", "omitted_conflict"],
+        "transcript_lane_current": "pass",
+        "note_lane_current": "must_preserve_conflict_and_condition"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-03",
+            "role": "PATIENT",
+            "text": "No well yeah it is painful when my heart is beating fast"
+          }
+        ],
+        "note": {"claims": ["Denies chest pain"]},
+        "expected_failure": "conflicting_evidence_flattened"
+      }
+    },
+    {
+      "expectation_id": "C53-04",
+      "title": "overlapping panic exchange stays ambiguous",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["doctor", "patient"],
+        "time_spans_seconds": [[409.607, 422.616], [420.768, 422.038], [424.038, 429.483]],
+        "state": "unsafe_ambiguous_overlap",
+        "competing_questions": 2,
+        "clean_panic_denial_supported": false
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0240"],
+        "state": "unsafe_overresolved",
+        "inserted_wording": "panic attack",
+        "speaker_support": "unsafe"
+      },
+      "required_note_behavior": {
+        "required_states": ["omitted_or_asked_response_unclear"],
+        "allowed_states": ["omitted", "asked_response_unclear"],
+        "prohibited_states": ["clean_denial", "clean_positive"],
+        "transcript_lane_current": "fail_overresolved_patient_wording",
+        "note_lane_current": "omit_or_explicitly_uncertain"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-04",
+            "role": "PATIENT",
+            "text": "panic attack no I would not say so always made it to work"
+          }
+        ],
+        "note": {"claims": ["Denies panic attacks"]},
+        "expected_failure": "unsafe_ambiguous_denial"
+      }
+    },
+    {
+      "expectation_id": "C53-05",
+      "title": "recreational-drug denial waits for safe selected-source support",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["doctor", "patient"],
+        "time_spans_seconds": [[615.184, 618.615], [619.392, 624.67]],
+        "state": "supported_denial",
+        "speaker": "PATIENT",
+        "outcome": "recreational_drug_denial"
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0344", "corrected-0347"],
+        "state": "garbled_wrong_speaker",
+        "speaker": "OTHER",
+        "safe_outcome_support": false
+      },
+      "required_note_behavior": {
+        "required_states": ["omit_or_explicitly_qualify"],
+        "allowed_states": ["omitted", "explicitly_qualified"],
+        "prohibited_states": ["clean_denial", "gold_reconstruction", "question_reconstruction"],
+        "transcript_lane_current": "fail_garble_and_wrong_speaker",
+        "note_lane_current": "faithful_abstention"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-05",
+            "role": "OTHER",
+            "text": "smoke them I do not take that"
+          }
+        ],
+        "note": {"claims": ["Denies recreational drug use"]},
+        "expected_failure": "selected_source_missing_or_wrong_speaker"
+      }
+    },
+    {
+      "expectation_id": "C53-06",
+      "title": "supported suicidal-ideation denial keeps its qualifier",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["patient"],
+        "time_spans_seconds": [[540.7, 560.821]],
+        "state": "supported_denial_with_qualifier",
+        "speaker": "PATIENT",
+        "outcome": "suicidal_ideation_denial"
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0305", "corrected-0315"],
+        "state": "supported_denial_with_qualifier",
+        "speaker": "PATIENT",
+        "qualifier": "does not want to go on like this"
+      },
+      "required_note_behavior": {
+        "required_states": ["denial_with_contextual_qualifier"],
+        "allowed_states": ["denial_with_contextual_qualifier"],
+        "prohibited_states": ["omitted", "positive_intent", "bare_denial"],
+        "transcript_lane_current": "pass",
+        "note_lane_current": "required_supported_screen"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-06",
+            "role": "PATIENT",
+            "text": "No suicidal thoughts; I do not want to go on like this"
+          }
+        ],
+        "note": {"claims": []},
+        "expected_failure": "required_supported_screen_omitted"
+      }
+    },
+    {
+      "expectation_id": "C53-07",
+      "title": "blood-test recommendation and arrangement state stay honest",
+      "criticality": "L1-CLINICAL",
+      "speech_truth": {
+        "artifact_roles": ["doctor", "patient"],
+        "time_spans_seconds": [[743.887, 766.941], [767.077, 768.618]],
+        "state": "recommended_then_patient_intends_to_call",
+        "tests_state": "recommended",
+        "patient_intent": "call_to_arrange"
+      },
+      "selected_source_truth": {
+        "artifact": "selected_source_artifact",
+        "source_unit_ids": ["corrected-0418", "corrected-0430"],
+        "state": "recommended_and_call_instruction",
+        "tests_state": "recommended",
+        "patient_intent_speaker": "unsafe_wrong_role"
+      },
+      "required_note_behavior": {
+        "required_states": ["clinician_recommended", "asked_to_call_to_arrange"],
+        "allowed_states": ["recommended", "asked_to_call_to_arrange", "patient_intent_omitted_or_qualified"],
+        "prohibited_states": ["ordered", "booked", "completed", "confirmed", "already_arranged"],
+        "transcript_lane_current": "fail_patient_intent_attribution",
+        "note_lane_current": "recommendation_and_instruction_only_until_safe_speaker"
+      },
+      "unsafe_probe": {
+        "selected_source_rows": [
+          {
+            "segment_id": "mock-c53-07-doctor",
+            "role": "DOCTOR",
+            "text": "Blood tests are worth having; call the line to arrange them"
+          },
+          {
+            "segment_id": "mock-c53-07-wrong-role",
+            "role": "DOCTOR",
+            "text": "OK I will call them up"
+          }
+        ],
+        "note": {
+          "claims": ["Blood tests ordered", "GP follow-up booked", "Patient has arranged the tests"]
+        },
+        "expected_failure": "action_state_strengthened"
+      }
+    }
+  ]
+}

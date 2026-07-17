@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-17
 ---
 
 # Eval and Metrics Lessons
@@ -286,3 +286,29 @@ cleanup lane. `role_source=post_visit_alignment` names the cleanup; its absence 
 scaffold (or a live-lane exception inherited through it — check the live twin's stored role
 too). Read the provenance field before classifying any wrong label as upstream debt, because the
 two classes route to different fixes.
+
+## Lesson: Multiset surplus does not prove a false insertion
+
+**Created:** 2026-07-17
+**What happened:** T02.6 first expected the visible word `meltformin` to count as a false
+insertion beside an omitted `metformin`. The scorer's aligned word errors correctly showed that
+pair as a likely wrong-or-garbled substitution, so the focused test failed instead of proving
+the intended separation between lexical defects and genuinely added words.
+**Evidence:** `scripts/transcript-quality.py` (search: "def _classify_surplus_words") and
+`tests/python/test_transcript_quality.py` (search: "wrong_or_garbled_words").
+**Prevention:** Treat an unmatched visible word as a false insertion only when it is not paired
+with missing source truth. Keep substitution-like surplus in a separate diagnostic bucket; do
+not infer an invented clinical claim from multiset surplus alone.
+
+## Lesson: Generic state words need proposition and topic scope
+
+**Created:** 2026-07-17
+**What happened:** T02.7 first searched the whole saved note for the C53-02 longitudinal state
+words. The retained note's unrelated phrase `significantly reduced sleep` therefore produced a
+false alcohol-change failure even though the alcohol proposition described only a current weekend
+snapshot.
+**Evidence:** `scripts/note-quality.py` (search: "def _c53_02_failures") and
+`tests/python/test_note_quality.py` (search: "test_alcohol_trend_words_stay_scoped").
+**Prevention:** Before scoring a generic state word such as increased, reduced, stopped, or
+unchanged, split the visible note into deterministic propositions and require the owning clinical
+topic in the same proposition. Never let one SOAP subject lend state to another.

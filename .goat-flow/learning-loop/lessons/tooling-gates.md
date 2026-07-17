@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-17
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -327,6 +327,26 @@ attribute. Focused tests passed, but Gruff exposed the extra state on a class al
 attributes. Replacing it with a module policy constant kept the file at 999 lines and a
 `--diff HEAD` hook scan reported zero new findings. Prefer a constant for a fixed application
 contract; use Gruff's new-only diff to distinguish introduced findings from inherited symbol debt.
+
+The 0.5.0 corpus-picker change repeated the trap in a developer script: focused tests, Ruff, JSON
+parsing, and compilation passed after an allowlist was added, while direct Gruff found the file had
+grown from an inherited 1,004 lines to 1,029. Compacting the new allowlist and redundant vertical
+space brought it to 998 lines with `Composite: A (100.00 / 100)`. Run direct Gruff before expanding
+a near-limit file even when the change is metadata-only and behavior tests are already green.
+
+## Lesson: Repeated JSON blocks need identity-scoped patch anchors
+
+**Created:** 2026-07-17
+**What happened:** A patch added consult-2.9 and consult-5.3 metadata by matching repeated
+`lane_ids` / `region_labels` / empty-array blocks in the development manifest. The patch applied
+cleanly but attached both records to the first two consultations instead of their named fixtures.
+An immediate fixture-ID grep caught the placement before tests or evidence were recorded.
+**Evidence:** `tests/fixtures/audio/development-corpus-0.5.0.json` (search:
+`consult-2.9-medication-allergy`) and `tests/python/test_development_corpus.py` (search:
+`test_manifest_registers_consult_29_cross_lane_evidence`).
+**Prevention:** For repeated JSON/YAML objects, include the unique parent ID in every patch hunk,
+then assert the expected array position and ID before inspecting child values. A valid parse proves
+syntax only; it does not prove metadata landed on the user-visible record it describes.
 
 ## Lesson: A schema switch orphans every test stub beneath it - guard the provider boundary
 

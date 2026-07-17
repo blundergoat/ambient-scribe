@@ -28,6 +28,10 @@ from nemo_pipeline import NemoPipeline
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon_review.json"
 EVALUATOR_PATH = REPO_ROOT / "scripts" / "evaluate-medical-boost.py"
+DEVELOPMENT_CORPUS_HELPER_PATH = REPO_ROOT / "scripts" / "development-corpus.py"
+DEVELOPMENT_CORPUS_MANIFEST_PATH = (
+    REPO_ROOT / "tests" / "fixtures" / "audio" / "development-corpus-0.5.0.json"
+)
 
 
 def load_medical_boost_evaluator() -> ModuleType:
@@ -43,6 +47,26 @@ def load_medical_boost_evaluator() -> ModuleType:
     sys.modules[spec.name] = evaluator
     spec.loader.exec_module(evaluator)
     return evaluator
+
+
+def load_development_corpus_helper() -> ModuleType:
+    """Load the corpus gate used before a developer scans clinical vocabulary.
+    It keeps the collision test on approved consultations without starting the app.
+    """
+    helper_spec = importlib.util.spec_from_file_location(
+        "ambient_scribe_development_corpus",
+        DEVELOPMENT_CORPUS_HELPER_PATH,
+    )
+
+    # No import specification means the developer cannot prove the vocabulary scan is scoped.
+    assert helper_spec is not None
+    # No loader means the safety gate cannot supply approved consultation paths.
+    assert helper_spec.loader is not None
+
+    development_corpus_helper = importlib.util.module_from_spec(helper_spec)
+    sys.modules[helper_spec.name] = development_corpus_helper
+    helper_spec.loader.exec_module(development_corpus_helper)
+    return development_corpus_helper
 
 
 def test_missing_lexicon_loads_no_entries(tmp_path):
@@ -366,43 +390,52 @@ def test_consult12_hard_negatives_stay_byte_identical():
 
 
 def test_consult12_variant_sweep_finds_no_collision_in_official_corpus():
-    """The retained ambiguity sweep: no new variant is a word anyone actually said.
-
-    Every official PriMock57 TextGrid is the ground-truth of what was really
-    spoken. A candidate variant that appears there would mean the "misspelling"
-    is a real word or another medicine, and rewriting it would corrupt a
-    faithful transcript. The four canonicals must also exist in the consult-1.2
-    doctor ground truth, proving the targets are the clinician's actual words.
+    """Keep approved variants from rewriting words spoken in development cases.
+    Use before activation; each canonical target must also remain in official truth.
     """
     import re as sweep_re
 
-    audio_fixture_dir = REPO_ROOT / "tests" / "fixtures" / "audio"
-    corpus_words: set[str] = set()
-    # Every TextGrid text interval contributes its spoken words to the vocabulary.
-    for textgrid_path in sorted(audio_fixture_dir.glob("*.TextGrid")):
-        textgrid_content = textgrid_path.read_text(encoding="utf-8", errors="replace")
-        for spoken_text in sweep_re.findall(r'text = "([^"]*)"', textgrid_content):
-            corpus_words.update(
-                word.casefold() for word in sweep_re.findall(r"[A-Za-z']+", spoken_text)
+    development_corpus_helper = load_development_corpus_helper()
+    development_audio_fixture_directory = REPO_ROOT / "tests" / "fixtures" / "audio"
+    development_corpus_words: set[str] = set()
+
+    # Only approved consultations contribute words that could block an unsafe visible rewrite.
+    for (
+        development_textgrid_path
+    ) in development_corpus_helper.development_textgrid_paths(
+        DEVELOPMENT_CORPUS_MANIFEST_PATH,
+        REPO_ROOT,
+    ):
+        development_truth_content = development_textgrid_path.read_text(
+            encoding="utf-8", errors="replace"
+        )
+        # Every official speech interval protects real user wording from a correction collision.
+        for official_spoken_text in sweep_re.findall(
+            r'text = "([^"]*)"', development_truth_content
+        ):
+            # Compare whole words so punctuation does not hide a spoken collision.
+            development_corpus_words.update(
+                spoken_word.casefold()
+                for spoken_word in sweep_re.findall(r"[A-Za-z']+", official_spoken_text)
             )
 
-    assert corpus_words, "the official corpus must be present for the sweep"
+    assert development_corpus_words, "the official corpus must be present for the sweep"
 
     new_variant_words = ["luratidine", "pyritin", "fexaphenidine", "emolons"]
-    # Zero unsafe rewrites: none of the candidate variants is real spoken language.
+    # Each proposed variant must stay absent from real speech before users see rewrites.
     for variant_word in new_variant_words:
-        assert variant_word not in corpus_words, (
+        assert variant_word not in development_corpus_words, (
             f"variant '{variant_word}' collides with real corpus speech"
         )
 
-    consult12_doctor_grid = (
+    consult12_doctor_truth = (
         (
-            audio_fixture_dir
+            development_audio_fixture_directory
             / "primock57-day1-consultation02-i-have-sore-red-skin.doctor.TextGrid"
         )
         .read_text(encoding="utf-8", errors="replace")
         .casefold()
     )
-    # The canonical targets are exactly what the doctor really said.
+    # Every canonical target stays grounded in what the clinician officially said.
     for canonical_word in ["loratadine", "piriton", "fexofenadine", "emollients"]:
-        assert canonical_word in consult12_doctor_grid
+        assert canonical_word in consult12_doctor_truth

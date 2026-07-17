@@ -28,12 +28,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 SUPPORTED_REFERENCE_ROLES = {"DOCTOR", "PATIENT"}
 DEFAULT_SPEAKER_CAP = 2
+GARBLE_REVIEW_SIMILARITY_FLOOR = 0.70
 
 
 @dataclass(frozen=True)
@@ -419,7 +422,9 @@ def word_error_score(
                 substitution_candidate = _add_error(match_or_substitute, "substitution")
 
             deletion_candidate = _add_error(previous_row[hypothesis_index], "deletion")
-            insertion_candidate = _add_error(current_row[hypothesis_index - 1], "insertion")
+            insertion_candidate = _add_error(
+                current_row[hypothesis_index - 1], "insertion"
+            )
             current_row.append(
                 min(
                     substitution_candidate,
@@ -439,6 +444,390 @@ def word_error_score(
         reference_words=len(reference_words),
         hypothesis_words=len(hypothesis_words),
     )
+
+
+def words_missing_from_clinician_transcript(
+    reference_words: list[str],
+    hypothesis_words: list[str],
+) -> list[str]:
+    """Return reference words absent from the clinician-visible transcript.
+
+    Args:
+        reference_words: Official words in order; empty means there is no omission denominator.
+        hypothesis_words: Visible words in order; empty means every reference word is missing.
+
+    Returns:
+        Missing words in official order; empty means every reference occurrence is present.
+    """
+    remaining_visible_words = Counter(hypothesis_words)
+    missing_reference_words: list[str] = []
+
+    # Each official occurrence must have its own matching word in the visible transcript.
+    for reference_word in reference_words:
+        # A remaining visible occurrence satisfies this one official word.
+        if remaining_visible_words[reference_word] > 0:
+            remaining_visible_words[reference_word] -= 1
+            continue
+        missing_reference_words.append(reference_word)
+
+    return missing_reference_words
+
+
+def surplus_words_in_clinician_transcript(
+    reference_words: list[str],
+    hypothesis_words: list[str],
+) -> list[str]:
+    """Return visible words not licensed by the official transcript count.
+
+    Args:
+        reference_words: Official words in order; empty means every visible word is surplus.
+        hypothesis_words: Visible words in order; empty means no insertion or duplicate exists.
+
+    Returns:
+        Surplus words in display order for insertion and duplicate classification.
+    """
+    remaining_official_words = Counter(reference_words)
+    surplus_visible_words: list[str] = []
+
+    # Each visible occurrence consumes one matching official occurrence when available.
+    for visible_word in hypothesis_words:
+        # A remaining official occurrence licenses this word in the clinician view.
+        if remaining_official_words[visible_word] > 0:
+            remaining_official_words[visible_word] -= 1
+            continue
+        surplus_visible_words.append(visible_word)
+
+    return surplus_visible_words
+
+
+def _normalized_word_values(word_values: list[Any]) -> list[str]:
+    """Flatten supplied words or phrases into the clinician-facing token order.
+
+    Args:
+        word_values: Words/phrases; empty means the transcript lane has no readable text.
+
+    Returns:
+        Lowercase scorer tokens in supplied order.
+    """
+    normalized_words: list[str] = []
+    # Each value may be one word or a short phrase from a stored transcript row.
+    for word_value in word_values:
+        normalized_words.extend(tokens(str(word_value)))
+    return normalized_words
+
+
+def _classify_surplus_words(
+    reference_words: list[str],
+    missing_words: list[str],
+    surplus_words: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Separate visible surplus into insertion, duplicate, and substitution evidence.
+
+    Args:
+        reference_words: Official tokens; empty makes every visible surplus an insertion.
+        missing_words: Exact official words absent from the lane; empty means no substitution gap.
+        surplus_words: Extra visible occurrences; empty means no surplus defect exists.
+
+    Returns:
+        False insertions, duplicates, then wrong-or-garbled words in display order.
+    """
+    official_vocabulary = set(reference_words)
+    false_insertions: list[str] = []
+    duplicate_words: list[str] = []
+    wrong_or_garbled_words: list[str] = []
+
+    # Each surplus word keeps the most specific defect class the reviewer can prove.
+    for surplus_word in surplus_words:
+        # Example: a second "metformin" is a duplicate, not a new medication insertion.
+        if surplus_word in official_vocabulary:
+            duplicate_words.append(surplus_word)
+        # Missing truth plus different wording is substitution/garble evidence.
+        elif missing_words:
+            wrong_or_garbled_words.append(surplus_word)
+        else:
+            false_insertions.append(surplus_word)
+    return false_insertions, duplicate_words, wrong_or_garbled_words
+
+
+def _lane_error_rates(
+    lane_word_errors: WordErrorScore,
+    duplicate_words: list[str],
+) -> tuple[float | None, float | None, float | None]:
+    """Return insertion, omission, and duplicate rates with honest empty denominators.
+
+    Args:
+        lane_word_errors: Alignment counts for one clinician-visible lane.
+        duplicate_words: Proven surplus repeats; empty means the duplicate numerator is zero.
+
+    Returns:
+        Insertion, omission, and duplicate rates; None means that denominator is empty.
+    """
+    false_insertion_rate: float | None = None
+    omission_rate: float | None = None
+    duplicate_word_rate: float | None = None
+    # No official words means insertion and omission rates have no fair denominator.
+    if lane_word_errors.reference_words > 0:
+        false_insertion_rate = (
+            lane_word_errors.insertions / lane_word_errors.reference_words
+        )
+        omission_rate = lane_word_errors.deletions / lane_word_errors.reference_words
+    # No visible words means the clinician saw no duplicate denominator.
+    if lane_word_errors.hypothesis_words > 0:
+        duplicate_word_rate = len(duplicate_words) / lane_word_errors.hypothesis_words
+    return false_insertion_rate, omission_rate, duplicate_word_rate
+
+
+def _score_transcript_lane_words(
+    reference_words: list[str],
+    lane_record: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one word-error record for exactly one stored transcript lane.
+
+    Args:
+        reference_words: Normalized official words; empty keeps raw counts and unavailable rates.
+        lane_record: Lane identity/hash/words; empty words represent an empty clinician view.
+
+    Returns:
+        Counts, rates, and exact defect words for the named artifact.
+    """
+    hypothesis_words = _normalized_word_values(
+        list(lane_record.get("hypothesis_words", []))
+    )
+    missing_words = words_missing_from_clinician_transcript(
+        reference_words, hypothesis_words
+    )
+    surplus_words = surplus_words_in_clinician_transcript(
+        reference_words, hypothesis_words
+    )
+    false_insertions, duplicate_words, wrong_or_garbled_words = _classify_surplus_words(
+        reference_words, missing_words, surplus_words
+    )
+    lane_word_errors = word_error_score(reference_words, hypothesis_words)
+    false_insertion_rate, omission_rate, duplicate_word_rate = _lane_error_rates(
+        lane_word_errors, duplicate_words
+    )
+    return {
+        "artifact_sha256": lane_record.get("artifact_sha256"),
+        "substitutions": lane_word_errors.substitutions,
+        "insertions": lane_word_errors.insertions,
+        "deletions": lane_word_errors.deletions,
+        "reference_words": lane_word_errors.reference_words,
+        "hypothesis_words": lane_word_errors.hypothesis_words,
+        "wer_percent": lane_word_errors.wer_percent,
+        "omissions": missing_words,
+        "false_insertions": false_insertions,
+        "duplicates": duplicate_words,
+        "wrong_or_garbled_words": wrong_or_garbled_words,
+        "false_insertion_rate": false_insertion_rate,
+        "omission_rate": omission_rate,
+        "duplicate_word_rate": duplicate_word_rate,
+    }
+
+
+def score_transcript_lanes(
+    *,
+    speech_truth_words: list[str],
+    lanes: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Score live and corrected words without merging what the clinician could see.
+
+    Args:
+        speech_truth_words: Official words; empty makes rates unavailable but keeps raw counts.
+        lanes: Named lane records; empty returns no scores, and duplicate names fail closed.
+
+    Returns:
+        One independent word-error record per lane in the supplied order.
+
+    Raises:
+        ValueError: When a lane is unnamed, unsupported, or repeated.
+    """
+    reference_words = _normalized_word_values(list(speech_truth_words))
+    lane_scores: dict[str, dict[str, Any]] = {}
+
+    # Each lane is scored independently so correction cannot repair the live display.
+    for lane_record in lanes:
+        lane_name = str(lane_record.get("lane", "")).strip().lower()
+        # Only the two clinician workflow lanes belong in this frozen scorecard.
+        if lane_name not in {"live", "corrected"}:
+            raise ValueError(f"unsupported transcript lane: {lane_name or '<empty>'}")
+        # A repeated name would silently replace evidence from an earlier run.
+        if lane_name in lane_scores:
+            raise ValueError(f"duplicate transcript lane: {lane_name}")
+        lane_scores[lane_name] = _score_transcript_lane_words(
+            reference_words, lane_record
+        )
+    return lane_scores
+
+
+def _best_term_similarity_in_rows(
+    expected_term: str,
+    hypothesis_rows: list[dict[str, Any]],
+) -> float:
+    """Return the strongest diagnostic spelling resemblance in visible rows.
+
+    Args:
+        expected_term: Official clinical term; empty means no resemblance can be measured.
+        hypothesis_rows: Visible mock rows; empty means the term was fully omitted.
+
+    Returns:
+        Character similarity from zero to one for review classification only.
+    """
+    normalized_expected_term = "".join(tokens(expected_term))
+    best_similarity = 0.0
+
+    # Each row is compared as one collapsed phrase; this never rewrites its displayed text.
+    for hypothesis_row in hypothesis_rows:
+        normalized_visible_phrase = "".join(tokens(str(hypothesis_row.get("text", ""))))
+        # Empty official or visible text gives the reviewer no spelling evidence.
+        if normalized_expected_term == "" or normalized_visible_phrase == "":
+            continue
+        row_similarity = SequenceMatcher(
+            None, normalized_expected_term, normalized_visible_phrase
+        ).ratio()
+        # The strongest row explains whether wording is garbled rather than absent.
+        if row_similarity > best_similarity:
+            best_similarity = row_similarity
+
+    return best_similarity
+
+
+def _terms_on_wrong_speaker(
+    speech_truth_terms: list[str],
+    required_role: str,
+    hypothesis_rows: list[dict[str, Any]],
+) -> list[str]:
+    """Return exact truth terms shown under the wrong clinician/patient role.
+
+    Args:
+        speech_truth_terms: Official clinical terms; empty means no attribution requirement.
+        required_role: Required visible role; empty means no wrong-speaker term is inferred.
+        hypothesis_rows: Literal mock rows with roles; empty means no contamination exists.
+
+    Returns:
+        Wrong-speaker terms in official order.
+    """
+    wrong_speaker_terms: list[str] = []
+    # Every official term keeps its own speaker-attribution check.
+    for speech_truth_term in speech_truth_terms:
+        # Each row retains its role so Doctor text cannot repair Patient evidence.
+        for hypothesis_row in hypothesis_rows:
+            row_role = str(hypothesis_row.get("role", "")).upper()
+            row_words = tokens(str(hypothesis_row.get("text", "")))
+            # Only exact text with a pinned different role proves contamination.
+            if (
+                speech_truth_term in row_words
+                and required_role != ""
+                and row_role != required_role
+            ):
+                wrong_speaker_terms.append(speech_truth_term)
+    return wrong_speaker_terms
+
+
+def _consult_29_transcript_outcome(
+    lane_score: dict[str, Any],
+    hypothesis_rows: list[dict[str, Any]],
+    visible_words: list[str],
+    wrong_speaker_terms: list[str],
+) -> tuple[str, list[str]]:
+    """Choose one independent consult-2.9 outcome from computed transcript evidence.
+
+    Args:
+        lane_score: Exact word defects for one mock lane.
+        hypothesis_rows: Literal rows used only for diagnostic resemblance.
+        visible_words: Normalized displayed words; empty means full omission.
+        wrong_speaker_terms: Exact terms assigned to the wrong role; empty means none.
+
+    Returns:
+        Outcome class and affected terms without reading the expected fixture result.
+    """
+    # Wrong-speaker exact wording outranks lexical error counts.
+    if wrong_speaker_terms:
+        return "cross_speaker_contamination", wrong_speaker_terms
+    # Extra words after all truth terms are present are false insertions.
+    if not lane_score["omissions"] and lane_score["false_insertions"]:
+        return "false_insertion", lane_score["false_insertions"]
+
+    best_missing_term_similarity = 0.0
+    # Every missing term gets its own non-rewriting resemblance check.
+    for missing_term in lane_score["omissions"]:
+        best_missing_term_similarity = max(
+            best_missing_term_similarity,
+            _best_term_similarity_in_rows(missing_term, hypothesis_rows),
+        )
+    # Strong resemblance marks garble for review but never canonical support.
+    if best_missing_term_similarity >= GARBLE_REVIEW_SIMILARITY_FLOOR:
+        return "garble", lane_score["omissions"]
+    # One unrelated replacement word is a wrong term rather than a silent omission.
+    if len(visible_words) == 1:
+        return "wrong_term", lane_score["omissions"]
+    # Exact text on the required speaker is supported and affects no term.
+    if not lane_score["omissions"]:
+        return "supported", []
+    return "omission", lane_score["omissions"]
+
+
+def score_consult_29_probe(scoring_probe: dict[str, Any]) -> dict[str, Any]:
+    """Classify one medication/allergy transcript defect from its mock evidence.
+
+    Args:
+        scoring_probe: CPU-only probe; empty or note-scoped input fails closed.
+
+    Returns:
+        One computed clinician-facing outcome without consulting the expected result.
+
+    Raises:
+        ValueError: When the probe belongs to the saved-note scorer or lacks truth terms.
+    """
+    scoring_scope = str(scoring_probe.get("scoring_scope", ""))
+    # Note and source-review probes stay red until the dedicated note scorer owns them.
+    if scoring_scope != "transcript_lane":
+        raise ValueError(
+            f"unsupported transcript probe scope: {scoring_scope or '<empty>'}"
+        )
+
+    probe_input = scoring_probe.get("input", {})
+    speech_truth_terms = [
+        str(term).lower()
+        # Each official term remains an independent clinical truth requirement.
+        for term in probe_input.get("speech_truth_terms", [])
+    ]
+    # No official term means the scorer cannot identify what the clinician should have seen.
+    if not speech_truth_terms:
+        raise ValueError("consult-2.9 transcript probe has no speech truth term")
+
+    hypothesis_rows = list(probe_input.get("hypothesis_rows", []))
+    visible_row_texts = [
+        hypothesis_row.get("text", "")
+        # Every mock row contributes only its literal displayed wording.
+        for hypothesis_row in hypothesis_rows
+    ]
+    visible_words = _normalized_word_values(visible_row_texts)
+
+    lane_score = score_transcript_lanes(
+        speech_truth_words=speech_truth_terms,
+        lanes=[
+            {
+                "lane": "live",
+                "artifact_sha256": None,
+                "hypothesis_words": visible_words,
+            }
+        ],
+    )["live"]
+    wrong_speaker_terms = _terms_on_wrong_speaker(
+        speech_truth_terms,
+        str(probe_input.get("required_role", "")).upper(),
+        hypothesis_rows,
+    )
+    outcome_class, affected_terms = _consult_29_transcript_outcome(
+        lane_score, hypothesis_rows, visible_words, wrong_speaker_terms
+    )
+
+    return {
+        "probe_id": scoring_probe.get("probe_id"),
+        "outcome_class": outcome_class,
+        "outcomes": [outcome_class],
+        "affected_terms": affected_terms,
+    }
 
 
 def _add_error(
@@ -471,7 +860,9 @@ def _add_error(
     return score_tuple
 
 
-def _word_error_sort_key(score_tuple: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+def _word_error_sort_key(
+    score_tuple: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
     """Rank WER candidates deterministically when edit distances tie.
 
     Args:
@@ -604,7 +995,9 @@ def shingle_duplication(words: list[str], n: int = 4) -> float:
     return 1 - len(set(shingles)) / len(shingles)
 
 
-def overlap_seconds(start: float, end: float, interval_start: float, interval_end: float) -> float:
+def overlap_seconds(
+    start: float, end: float, interval_start: float, interval_end: float
+) -> float:
     """Return time overlap between two spans.
 
     Args:
@@ -652,7 +1045,9 @@ def reference_role_for_segment(
     return best_role
 
 
-def overlap_spans(reference_intervals: list[ReferenceInterval]) -> list[tuple[float, float]]:
+def overlap_spans(
+    reference_intervals: list[ReferenceInterval],
+) -> list[tuple[float, float]]:
     """Return spans where doctor and patient channels talk simultaneously.
 
     Args:
@@ -671,6 +1066,7 @@ def overlap_spans(reference_intervals: list[ReferenceInterval]) -> list[tuple[fl
 
     # Pairwise channel intersections are the ambiguous mixed-mono regions.
     for doctor_interval in doctor_intervals:
+        # Every patient span may overlap this doctor span in the mixed recording.
         for patient_interval in patient_intervals:
             start = max(doctor_interval.start, patient_interval.start)
             end = min(doctor_interval.end, patient_interval.end)
@@ -733,6 +1129,7 @@ def span_touches_any_overlap(
     """
     # Each overlap span can make words or segment boundaries ambiguous for users.
     for overlap_start, overlap_end in spans:
+        # Any positive intersection means the row touched simultaneous speech.
         if overlap_seconds(start, end, overlap_start, overlap_end) > 0:
             return True
     return False
@@ -756,7 +1153,9 @@ def timestamp_in_overlap(timestamp: float, spans: list[tuple[float, float]]) -> 
     return False
 
 
-def touches_any_span(segment: HypothesisSegment, spans: list[tuple[float, float]]) -> bool:
+def touches_any_span(
+    segment: HypothesisSegment, spans: list[tuple[float, float]]
+) -> bool:
     """Return whether a transcript row touches an ambiguous overlap span.
 
     Args:
@@ -808,6 +1207,504 @@ def timed_words_for_region(
     return region_words
 
 
+def score_regional_word_errors(
+    reference_intervals: list[ReferenceInterval],
+    hypothesis_segments: list[HypothesisSegment],
+) -> dict[str, WordErrorScore]:
+    """Score clean and overlap words with the same token-centre allocation.
+
+    Args:
+        reference_intervals: Official timed speech; empty makes both WER values unavailable.
+        hypothesis_segments: Visible timed rows; empty means all regional reference words are omitted.
+
+    Returns:
+        Independent `clean` and `overlap` WER counts for the clinician-facing lane.
+    """
+    mixed_speech_spans = overlap_spans(reference_intervals)
+    clean_word_errors = word_error_score(
+        timed_words_for_region(
+            reference_intervals, mixed_speech_spans, include_overlap=False
+        ),
+        timed_words_for_region(
+            hypothesis_segments, mixed_speech_spans, include_overlap=False
+        ),
+    )
+    overlap_word_errors = word_error_score(
+        timed_words_for_region(
+            reference_intervals, mixed_speech_spans, include_overlap=True
+        ),
+        timed_words_for_region(
+            hypothesis_segments, mixed_speech_spans, include_overlap=True
+        ),
+    )
+    return {"clean": clean_word_errors, "overlap": overlap_word_errors}
+
+
+def is_phrase_present_in_text(text: str, required_phrase: str) -> bool:
+    """Return whether a required phrase appears as consecutive visible words.
+
+    Args:
+        text: Clinician-visible row text; empty means no phrase can be supported.
+        required_phrase: Official phrase; empty is never treated as evidence.
+
+    Returns:
+        True only for an exact normalized word sequence in the displayed row.
+    """
+    visible_words = tokens(text)
+    required_words = tokens(required_phrase)
+    # Empty official wording cannot become a vacuous clinical match.
+    if not required_words:
+        return False
+
+    last_start_index = len(visible_words) - len(required_words)
+    # Each possible start keeps multiword medication names contiguous.
+    for start_index in range(last_start_index + 1):
+        end_index = start_index + len(required_words)
+        # Exact words support the phrase; fuzzy wording remains a transcript defect.
+        if visible_words[start_index:end_index] == required_words:
+            return True
+    return False
+
+
+def _validated_critical_span_bounds(
+    span_expectation: dict[str, Any],
+) -> tuple[float, float]:
+    """Return valid overlap-only bounds for a clinician-reviewed critical span.
+
+    Args:
+        span_expectation: Span timing/rule; empty or containment input fails closed.
+
+    Returns:
+        Positive start/end seconds for overlap membership.
+
+    Raises:
+        ValueError: When containment is requested or the time range is not positive.
+    """
+    span_start_seconds = float(span_expectation.get("start_seconds", 0.0) or 0.0)
+    span_end_seconds = float(span_expectation.get("end_seconds", 0.0) or 0.0)
+    membership_rule = str(
+        span_expectation.get("membership_rule", "time_overlap")
+    ).lower()
+    # Containment would drop an answer that crosses the clinician's review boundary.
+    if membership_rule != "time_overlap":
+        raise ValueError(f"unsupported critical-span membership: {membership_rule}")
+    # An empty or reversed span cannot identify clinician-visible evidence safely.
+    if span_end_seconds <= span_start_seconds:
+        raise ValueError("critical span must have a positive time range")
+    return span_start_seconds, span_end_seconds
+
+
+def _segments_overlapping_critical_span(
+    hypothesis_segments: list[HypothesisSegment],
+    span_start_seconds: float,
+    span_end_seconds: float,
+) -> list[HypothesisSegment]:
+    """Return stored rows touching any part of a frozen review span.
+
+    Args:
+        hypothesis_segments: One stored lane; empty means no span evidence exists.
+        span_start_seconds: Inclusive review start in seconds.
+        span_end_seconds: Review end in seconds; boundary-crossing rows remain eligible.
+
+    Returns:
+        Overlapping rows in their supplied order.
+    """
+    span_rows: list[HypothesisSegment] = []
+    # Any positive overlap keeps boundary evidence such as the allergy answer.
+    for hypothesis_segment in hypothesis_segments:
+        # A row can extend beyond the span and still remain clinician-visible evidence.
+        if (
+            overlap_seconds(
+                hypothesis_segment.start,
+                hypothesis_segment.end,
+                span_start_seconds,
+                span_end_seconds,
+            )
+            > 0
+        ):
+            span_rows.append(hypothesis_segment)
+    return span_rows
+
+
+def _critical_term_state(
+    required_term: str,
+    required_role: str,
+    span_rows: list[HypothesisSegment],
+) -> str:
+    """Return supported, omitted, or wrong-speaker for one exact clinical term.
+
+    Args:
+        required_term: Official term; empty never becomes supported.
+        required_role: Required role; empty accepts exact text from either speaker.
+        span_rows: Overlapping lane rows; empty means the term is omitted.
+
+    Returns:
+        Stable term-state label used by critical-span evidence.
+    """
+    matching_rows: list[HypothesisSegment] = []
+    # Each overlapping row is a possible exact source for this term.
+    for span_row in span_rows:
+        # Garbled or split wording does not become a canonical match.
+        if is_phrase_present_in_text(span_row.text, required_term):
+            matching_rows.append(span_row)
+    # No exact row means omission even when a plausible garble is nearby.
+    if not matching_rows:
+        return "omitted"
+    # An unpinned role accepts exact wording from either consultation speaker.
+    if required_role == "":
+        return "supported"
+    # Any correctly attributed exact row safely supports the term.
+    if any(matching_row.role == required_role for matching_row in matching_rows):
+        return "supported"
+    return "wrong_speaker"
+
+
+def _score_required_critical_terms(
+    required_terms: list[str],
+    required_role: str,
+    span_rows: list[HypothesisSegment],
+) -> tuple[list[str], list[str], list[str]]:
+    """Group exact critical terms by supported, omitted, and wrong-speaker state.
+
+    Args:
+        required_terms: Official terms; empty returns three empty result lists.
+        required_role: Required visible role; empty accepts either speaker.
+        span_rows: Time-overlapping lane rows; empty omits every required term.
+
+    Returns:
+        Supported, omitted, and wrong-speaker terms in official order.
+    """
+    supported_terms: list[str] = []
+    omitted_terms: list[str] = []
+    wrong_speaker_terms: list[str] = []
+    # Every term stays independent so one correct medicine cannot hide another failure.
+    for required_term in required_terms:
+        term_state = _critical_term_state(required_term, required_role, span_rows)
+        # Exact text on the required role contributes to span success.
+        if term_state == "supported":
+            supported_terms.append(required_term)
+        # Missing exact text stays an omission rather than a reconstructed name.
+        elif term_state == "omitted":
+            omitted_terms.append(required_term)
+        else:
+            wrong_speaker_terms.append(required_term)
+    return supported_terms, omitted_terms, wrong_speaker_terms
+
+
+def score_critical_span(
+    span_expectation: dict[str, Any],
+    hypothesis_segments: list[HypothesisSegment],
+) -> dict[str, Any]:
+    """Score one frozen clinical span without reconstructing missing wording.
+
+    Args:
+        span_expectation: Span ID, timing, terms, and optional role; empty fields fail closed.
+        hypothesis_segments: One stored transcript lane; empty means every term is omitted.
+
+    Returns:
+        Exact supported, omitted, and wrong-speaker terms for the reviewer.
+
+    Raises:
+        ValueError: When the span uses containment or has a non-positive time range.
+    """
+    span_start_seconds, span_end_seconds = _validated_critical_span_bounds(
+        span_expectation
+    )
+    required_role = str(span_expectation.get("required_role", "")).upper()
+    required_terms = [
+        str(required_term).lower()
+        # Every named term must pass; partial credit cannot hide a medication failure.
+        for required_term in span_expectation.get("required_terms", [])
+    ]
+    span_rows = _segments_overlapping_critical_span(
+        hypothesis_segments, span_start_seconds, span_end_seconds
+    )
+    supported_terms, omitted_terms, wrong_speaker_terms = (
+        _score_required_critical_terms(required_terms, required_role, span_rows)
+    )
+
+    # Empty required terms make the span fail closed instead of becoming a vacuous pass.
+    passed = not omitted_terms and not wrong_speaker_terms and bool(required_terms)
+    return {
+        "span_id": span_expectation.get("span_id"),
+        "passed": passed,
+        "required_terms": required_terms,
+        "supported_terms": supported_terms,
+        "omissions": omitted_terms,
+        "wrong_speaker_terms": wrong_speaker_terms,
+        "overlapping_rows": len(span_rows),
+    }
+
+
+def score_critical_spans(
+    span_expectations: list[dict[str, Any]],
+    hypothesis_segments: list[HypothesisSegment],
+) -> dict[str, Any]:
+    """Aggregate named critical spans while retaining every failed span result.
+
+    Args:
+        span_expectations: Frozen span definitions; empty makes recall unavailable.
+        hypothesis_segments: One stored lane; empty scores every required span as failed.
+
+    Returns:
+        Passed/required counts, recall, failed IDs, and full per-span evidence.
+    """
+    span_scores: list[dict[str, Any]] = []
+    # Each named span remains visible so an average cannot hide a clinical failure.
+    for span_expectation in span_expectations:
+        span_scores.append(score_critical_span(span_expectation, hypothesis_segments))
+
+    passed_span_ids = [
+        span_score["span_id"]
+        # Every passing span has exact wording, timing membership, and required attribution.
+        for span_score in span_scores
+        # A failed span stays out of the numerator but remains in the evidence array.
+        if span_score["passed"]
+    ]
+    failed_span_ids = [
+        span_score["span_id"]
+        # Every failed span is named for the clinician or quality reviewer.
+        for span_score in span_scores
+        # Only failed spans belong in the diagnostic failure list.
+        if not span_score["passed"]
+    ]
+    critical_term_recall: float | None = None
+    # No registered span means recall is unavailable, never a favorable zero or pass.
+    if span_scores:
+        critical_term_recall = len(passed_span_ids) / len(span_scores)
+
+    return {
+        "passed_spans": len(passed_span_ids),
+        "required_spans": len(span_scores),
+        "critical_term_recall": critical_term_recall,
+        "passed_span_ids": passed_span_ids,
+        "failed_span_ids": failed_span_ids,
+        "spans": span_scores,
+    }
+
+
+def _source_unit_identifier(source_unit: dict[str, Any]) -> str:
+    """Return the stable identity a reviewer uses to trace one transcript unit.
+
+    Args:
+        source_unit: Stored row or derived unit; empty identity means provenance is missing.
+
+    Returns:
+        Source-unit/segment ID, or an empty string when the UI evidence cannot be traced.
+    """
+    # A derived source-unit ID takes precedence; raw transcript rows fall back to segment ID.
+    return str(
+        source_unit.get("source_unit_id") or source_unit.get("segment_id") or ""
+    ).strip()
+
+
+def _turn_key(source_unit: dict[str, Any]) -> tuple[str, str]:
+    """Return normalized role and wording for duplicate-turn comparison.
+
+    Args:
+        source_unit: Visible unit; empty role/text stays an explicit empty key.
+
+    Returns:
+        Uppercase role plus normalized words as one deterministic key.
+    """
+    return (
+        str(source_unit.get("role", "")).upper(),
+        " ".join(tokens(str(source_unit.get("text", "")))),
+    )
+
+
+def _surplus_duplicate_turn_count(
+    source_units: list[dict[str, Any]],
+    reference_turns: list[dict[str, Any]] | None,
+) -> int | None:
+    """Count repeated visible turns beyond the official occurrence allowance.
+
+    Args:
+        source_units: Emitted units; empty means zero duplicates when references exist.
+        reference_turns: Official turns; None means duplicate-turn truth is unavailable.
+
+    Returns:
+        Surplus repeated turns, or None when no reference-turn contract was supplied.
+    """
+    # Without official turns, repeated-looking wording cannot be called unlicensed.
+    if reference_turns is None:
+        return None
+
+    visible_turn_counts: Counter[tuple[str, str]] = Counter()
+    reference_turn_counts: Counter[tuple[str, str]] = Counter()
+    # Every visible unit contributes one emitted turn occurrence.
+    for source_unit in source_units:
+        visible_turn_counts[_turn_key(source_unit)] += 1
+    # Every official turn licenses one matching occurrence.
+    for reference_turn in reference_turns:
+        reference_turn_counts[_turn_key(reference_turn)] += 1
+
+    duplicate_turn_count = 0
+    # A turn must repeat before any surplus occurrence can count as a duplicate.
+    for turn_key, visible_count in visible_turn_counts.items():
+        # One visible occurrence is never a duplicate, even if absent from references.
+        if visible_count <= 1:
+            continue
+        licensed_occurrences = max(1, reference_turn_counts[turn_key])
+        duplicate_turn_count += max(0, visible_count - licensed_occurrences)
+    return duplicate_turn_count
+
+
+def _source_preservation_defects(source_unit: dict[str, Any]) -> list[str]:
+    """Return wording and speaker changes against supplied source-unit truth.
+
+    Args:
+        source_unit: Visible unit plus optional source text/role/speaker; empty means no checks.
+
+    Returns:
+        Exact preservation defect labels for the clinician-facing unit.
+    """
+    preservation_defects: list[str] = []
+    source_text = source_unit.get("source_text")
+    # A supplied source text is an exact no-rewrite contract for visible wording.
+    if source_text is not None and tokens(str(source_text)) != tokens(
+        str(source_unit.get("text", ""))
+    ):
+        preservation_defects.append("lexical_rewrite")
+
+    source_role = source_unit.get("source_role")
+    # A supplied source role prevents assembly from borrowing across speakers.
+    if (
+        source_role is not None
+        and str(source_role).upper() != str(source_unit.get("role", "")).upper()
+    ):
+        preservation_defects.append("speaker_role_changed")
+
+    source_speaker_id = source_unit.get("source_speaker_id")
+    # A supplied speaker ID must survive assembly even when its role is unchanged.
+    if source_speaker_id is not None and str(source_speaker_id) != str(
+        source_unit.get("speaker_id", "")
+    ):
+        preservation_defects.append("speaker_identity_changed")
+    return preservation_defects
+
+
+def _transition_defect_reasons(
+    previous_source_unit: dict[str, Any],
+    current_source_unit: dict[str, Any],
+    seen_source_unit_ids: set[str],
+) -> list[str]:
+    """Return identity, chronology, wording, and speaker defects for one transition.
+
+    Args:
+        previous_source_unit: Earlier persisted unit; empty identity fails traceability.
+        current_source_unit: Next persisted unit; empty identity fails traceability.
+        seen_source_unit_ids: IDs already shown; an empty set means no duplicate is possible.
+
+    Returns:
+        All independent defect reasons for this adjacent clinician-visible transition.
+    """
+    previous_source_unit_id = _source_unit_identifier(previous_source_unit)
+    current_source_unit_id = _source_unit_identifier(current_source_unit)
+    defect_reasons: list[str] = []
+    # Empty identity prevents the clinician from tracing the transition to evidence.
+    if previous_source_unit_id == "" or current_source_unit_id == "":
+        defect_reasons.append("source_identity_missing")
+    # Reusing an earlier ID makes two visible turns claim the same source unit.
+    if current_source_unit_id in seen_source_unit_ids:
+        defect_reasons.append("duplicate_source_identity")
+
+    previous_start = float(previous_source_unit.get("start", 0.0) or 0.0)
+    current_start = float(current_source_unit.get("start", 0.0) or 0.0)
+    # Example: a late medication row must not silently appear before its question.
+    if current_start < previous_start:
+        defect_reasons.append("chronology_regression")
+    defect_reasons.extend(_source_preservation_defects(current_source_unit))
+    return defect_reasons
+
+
+def _coherence_rates(
+    eligible_transitions: int,
+    assembly_defects: int,
+) -> tuple[int, float | None, float | None]:
+    """Return coherent count plus coherence and defect rates.
+
+    Args:
+        eligible_transitions: Adjacent unit pairs; zero makes both rates unavailable.
+        assembly_defects: Transition pairs with one or more defects.
+
+    Returns:
+        Coherent transitions, coherence rate, then defect rate.
+    """
+    coherent_transitions = eligible_transitions - assembly_defects
+    # Fewer than two units has no adjacent-transition denominator.
+    if eligible_transitions == 0:
+        return coherent_transitions, None, None
+    return (
+        coherent_transitions,
+        coherent_transitions / eligible_transitions,
+        assembly_defects / eligible_transitions,
+    )
+
+
+def score_turn_coherence(
+    source_units: list[dict[str, Any]],
+    *,
+    reference_turns: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Score adjacent stored units for chronology, identity, and lexical preservation.
+
+    Args:
+        source_units: Units in persisted order; fewer than two makes coherence unavailable.
+        reference_turns: Official turns for duplicate counts; None leaves that count unavailable.
+
+    Returns:
+        Coherence/defect rates, duplicate count, and every transition-level reason.
+    """
+    eligible_transitions = max(0, len(source_units) - 1)
+    transition_defects: list[dict[str, Any]] = []
+    seen_source_unit_ids: set[str] = set()
+    # The first unit starts identity tracking even though it has no preceding transition.
+    if source_units:
+        first_source_unit_id = _source_unit_identifier(source_units[0])
+        # Missing identity stays visible as a later transition defect instead of a fake ID.
+        if first_source_unit_id != "":
+            seen_source_unit_ids.add(first_source_unit_id)
+
+    # Each adjacent pair represents one transition the clinician reads in sequence.
+    for transition_index in range(eligible_transitions):
+        previous_source_unit = source_units[transition_index]
+        current_source_unit = source_units[transition_index + 1]
+        previous_source_unit_id = _source_unit_identifier(previous_source_unit)
+        current_source_unit_id = _source_unit_identifier(current_source_unit)
+        defect_reasons = _transition_defect_reasons(
+            previous_source_unit, current_source_unit, seen_source_unit_ids
+        )
+
+        # Every defective transition keeps all reasons instead of collapsing to one favorable label.
+        if defect_reasons:
+            transition_defects.append(
+                {
+                    "transition_index": transition_index,
+                    "from_source_unit_id": previous_source_unit_id,
+                    "to_source_unit_id": current_source_unit_id,
+                    "reasons": defect_reasons,
+                }
+            )
+        # A non-empty current ID becomes unavailable to every later transition.
+        if current_source_unit_id != "":
+            seen_source_unit_ids.add(current_source_unit_id)
+
+    coherent_transitions, turn_coherence, assembly_defect_rate = _coherence_rates(
+        eligible_transitions, len(transition_defects)
+    )
+
+    return {
+        "coherent_transitions": coherent_transitions,
+        "eligible_transitions": eligible_transitions,
+        "turn_coherence": turn_coherence,
+        "assembly_defects": len(transition_defects),
+        "assembly_defect_rate": assembly_defect_rate,
+        "duplicate_turns": _surplus_duplicate_turn_count(source_units, reference_turns),
+        "transition_defects": transition_defects,
+    }
+
+
 def score_segmentation(
     segments: list[HypothesisSegment],
     spans: list[tuple[float, float]],
@@ -841,6 +1738,7 @@ def score_segmentation(
             continue
 
         clean_segment_count += 1
+        # A clean short row still contributes to the clinician's readability burden.
         if is_fragment:
             clean_fragment_count += 1
 
@@ -1133,7 +2031,9 @@ def build_row_diagnostics(
             # The first row of a window is where a whole-window identity swap
             # would first become visible to the clinician.
             if owning_window is not None:
-                first_in_window = owning_window.window_index not in first_row_seen_by_window
+                first_in_window = (
+                    owning_window.window_index not in first_row_seen_by_window
+                )
                 first_row_seen_by_window.add(owning_window.window_index)
 
         rows.append(
@@ -1289,8 +2189,10 @@ def score_best_dyadic_mapping(
         speaker_id = segment.speaker_id.strip()
         expected_role = reference_role_for_segment(segment, reference_intervals)
 
+        # Missing identity or reference ownership cannot support a role mapping.
         if speaker_id == "" or expected_role is None:
             continue
+        # Cross-talk rows stay out of the clean speaker-mapping ceiling.
         if touches_any_span(segment, spans):
             continue
 
@@ -1302,7 +2204,9 @@ def score_best_dyadic_mapping(
     speaker_ids = sorted(reference_counts_by_speaker)
     # The dyadic ceiling only exists for exactly two visible consultation voices.
     if len(speaker_ids) != 2:
-        return DyadicMappingCeiling(best_mapping={}, correct_segments=0, scored_segments=0)
+        return DyadicMappingCeiling(
+            best_mapping={}, correct_segments=0, scored_segments=0
+        )
 
     scored_segments = sum(
         sum(counts.values()) for counts in reference_counts_by_speaker.values()
@@ -1320,6 +2224,7 @@ def score_best_dyadic_mapping(
             reference_counts_by_speaker[speaker_id][role]
             for speaker_id, role in candidate.items()
         )
+        # The stronger valid assignment is the recoverable mapping shown to reviewers.
         if correct > best_correct:
             best_correct = correct
             best_mapping = candidate
@@ -1331,7 +2236,9 @@ def score_best_dyadic_mapping(
     )
 
 
-def phantom_speaker_count(segments: list[HypothesisSegment], cap: int = DEFAULT_SPEAKER_CAP) -> int:
+def phantom_speaker_count(
+    segments: list[HypothesisSegment], cap: int = DEFAULT_SPEAKER_CAP
+) -> int:
     """Count visible speaker IDs beyond the expected dyadic cap.
 
     Args:
@@ -1512,14 +2419,9 @@ def main() -> int:
     attribution = score_attribution(segments, reference_intervals)
     spans = overlap_spans(reference_intervals)
     overall_word_errors = word_error_score(ref_words, hyp_words)
-    clean_word_errors = word_error_score(
-        timed_words_for_region(reference_intervals, spans, include_overlap=False),
-        timed_words_for_region(segments, spans, include_overlap=False),
-    )
-    overlap_word_errors = word_error_score(
-        timed_words_for_region(reference_intervals, spans, include_overlap=True),
-        timed_words_for_region(segments, spans, include_overlap=True),
-    )
+    regional_word_errors = score_regional_word_errors(reference_intervals, segments)
+    clean_word_errors = regional_word_errors["clean"]
+    overlap_word_errors = regional_word_errors["overlap"]
     segmentation = score_segmentation(segments, spans, args.cutoff_seconds)
     speaker_purity = score_speaker_purity(segments, reference_intervals)
     clean_speaker_purity = score_speaker_purity(
@@ -1549,6 +2451,7 @@ def main() -> int:
         )
 
     strict_attribution = score_strict_attribution(segments, reference_intervals)
+    # No window artifact means seam ownership diagnostics are unavailable for this run.
     window_spans = (
         emission_window_spans(args.window_artifact)
         if args.window_artifact is not None
@@ -1562,6 +2465,7 @@ def main() -> int:
     )
     print(f"4-gram duplication in hypothesis: {shingle_duplication(hyp_words):.1%}")
     print(f"reference vocabulary recall: {recall:.1%}")
+    # An empty official transcript has no meaningful clinician-visible length ratio.
     print(
         f"length ratio hyp/ref: {len(hyp_words) / len(ref_words):.2f}"
         if ref_words
@@ -1651,10 +2555,7 @@ def main() -> int:
         f"({dyadic_ceiling.correct_segments}/{dyadic_ceiling.scored_segments})"
     )
     print(f"best dyadic mapping: {dyadic_mapping_detail(dyadic_ceiling)}")
-    print(
-        "role mapping headroom (non-overlap): "
-        f"{points_or_na(role_mapping_headroom)}"
-    )
+    print(f"role mapping headroom (non-overlap): {points_or_na(role_mapping_headroom)}")
     print(
         "speaker purity by ID (non-overlap): "
         f"{speaker_purity_detail(clean_speaker_purity)}"
@@ -1686,5 +2587,6 @@ def main() -> int:
     return 0
 
 
+# Direct execution prints the report a reviewer uses after a saved visit.
 if __name__ == "__main__":
     raise SystemExit(main())

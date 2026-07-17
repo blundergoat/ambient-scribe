@@ -1,0 +1,632 @@
+{
+  "schema_version": "ambient-scribe-clinical-data-red-specimens/v1",
+  "asset_contract_version": "ambient-scribe-clinical-data-contract/v1",
+  "description_lines": [
+    "Mock-only clinical-data failures for the CPU audit gate.",
+    "Use these before a card or term can influence clinician-visible output.",
+    "Each specimen changes one contract dimension and names one finding.",
+    "No provider, GPU, private encounter, or holdout content is included."
+  ],
+  "sealed_stems": [
+    "primock57-day1-consultation05-lower-abdominal-pain",
+    "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow",
+    "primock57-day2-consultation07-im-having-chest-discomfort",
+    "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately",
+    "primock57-day5-consultation04-lower-stomach-pain",
+    "primock57-day5-consultation08-im-wheezy"
+  ],
+  "base_assets": {
+    "clinical_knowledge": {
+      "schema_version": "ambient-scribe-clinical-knowledge/v1",
+      "asset_id": "mock-clinical-knowledge",
+      "asset_version": "red-specimen-v1",
+      "default_state": "inactive",
+      "entries": [
+        {
+          "id": "renal-review",
+          "status": "active",
+          "title": "Renal documentation review",
+          "keywords": [
+            "naproxen"
+          ],
+          "snippet": "Documentation reminder: record the renal-risk discussion only when the selected transcript supports it.",
+          "hard_negatives": [
+            "The naproxenate sample label is unrelated."
+          ],
+          "evidence_class": "project_authored_documentation_checklist",
+          "locale": "en-AU",
+          "intended_consumer": "summary_prompt_context",
+          "source": {
+            "artifact_id": "mock-documentation-source",
+            "locator": "docs/mock-documentation-source.md#renal-review",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "published_at": "2026-07-01",
+            "updated_at": "2026-07-01"
+          },
+          "review": {
+            "status": "approved",
+            "reviewer_id": "mock-clinician-001",
+            "reviewer_role": "clinician",
+            "reviewed_at": "2026-07-17"
+          },
+          "privacy_exclusions": [
+            "contact_details",
+            "credentials_or_secrets",
+            "patient_identity",
+            "sealed_holdout_content"
+          ]
+        }
+      ]
+    },
+    "medical_lexicon_text": "metformin|met formin\n",
+    "medical_lexicon_review": {
+      "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+      "asset_id": "mock-medical-lexicon-review",
+      "asset_version": "red-specimen-v1",
+      "runtime_lexicon": {
+        "schema_version": "ambient-scribe-medical-lexicon/v1",
+        "sha256": "e6f0b4dcc88b8f373b2efafcb62d12b9ee711a9c3b34d28371e626a9e699075a"
+      },
+      "entries": [
+        {
+          "id": "metformin-met-formin",
+          "canonical": "metformin",
+          "variant": "met formin",
+          "status": "active",
+          "category": "asr_variant",
+          "raw_text": "met formin",
+          "expected_visible_text": "metformin",
+          "hard_negatives": [
+            "The formatting example is unrelated."
+          ],
+          "evidence_class": "observed_development_asr_error",
+          "locale": "en-AU",
+          "intended_consumer": "live_post_asr_normalizer",
+          "source_artifact": {
+            "artifact_id": "mock-development-source-001",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "span": "12.000-13.000",
+            "corpus_class": "development"
+          },
+          "review": {
+            "status": "approved",
+            "reviewer_id": "mock-clinician-001",
+            "reviewer_role": "clinician",
+            "reviewed_at": "2026-07-17"
+          },
+          "privacy_exclusions": [
+            "contact_details",
+            "credentials_or_secrets",
+            "patient_identity",
+            "sealed_holdout_content"
+          ],
+          "safety_rationale": "The exact development ASR error maps to one spoken medicine and leaves unrelated wording unchanged."
+        }
+      ]
+    }
+  },
+  "required_finding_ids": [
+    "review.missing_active_pair",
+    "review.generic_active_provenance",
+    "review.duplicate_pair",
+    "lexicon.variant_collision",
+    "review.active_semantic_synonym",
+    "knowledge.keyword_substring_collision",
+    "knowledge.inactive_context_injected",
+    "privacy.sealed_holdout_source"
+  ],
+  "specimens": [
+    {
+      "id": "missing-pair-review",
+      "description": "A second executable metformin variant has no exact active review row.",
+      "asset_overrides": {
+        "medical_lexicon_text": "metformin|met formin|metforman\n",
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "5690d15c28d1e22a4ec74a7f1b19c3109c62b2cfe988b6793cd1a3f531034a6c"
+          },
+          "entries": [
+            {
+              "id": "metformin-met-formin",
+              "canonical": "metformin",
+              "variant": "met formin",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "met formin",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The formatting example is unrelated."
+              ],
+              "evidence_class": "observed_development_asr_error",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-development-source-001",
+                "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "span": "12.000-13.000",
+                "corpus_class": "development"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "The exact development ASR error maps to one spoken medicine and leaves unrelated wording unchanged."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "review.missing_active_pair",
+        "asset": "medical_lexicon_review",
+        "entry_id": "metformin::metforman"
+      }
+    },
+    {
+      "id": "generic-active-provenance",
+      "description": "An active pair uses generic project-curated provenance instead of a reviewed artifact.",
+      "asset_overrides": {
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "e6f0b4dcc88b8f373b2efafcb62d12b9ee711a9c3b34d28371e626a9e699075a"
+          },
+          "entries": [
+            {
+              "id": "metformin-met-formin",
+              "canonical": "metformin",
+              "variant": "met formin",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "met formin",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The formatting example is unrelated."
+              ],
+              "evidence_class": "generic_project_curated",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-development-source-001",
+                "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "span": "12.000-13.000",
+                "corpus_class": "development"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "The candidate still needs artifact-bound evidence before a clinician can rely on the rewrite."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "review.generic_active_provenance",
+        "asset": "medical_lexicon_review",
+        "entry_id": "metformin-met-formin"
+      }
+    },
+    {
+      "id": "duplicate-pair-review",
+      "description": "Two active ledger rows claim the same executable canonical and variant pair.",
+      "asset_overrides": {
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "e6f0b4dcc88b8f373b2efafcb62d12b9ee711a9c3b34d28371e626a9e699075a"
+          },
+          "entries": [
+            {
+              "id": "metformin-met-formin-a",
+              "canonical": "metformin",
+              "variant": "met formin",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "met formin",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The formatting example is unrelated."
+              ],
+              "evidence_class": "observed_development_asr_error",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-development-source-001",
+                "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "span": "12.000-13.000",
+                "corpus_class": "development"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "The exact development ASR error maps to one spoken medicine and leaves unrelated wording unchanged."
+            },
+            {
+              "id": "metformin-met-formin-b",
+              "canonical": "metformin",
+              "variant": "met formin",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "met formin",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The formatting example is unrelated."
+              ],
+              "evidence_class": "observed_development_asr_error",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-development-source-001",
+                "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "span": "12.000-13.000",
+                "corpus_class": "development"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "The exact development ASR error maps to one spoken medicine and leaves unrelated wording unchanged."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "review.duplicate_pair",
+        "asset": "medical_lexicon_review",
+        "entry_id": "metformin::met formin"
+      }
+    },
+    {
+      "id": "variant-owner-collision",
+      "description": "The same normalized ASR variant is executable for two different medicines.",
+      "asset_overrides": {
+        "medical_lexicon_text": "losartan|shared miss\nmetformin|shared miss\n",
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "4603b5fc4feb5bcdc76f3ec6fa94aa1f0e5b516ec4cdf26efceeddc9c4a3f305"
+          },
+          "entries": [
+            {
+              "id": "losartan-shared-miss",
+              "canonical": "losartan",
+              "variant": "shared miss",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "shared miss",
+              "expected_visible_text": "losartan",
+              "hard_negatives": [
+                "The shared folder is unrelated."
+              ],
+              "evidence_class": "approved_synthetic_asr_fixture",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-synthetic-source-001",
+                "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+                "span": "fixture-row-001",
+                "corpus_class": "approved_synthetic"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "Synthetic collision control for one medicine."
+            },
+            {
+              "id": "metformin-shared-miss",
+              "canonical": "metformin",
+              "variant": "shared miss",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "shared miss",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The shared folder is unrelated."
+              ],
+              "evidence_class": "approved_synthetic_asr_fixture",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-synthetic-source-002",
+                "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+                "span": "fixture-row-002",
+                "corpus_class": "approved_synthetic"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "Synthetic collision control for a different medicine."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "lexicon.variant_collision",
+        "asset": "medical_lexicon_text",
+        "entry_id": "shared miss"
+      }
+    },
+    {
+      "id": "active-semantic-synonym",
+      "description": "A patient's plain-language heart-attack wording is activated as a diagnostic rewrite.",
+      "asset_overrides": {
+        "medical_lexicon_text": "myocardial infarction|heart attack\n",
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "b5059aad726600c902e375cf477c9ca0b301d8f15f3e51873c037ba140786c45"
+          },
+          "entries": [
+            {
+              "id": "myocardial-infarction-heart-attack",
+              "canonical": "myocardial infarction",
+              "variant": "heart attack",
+              "status": "active",
+              "category": "semantic_synonym",
+              "raw_text": "heart attack",
+              "expected_visible_text": "myocardial infarction",
+              "hard_negatives": [
+                "The patient's plain-language wording must stay unchanged."
+              ],
+              "evidence_class": "approved_synthetic_asr_fixture",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "mock-candidate-source-001",
+                "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+                "span": "candidate-row-001",
+                "corpus_class": "approved_synthetic"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "This specimen proves a semantic rewrite can never become active."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "review.active_semantic_synonym",
+        "asset": "medical_lexicon_review",
+        "entry_id": "myocardial-infarction-heart-attack"
+      }
+    },
+    {
+      "id": "knowledge-keyword-substring-collision",
+      "description": "The keyword renal is embedded in the separate keyword adrenal and would over-retrieve under substring matching.",
+      "asset_overrides": {
+        "clinical_knowledge": {
+          "schema_version": "ambient-scribe-clinical-knowledge/v1",
+          "asset_id": "mock-clinical-knowledge",
+          "asset_version": "red-specimen-v1",
+          "default_state": "inactive",
+          "entries": [
+            {
+              "id": "adrenal-review",
+              "status": "active",
+              "title": "Adrenal documentation review",
+              "keywords": [
+                "adrenal"
+              ],
+              "snippet": "Documentation reminder: record adrenal context only when the selected transcript supports it.",
+              "hard_negatives": [
+                "The architecture label is unrelated."
+              ],
+              "evidence_class": "project_authored_documentation_checklist",
+              "locale": "en-AU",
+              "intended_consumer": "summary_prompt_context",
+              "source": {
+                "artifact_id": "mock-documentation-source",
+                "locator": "docs/mock-documentation-source.md#adrenal-review",
+                "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+                "published_at": "2026-07-01",
+                "updated_at": "2026-07-01"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ]
+            },
+            {
+              "id": "renal-review",
+              "status": "active",
+              "title": "Renal documentation review",
+              "keywords": [
+                "renal"
+              ],
+              "snippet": "Documentation reminder: record renal context only when the selected transcript supports it.",
+              "hard_negatives": [
+                "The rental agreement is unrelated."
+              ],
+              "evidence_class": "project_authored_documentation_checklist",
+              "locale": "en-AU",
+              "intended_consumer": "summary_prompt_context",
+              "source": {
+                "artifact_id": "mock-documentation-source",
+                "locator": "docs/mock-documentation-source.md#renal-review",
+                "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                "published_at": "2026-07-01",
+                "updated_at": "2026-07-01"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ]
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "knowledge.keyword_substring_collision",
+        "asset": "clinical_knowledge",
+        "entry_id": "renal::adrenal"
+      }
+    },
+    {
+      "id": "inactive-knowledge-injected",
+      "description": "The disabled prompt probe received an otherwise approved knowledge reminder.",
+      "context_probe": {
+        "context_enabled": false,
+        "retrieved_entry_ids": [
+          "renal-review"
+        ],
+        "rendered_prompt_snippets": [
+          "Documentation reminder: record the renal-risk discussion only when the selected transcript supports it."
+        ]
+      },
+      "expected_finding": {
+        "finding_id": "knowledge.inactive_context_injected",
+        "asset": "context_probe",
+        "entry_id": "renal-review"
+      }
+    },
+    {
+      "id": "sealed-holdout-derived-pair",
+      "description": "An active rewrite cites a sealed holdout filename without reading or embedding its content.",
+      "asset_overrides": {
+        "medical_lexicon_review": {
+          "schema_version": "ambient-scribe-medical-lexicon-review/v2",
+          "asset_id": "mock-medical-lexicon-review",
+          "asset_version": "red-specimen-v1",
+          "runtime_lexicon": {
+            "schema_version": "ambient-scribe-medical-lexicon/v1",
+            "sha256": "e6f0b4dcc88b8f373b2efafcb62d12b9ee711a9c3b34d28371e626a9e699075a"
+          },
+          "entries": [
+            {
+              "id": "metformin-met-formin",
+              "canonical": "metformin",
+              "variant": "met formin",
+              "status": "active",
+              "category": "asr_variant",
+              "raw_text": "met formin",
+              "expected_visible_text": "metformin",
+              "hard_negatives": [
+                "The formatting example is unrelated."
+              ],
+              "evidence_class": "observed_development_asr_error",
+              "locale": "en-AU",
+              "intended_consumer": "live_post_asr_normalizer",
+              "source_artifact": {
+                "artifact_id": "primock57-day2-consultation07-im-having-chest-discomfort",
+                "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                "span": "hash-only-name-no-content",
+                "corpus_class": "sealed_holdout"
+              },
+              "review": {
+                "status": "approved",
+                "reviewer_id": "mock-clinician-001",
+                "reviewer_role": "clinician",
+                "reviewed_at": "2026-07-17"
+              },
+              "privacy_exclusions": [
+                "contact_details",
+                "credentials_or_secrets",
+                "patient_identity",
+                "sealed_holdout_content"
+              ],
+              "safety_rationale": "A sealed source can never authorize an active development rewrite."
+            }
+          ]
+        }
+      },
+      "expected_finding": {
+        "finding_id": "privacy.sealed_holdout_source",
+        "asset": "medical_lexicon_review",
+        "entry_id": "metformin-met-formin"
+      }
+    }
+  ]
+}

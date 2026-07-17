@@ -1,0 +1,540 @@
+{
+  "schema_version": "ambient-scribe-development-corpus/v1",
+  "manifest_id": "ambient-scribe-0.5.0-development",
+  "frozen_at": "2026-07-17",
+  "fixture_root": "tests/fixtures/audio",
+  "scorer": {
+    "version": "ambient-scribe-transcript-quality/0.5.0",
+    "path": "scripts/transcript-quality.py",
+    "sha256": "a0c42d3259656af43b44393f10edfb6e835a7de895eec3cb5b435876281ca165"
+  },
+  "selection": {
+    "mode": "explicit_ordered",
+    "fixture_count": 10,
+    "implicit_discovery": false
+  },
+  "picker_catalog": {
+    "path": "tests/fixtures/audio/generated-manifest.json",
+    "fixture_count": 10,
+    "bytes": 10846,
+    "sha256": "b1eea4055ec167de4198fcbf12866bfdb14fed507a9b0a270f07eac65c261c82",
+    "generation_mode": "ten_explicit_development_case_ids"
+  },
+  "lane_ids": [
+    "speech_truth",
+    "live",
+    "corrected",
+    "selected_source",
+    "saved_note"
+  ],
+  "region_labels": [
+    "overall",
+    "clean",
+    "overlap"
+  ],
+  "regional_word_allocation": {
+    "overlap_source": "different-role official TextGrid interval intersections",
+    "token_assignment": "estimated_word_center",
+    "clean_rule": "word center is outside every overlap span",
+    "overlap_rule": "word center is inside an overlap span"
+  },
+  "fixtures": [
+    {
+      "ordinal": 1,
+      "fixture_id": "primock57-day1-consultation02-i-have-sore-red-skin",
+      "stem": "primock57-day1-consultation02-i-have-sore-red-skin",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav",
+          "bytes": 17894478,
+          "sha256": "58283edfe790ba2dd2c5d72af217e24c1f1a22f8a7c28b9f2691f0b5250d8602"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.doctor.TextGrid",
+          "bytes": 17093,
+          "sha256": "4a33e030a4670936754821469855e63cb3263b1575da098cacd1158b48684277"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.patient.TextGrid",
+          "bytes": 12903,
+          "sha256": "61ae00734844852f9fd70df574b02aa79b3da4b654464bd0d70191266a5f78fa"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 2,
+      "fixture_id": "primock57-day1-consultation03-i-have-terrible-headache",
+      "stem": "primock57-day1-consultation03-i-have-terrible-headache",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.wav",
+          "bytes": 17418318,
+          "sha256": "06006b517c672d3393f8e9a08a5c98aa7935761ca82a3d059fcb13e008e4784d"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.doctor.TextGrid",
+          "bytes": 18563,
+          "sha256": "a4a10a7817ea6ff09baa7c5dcf582008d4d67d82154492622e3ba39af7ef8589"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.patient.TextGrid",
+          "bytes": 13893,
+          "sha256": "db2982dfa60856dc104919f3e7a71716bd58c243e81311d41cd6010cb7f39f90"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 3,
+      "fixture_id": "primock57-day1-consultation06-hard-to-breathe",
+      "stem": "primock57-day1-consultation06-hard-to-breathe",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation06-hard-to-breathe.wav",
+          "bytes": 21200718,
+          "sha256": "2642b3ff9dffd023819448069c724d1d5da24ab46807d72c0701f80971e1969c"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation06-hard-to-breathe.doctor.TextGrid",
+          "bytes": 21788,
+          "sha256": "73203b4bce1ccd96b57632186933a3f81baa3d2e7fea46da25f297c01364c7d7"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation06-hard-to-breathe.patient.TextGrid",
+          "bytes": 16133,
+          "sha256": "59c6411e37bd4b2366293ef9881c037af7138d4e58d34ab060114a3187e0ab08"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 4,
+      "fixture_id": "primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "stem": "primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation07-i-have-a-cough-and-cold.wav",
+          "bytes": 27463758,
+          "sha256": "2c03c95c4e6fcbd6ea29379ce746588a5bc3e1765c6726ccae895020ae525d4a"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation07-i-have-a-cough-and-cold.doctor.TextGrid",
+          "bytes": 23582,
+          "sha256": "3f13e35fbee17813544ad8b4ce64964aae59f5ed9192c3205f73d279a2e1275c"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation07-i-have-a-cough-and-cold.patient.TextGrid",
+          "bytes": 22220,
+          "sha256": "5d84b563fce8fdd9fc40691aaeaece9724612381227e1c1272e0dd2466d4a8c3"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 5,
+      "fixture_id": "primock57-day1-consultation08-i-have-dry-itchy-skin",
+      "stem": "primock57-day1-consultation08-i-have-dry-itchy-skin",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation08-i-have-dry-itchy-skin.wav",
+          "bytes": 14918478,
+          "sha256": "0307bc8670105ec3839ce9160b224555fc3c4bd25f3547a08160ad1eed7967f6"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation08-i-have-dry-itchy-skin.doctor.TextGrid",
+          "bytes": 16218,
+          "sha256": "3219c5cc64fd07d504bcf46b4222cc1679ccd9e77c1d00730ecdeb88046326e7"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day1-consultation08-i-have-dry-itchy-skin.patient.TextGrid",
+          "bytes": 11160,
+          "sha256": "eb5e6f5e75c738e05103efa8c1c0c6793446c0334b21c23e210a1c079023e445"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 6,
+      "fixture_id": "primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb",
+      "stem": "primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.wav",
+          "bytes": 14426958,
+          "sha256": "673c88e33d19b8cd73e2f92e5ff2aa1b9859bfbe925b173ec3c0ea88850cf1db"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.doctor.TextGrid",
+          "bytes": 14094,
+          "sha256": "df33bf5710284b64723cca9d6300f7f87792d3523c43a1f524573a8c517009ff"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.patient.TextGrid",
+          "bytes": 13459,
+          "sha256": "64a0237933be893f2314534a05c4f2a5f3f39d1e606cf5b920a443460ef06de9"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 7,
+      "fixture_id": "primock57-day2-consultation09-i-cant-move-my-left-arm",
+      "stem": "primock57-day2-consultation09-i-cant-move-my-left-arm",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.wav",
+          "bytes": 13831758,
+          "sha256": "d086245d20fe6c28c25a8ba57ad3850db1955ecb851c711dde6a2a4f1f88ce17"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.doctor.TextGrid",
+          "bytes": 12216,
+          "sha256": "1297724d572d7b6c4599beb05a73b3227bb85e521f90ee7eafe7a30caeef7122"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.patient.TextGrid",
+          "bytes": 10876,
+          "sha256": "6f843fe765397be1afc635e8273334c30bfa61428a94b5686785397c903210fd"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [
+        {
+          "span_id": "consult-2.9-medication-allergy",
+          "start_seconds": 293.345,
+          "end_seconds": 310.436,
+          "membership_rule": "time_overlap",
+          "canonical_terms": ["metformin", "losartan", "amlodipine", "penicillin"],
+          "expectations": {
+            "live": "score retained live hypotheses without canonical reconstruction",
+            "corrected": "score retained corrected hypotheses separately from live",
+            "attribution": "score text and Doctor/Patient ownership independently",
+            "confidence": "null is unmeasured and excluded from review-marker denominators",
+            "selected_source": "NOT_OBSERVED until an exact selected-source artifact is retained",
+            "saved_note": "NOT_OBSERVED until an exact note/source pair is retained"
+          }
+        }
+      ],
+      "persisted_artifacts": [
+        {
+          "artifact_id": "consult-2.9-run-20260710-live",
+          "lane": "live",
+          "path": "var/quality/full-corpus-20260710T2328Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+          "bytes": 42349,
+          "sha256": "d691e00b9ffbca619f94b3789e508e95a7e30ba713bf3cfe572b8b6ddb2b20e5"
+        },
+        {
+          "artifact_id": "consult-2.9-run-20260710-corrected",
+          "lane": "corrected",
+          "path": "var/quality/full-corpus-20260710T2328Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+          "bytes": 59355,
+          "sha256": "463915820ae8bd50707fd74a63e584c97eccb87d68181537483ca23437094624"
+        },
+        {
+          "artifact_id": "consult-2.9-run-20260712-live",
+          "lane": "live",
+          "path": "var/quality/full-corpus-20260712T233933Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+          "bytes": 43174,
+          "sha256": "9d760df85810f58615003c97e19c7adf8fbe9a751253693a7613df17e23a700f"
+        },
+        {
+          "artifact_id": "consult-2.9-run-20260712-corrected",
+          "lane": "corrected",
+          "path": "var/quality/full-corpus-20260712T233933Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+          "bytes": 60531,
+          "sha256": "5d755abbba9a6c37c128af77c9734783bc1cb420f4e38bae126225eac8dbde7b"
+        },
+        {
+          "artifact_id": "consult-2.9-run-20260713-live",
+          "lane": "live",
+          "path": "var/quality/full-corpus-20260713T084709Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+          "bytes": 43999,
+          "sha256": "64bc0d90f3a9ae0d6c84e65afc36905be013b330591665905257520a8dd514c0"
+        },
+        {
+          "artifact_id": "consult-2.9-run-20260713-corrected",
+          "lane": "corrected",
+          "path": "var/quality/full-corpus-20260713T084709Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+          "bytes": 61712,
+          "sha256": "52b11940d2989932beeb312972f7b0a07f79d9484525940b530e9242ddb42c95"
+        }
+      ]
+    },
+    {
+      "ordinal": 8,
+      "fixture_id": "primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "stem": "primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.wav",
+          "bytes": 16321998,
+          "sha256": "e24a2683204454f4f2294b2804c8f54974d24cf312dbdb6dba6acea75d3417c0"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.doctor.TextGrid",
+          "bytes": 13971,
+          "sha256": "f1d76e0088006965f7c795558c60e10ddf4a4b36d4127f44f54e8b7305ffaf35"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.patient.TextGrid",
+          "bytes": 10991,
+          "sha256": "d85d5eccd5c1b2032e550c5d2f04605a92dc5666442fdb772e3ee7e907c0b5df"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    },
+    {
+      "ordinal": 9,
+      "fixture_id": "primock57-day5-consultation03-im-feeling-very-anxious",
+      "stem": "primock57-day5-consultation03-im-feeling-very-anxious",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.wav",
+          "bytes": 24842958,
+          "sha256": "e98d0047347e567ee07960b44eaaba284c09bf4976a3aa439b81bb1a495b9e25"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.doctor.TextGrid",
+          "bytes": 14576,
+          "sha256": "38b91e45c3f6470f695b944815fa3980b2b47c145b0aaa67e825fe2b3606160d"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.patient.TextGrid",
+          "bytes": 19462,
+          "sha256": "d55d04f79fcb8dc0e3a1a330355edb44a4746b6be55ace280b80a7a9055097c7"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": [
+        {
+          "artifact_id": "consult-5.3-selected-source",
+          "lane": "selected_source",
+          "path": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious/corrected-transcript.json",
+          "bytes": 113669,
+          "sha256": "2a0cc6a3ce5aad522d6fa732da6db05036d9842da16d3e61b54eed2e6eaaff47"
+        },
+        {
+          "artifact_id": "consult-5.3-retained-note",
+          "lane": "saved_note",
+          "path": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious/summary.json",
+          "bytes": 9966,
+          "sha256": "27a542876fb6f28b6515015c6319928bf76e16bfe38526a3d6d5f0e62c67cddf"
+        }
+      ]
+    },
+    {
+      "ordinal": 10,
+      "fixture_id": "primock57-day5-consultation09-tired-all-the-time",
+      "stem": "primock57-day5-consultation09-tired-all-the-time",
+      "files": {
+        "wav": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation09-tired-all-the-time.wav",
+          "bytes": 18528078,
+          "sha256": "daa8bff513e849e5a9675d41e13377d07e6e40acd1a8c49da4ef9df640ced460"
+        },
+        "doctor_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation09-tired-all-the-time.doctor.TextGrid",
+          "bytes": 14102,
+          "sha256": "568b913ec416de9b6e22b2e0040dfe9b74a83512e10a238018ef673b24a72c00"
+        },
+        "patient_textgrid": {
+          "path": "tests/fixtures/audio/primock57-day5-consultation09-tired-all-the-time.patient.TextGrid",
+          "bytes": 15577,
+          "sha256": "4e79de3506ad24e60f89a755fc87bcb9dd251e23ebfa0ddb84af124ad811d3cb"
+        }
+      },
+      "lane_ids": ["speech_truth", "live", "corrected", "selected_source", "saved_note"],
+      "region_labels": ["overall", "clean", "overlap"],
+      "critical_spans": [],
+      "persisted_artifacts": []
+    }
+  ],
+  "sealed_holdouts": {
+    "registration_status": "registered_prior_seal_matched",
+    "content_access": "prohibited",
+    "hash_fields": ["bytes", "sha256"],
+    "primary": [
+      "primock57-day2-consultation07-im-having-chest-discomfort",
+      "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately",
+      "primock57-day5-consultation04-lower-stomach-pain"
+    ],
+    "contingency": [
+      "primock57-day1-consultation05-lower-abdominal-pain",
+      "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow",
+      "primock57-day5-consultation08-im-wheezy"
+    ],
+    "triplet_hashes": {
+      "registered_at": "2026-07-17T07:07:05Z",
+      "prior_seal": "var/quality/m07-manifests-20260715T221131Z/triplet-hashes.sha256",
+      "evidence": "var/quality/0.5.0-harness-20260717T011802Z/t02.9-holdout-registration.tsv",
+      "comparison_status": "18_of_18_matched",
+      "primary": [
+        {
+          "stem": "primock57-day2-consultation07-im-having-chest-discomfort",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day2-consultation07-im-having-chest-discomfort.wav",
+              "bytes": 14638158,
+              "sha256": "bbddb19313cb2faba59794159cf10a81b8bfad1755edf7ff41d326bb3e1ec3fb"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day2-consultation07-im-having-chest-discomfort.doctor.TextGrid",
+              "bytes": 13904,
+              "sha256": "4bbd29102b589d3a6b24cd095f5ac7bd0f0711562749a5c2a6e278d45be9884b"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day2-consultation07-im-having-chest-discomfort.patient.TextGrid",
+              "bytes": 14585,
+              "sha256": "935e7ca8cd58b2b2d5fc0759bd4e7512a9e0c09e72cbc1f6093c0d65fa3fd08a"
+            }
+          ]
+        },
+        {
+          "stem": "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately.wav",
+              "bytes": 22281678,
+              "sha256": "3fb9e0cedec8804f21e8a63d1a8c271fc925258b54745a7f90d3acc4d920b893"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately.doctor.TextGrid",
+              "bytes": 17495,
+              "sha256": "bd5c6e059fb08e133c7fcfb00af486bc59e5d8883333e3795e74297da457fcb5"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately.patient.TextGrid",
+              "bytes": 20626,
+              "sha256": "f0dc1621cec01e967d8e098eb7408761faef99b5d1bdd5a2478de707abdb04d0"
+            }
+          ]
+        },
+        {
+          "stem": "primock57-day5-consultation04-lower-stomach-pain",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day5-consultation04-lower-stomach-pain.wav",
+              "bytes": 17395278,
+              "sha256": "87c6a8f095bca7ceb235678be50df41e91f2702462f21585482159469ad45e85"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day5-consultation04-lower-stomach-pain.doctor.TextGrid",
+              "bytes": 18892,
+              "sha256": "97b654cc86270f98214c43914314b250a9777e9082d71bd0c0aabbffe8cb6246"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day5-consultation04-lower-stomach-pain.patient.TextGrid",
+              "bytes": 14910,
+              "sha256": "338706d00afd436bedc1c617625e47b28cd00c71ed0e989d126b08ea6a4ded51"
+            }
+          ]
+        }
+      ],
+      "contingency": [
+        {
+          "stem": "primock57-day1-consultation05-lower-abdominal-pain",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day1-consultation05-lower-abdominal-pain.wav",
+              "bytes": 18464718,
+              "sha256": "509a5b11992c3e51d25bbd27a5a97beb7cecf43047a55588212a94e9a8b95429"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day1-consultation05-lower-abdominal-pain.doctor.TextGrid",
+              "bytes": 17117,
+              "sha256": "3c834cbb2a4105cae1e091b487e04d4ae2b81596e9a6e40b608f8106617d316c"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day1-consultation05-lower-abdominal-pain.patient.TextGrid",
+              "bytes": 12214,
+              "sha256": "0c015d45b7dcda76580e765301064ccefabe8ea7d6850bded2d2283b76b51cbe"
+            }
+          ]
+        },
+        {
+          "stem": "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow.wav",
+              "bytes": 17329998,
+              "sha256": "d126a2c8c15550f3fc74bc4128153ffc2a9629d7f986ba3ba749e8423c70fd02"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow.doctor.TextGrid",
+              "bytes": 15627,
+              "sha256": "66aa5caaf88646cb637bde510919b86fc4d67584529b8dc0d892a81a3eb02120"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow.patient.TextGrid",
+              "bytes": 11670,
+              "sha256": "289fba3dcbb9ce74e832a4e96eba5be7104c219178b9413c23ea596ab3155faa"
+            }
+          ]
+        },
+        {
+          "stem": "primock57-day5-consultation08-im-wheezy",
+          "files": [
+            {
+              "kind": "wav",
+              "filename": "primock57-day5-consultation08-im-wheezy.wav",
+              "bytes": 18026958,
+              "sha256": "0bb243ee5d71ba68617727b7132a0868d9082f2a53410641d11b03f588d81d6e"
+            },
+            {
+              "kind": "doctor_textgrid",
+              "filename": "primock57-day5-consultation08-im-wheezy.doctor.TextGrid",
+              "bytes": 17072,
+              "sha256": "2de7b95950d33d4860d359c11b1c927ee7385aa2250f82c5b5c3214b88ba6611"
+            },
+            {
+              "kind": "patient_textgrid",
+              "filename": "primock57-day5-consultation08-im-wheezy.patient.TextGrid",
+              "bytes": 15870,
+              "sha256": "2be5579f81b3669355a4c280f15df98d2ceaaa068b73d259373da1d6b2df6a88"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

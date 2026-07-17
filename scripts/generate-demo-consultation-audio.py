@@ -103,16 +103,13 @@ PRIMOCK57_NOTES_RAW_BASE_URL = (
     "https://raw.githubusercontent.com/babylonhealth/primock57/main/notes"
 )
 PRIMOCK57_CASE_FILE = re.compile(r"^(day\d+_consultation\d+)_(doctor|patient)\.wav$")
-PRIMOCK57_EXCLUDED_CASE_IDS = frozenset(
-    {
-        "day1_consultation01",
-        "day1_consultation04",
-        "day1_consultation09",
-        "day1_consultation10",
-        "day2_consultation01",
-        "day2_consultation08",
-        "day3_consultation05",
-    }
+PRIMOCK57_DEVELOPMENT_CASE_IDS = frozenset(
+    (
+        "day1_consultation02 day1_consultation03 day1_consultation06 "
+        "day1_consultation07 day1_consultation08 day2_consultation03 "
+        "day2_consultation09 day3_consultation01 day5_consultation03 "
+        "day5_consultation09"
+    ).split()
 )
 DEMO_CONSULTATIONS = (
     DemoConsultation(
@@ -293,33 +290,29 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     selected_cases = set(args.case or [])
     ffmpeg_path = shutil.which("ffmpeg")
-
     # Without FFmpeg/Flite the reviewer cannot generate the local demo WAVs.
     if not ffmpeg_path:
         raise SystemExit("ffmpeg is required and was not found on PATH")
-
+    # A negative download limit cannot describe how many demos the user wants.
     if args.primock57_limit < 0:
         raise SystemExit("--primock57-limit must be 0 or greater")
-
     output_dir.mkdir(parents=True, exist_ok=True)
     generated_manifest: list[dict[str, object]] = []
-
     # Each consultation becomes one canonical replay WAV plus manifest metadata.
     for consultation in DEMO_CONSULTATIONS:
         # Case filters let a user refresh one audio file without rebuilding all demos.
         if selected_cases and consultation.filename not in selected_cases:
             continue
-
         output_path = output_dir / consultation.filename
         # Existing WAVs are preserved unless the user explicitly asks to refresh them.
         if output_path.exists() and not args.force:
             generated_manifest.append(manifest_entry(consultation, output_path))
             continue
-
         generate_consultation_wav(ffmpeg_path, consultation, output_path)
         generated_manifest.append(manifest_entry(consultation, output_path))
-
+    # PriMock57 rows are added only when the developer explicitly requests that source.
     if args.include_primock57:
+        # Each allowed corpus case becomes one picker row in deterministic case order.
         for consultation in discover_primock57_consultations(
             args.primock57_limit,
             selected_cases,
@@ -331,12 +324,10 @@ def main() -> int:
                     primock57_manifest_entry(consultation, output_path)
                 )
                 continue
-
             generate_primock57_wav(ffmpeg_path, consultation, output_path)
             generated_manifest.append(
                 primock57_manifest_entry(consultation, output_path)
             )
-
     # A mistyped --case would otherwise overwrite the manifest with an empty
     # list and exit 0, making demo generation look successful.
     if selected_cases and not generated_manifest:
@@ -344,7 +335,6 @@ def main() -> int:
             f"no demo cases matched --case {sorted(selected_cases)}; "
             "check the filename or case id against DEMO_CONSULTATIONS"
         )
-
     manifest_path = output_dir / "generated-manifest.json"
     manifest_path.write_text(
         json.dumps(generated_manifest, indent=2) + "\n",
@@ -402,16 +392,15 @@ def discover_primock57_consultations(
         RuntimeError: When the remote metadata does not look like a file list.
     """
     entries = read_json_url(PRIMOCK57_AUDIO_API_URL)
+    # An unexpected remote response gives the developer no safe audio-file inventory.
     if not isinstance(entries, list):
         raise RuntimeError("PriMock57 audio API did not return a file list")
-
     case_files = collect_primock57_case_files(entries)
     selected_case_files, selected_case_complaints = select_primock57_case_files(
         case_files,
         limit,
         selected_cases,
     )
-
     return build_primock57_consultations(
         selected_case_files,
         selected_case_complaints,
@@ -428,16 +417,15 @@ def collect_primock57_case_files(entries: list[object]) -> dict[str, dict[str, s
         Map of case id to role filenames; empty means no playable PriMock pairs.
     """
     case_files: dict[str, dict[str, str]] = {}
+    # Each remote file row is considered once while building Doctor/Patient pairs.
     for entry in entries:
         # Non-file API rows cannot be downloaded as doctor/patient audio.
         if not isinstance(entry, dict) or entry.get("type") != "file":
             continue
-
         name = entry.get("name")
         # Missing names leave the user with nothing safe to download.
         if not isinstance(name, str):
             continue
-
         match = PRIMOCK57_CASE_FILE.match(name)
         # Non-consultation files in the corpus should not appear in the picker.
         if not match:
@@ -466,6 +454,7 @@ def select_primock57_case_files(
     """
     selected_case_files: list[tuple[str, dict[str, str]]] = []
     selected_case_complaints: dict[str, str] = {}
+    # Each discovered case is filtered before note metadata or audio can be selected.
     for case_id in sorted(case_files):
         files = case_files[case_id]
         # Excluded or incomplete cases cannot produce the intended replay row.
@@ -501,14 +490,14 @@ def is_playable_primock57_case(case_id: str, files: dict[str, str]) -> bool:
     """Return whether a PriMock57 case can be exposed in the picker.
 
     Args:
-        case_id: PriMock57 case id; excluded ids are hidden from users.
+        case_id: PriMock57 case id; non-development and sealed ids stay hidden.
         files: Role filename map; missing channels cannot be mixed into replay audio.
 
     Returns:
-        True when both channels exist and the case is allowed for local demos.
+        True when both channels exist and the case is in the frozen development set.
     """
-    # Excluded cases should not appear in the user's Demo Audio picker.
-    if case_id in PRIMOCK57_EXCLUDED_CASE_IDS:
+    # Only the ten development visits may appear in the developer's Demo Audio picker.
+    if case_id not in PRIMOCK57_DEVELOPMENT_CASE_IDS:
         return False
 
     return "doctor" in files and "patient" in files
@@ -528,6 +517,7 @@ def build_primock57_consultations(
         Consultation metadata consumed by the audio generator and manifest writer.
     """
     consultations: list[Primock57Consultation] = []
+    # Each approved pair becomes one self-contained record for the picker generator.
     for case_id, files in selected_case_files:
         note_path = f"notes/{case_id}.json"
         complaint = selected_case_complaints.get(case_id) or read_primock57_complaint(
@@ -682,6 +672,7 @@ def read_json_url(url: str) -> object:
     try:
         with urlopen(request, timeout=30) as response:
             return json.load(response)
+    # A developer may be offline or GitHub may time out while refreshing picker metadata.
     except URLError as exc:
         raise RuntimeError(f"could not read {url}: {exc}") from exc
 
@@ -710,9 +701,11 @@ def download_file(url: str, output_path: Path) -> None:
         with urlopen(request, timeout=120) as response:
             with output_path.open("wb") as output_file:
                 shutil.copyfileobj(response, output_file)
+    # A network drop can interrupt a developer's explicit demo-audio download.
     except URLError as exc:
         raise RuntimeError(f"could not download {url}: {exc}") from exc
 
+    # A pointer file would make the user's selected demo fail as audio at replay time.
     if is_git_lfs_pointer(output_path):
         raise RuntimeError(f"{url} returned a Git LFS pointer instead of audio")
 
@@ -873,6 +866,7 @@ def concat_wavs(
                 str(output_path),
             ],
         )
+    # A failed FFmpeg run can leave its temporary concat list behind without cleanup.
     finally:
         concat_file.unlink(missing_ok=True)
 
