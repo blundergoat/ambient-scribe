@@ -101,6 +101,24 @@ def test_window_rows_are_scoped_to_one_session_and_summarized() -> None:
                 ],
                 window_remaps=2,
                 window_phantom_merges=1,
+                slot_share_evidence=[
+                    {
+                        "speaker_slot": "spk_2",
+                        "window_voiced_frames": 3,
+                        "cumulative_voiced_frames": 3,
+                        "voiced_share": 0.02,
+                        "fold_decision": "fold_marginal",
+                    }
+                ],
+                folded_word_spans=[
+                    {
+                        "origin_speaker_slot": "spk_2",
+                        "visible_speaker_slot": "spk_0",
+                        "start_seconds": 10.1,
+                        "end_seconds": 10.3,
+                        "word_count": 2,
+                    }
+                ],
                 emitted_rows=1,
                 held_rows=1,
             ),
@@ -127,6 +145,8 @@ def test_window_rows_are_scoped_to_one_session_and_summarized() -> None:
     assert remapped_window["speaker_id_map"] == {"spk_0": "spk_1", "spk_1": "spk_0"}
     assert remapped_window["mapping_reasons"]["spk_1"] == "two_speaker_swap"
     assert remapped_window["overlap_votes"][0]["overlap_seconds"] == 0.5
+    assert remapped_window["slot_share_evidence"][0]["fold_decision"] == "fold_marginal"
+    assert remapped_window["folded_word_spans"][0]["word_count"] == 2
 
     assert summary == {
         "event": "window_continuity.summary",

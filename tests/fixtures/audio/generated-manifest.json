@@ -50,31 +50,6 @@
     "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
   },
   {
-    "filename": "primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose.wav",
-    "display_name": "PriMock57 day 1 consultation 4: I don't feel well, I have a cough and runny nose",
-    "dataset": "PriMock57",
-    "case_id": "day1_consultation04",
-    "complaint": "I don't feel well, I have a cough and runny nose",
-    "speakers": [
-      "DOCTOR",
-      "PATIENT"
-    ],
-    "expected_roles": {
-      "doctor_channel": "DOCTOR",
-      "patient_channel": "PATIENT"
-    },
-    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
-    "duration_seconds": 615.5,
-    "clip_seconds": null,
-    "source_audio": [
-      "audio/day1_consultation04_doctor.wav",
-      "audio/day1_consultation04_patient.wav"
-    ],
-    "source_note": "notes/day1_consultation04.json",
-    "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation04_doctor.wav, audio/day1_consultation04_patient.wav, notes/day1_consultation04.json",
-    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
-  },
-  {
     "filename": "primock57-day1-consultation05-lower-abdominal-pain.wav",
     "display_name": "PriMock57 day 1 consultation 5: Lower abdominal pain",
     "dataset": "PriMock57",
@@ -172,6 +147,256 @@
     ],
     "source_note": "notes/day1_consultation08.json",
     "source": "PriMock57 mock primary care consultation audio and note: audio/day1_consultation08_doctor.wav, audio/day1_consultation08_patient.wav, notes/day1_consultation08.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow.wav",
+    "display_name": "PriMock57 day 2 consultation 2: I have a strange swelling on my elbow",
+    "dataset": "PriMock57",
+    "case_id": "day2_consultation02",
+    "complaint": "I have a strange swelling on my elbow",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 541.6,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day2_consultation02_doctor.wav",
+      "audio/day2_consultation02_patient.wav"
+    ],
+    "source_note": "notes/day2_consultation02.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day2_consultation02_doctor.wav, audio/day2_consultation02_patient.wav, notes/day2_consultation02.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.wav",
+    "display_name": "PriMock57 day 2 consultation 3: I can't hear very well and my face is a bit numb",
+    "dataset": "PriMock57",
+    "case_id": "day2_consultation03",
+    "complaint": "I can't hear very well and my face is a bit numb",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 450.8,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day2_consultation03_doctor.wav",
+      "audio/day2_consultation03_patient.wav"
+    ],
+    "source_note": "notes/day2_consultation03.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day2_consultation03_doctor.wav, audio/day2_consultation03_patient.wav, notes/day2_consultation03.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day2-consultation07-im-having-chest-discomfort.wav",
+    "display_name": "PriMock57 day 2 consultation 7: I'm having chest discomfort",
+    "dataset": "PriMock57",
+    "case_id": "day2_consultation07",
+    "complaint": "I'm having chest discomfort",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 457.4,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day2_consultation07_doctor.wav",
+      "audio/day2_consultation07_patient.wav"
+    ],
+    "source_note": "notes/day2_consultation07.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day2_consultation07_doctor.wav, audio/day2_consultation07_patient.wav, notes/day2_consultation07.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day2-consultation09-i-cant-move-my-left-arm.wav",
+    "display_name": "PriMock57 day 2 consultation 9: I can't move my left arm",
+    "dataset": "PriMock57",
+    "case_id": "day2_consultation09",
+    "complaint": "I can't move my left arm",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 432.2,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day2_consultation09_doctor.wav",
+      "audio/day2_consultation09_patient.wav"
+    ],
+    "source_note": "notes/day2_consultation09.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day2_consultation09_doctor.wav, audio/day2_consultation09_patient.wav, notes/day2_consultation09.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.wav",
+    "display_name": "PriMock57 day 3 consultation 1: lips swelling after eating a sandwich",
+    "dataset": "PriMock57",
+    "case_id": "day3_consultation01",
+    "complaint": "lips swelling after eating a sandwich",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 510.1,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day3_consultation01_doctor.wav",
+      "audio/day3_consultation01_patient.wav"
+    ],
+    "source_note": "notes/day3_consultation01.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day3_consultation01_doctor.wav, audio/day3_consultation01_patient.wav, notes/day3_consultation01.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately.wav",
+    "display_name": "PriMock57 day 3 consultation 3: I don't have much appetite or energy lately",
+    "dataset": "PriMock57",
+    "case_id": "day3_consultation03",
+    "complaint": "I don't have much appetite or energy lately",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 696.3,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day3_consultation03_doctor.wav",
+      "audio/day3_consultation03_patient.wav"
+    ],
+    "source_note": "notes/day3_consultation03.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day3_consultation03_doctor.wav, audio/day3_consultation03_patient.wav, notes/day3_consultation03.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day5-consultation03-im-feeling-very-anxious.wav",
+    "display_name": "PriMock57 day 5 consultation 3: I'm feeling very anxious",
+    "dataset": "PriMock57",
+    "case_id": "day5_consultation03",
+    "complaint": "I'm feeling very anxious",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 776.3,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day5_consultation03_doctor.wav",
+      "audio/day5_consultation03_patient.wav"
+    ],
+    "source_note": "notes/day5_consultation03.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day5_consultation03_doctor.wav, audio/day5_consultation03_patient.wav, notes/day5_consultation03.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day5-consultation04-lower-stomach-pain.wav",
+    "display_name": "PriMock57 day 5 consultation 4: Lower stomach pain",
+    "dataset": "PriMock57",
+    "case_id": "day5_consultation04",
+    "complaint": "Lower stomach pain",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 543.6,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day5_consultation04_doctor.wav",
+      "audio/day5_consultation04_patient.wav"
+    ],
+    "source_note": "notes/day5_consultation04.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day5_consultation04_doctor.wav, audio/day5_consultation04_patient.wav, notes/day5_consultation04.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day5-consultation08-im-wheezy.wav",
+    "display_name": "PriMock57 day 5 consultation 8: I'm wheezy",
+    "dataset": "PriMock57",
+    "case_id": "day5_consultation08",
+    "complaint": "I'm wheezy",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 563.3,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day5_consultation08_doctor.wav",
+      "audio/day5_consultation08_patient.wav"
+    ],
+    "source_note": "notes/day5_consultation08.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day5_consultation08_doctor.wav, audio/day5_consultation08_patient.wav, notes/day5_consultation08.json",
+    "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
+  },
+  {
+    "filename": "primock57-day5-consultation09-tired-all-the-time.wav",
+    "display_name": "PriMock57 day 5 consultation 9: Tired all the time",
+    "dataset": "PriMock57",
+    "case_id": "day5_consultation09",
+    "complaint": "Tired all the time",
+    "speakers": [
+      "DOCTOR",
+      "PATIENT"
+    ],
+    "expected_roles": {
+      "doctor_channel": "DOCTOR",
+      "patient_channel": "PATIENT"
+    },
+    "edge_case": "Full-length PriMock57 mock primary care consultation with separate doctor/patient channels mixed to mono",
+    "duration_seconds": 579.0,
+    "clip_seconds": null,
+    "source_audio": [
+      "audio/day5_consultation09_doctor.wav",
+      "audio/day5_consultation09_patient.wav"
+    ],
+    "source_note": "notes/day5_consultation09.json",
+    "source": "PriMock57 mock primary care consultation audio and note: audio/day5_consultation09_doctor.wav, audio/day5_consultation09_patient.wav, notes/day5_consultation09.json",
     "license": "CC BY 4.0; mock consultations by Babylon clinicians and employees, not real patient audio"
   }
 ]

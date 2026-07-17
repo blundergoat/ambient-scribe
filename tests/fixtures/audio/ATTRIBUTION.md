@@ -12,7 +12,7 @@ separate doctor and patient channels by `scripts/generate-demo-consultation-audi
 
 Ground-truth transcripts (`*.doctor.TextGrid`, `*.patient.TextGrid`):
 
-- Source: PriMock57 `transcripts/day1_consultationNN_{doctor,patient}.TextGrid`.
+- Source: PriMock57 `transcripts/dayN_consultationNN_{doctor,patient}.TextGrid`.
 - License: CC BY 4.0 (same corpus as the audio).
 - Purpose: per-channel Praat reference transcripts for measuring transcription quality.
 - Fetch: `scripts/download-primock57-transcripts.sh` (named after the paired WAV).

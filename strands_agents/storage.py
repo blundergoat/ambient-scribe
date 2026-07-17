@@ -40,7 +40,6 @@ class StorageBackend(Protocol):
         self, session_id: str, max_chars: int = 3500
     ) -> str: ...
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None: ...
-    def set_row_role(self, session_id: str, segment_id: str, role: str) -> bool: ...
     def set_auto_row_roles(self, session_id: str, row_roles: dict[str, str]) -> None: ...
     def cleanup(self, session_id: str) -> None: ...
 
@@ -91,7 +90,7 @@ class SqliteBackend:
         self._create_tables()
 
     def _create_tables(self) -> None:
-        """Create sessions, segments, and row-correction tables if they don't exist."""
+        """Create the sessions, segments, and corrected-segments tables if they don't exist."""
         with self._lock:
             self._conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -112,14 +111,7 @@ class SqliteBackend:
                     position INTEGER NOT NULL,
                     segment_id TEXT,
                     role_source TEXT,
-                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS row_role_overrides (
-                    session_id TEXT NOT NULL,
-                    segment_id TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    PRIMARY KEY (session_id, segment_id),
+                    confidence REAL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
@@ -137,6 +129,7 @@ class SqliteBackend:
                     role_source TEXT,
                     source TEXT,
                     source_model TEXT,
+                    confidence REAL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
@@ -146,11 +139,14 @@ class SqliteBackend:
                 CREATE INDEX IF NOT EXISTS idx_corrected_segments_session_position
                     ON corrected_segments(session_id, position);
             """)
-            # Databases created before row corrections lack the new columns;
-            # SQLite raises "duplicate column" once they exist, which is fine.
+            # Databases created before row corrections or row confidence lack
+            # the newer columns; SQLite raises "duplicate column" once they
+            # exist, which is fine.
             for add_column_sql in (
                 "ALTER TABLE segments ADD COLUMN segment_id TEXT",
                 "ALTER TABLE segments ADD COLUMN role_source TEXT",
+                "ALTER TABLE segments ADD COLUMN confidence REAL",
+                "ALTER TABLE corrected_segments ADD COLUMN confidence REAL",
             ):
                 try:
                     self._conn.execute(add_column_sql)
@@ -190,8 +186,8 @@ class SqliteBackend:
             position = self._next_position(session_id)
             self._conn.execute(
                 """
-                INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -203,18 +199,13 @@ class SqliteBackend:
                     segment.get("role"),
                     position,
                     str(segment.get("segment_id", "")) or None,
+                    segment.get("confidence"),
                 ),
             )
-            # A re-appended row the clinician already corrected keeps their label.
-            self._reapply_row_role_overrides(session_id)
             self._conn.commit()
 
     def replace_segments(self, session_id: str, segments: list[dict]) -> None:
         """Replace all visible transcript lines after final transcription.
-
-        Rows the clinician corrected keep their corrected role by `segment_id`
-        across the replace, because finalize and summary flows rebuild rows
-        from raw transcript objects without role annotations.
 
         Args:
             session_id: Recording UUID whose stored history should be replaced.
@@ -229,8 +220,8 @@ class SqliteBackend:
             for position, segment in enumerate(segments):
                 self._conn.execute(
                     """
-                    INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO segments (session_id, speaker_id, text, start, end, is_interim, role, position, segment_id, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -242,9 +233,9 @@ class SqliteBackend:
                         segment.get("role"),
                         position,
                         str(segment.get("segment_id", "")) or None,
+                        segment.get("confidence"),
                     ),
                 )
-            self._reapply_row_role_overrides(session_id)
             self._conn.commit()
 
     def replace_corrected_segments(self, session_id: str, segments: list[dict]) -> None:
@@ -275,9 +266,10 @@ class SqliteBackend:
                         segment_id,
                         role_source,
                         source,
-                        source_model
+                        source_model,
+                        confidence
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -292,6 +284,7 @@ class SqliteBackend:
                         segment.get("role_source"),
                         segment.get("source"),
                         segment.get("source_model"),
+                        segment.get("confidence"),
                     ),
                 )
             self._conn.commit()
@@ -372,7 +365,7 @@ class SqliteBackend:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source
+                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, confidence
                 FROM segments
                 WHERE session_id = ?
                 ORDER BY position
@@ -399,6 +392,9 @@ class SqliteBackend:
             # The source marker shows which rows carry a human correction.
             if row[7]:
                 seg["role_source"] = row[7]
+            # Unmeasured rows omit the key so they render exactly as before.
+            if row[8] is not None:
+                seg["confidence"] = row[8]
             segments.append(seg)
         return segments
 
@@ -414,7 +410,7 @@ class SqliteBackend:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, source, source_model
+                SELECT speaker_id, text, start, end, is_interim, role, segment_id, role_source, source, source_model, confidence
                 FROM corrected_segments
                 WHERE session_id = ?
                 ORDER BY position
@@ -443,6 +439,9 @@ class SqliteBackend:
                 seg["source"] = row[8]
             if row[9]:
                 seg["source_model"] = row[9]
+            # Unmeasured rows omit the key so they render exactly as before.
+            if row[10] is not None:
+                seg["confidence"] = row[10]
             segments.append(seg)
         return segments
 
@@ -497,9 +496,6 @@ class SqliteBackend:
     def apply_role_mapping(self, session_id: str, mapping: dict[str, str]) -> None:
         """Persist speaker roles so restored history matches the live transcript.
 
-        Rows the clinician corrected individually are skipped: a whole-speaker
-        mapping must never silently undo a per-row human correction.
-
         Args:
             session_id: Recording UUID whose visible labels should change.
             mapping: Speaker-to-role map; empty means no stored labels change.
@@ -513,7 +509,6 @@ class SqliteBackend:
                     """
                     UPDATE segments SET role = ?, role_source = NULL
                     WHERE session_id = ? AND speaker_id = ?
-                      AND (role_source IS NULL OR role_source != 'user_row')
                     """,
                     (role, session_id, speaker_id),
                 )
@@ -524,8 +519,7 @@ class SqliteBackend:
 
         These are the cue-lane judgments for rows whose text contradicts their
         mapped speaker role. They are derived state: recomputed after every
-        mapping application, and they never touch a row the clinician
-        corrected personally.
+        mapping application.
 
         Args:
             session_id: Recording session whose rows are re-judged.
@@ -542,78 +536,10 @@ class SqliteBackend:
                     """
                     UPDATE segments SET role = ?, role_source = 'auto_row'
                     WHERE session_id = ? AND segment_id = ?
-                      AND (role_source IS NULL OR role_source != 'user_row')
                     """,
                     (auto_role, session_id, segment_id),
                 )
             self._conn.commit()
-
-    def set_row_role(self, session_id: str, segment_id: str, role: str) -> bool:
-        """Record a clinician's per-row role correction and apply it now.
-
-        The correction is keyed by the row's `segment_id`, survives later
-        speaker-level role mappings and finalize/summary row replacement, and
-        never touches the speaker-scoped mapping.
-
-        Args:
-            session_id: Recording UUID the clinician is correcting.
-            segment_id: Stable row ID minted at emission; empty cannot target a row.
-            role: Corrected role label shown for exactly that row.
-
-        Returns:
-            True when the session exists and the correction was recorded;
-            False means the browser targeted an unknown session or empty row ID.
-        """
-        # Empty row IDs cannot identify which visible row the user corrected.
-        if not segment_id:
-            return False
-
-        with self._lock:
-            known_session = self._conn.execute(
-                "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-            # Unknown sessions have no transcript the user could be seeing.
-            if known_session is None:
-                return False
-
-            self._conn.execute(
-                """
-                INSERT INTO row_role_overrides (session_id, segment_id, role)
-                VALUES (?, ?, ?)
-                ON CONFLICT(session_id, segment_id) DO UPDATE SET role = excluded.role
-                """,
-                (session_id, segment_id, role),
-            )
-            self._reapply_row_role_overrides(session_id)
-            self._conn.commit()
-        return True
-
-    def _reapply_row_role_overrides(self, session_id: str) -> None:
-        """Stamp stored rows with their clinician-corrected roles.
-
-        Called inside a held lock after any write that could rebuild or add
-        rows, so corrected rows always display the human label.
-
-        Args:
-            session_id: Recording UUID whose corrections should be re-applied.
-        """
-        self._conn.execute(
-            """
-            UPDATE segments
-            SET role = (
-                    SELECT overrides.role FROM row_role_overrides AS overrides
-                    WHERE overrides.session_id = segments.session_id
-                      AND overrides.segment_id = segments.segment_id
-                ),
-                role_source = 'user_row'
-            WHERE session_id = ?
-              AND segment_id IN (
-                    SELECT segment_id FROM row_role_overrides
-                    WHERE session_id = ?
-                )
-            """,
-            (session_id, session_id),
-        )
 
     def cleanup(self, session_id: str) -> None:
         """Remove a transcript history when the session is no longer needed.
@@ -627,9 +553,6 @@ class SqliteBackend:
             )
             self._conn.execute(
                 "DELETE FROM segments WHERE session_id = ?", (session_id,)
-            )
-            self._conn.execute(
-                "DELETE FROM row_role_overrides WHERE session_id = ?", (session_id,)
             )
             self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             self._conn.commit()

@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-10
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -73,6 +73,7 @@ last_reviewed: 2026-07-07
 - **What breaks:** NeMo's installed transcribe API advertises `timestamps=True`, but enabling it for `EncDecMultiTalkerRNNTBPEModel` during live chunk replay can terminate `nemo-agent` before the session quality row is emitted. The browser/eval then sees a missing `session.quality` artifact instead of a clean transcription result.
 - **Evidence:** A consult-03 83s replay session `f14375fd-a803-46b0-a38a-1fea08688bc6` with `timestamps=True` added to `_asr_model.transcribe(...)` failed with `error: no session.quality JSONL row found`. `docker compose logs nemo-agent --tail 250` showed `terminate called after throwing an instance of 'c10::AcceleratorError'` and `CUDA error: an illegal memory access was encountered` immediately after NeMo logged `Timestamps requested`.
 - **Prevention:** Do not enable multitalker ASR timestamps as a quick word-to-speaker fix. Treat it as a GPU spike requiring an isolated process, log grep, and restart after failure; keep the proportional word splitter unless a timestamp path completes `scripts/eval-fixtures.sh --all` without CUDA errors.
+- **Update (2026-07-07, 0.4.0-slice-1 M06 spike):** confidence mode is NOT similarly cursed - enabling `confidence_cfg` (preserve word+token) on the same multitalker model, with the runtime's CUDA-graph workaround mirrored, ran clean on two fixtures with non-degenerate values and an error-free follow-up eval (`scripts/probe-word-confidence.py`, evidence `var/quality/word-confidence-spike/`). The timestamp caution stands; do not generalize it to confidence.
 
 ## Footgun: Reconnect grace window keeps session state alive after disconnect
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
@@ -159,25 +160,6 @@ last_reviewed: 2026-07-07
 - **Evidence:** 2026-07-06 fake-mic live-stop repro, session `7b627fbb-8c0e-4119-9f8a-03600e290b78`: browser froze at 8 rows while the server stored 11; the quality record and `finalized` event were published to nobody. The replay path never hit this because `enterReplayDrain` (`public/js/scribe-output.js`, search: "enterReplayDrain") already waits for `finalized` with a bounded timeout.
 - **Prevention:** Every stop path must drain, not tear down: close the WebSocket, keep the EventSource open until the `finalized` event or a bounded timeout, then summarize (`stopRecording`/`endLiveStop` mirror the replay drain since M21). Only explicit discard paths (`resetSession`, replay error cleanup) may disconnect immediately. Server-side, summary POSTs merge by `segment_id` (`merge_browser_segments`) instead of replacing history, so even a raced or stale browser can no longer shrink the stored transcript. When adding a new stop/teardown path, classify it drain-wait vs discard-immediate before wiring `disconnectMercureStreams()`.
 
-## Footgun: NeMo cache-aware streaming integration has three silent alignment traps
-
-**Status:** active | **Created:** 2026-07-06 | **Evidence:** ACTUAL_MEASURED
-
-- **What breaks:** Integrating `SpeakerTaggedASR` + `CacheAwareStreamingAudioBuffer` for live audio (M22 streaming engine) fails silently in three distinct ways that all present as "mysteriously bad transcript quality" with zero errors: (1) `append_audio`'s first-stream create branch returns `stream_id=-1`, so passing the returned id back on the next append pads a NEW stream - the batch grows per chunk until the diar streaming state throws a tensor-size mismatch; (2) `drop_extra_pre_encoded` must be `0` on step 0 and `encoder.streaming_cfg.drop_extra_pre_encoded` on every later step - passing 0 forever misaligns encoder outputs and quietly destroys recall (~30% observed); (3) per-instance hypothesis `timestamp` frames count that speaker's own voiced/decoded frames, NOT session time - `offset + ts*0.08` produces row times beyond the audio, and downstream cutoff filters then silently drop the rows.
-- **Evidence:** M22 Phase 2 GPU-contact debugging, 2026-07-06 (`.goat-flow/plans/0.3.0/M22-session-long-streaming-diarization.md`, search: "GPU-contact findings"). Per-step instrumentation dump proved cumulative slot texts with frozen bursts and voiced-frame timestamps.
-- **Prevention:** Pin `stream_id = max(0, returned_id)` after the first append; mirror the reference CLI's per-step `drop_extra_pre_encoded` computation verbatim. When streaming quality looks wrong with clean logs, instrument per-step hypothesis facts (slot, n_words, head/tail, ts0/tsN, offset) before touching emission logic.
-- **Three more traps found at REAL-TIME pacing (2026-07-06, invisible at accelerated eval pacing):** (4) `CacheAwareStreamingAudioBuffer.__iter__` yields PARTIAL chunks near the buffer end and advances the cursor a full shift regardless - at 1x pacing a step loop drains the buffer every feed, truncating AND skipping audio four times per 5s chunk (garbled words, speaker fragmentation). Gate stepping on `frames_available >= full_chunk_frames` and consume partials only at flush. (5) Deriving word times from the decode/step clock is FICTION under decode lag: rows carry compressed times, the time-overlap scorer and the role layer both read garbage, and eval "attribution" numbers become unmeasurable. True times come from inverting the diarizer's own activity stream: per-slot (cumulative voiced frames -> wall seconds) ledger, then map each token timestamp through it. (6) An eager "pin the first N slots to establish" speaker cap folds a genuine voice into another slot when one speaker's audio spans two early cache slots (c03's doctor does) - fold only hallucination-scale marginal slots (share-based) and let substantial slots through; the role mapping labels them anyway.
-- **Verification rule this taught:** accelerated-pacing evals CANNOT stand in for real-time behavior on streaming integrations. Any cache-aware streaming change must pass a 1x browser replay (row order, live cadence, text sanity) in addition to eval gates.
-- **Update (2026-07-07):** pacing is NOT the whole story. `scripts/eval-corrected-fixtures.sh`
-  gained an `EVAL_PACE=1x` mode (real-time cadence, browser-like 250ms chunks) and the paced
-  consult-08 @60s streaming run scored live strict 59.1% vs 59.4% unpaced - while the real
-  browser replay scored 79.3% at the same 60s horizon (pre-M11 history; post-M11 would be
-  higher). The eval's WebSocket feed differs from the browser replay path beyond cadence
-  (candidates: browser WAV-decode/resample pipeline, finalize behavior on abrupt socket close,
-  real callback jitter). Until that residual is explained, browser replays remain the only
-  honest live-lane reference on the streaming engine; eval live numbers are comparable only
-  to other eval runs with the same pace mode.
-
 ## Footgun: Row-scope role override after grace expiry publishes fabricated empty role state
 
 **Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
@@ -189,7 +171,7 @@ last_reviewed: 2026-07-07
 - **What breaks:** Both scopes of `/session/{id}/roles/override` call `get_or_create_state(session_id)` to include the speaker mapping and confidence in their Mercure publish. After lifecycle teardown runs `cleanup_role_state`, that call silently CREATES a fresh empty `RoleMappingState` (mapping `{}`, zero confidence) for the dead session and publishes it as an authoritative `role_update`. The browser guard `if (!roleUpdateEvent.mapping)` does not catch `{}` (an empty object is truthy in JS), so `confidence = roleUpdateEvent.confidence ?? 0` wipes the header badge while `applySpeakerRoleMapping({})` leaves labels alone. The row correction itself sticks because `sessions.set_row_role` writes to transcript storage, whose TTL is independent of lifecycle role state.
 - **Evidence:** 2026-07-06 consult-03 manual test, session `fd2d7bfb-5d23-4e32-b0fa-e4f16cf0fed7`: grace expired `19:59:34Z`; a row override `seg-0002 -> PATIENT` at `20:07:34Z` published `{"type":"role_update","mapping":{},"row_overrides":{"seg-0002":"PATIENT"},...}` and the header badge dropped from `Roles identified (92%)` to `Speakers unclear (0%)` while the row chip flipped correctly.
 - **Prevention:** Post-visit request paths must peek at existing role state rather than `get_or_create_state` before including mapping/confidence in a publish, and the browser must treat an empty mapping as "no mapping news" rather than letting a `manual_override` row-scope event overwrite session-level confidence. When adding any post-Stop interaction (overrides, review queues, edits), check what lifecycle teardown has already destroyed before republishing derived state.
-- **Current state (2026-07-07):** the row-scope publish now peeks (`strands_agents/tools/assign_roles.py`, search: "def peek_state") and omits mapping/confidence for a finished visit, and `handleRoleUpdate` routes badge news through `applyMappingAndConfidenceNews` so `manual_override` events never move the earned badge (regressions: `tests/python/test_api.py`, search: "publishes_no_fabricated_mapping"; `tests/e2e/browser.spec.js`, search: "cannot wipe the badge"). Residual trap: the speaker-scope branch of `roles_override` and the `roles_snapshot` endpoint still call `get_or_create_state` and can resurrect empty state post-teardown; badge impact is guarded browser-side, but the state fabrication itself remains.
+- **Current state (2026-07-07):** the row-scope publish now peeks (`strands_agents/tools/assign_roles.py`, search: "def peek_state") and omits mapping/confidence for a finished visit, and `handleRoleUpdate` routes badge news through `applyMappingAndConfidenceNews` so `manual_override` events never move the earned badge (regressions: `tests/python/test_api.py`, search: "publishes_no_fabricated_mapping"; `tests/e2e/browser.spec.js`, search: "cannot wipe the badge"). RESOLVED for all three callers (2026-07-07 evening, 0.4.0-slice-1 M04): the speaker-scope branch is liveness-gated (`strands_agents/api/server.py`, search: "_apply_speaker_role_override") - a live visit (active socket or reconnect grace) still creates state so a label clicked before the role worker's first update pins against later agent proposals, while a finished visit peeks, applies only the explicit `{speaker_id: role}` to stored rows and the corrected artifact, skips the auto-row re-judge, and publishes the partial mapping with no confidence key. `roles_snapshot` peeks and returns the honest empty shape. Regressions: `tests/python/test_api.py`, search: "speaker_override_after_role_state_cleanup", "snapshot_after_cleanup_does_not_resurrect", "before_first_role_update_pins_label".
 
 ## Footgun: Logger-level filters never see records propagated from module loggers
 
@@ -210,6 +192,62 @@ last_reviewed: 2026-07-07
 - **Files:** `strands_agents/api/summary_request.py` (search: "if corrected_segments:")
 - **What breaks:** A clinician role decision is recorded in three independent places: the server's `confirmed_overrides` (enforced over agent proposals by `_apply_confirmed_overrides`), the browser's `manualOverrides` set (blocks incoming `role_update` mappings client-side), and the corrected-transcript artifact (role snapshot taken at correction time, preferred by summaries). Any mutation path that touches only one diverges the rest. Two PR #3 review findings hit this: cycling a label back to Unknown (the documented undo) stored UNKNOWN as a PERMANENT confirmed override so the agent could never relabel - and even after the server fix, the browser's `manualOverrides` would still have blocked relabels until `cycleRole` also deleted its entry; separately, overrides after the first correction never reached `corrected_segments`, so retried summaries cited pre-fix roles.
 - **Prevention:** Any new role-mutation feature (bulk relabel, undo stack, review queue) must decide explicitly for EACH of the three stores: update, invalidate, or deliberately skip - and say why. Current wiring: UNKNOWN pops the confirmed override AND the browser set; speaker overrides rewrite corrected rows in place; row overrides invalidate the corrected artifact so the next summary re-corrects (regressions: `tests/python/test_api.py`, search: "unknown_override_clears_confirmed_override", "updates_corrected_rows_for_retried_summaries", "invalidates_stale_corrected_artifact").
+
+## Footgun: A hot-reload can silently move NeMo to CPU when WSL drops the GPU adapter
+
+**Status:** active | **Created:** 2026-07-08 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_pipeline.py` (search: "torch.cuda.is_available()")
+- **Files:** `scripts/eval-corrected-fixtures.sh` (search: "AGENT_HTTP_URL")
+- **What breaks:** WSL2 can lose its GPU adapter mid-session while everything else keeps
+  working: `/dev/dxg` still exists, `nvidia-smi` exits 0 while printing NOTHING, `/health`
+  stays green, and the next uvicorn hot-reload loads both models on CPU because the pipeline
+  falls back silently (`cuda if available else cpu`). Observed 2026-07-08: the first CPU load
+  logged only NeMo warnings ("No conditional node support for Cuda ... CUDA is not
+  available") at 08:35Z after ~25 hot-reloads and two probe processes; the M06 phase-2 gate
+  eval then ran on CPU against the GPU M01 baseline and produced a false "regression" (c08
+  live +6 words diverging from row 7; c02 role-mapping luck flip). Two same-code CPU runs
+  were byte-identical to each other, proving device numerics - not code - moved the text.
+  `docker compose restart nemo-agent` cannot recover this state: the nvidia runtime hook
+  fails with "WSL environment detected but no adapters were found" and the container stays
+  DOWN until a Windows-side `wsl --shutdown`.
+- **Prevention:** Before ANY baseline-gated eval, verify device liveness in the running
+  container - `docker exec ambient-scribe-nemo-agent-1 python -c "import torch;
+  print(torch.cuda.is_available())"` must print True; env vars alone are NOT liveness
+  (lessons/verification.md "Verify the running container's env" now has a device
+  counterpart). Treat a byte-identity gate failure as UNATTRIBUTED until the run's device
+  matches the baseline's device; re-run the same eval twice on the same device to separate
+  code drift from hardware numerics before touching any code. After GPU restore, grep the
+  agent log for "CUDA is not available" over the full session window before trusting any
+  metrics recorded in it.
+
+## Footgun: Second-pass correction failure silently swaps the summary's input lane
+
+**Status:** active | **Created:** 2026-07-09 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/api/server.py` (search: "correction.unavailable")
+- **Files:** `strands_agents/api/summary_request.py` (search: "corrected_segments")
+- **What breaks:** (Pre-M09 behavior; see the 2026-07-11 update for what ships now.) The post-visit correction endpoint made exactly ONE attempt; any second-pass failure returned HTTP 200 with `correction.unavailable` at WARNING, and the next summary request silently fell back from `corrected_segments` to `browser_visible_segments` (raw live rows: worse ASR, dual-identity duplicate rows, different row shapes for the fidelity checker) - stacking with the 8000-char head-truncation footgun (footguns/summary.md). The observed failure was `CUDA driver error: device not ready` on the FIRST transcribe call, ~12s after `session_lifecycle.destroy_scheduled`, on the longest session of the evening (116 chunks), while the two shorter sessions' corrections succeeded minutes earlier and `torch.cuda.is_available()` printed True in-container immediately afterwards. The initial "racing the live session's GPU teardown" reading was REJECTED by the M09 diagnosis: the error landed well inside the 30s reconnect grace (destroy had not run), `SessionLifecycle.destroy` performs no NeMo/GPU teardown work, and the 2026-07-10 capacity table below reproduced the failure deterministically by LENGTH, including on a clean restarted agent. "A single retry would very likely have succeeded" was likewise refuted for long clips (next update).
+- **Log-grep trap:** the failure is logged at WARNING with the wording "CUDA driver error", so sweeps for `ERROR`, `Traceback`, or the phrase "CUDA error" all miss it. Grep `correction.unavailable` explicitly when auditing a session.
+- **Evidence:** 2026-07-08 (UTC) session `0a40e243-c813-48a5-b87f-e069da4def40`: `correction.unavailable ... duration_ms=12350 detail=Second-pass ASR failed for nvidia/parakeet-tdt-0.6b-v3: CUDA driver error: device not ready`, then `summary.requested source=browser_visible_segments` 14s later. Same evening, sessions `d97a9bde`/`203d1d35` logged `correction.completed` (17.4s / 11.5s) and `summary.requested source=corrected_segments`. Related but distinct root cause with the same downstream fallback: lessons/verification.md (search: "correction smoke tests must stay inside reconnect grace").
+- **Prevention:** after every manual or e2e correction run, verify BOTH `correction.completed` AND `summary.requested source=corrected_segments` in the agent log before judging note quality - the existing grace-expiry lesson's check now has two root causes that trip it. Since M09 (2026-07-11) the fallback is no longer silent in the UI, but the log check remains the server-side truth.
+- **Update (2026-07-10, M08 c03 acceptance):** "a single retry would very likely have succeeded" is now REFUTED for long clips. Full-length c03 (9:04) corrections failed 3/3 today - once as an explicit CUDA OOM ("1.38 GiB ... 247 MiB free"), twice as "device not ready", including once on a freshly restarted agent with 10.6 GiB free - while 3:01-3:48 sessions succeeded on both days. GPU sampling during the clean-state run shows streaming stayed ~5.8 GiB and the correction's own transcribe spiked to 15.7 GiB in ~10s before failing, then stayed cached at 15.7 GiB, so same-lifetime retries inherit near-zero headroom. Treat full-length one-shot second-pass transcribe as over-capacity on this 16 GB card with the streaming stack resident; the failure is deterministic at ~9 min, not a teardown race. Full table and design implications: `.goat-flow/plans/0.4.0-slice-1/M09-correction-resilience.md` (search: "length-correlated capacity failure").
+- **Update (2026-07-11, 0.4.0-slice-1 M09 shipped - evidenced behavior only):**
+  - Length-gated second pass: <=240s audio keeps the byte-identical one-shot call; longer audio runs as ordered 180s chunks through ONE restored model with visit-relative timing/confidence (`strands_agents/post_visit_correction.py`, search: "_ONE_SHOT_MAX_AUDIO_SECONDS"). The M01 trio stayed byte-identical on GPU. Corpus-sweep field fix (2026-07-11): a 541.56s visit's 1.56s tail sliver decoded empty and vetoed the whole correction (`empty_result`); remainders under `_MIN_FINAL_CHUNK_SECONDS` (10s) now ride inside the final chunk, while a full-size empty chunk still falls back loudly.
+  - One same-model retry, ONLY for the case-insensitive `device not ready` exception/cause-chain signature, after synchronize + `empty_cache` + ~2s backoff (search: "_is_device_not_ready_error"). OOM, illegal-memory-access, device-side-assert, model-load, malformed-audio, and empty-result failures never retry.
+  - Pre-model-restore cache release: `gc.collect()` + `torch.cuda.empty_cache()` immediately BEFORE every correction model restore (search: "_release_cached_cuda_memory_before_model_restore"). Added red-test-first after a day5 restore failure (`model_load_failed`, attempted=false) with stale correction cache + 579s stream resident (`var/quality/m09-day5-browser/attempt-1-model-load-failed-20260710T2015Z/`). Do not remove without repeating that field sequence.
+  - Correction is globally single-flight on the event loop (`strands_agents/api/server.py`, search: "correction_single_flight"); queued requests hold no executor worker, duplicate non-force requests reuse the stored artifact, `force` reruns. Does NOT serialize correction against live streaming.
+  - Provenance is visible: responses and `correction.completed`/`correction.unavailable` logs carry attempts/retried/chunk_count plus a sanitized `reason_category` (never raw CUDA text or clinical prose); the browser keys its persistent live-fallback notice off the summary's ACTUAL `transcript_source` and never invents a failure for direct live/store summaries.
+  - Acceptance: day5 579s browser replay passed from corrected source (correction 17.06s, chunk_count=4, no retry; summary 32.37s; no notice) - `var/quality/m09-day5-browser/attempt-2-corrected-source-20260710T2214Z/`. The 3/3-failing full-length c03 passed on a deliberately dirty GPU: release reclaimed ~4.7 GiB (11354 -> 6688 MiB), bounded peak 11464/16303 MiB vs the fatal 15.7 GiB one-shot spike, 18.09s, attempts=1, then corrected-source summary acceptance - `var/quality/m08-c03-acceptance/acceptance-notes-20260710T2230Z.md`.
+
+## Footgun: Phantom-speaker merging can fold short real interjections into the other speaker's row
+
+**Status:** active | **Created:** 2026-07-09 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/nemo_session.py` (search: "phantom_speaker_merged")
+- **What breaks:** The streaming engine folds window-local marginal speaker slots into a canonical speaker (the hallucination-scale guard from the cache-aware integration entry above). When a real patient interjection is short enough to look marginal inside one window, the fold assigns those words to the OTHER speaker's canonical stream, and they render inside that speaker's row - the cross-talk bleed family seen in every manual acceptance run.
+- **Evidence:** CONFIRMED 2026-07-12 in `phase0-verdict.md`. Keeping origins exposed 8 new identities; stable aliasing then counted 14 harmful day3 folds, though all 14 wrong roles pre-existed (`phase1b-targeted-gate-verdict.md`).
+- **Prevention:** Keep `NEMO_STREAMING_CROSSTALK_GUARD=0`. A cache slot is not a visit-long person: neither expose it nor pin it globally. Any replacement remains Ask First and must pass grounded target, flag-off hash, no-new-identity, and corpus quality gates.
 
 ## Resolved Entries
 

@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-09
 ---
 
 # Verification Patterns
@@ -93,3 +93,23 @@ authoritative constraint file (`composer.json`) rather than restating it. Anchor
 "exit_code"), `scripts/eval-fixtures.sh` (search: "no WAV fixtures found"),
 `scripts/health-check-remote.sh` (search: "Failing closed"), `strands_agents/api/server.py`
 (search: "unknown ROLE_AGENT_MODEL_PROVIDER").
+
+## Pattern: Judge note-pipeline behavior against persisted rows fetched from the agent API
+
+**Created:** 2026-07-09
+
+**Context:** Fidelity-checker verdicts depend on row SHAPE (lengths, punctuation, merge
+boundaries), and the browser transcript renders the live lane while summaries normally run on
+the corrected lane. During the 2026-07-08 (UTC) manual round, rows reconstructed from pasted
+UI text produced verdicts that disagreed with the logged `summary.fidelity_*` outcome; the
+persisted corrected rows reproduced it exactly (three flags, all identified as false
+positives).
+
+**Approach:** Fetch the rows the pipeline actually consumed - `GET
+:${AGENT_PORT:-48101}/session/{id}/corrected-transcript` (or `/history` for the live lane) -
+to a file, then import the module under test directly in the project venv
+(`strands_agents/.venv/bin/python`) and run the real functions (`find_fidelity_violations`,
+`_negative_finding_violation`) against those rows. Confirmed twice in one session: reproduced
+the missed fabricated denial (session `203d1d35`) and the three false-positive flags (session
+`d97a9bde`). Keep the scripts with the milestone that owns the fix so they become regression
+tests (`.goat-flow/plans/0.4.0-slice-1/tools/m10-*.py`).

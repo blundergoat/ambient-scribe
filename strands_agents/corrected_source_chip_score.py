@@ -54,6 +54,11 @@ _PATIENT_SYMPTOM_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+# Consultation-structure preambles are doctor-owned first person, not symptom talk;
+# without this exclusion the yes-no screening preamble flags on every run (c03 corrected-0146).
+_DOCTOR_PREAMBLE_PATTERNS = (
+    re.compile(r"\bi('| a)?m just (gonna|going to) ask\b", re.IGNORECASE),
+)
 
 
 @dataclass(frozen=True)
@@ -321,7 +326,9 @@ def score_corrected_segment(
         evidence.extend(doctor_cues)
 
     # Doctor rows that contain first-person symptom text likely borrowed patient words.
-    if role == "DOCTOR" and patient_cues:
+    # Question preambles ("I'm just gonna ask") stay out of this reporting path only -
+    # the cue itself keeps driving every other check.
+    if role == "DOCTOR" and patient_cues and not is_doctor_preamble(normalized_text):
         codes.append("patient_statement_in_doctor_row")
         evidence.extend(patient_cues)
 
@@ -413,6 +420,23 @@ def patient_cue_labels(normalized_text: str) -> list[str]:
                 break
 
     return labels
+
+
+def is_doctor_preamble(normalized_text: str) -> bool:
+    """Return whether a row is consultation-structure phrasing the doctor owns.
+
+    Args:
+        normalized_text: Lowercase row text; empty never matches a preamble.
+
+    Returns:
+        True when the row matches a doctor question preamble like "I'm just gonna ask".
+    """
+    for pattern in _DOCTOR_PREAMBLE_PATTERNS:
+        # One preamble match is enough to keep the row out of the patient-statement report.
+        if pattern.search(normalized_text):
+            return True
+
+    return False
 
 
 def is_patient_ack_after_doctor_question(

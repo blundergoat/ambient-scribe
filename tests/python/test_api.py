@@ -4,6 +4,7 @@ Tests for the FastAPI server endpoints.
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -138,6 +139,9 @@ class TestSessionHistory:
                 "end": 1.0,
             },
         )
+        # The visit is live: its WebSocket session is still registered, so the
+        # override must create/pin role state (lifecycle.clear() runs per test).
+        lifecycle._active[TEST_SESSION_ID] = MagicMock()
 
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
@@ -246,23 +250,28 @@ class TestSessionHistory:
         corrected_rows = sessions.get_corrected_segments(TEST_SESSION_ID)
         assert corrected_rows[0]["role"] == "PATIENT"
 
-    def test_row_override_invalidates_stale_corrected_artifact(
+    def test_speaker_override_after_role_state_cleanup_publishes_no_fabricated_state(
         self, client, monkeypatch
     ):
-        """A row fix cannot map onto corrected rows, so they must not go stale."""
+        """A post-visit speaker relabel must not resurrect or broadcast empty role state."""
+        published_events = []
 
         async def fake_publish(topic, data, event_id=None):
-            """Publishing is not under test for corrected-row invalidation."""
+            """Capture the roles-topic event the late speaker correction broadcasts."""
+            published_events.append((topic, data))
             return True
 
         monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        # The visit ended: transcript rows and the corrected artifact persist in
+        # storage, but grace-window teardown already destroyed the role state.
         sessions.append_segment(
             TEST_SESSION_ID,
             {
                 "speaker_id": "spk_0",
-                "text": "row the clinician fixes",
+                "text": "row the clinician relabels after the visit",
                 "start": 0.0,
-                "end": 1.0,
+                "end": 0.9,
                 "segment_id": "seg-0001",
             },
         )
@@ -272,151 +281,104 @@ class TestSessionHistory:
                 {
                     "segment_id": "corrected-0001",
                     "speaker_id": "spk_0",
-                    "role": "DOCTOR",
-                    "text": "corrected text",
+                    "role": "PATIENT",
+                    "text": "row the clinician relabels after the visit",
                     "start": 0.0,
-                    "end": 1.0,
-                    "source_model": "test-model",
+                    "end": 0.9,
                 }
             ],
-        )
-
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "PATIENT"},
-        )
-        assert response.status_code == 200
-
-        # The next summary re-corrects from the updated scaffold instead of
-        # citing the pre-fix roles.
-        assert sessions.get_corrected_segments(TEST_SESSION_ID) == []
-
-    def test_row_override_pins_one_row_without_touching_the_speaker(
-        self, client, monkeypatch
-    ):
-        """Correcting one row must not relabel the speaker's other rows."""
-        from tools.assign_roles import get_or_create_state
-
-        published_events = []
-
-        async def fake_publish(topic, data, event_id=None):
-            """Capture the roles-topic event the correction broadcasts."""
-            published_events.append((topic, data))
-            return True
-
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-
-        # Two rows from the same speaker; the clinician says row 2 is the patient.
-        for index in (1, 2):
-            sessions.append_segment(
-                TEST_SESSION_ID,
-                {
-                    "speaker_id": "spk_0",
-                    "text": f"row {index}",
-                    "start": float(index),
-                    "end": float(index) + 0.9,
-                    "segment_id": f"seg-{index:04d}",
-                },
-            )
-
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0002", "role": "PATIENT"},
-        )
-        assert response.status_code == 200
-        assert response.json() == {
-            "status": "ok",
-            "segment_id": "seg-0002",
-            "role": "PATIENT",
-        }
-
-        # A later agent-style speaker mapping cannot undo the row correction.
-        sessions.apply_role_mapping(TEST_SESSION_ID, {"spk_0": "DOCTOR"})
-        stored_rows = sessions.get_segments(TEST_SESSION_ID)
-        assert stored_rows[0]["role"] == "DOCTOR"
-        assert stored_rows[1]["role"] == "PATIENT"
-        assert stored_rows[1]["role_source"] == "user_row"
-
-        # The speaker-scoped stores stay untouched by a row correction.
-        state = get_or_create_state(TEST_SESSION_ID)
-        assert "spk_0" not in state.confirmed_overrides
-        assert "spk_0" not in state.current_mapping
-
-        # Other tabs learn about the row via the additive row_overrides field.
-        roles_topic, role_event = published_events[-1]
-        assert roles_topic.endswith("/roles")
-        assert role_event["row_overrides"] == {"seg-0002": "PATIENT"}
-        assert role_event["manual_override"] is True
-
-    def test_row_override_after_role_state_cleanup_publishes_no_fabricated_mapping(
-        self, client, monkeypatch
-    ):
-        """A post-visit row fix must not broadcast empty mapping or zero confidence."""
-        published_events = []
-
-        async def fake_publish(topic, data, event_id=None):
-            """Capture the roles-topic event the late correction broadcasts."""
-            published_events.append((topic, data))
-            return True
-
-        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
-
-        # The visit ended: transcript rows persist in storage, but grace-window
-        # teardown already destroyed the session's role state.
-        sessions.append_segment(
-            TEST_SESSION_ID,
-            {
-                "speaker_id": "spk_0",
-                "text": "row the clinician reviews after the visit",
-                "start": 0.0,
-                "end": 0.9,
-                "segment_id": "seg-0001",
-            },
         )
         role_tools.cleanup_session(TEST_SESSION_ID)
 
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "PATIENT"},
+            json={"speaker_id": "spk_0", "role": "DOCTOR"},
         )
         assert response.status_code == 200
 
-        # The correction still sticks to the stored row.
-        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "PATIENT"
+        # The explicit correction still sticks to stored rows AND the corrected
+        # artifact, so a retried summary cites the clinician's latest label.
+        assert sessions.get_segments(TEST_SESSION_ID)[0]["role"] == "DOCTOR"
+        assert sessions.get_corrected_segments(TEST_SESSION_ID)[0]["role"] == "DOCTOR"
 
-        # The broadcast carries only the row signal - no fabricated speaker state
-        # that would wipe another tab's earned confidence badge.
+        # The broadcast carries only the clinician's explicit partial mapping -
+        # no fabricated confidence or re-judged exceptions for a dead session.
         _, role_event = published_events[-1]
-        assert role_event["row_overrides"] == {"seg-0001": "PATIENT"}
+        assert role_event["mapping"] == {"spk_0": "DOCTOR"}
         assert role_event["manual_override"] is True
-        assert "mapping" not in role_event
         assert "confidence" not in role_event
+        assert "row_exceptions" not in role_event
 
-        # The dead session gained no resurrected role state either.
+        # The dead session gained no resurrected role state.
         assert TEST_SESSION_ID not in role_tools._session_states
 
-    def test_row_override_rejects_ambiguous_or_unknown_targets(self, client):
+    def test_speaker_override_on_live_visit_before_first_role_update_pins_label(
+        self, client, monkeypatch
+    ):
+        """Clicking a speaker label before the role worker has run must still pin it."""
+
+        async def fake_publish(topic, data, event_id=None):
+            """Pretend Mercure accepted the early manual override event."""
+            return True
+
+        monkeypatch.setattr(api_server, "publish_to_mercure", fake_publish)
+
+        sessions.append_segment(
+            TEST_SESSION_ID,
+            {
+                "speaker_id": "spk_0",
+                "text": "labelled before any agent role update arrived",
+                "start": 0.0,
+                "end": 1.0,
+                "segment_id": "seg-0001",
+            },
+        )
+        # Live visit, but the role worker has not created any state yet.
+        lifecycle._active[TEST_SESSION_ID] = MagicMock()
+        assert TEST_SESSION_ID not in role_tools._session_states
+
+        response = client.post(
+            f"/session/{TEST_SESSION_ID}/roles/override",
+            json={"speaker_id": "spk_0", "role": "DOCTOR"},
+        )
+        assert response.status_code == 200
+
+        # The live override creates state and pins the label against later
+        # agent proposals - the survival contract the UI relies on.
+        state = role_tools.get_or_create_state(TEST_SESSION_ID)
+        assert state.confirmed_overrides == {"spk_0": "DOCTOR"}
+        assert state.current_mapping["spk_0"] == "DOCTOR"
+
+    def test_roles_snapshot_after_cleanup_does_not_resurrect_state(self, client):
+        """Reading roles for a finished visit must not create state as a side effect."""
+        role_tools.cleanup_session(TEST_SESSION_ID)
+
+        response = client.get(f"/session/{TEST_SESSION_ID}/roles")
+        assert response.status_code == 200
+
+        # The page honestly sees "no role news" - the same shape as the PHP fallback.
+        payload = response.json()
+        assert payload["mapping"] == {}
+        assert payload["confidence"] == 0.0
+
+        # A read is a read: the dead session gained no new state entry.
+        assert TEST_SESSION_ID not in role_tools._session_states
+
+    def test_role_override_rejects_incomplete_requests(self, client):
         """The UI gets clear validation errors instead of silent no-ops."""
-        # Neither scope: the server cannot know what the user corrected.
+        # No speaker: the server cannot know whose label the user clicked.
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
             json={"role": "DOCTOR"},
         )
         assert response.status_code == 400
 
-        # Both scopes at once is ambiguous and likely a client bug.
+        # No role: a click that never picked a label cannot relabel anything.
         response = client.post(
             f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"speaker_id": "spk_0", "segment_id": "seg-0001", "role": "DOCTOR"},
+            json={"speaker_id": "spk_0"},
         )
         assert response.status_code == 400
-
-        # A row correction for a session with no stored transcript cannot stick.
-        response = client.post(
-            f"/session/{TEST_SESSION_ID}/roles/override",
-            json={"segment_id": "seg-0001", "role": "DOCTOR"},
-        )
-        assert response.status_code == 404
 
 
 class TestTranscriptionEndpoints:
@@ -846,7 +808,7 @@ class TestSummaryModelPreflight:
         """A typo'd provider must not let a consultation start."""
         monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrok")
 
-        available, detail = api_server._summary_model_reachable()
+        available, detail = api_server._probe_summary_model()
 
         assert available is False
         assert "bedrok" in detail
@@ -864,7 +826,7 @@ class TestSummaryModelPreflight:
         monkeypatch.setenv("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
         monkeypatch.setattr(boto3, "Session", NoCredentialsSession)
 
-        available, detail = api_server._summary_model_reachable()
+        available, detail = api_server._probe_summary_model()
 
         assert available is False
         assert "credentials" in detail
@@ -883,7 +845,7 @@ class TestSummaryModelPreflight:
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         monkeypatch.setattr(boto3, "Session", ConfiguredSession)
 
-        available, detail = api_server._summary_model_reachable()
+        available, detail = api_server._probe_summary_model()
 
         assert available is True
         assert detail == "bedrock:ap-southeast-2"
@@ -904,7 +866,7 @@ class TestSummaryModelPreflight:
             api_server.httpx, "get", lambda url, timeout: FakeTagsResponse()
         )
 
-        available, detail = api_server._summary_model_reachable()
+        available, detail = api_server._probe_summary_model()
 
         assert available is False
         assert "not pulled" in detail
@@ -925,7 +887,7 @@ class TestSummaryModelPreflight:
         )
 
         monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b")
-        assert api_server._summary_model_reachable() == (True, "ollama:qwen3.5:9b")
+        assert api_server._probe_summary_model() == (True, "ollama:qwen3.5:9b")
 
         monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "phi4")
-        assert api_server._summary_model_reachable() == (True, "ollama:phi4")
+        assert api_server._probe_summary_model() == (True, "ollama:phi4")

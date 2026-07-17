@@ -18,48 +18,47 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${REPO_ROOT}/tests/fixtures/audio"
 BASE_URL="https://raw.githubusercontent.com/babylonhealth/primock57/main/transcripts"
 
-# consultation number -> local WAV stem (must match the generated .wav files)
-declare -A STEM=(
-  [02]="primock57-day1-consultation02-i-have-sore-red-skin"
-  [03]="primock57-day1-consultation03-i-have-terrible-headache"
-  [04]="primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose"
-  [05]="primock57-day1-consultation05-lower-abdominal-pain"
-  [06]="primock57-day1-consultation06-hard-to-breathe"
-  [07]="primock57-day1-consultation07-i-have-a-cough-and-cold"
-  [08]="primock57-day1-consultation08-i-have-dry-itchy-skin"
-)
-
 downloaded=0
 skipped=0
 failed=0
 
-for num in $(printf '%s\n' "${!STEM[@]}" | sort); do
-  stem="${STEM[$num]}"
+shopt -s nullglob
+wav_files=("${DEST}"/primock57-day*-consultation*.wav)
 
-  # Only fetch transcripts that pair with an existing WAV fixture.
-  if [[ ! -f "${DEST}/${stem}.wav" ]]; then
-    echo "skip  ${stem}.wav not present - run generate-demo-consultation-audio.py first"
+if [[ "${#wav_files[@]}" -eq 0 ]]; then
+    echo "skip  no PriMock57 WAV fixtures found - run generate-demo-consultation-audio.py first"
     skipped=$((skipped + 1))
-    continue
-  fi
+fi
 
-  for channel in doctor patient; do
-    source_url="${BASE_URL}/day1_consultation${num}_${channel}.TextGrid"
-    out_path="${DEST}/${stem}.${channel}.TextGrid"
-    tmp_file="$(mktemp)"
+for wav_path in "${wav_files[@]}"; do
+    stem="$(basename "${wav_path}" .wav)"
 
-    # Validate the body is a real TextGrid, not a 404 page or an LFS pointer.
-    if curl -fsS -m 60 "${source_url}" -o "${tmp_file}" \
-        && head -n 1 "${tmp_file}" | grep -q 'ooTextFile'; then
-      mv "${tmp_file}" "${out_path}"
-      echo "ok    ${stem}.${channel}.TextGrid"
-      downloaded=$((downloaded + 1))
+    if [[ "${stem}" =~ ^primock57-day([0-9]+)-consultation([0-9]+)(-|$) ]]; then
+        day="${BASH_REMATCH[1]}"
+        consultation="${BASH_REMATCH[2]}"
     else
-      rm -f "${tmp_file}"
-      echo "FAIL  ${source_url}"
-      failed=$((failed + 1))
+        echo "skip  ${stem}.wav does not match a PriMock57 day/consultation id"
+        skipped=$((skipped + 1))
+        continue
     fi
-  done
+
+    for channel in doctor patient; do
+        source_url="${BASE_URL}/day${day}_consultation${consultation}_${channel}.TextGrid"
+        out_path="${DEST}/${stem}.${channel}.TextGrid"
+        tmp_file="$(mktemp)"
+
+        # Validate the body is a real TextGrid, not a 404 page or an LFS pointer.
+        if curl -fsS -m 60 "${source_url}" -o "${tmp_file}" \
+            && head -n 1 "${tmp_file}" | grep -q 'ooTextFile'; then
+            mv "${tmp_file}" "${out_path}"
+            echo "ok    ${stem}.${channel}.TextGrid"
+            downloaded=$((downloaded + 1))
+        else
+            rm -f "${tmp_file}"
+            echo "FAIL  ${source_url}"
+            failed=$((failed + 1))
+        fi
+    done
 done
 
 echo "---- transcripts: downloaded=${downloaded} skipped=${skipped} failed=${failed} ----"

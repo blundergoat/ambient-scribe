@@ -33,10 +33,13 @@ class PostVisitTranscription:
         text: Plain transcript text; empty means the correction pass falls back to live rows.
         word_timings: Per-word `{"word","start","end"}` rows aligned to the split display
             words; None means no trustworthy timing exists and no row is timing-split.
+        word_confidences: Per-word confidence aligned to the split display words; None
+            means corrected rows carry no confidence and render unstyled.
     """
 
     text: str
     word_timings: list[dict[str, Any]] | None = None
+    word_confidences: list[float] | None = None
 
 
 def validated_word_timings(
@@ -74,6 +77,37 @@ def validated_word_timings(
             return None
 
     return word_timings
+
+
+def validated_word_confidences(
+    word_confidences: list[float] | None,
+    words: list[str],
+) -> list[float] | None:
+    """Keep word confidences only when they pair one-to-one with display words.
+
+    Args:
+        word_confidences: Confidence values from the transcriber; None means the
+            correction ran without confidence.
+        words: Split display words the corrected rows will show.
+
+    Returns:
+        The validated values, or None when a count mismatch makes them
+        untrustworthy and corrected rows should render unstyled.
+    """
+    # Absent confidence simply leaves corrected rows unmeasured.
+    if not word_confidences:
+        return None
+
+    # Values must pair one-to-one with visible words or rows would style the
+    # wrong lines.
+    if len(word_confidences) != len(words):
+        logger.warning(
+            "post_visit_correction.word_confidences_mismatch",
+            extra={"confidence_rows": len(word_confidences), "words": len(words)},
+        )
+        return None
+
+    return word_confidences
 
 
 def word_timings_from_hypothesis(

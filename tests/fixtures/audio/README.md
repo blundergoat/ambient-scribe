@@ -10,16 +10,26 @@ when you need fresh files for the browser Demo Audio picker or `scripts/m2-verif
 python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 \
   --case day1_consultation02 \
   --case day1_consultation03 \
-  --case day1_consultation04 \
   --case day1_consultation05 \
   --case day1_consultation06 \
   --case day1_consultation07 \
-  --case day1_consultation08
+  --case day1_consultation08 \
+  --case day2_consultation02 \
+  --case day2_consultation03 \
+  --case day2_consultation07 \
+  --case day2_consultation09 \
+  --case day3_consultation01 \
+  --case day3_consultation03 \
+  --case day5_consultation03 \
+  --case day5_consultation04 \
+  --case day5_consultation08 \
+  --case day5_consultation09
 ```
 
 The generator downloads CC BY 4.0 PriMock57 doctor/patient channels, mixes each
 pair to a full-length 16 kHz mono 16-bit PCM WAV, and writes `generated-manifest.json`.
-Cases 01, 09, and 10 are intentionally excluded from the local demo picker.
+The source of truth for cases intentionally excluded from the local demo picker is
+`PRIMOCK57_EXCLUDED_CASE_IDS` in `scripts/generate-demo-consultation-audio.py`.
 
 ## Ground-truth transcripts
 
@@ -46,11 +56,20 @@ TextGrids together. Like the `.wav` fixtures, `.TextGrid` files are git-ignored.
 | --- | --- | --- | --- |
 | `primock57-day1-consultation02-i-have-sore-red-skin.wav` | Sore red skin | Doctor, patient | Default `m2-verify` file |
 | `primock57-day1-consultation03-i-have-terrible-headache.wav` | Terrible headache | Doctor, patient | Additional mock consultation |
-| `primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose.wav` | Cough and runny nose | Doctor, patient | Additional mock consultation |
 | `primock57-day1-consultation05-lower-abdominal-pain.wav` | Lower abdominal pain | Doctor, patient | Additional mock consultation |
 | `primock57-day1-consultation06-hard-to-breathe.wav` | Hard to breathe | Doctor, patient | Additional mock consultation |
 | `primock57-day1-consultation07-i-have-a-cough-and-cold.wav` | Cough and cold | Doctor, patient | Additional mock consultation |
 | `primock57-day1-consultation08-i-have-dry-itchy-skin.wav` | Dry itchy skin | Doctor, patient | Additional mock consultation |
+| `primock57-day2-consultation02-i-have-a-strange-swelling-on-my-elbow.wav` | Elbow swelling | Doctor, patient | Musculoskeletal swelling / bursitis |
+| `primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.wav` | Hearing loss and face numbness | Doctor, patient | ENT plus neurologic symptoms |
+| `primock57-day2-consultation07-im-having-chest-discomfort.wav` | Chest discomfort | Doctor, patient | Cardiac red-flag vocabulary |
+| `primock57-day2-consultation09-i-cant-move-my-left-arm.wav` | Left arm weakness | Doctor, patient | Stroke-like urgent neurologic symptoms |
+| `primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.wav` | Lip swelling | Doctor, patient | Allergy / anaphylaxis vocabulary |
+| `primock57-day3-consultation03-i-dont-have-much-appetite-or-energy-lately.wav` | Low appetite and energy | Doctor, patient | Constitutional symptoms and weight loss |
+| `primock57-day5-consultation03-im-feeling-very-anxious.wav` | Anxiety | Doctor, patient | Mental-health vocabulary |
+| `primock57-day5-consultation04-lower-stomach-pain.wav` | Lower stomach pain | Doctor, patient | Gynaecology / abdominal pain vocabulary |
+| `primock57-day5-consultation08-im-wheezy.wav` | Wheeze | Doctor, patient | Asthma and wheeze vocabulary |
+| `primock57-day5-consultation09-tired-all-the-time.wav` | Tired all the time | Doctor, patient | Fatigue, rash, and systemic symptoms |
 
 ## Contract
 

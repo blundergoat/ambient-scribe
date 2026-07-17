@@ -1,12 +1,124 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-15
 ---
 
 # Tooling and Quality-Gate Lessons
 
 Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
+
+## Lesson: Placement proofs must not default missing telemetry to zero
+
+**Created:** 2026-07-13
+**What happened:** M00's first CPU-only Ollama verifier converted an absent `/api/ps`
+`size_vram` field to zero. A changed or incomplete API response could therefore certify that
+the user's local model left the GPU to NeMo without reporting any placement measurement.
+**Evidence:** `scripts/install-ollama.sh` (search: "missing VRAM measurement").
+**Prevention:** Treat absent device-placement fields as invalid evidence. Accept CPU-only model
+placement only when the exact loaded model explicitly reports zero VRAM; fail closed otherwise.
+
+## Lesson: Whole-file patch replacement can drop executable mode
+
+**Created:** 2026-07-13
+**What happened:** M00 replaced `scripts/check-ai-model.sh` through a delete/add patch. Bash syntax
+and ShellCheck were clean, but `stat` showed the operator command had changed from executable to
+mode `0644`, so direct use would have failed before any model check ran.
+**Evidence:** `scripts/check-ai-model.sh` (search: "Diagnose the off-GPU models") and
+`var/quality/m00-default-models-infra-20260712T201108Z/` (focused static evidence).
+**Prevention:** After replacing any executable script as a whole, compare `stat -c '%a %n'` with
+HEAD, restore the original executable mode before behavioral tests, and include mode in staging
+review. Prefer in-place hunks when a full replacement is unnecessary.
+
+## Lesson: Formatter-only churn can inherit class-wide Gruff debt
+
+**Created:** 2026-07-12
+**What happened:** M04 retained two Ruff-only line wraps in `TranscriptionSession` after removing
+the rejected behavior. The changed-symbol hook then surfaced the class's pre-existing size debt
+as changed scope even though no behavior remained.
+**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope") and
+`.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
+**Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
+but do not widen a debt-heavy symbol to chase formatter debt outside scope.
+
+## Lesson: Evidence CLI documentation is part of its gate
+
+**Created:** 2026-07-12
+**What happened:** M04 tests/Ruff passed before Gruff found eight missing docs. M05 repeated the
+sequence: its duplicate scorer was behaviorally green before Gruff found undocumented public
+evidence fields whose null/empty meanings operators need to interpret the report.
+**Evidence:** `scripts/fold-attribution-score.py` (search: "def build_report") and
+`scripts/duplicate-transcript-score.py` (search: "class VisibleHistoryRow") now document empty,
+UNKNOWN, legacy-ID, and absent-arrival meanings.
+**Prevention:** Run direct Gruff immediately after the first behavioral green. Do not tick an
+evidence CLI until every public field and empty/null outcome has operator-facing documentation.
+
+## Lesson: Diagnostic state is unavailable until the retained artifact proves it
+
+**Created:** 2026-07-12
+**What happened:** M05 stored `late_slot_births` and `revision_resyncs` in session continuity,
+but its logger and extractor omitted both fields. The 1x replay therefore could not recover them.
+The same replay and accepted baseline each had 10 phantom merges but zero duplicate pairs, so the
+merge count was also rejected as causal evidence.
+**Evidence:** `strands_agents/nemo_session.py` (search: "continuity_log_fields") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/phase0-mechanism-verdict.md`.
+**Prevention:** Before relying on instrumentation, prove the exact retained artifact contains the
+field. Record a missing field as unavailable, never zero, and reject fixes unsupported by the
+user-visible acceptance metric.
+
+## Lesson: A correction timeout cannot be interpreted as byte drift
+
+**Created:** 2026-07-12
+**What happened:** M05's flag-OFF c02 stream finalized with zero quality errors, but the correction
+HTTP call timed out after 120 seconds before producing the artifact needed for canonical hashing.
+Health and CUDA stayed live, so neither a matching nor mismatching byte result existed.
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search: "120.002 seconds")
+and `.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "120.001 seconds"). M06 repeated
+the boundary with max-hold behavior explicitly off, confirming it is not a byte or release-policy
+result.
+**Prevention:** Separate correction availability from byte comparison: retain the timeout timeline,
+health/CUDA proof, and partial artifacts, then stop before retrying or labeling the result drift.
+
+## Lesson: Keep evidence grounding separate from wording classification
+
+**Created:** 2026-07-12
+**What happened:** M05's connector refinement passed 39/39 behavior contracts, but combining
+TextGrid ownership gates with the word matcher raised Gruff Halstead volume to 407 and lowered its
+maintainability index to 63.2. Separating reference grounding from decoder-word classification
+restored both scorer and runtime Gruff to A/100 without changing the focused result.
+**Evidence:** `scripts/duplicate-transcript-score.py` (search: "grounded_decoder_repeat_match") and
+`scripts/duplicate-transcript-score.py` (search: "decoder_variant_word_match").
+**Prevention:** Keep oracle/reference ownership checks separate from process-local wording rules;
+run their shared end-to-end contract after refactoring so evidence semantics cannot drift.
+
+## Lesson: Exact decoder wording cannot close duplicate-identity acceptance
+
+**Created:** 2026-07-12
+**What happened:** M05 closed no-fix after its scorer found zero exact pairs in a 1x replay. The
+user's next browser check exposed a minimal two-row case with different IDs, one TextGrid Patient,
+0.29 seconds overlap, and no genuine overlap; small decoder wording differences kept the scorer at
+zero.
+**Evidence:** `scripts/duplicate-transcript-score.py` (search: "rows_by_normalized_text") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/manual-3c092379-minimal-exact-report.json`.
+**Prevention:** Treat exact wording as a high-precision signal, not the acceptance boundary. Before
+closing duplicate identity, include controlled decoder-variant matching grounded by overlapping
+time, different IDs, and one TextGrid speaker, then require a manual browser check.
+
+## Lesson: Run every safety predicate against the retained target
+
+**Created:** 2026-07-12
+**What happened:** M05's planning probe incorrectly reported equal vocabulary for the manual
+decoder-variant pair because a nested jq expression shadowed the word being compared. The first
+real scorer run then returned zero: role, overlap, timing, a shared four-word phrase, and 0.875
+word-LCS all passed, but the two eight-word rows had different vocabulary. The same faulty probe
+also labeled two canonical candidates safe; the tested classifier later proved each contained
+distinct non-connector words and the accepted 20 scored zero, not the planned two.
+**Evidence:**
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/d3-implementation-20260712T085346Z/diagnose-grounded-threshold-connector.json`
+and `diagnose-canonical-grounded-pairs.json` beside it.
+**Prevention:** Before implementing a safety filter, run its complete predicate against the retained
+target and save one PHI-safe boolean/count record per condition. Treat ad-hoc jq joins as planning
+signals only, especially when nested `.` scopes can change which operand `index()` receives.
 
 ## Lesson: Fixture CLIs should load helpers without mutating `sys.path`
 
@@ -107,11 +219,28 @@ During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` report
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import").
+**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import"), `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections").
 
 Full pytest caught that the test helper loaded `scripts/analyze-logs.py` with `importlib.util.module_from_spec()` but did not register it in `sys.modules` before executing the module. Python dataclasses resolving postponed annotations then failed during import.
 
+The same mistake recurred in the M08 context-measurement probe when it dynamically loaded a
+module containing dataclasses. This recurrence confirms the registration step belongs in the
+probe template, not only in one test helper.
+
 **Lesson:** When test-loading a hyphenated Python script that defines dataclasses or postponed annotations, insert the module into `sys.modules` before `spec.loader.exec_module(module)`, then rerun the full test gate that found the issue.
+
+## Lesson: Provider probes must modify the SDK-formatted request in place
+
+**Created:** 2026-07-10
+**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections"), `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
+
+The first M08 Bedrock token-cap probe passed a new `inferenceConfig` beside the request generated
+by the installed Strands formatter. That formatter had already embedded `inferenceConfig`, so the
+duplicate wrapper made the probe invalid before it could measure the real request.
+
+**Lesson:** Build provider probes through the installed runtime formatter, inspect the resulting
+request shape, and override an existing nested limit such as `inferenceConfig.maxTokens` in place.
+Do not assume the wrapper leaves provider options for the caller to add again.
 
 ## Lesson: GPU image import gates need a local/pending split (2026-07-04)
 
@@ -147,3 +276,76 @@ fixture runner.
 **Lesson:** Treat model-card recommendations as candidates, not implementation facts.
 Before planning product wiring for a newer ASR checkpoint, run it inside the exact pinned
 Docker runtime and record a fixture score or a precise compatibility failure.
+
+## Lesson: Gruff PHP file intent must precede the strict-types declaration
+
+**Created:** 2026-07-11
+**What happened:** M01 added a documented test-only PHP router, but its file docblock followed
+`declare(strict_types=1)`. PHP lint, PHP-CS-Fixer, and PHPStan all passed while preflight failed
+`docs.missing-file-phpdoc`; gruff recognizes the intent only at the file header.
+**Evidence:** `scripts/e2e-router.php` (search: "Route isolated browser tests") now places the
+3-8-line intent block immediately after `<?php`, before the strict-types declaration.
+**Prevention:** For every new PHP file, put the file-intent docblock directly after `<?php` and
+before `declare(strict_types=1)`, then run the direct gruff-php gate as well as PHP lint/style.
+
+## Lesson: Structured fixture gates require the running JSON log mode
+
+**Created:** 2026-07-12
+**What happened:** An M04 flag-OFF trio stopped in preflight because the restored normal agent
+used `LOG_FORMAT=console` while `EVAL_REQUIRE_STRUCTURED_LOGS=1` required JSON. No fixture ran.
+**Evidence:** `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-flag-off-trio-eval.log`.
+**Prevention:** Before a structured fixture run, verify `LOG_FORMAT=json` in the running agent as
+well as feature flags and CUDA; restore normal log mode after the evidence run.
+
+The same session found that a bare `nohup ... &` child launched by a one-shot command runner was
+reaped immediately with empty logs. For long evals, verify both the saved child PID and the first
+fixture line; when the runner reaps descendants, keep a managed parent session waiting on the
+`nohup` child while a separate monitor records health and progress. M06 later showed that an
+explicitly interrupted assistant turn can also end that managed process group mid-fixture without
+an application sentinel. Put multi-hour eval, log capture, and health polling in independent OS
+sessions, then verify their session IDs differ from the launching command before relying on them.
+The M06 live-only gate reconfirmed the check: three saved background PIDs vanished with an empty
+run log and no fixture directory, while named `tmux` sessions immediately produced the first
+fixture UUID and completed. Treat an empty log after the launch check as no run, never as a gate
+failure or pass.
+
+## Lesson: Run changed-symbol Gruff before a hot-path module crosses its size gate
+
+**Created:** 2026-07-13
+**What happened:** M06's Phase 1 release branch passed its CPU behavior tests and Ruff, but direct
+changed-symbol Gruff found the edited release method at 124 lines / 64.6 maintainability and then
+found the module at 1,031 lines after the method was extracted. Neither issue was a runtime test
+failure, and the module had been below the file threshold before the diagnostic additions.
+**Evidence:** `var/quality/m06-emission-starvation-20260712T211015Z/phase1-gruff-direct.log` and
+`strands_agents/nemo_streaming_engine.py` (search: "class _ReleasePolicy").
+**Prevention:** On a near-threshold hot-path module, run changed-symbol Gruff after each substantive
+diagnostic or policy slice. Extract a named policy before the release method crosses 100 lines,
+then tighten comments and contracts while checking the file remains below its configured limit.
+
+The cadence refinement first stored the fixed browser tick as another per-session engine
+attribute. Focused tests passed, but Gruff exposed the extra state on a class already carrying 21
+attributes. Replacing it with a module policy constant kept the file at 999 lines and a
+`--diff HEAD` hook scan reported zero new findings. Prefer a constant for a fixed application
+contract; use Gruff's new-only diff to distinguish introduced findings from inherited symbol debt.
+
+## Lesson: A schema switch orphans every test stub beneath it - guard the provider boundary
+
+**Created:** 2026-07-15
+**What happened:** M06 replaced the summary generation path (`_generate_validated_draft` →
+`_generate_validated_v2_draft`). Two tests stubbed the OLD helper by name; after the switch the
+stubs patched dead code and the live path ran to `create_summary_agent()` — on a box carrying
+real AWS credentials for approved replay campaigns. An estimated 3-6 UNAUTHORIZED Bedrock
+generations occurred across two pytest invocations before the 8-19s suite runtimes exposed it
+(one test even PASSED on real model output). Root causes: name-based stubs one level above the
+boundary, and no fail-fast at the boundary itself.
+**Evidence:** `.goat-flow/logs/sessions/2026-07-14-prime-m01-source-integrity.md` (search:
+"UNAUTHORIZED"); the guard in `tests/python/conftest.py` (search: "_no_summary_provider_calls").
+**Prevention:** (1) A session-scoped autouse conftest guard replaces
+`agents.create_summary_agent` with a raiser, so any unpatched generation path fails fast and
+free; tests patch their helper OVER the stub. (2) When renaming/replacing a function, grep the
+TESTS for the old name before running anything — a stub that still patches the old name is a
+live-fire path, not a failing test. (3) Watch suite runtime: an 8s jump in a sub-second file
+means network. Bonus finding: a per-test autouse fixture perturbed event-loop timing enough to
+trip a latent grace-destroy/dead-executor race in the transcription tests two files away —
+prefer session-scoped single-setattr guards, and treat new order-dependent failures after a
+conftest change as YOUR change until bisected (`git stash push -- <file>` isolates it fast).

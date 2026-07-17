@@ -106,7 +106,8 @@ class TestCorrectedTranscriptStorage:
         context = build_summary_context(SESSION_ID, summary_request, backend)
 
         assert context.source == "corrected_segments"
-        assert context.stored_segments[0]["text"] == "high accuracy corrected text"
+        assert context.complete_segments[0]["text"] == "high accuracy corrected text"
+        assert context.selected_segments[0]["text"] == "high accuracy corrected text"
         assert "[DOCTOR] high accuracy corrected text" in context.transcript
         assert "browser visible live text" not in context.transcript
         assert backend.get_segments(SESSION_ID)[0]["text"] == "browser visible live text"

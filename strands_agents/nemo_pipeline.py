@@ -23,6 +23,11 @@ from medical_lexicon import (
     default_medical_lexicon_path,
     load_medical_lexicon,
 )
+from nemo_confidence import (
+    enable_word_confidence_decoding,
+    row_confidence_for_word_share,
+    word_confidences_for_display_words,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,8 @@ class Segment:
         segment_id: Stable server ID; empty means no reconciliation ID yet.
         revision: Version number used when a visible line is updated.
         supersedes: Prior segment ID replaced by this line; empty means none.
+        confidence: How clearly the row was heard (0-1); None means no
+            trustworthy value exists and the row renders without styling.
     """
 
     speaker_id: str  # e.g., "spk_0", "spk_1"
@@ -59,6 +66,8 @@ class Segment:
     segment_id: str = ""  # Server-assigned unique ID
     revision: int = 1  # Incremented when segment is updated
     supersedes: str = ""  # segment_id this replaces (for reconciliation)
+    confidence: float | None = None  # Row ASR confidence; None means unmeasured
+
     def dict(self) -> dict:
         """Convert the segment into the JSON shape streamed to the browser.
 
@@ -79,6 +88,9 @@ class Segment:
         # Superseded IDs tell the UI which earlier transcript line was replaced.
         if self.supersedes:
             segment_payload["supersedes"] = self.supersedes
+        # Unmeasured rows omit the key so they render exactly as before.
+        if self.confidence is not None:
+            segment_payload["confidence"] = self.confidence
         return segment_payload
 
 
@@ -169,6 +181,11 @@ class NemoPipeline:
                 .eval()
                 .to(device)
             )
+
+            # Word confidence feeds low-confidence row styling; it must be
+            # enabled BEFORE the CUDA-graph workaround because the decoding
+            # strategy rebuild replaces the patched decoder internals.
+            enable_word_confidence_decoding(self._asr_model)
 
             # CUDA graph workaround (required for PyTorch 2.8 compat)
             self._asr_model.decoding.decoding.use_cuda_graph_decoder = False
@@ -407,7 +424,35 @@ class NemoPipeline:
         if total_duration <= 0:
             return []
 
-        return self._segments_from_words(parsed_diar, words, total_duration)
+        return self._segments_from_words(
+            parsed_diar,
+            words,
+            total_duration,
+            self._raw_word_confidences(asr_hyps),
+        )
+
+    @staticmethod
+    def _raw_word_confidences(asr_hyps: Any) -> list[float] | None:
+        """Return per-word confidence for the window's raw ASR words.
+
+        Confidence aligns with the words NeMo actually decoded, BEFORE medical
+        correction may change the visible word count; rows later map their
+        visible word share onto this raw list.
+
+        Args:
+            asr_hyps: Raw NeMo hypotheses; empty means no words were decoded.
+
+        Returns:
+            Raw-word confidence list, or None when this decode carried none and
+            the window's rows should render without confidence.
+        """
+        # No hypotheses means there are no decoded words to describe.
+        if not asr_hyps:
+            return None
+
+        first_hypothesis = asr_hyps[0]
+        raw_words = str(getattr(first_hypothesis, "text", "") or "").split()
+        return word_confidences_for_display_words(first_hypothesis, raw_words)
 
     def _visible_asr_text(self, asr_hyps: Any) -> str:
         """Return ASR text after optional medical correction for the UI.
@@ -454,6 +499,7 @@ class NemoPipeline:
         parsed_diar: list[tuple[float, float, str]],
         words: list[str],
         total_duration: float,
+        word_confidences: list[float] | None = None,
     ) -> list[Segment]:
         """Distribute ASR words across diarized speakers for transcript cards.
 
@@ -461,6 +507,7 @@ class NemoPipeline:
             parsed_diar: Speaker timing rows; empty would produce no transcript cards.
             words: ASR tokens; empty means the caller should avoid this helper.
             total_duration: Sum of diarized speech duration; zero would make shares invalid.
+            word_confidences: Raw-word confidence values; None leaves every row unmeasured.
 
         Returns:
             Transcript segments shown by the browser; empty means no text survived splitting.
@@ -471,6 +518,7 @@ class NemoPipeline:
         for diarization_index, (start, end, speaker_id) in enumerate(parsed_diar):
             segment_duration = end - start
             duration_share = segment_duration / total_duration
+            row_first_word_index = word_cursor
 
             # The final visible card receives any leftover words after rounding.
             if diarization_index == len(parsed_diar) - 1:
@@ -490,6 +538,12 @@ class NemoPipeline:
                         text=visible_text,
                         start=start,
                         end=end,
+                        confidence=row_confidence_for_word_share(
+                            word_confidences,
+                            row_first_word_index,
+                            word_cursor,
+                            len(words),
+                        ),
                     )
                 )
 

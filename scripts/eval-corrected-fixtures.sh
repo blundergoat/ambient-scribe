@@ -22,20 +22,22 @@ RUN_DIR="${CORRECTED_FIXTURE_RUN_DIR:-var/quality/corrected-fixtures/$RUN_ID}"
 RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SOURCE_CHIP_SCORE_TEXT_PATH="$RUN_DIR/source-chip-score.txt"
 SOURCE_CHIP_SCORE_JSON_PATH="$RUN_DIR/source-chip-score.json"
+CORRECTION_FAILURE_LEDGER_PATH="$RUN_DIR/correction-failures.jsonl"
 SOURCE_CHIP_FAIL_ON_FINDINGS="${CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS:-0}"
 # fast = blast chunks as quickly as the socket accepts (historical baselines);
-# 1x   = real-time pacing with browser-like chunk sizes, for live-lane numbers
-#        that match what a clinician's replay actually produces.
+# 1x   = real-time pacing; the browser and eval both default to 5-second chunks.
 PACE_MODE="${EVAL_PACE:-fast}"
-if [[ "$PACE_MODE" == "1x" && -z "${EVAL_CHUNK_MS:-}" ]]; then
-  # The browser's PCM streamer sends ~256ms chunks; 5s bursts would still be
-  # unrepresentative even when the overall rate is real-time.
-  CHUNK_MS=250
-else
-  CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
-fi
+CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
 ROLE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-8}"
+REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
+CORRECTION_UNAVAILABLE_EXIT_CODE=20
+ALL_FIXTURES_REQUESTED=false
+CORPUS_MODE=false
+FIXTURE_TOTAL=0
+FIXTURE_OK=0
+FIXTURE_FAILED=0
+LAST_FIXTURE_OUTCOME="ready"
 declare -a FIXTURE_QUERIES=()
 declare -a FIXTURE_PATHS=()
 declare -a REPORT_ROWS=()
@@ -47,21 +49,28 @@ Usage:
   scripts/eval-corrected-fixtures.sh [--seconds N] --all
 
 Examples:
-  scripts/eval-corrected-fixtures.sh --seconds 60 consultation03
-  scripts/eval-corrected-fixtures.sh --seconds 60 consultation02 consultation03 consultation08
+  scripts/eval-corrected-fixtures.sh --seconds 60 consultation03-i-have-terrible-headache
+  scripts/eval-corrected-fixtures.sh --seconds 60 \
+    consultation03-i-have-terrible-headache consultation08-i-have-dry-itchy-skin
 
 Environment:
   AGENT_HTTP_URL                 default http://localhost:48101
   AGENT_WS_URL                   default ws://localhost:48101
   EVAL_FIXTURE_SECONDS           optional cutoff to stream from each WAV
   CORRECTED_FIXTURE_RUN_DIR      optional artifact directory
+  EVAL_CHUNK_MS                  PCM chunk size in milliseconds, default 5000
   EVAL_ROLE_TIMELINE_SETTLE_SECONDS
-                                  seconds to wait for visible live Doctor/Patient labels; default 8
+                                  seconds to wait for final role decisions; default 8
+  EVAL_REQUIRE_STRUCTURED_LOGS     set 1 to require LOG_FORMAT=json before replay; default 0
   CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS
                                   set 1 to fail the eval when source-chip findings exist; default 0
   EVAL_PACE                      fast (default, historical-baseline blast) or 1x
-                                  (real-time pacing + browser-like 250ms chunks;
-                                  live-lane numbers then reflect real replays)
+                                  (real-time pacing; default chunks match the browser's 5000ms)
+
+Corpus behavior:
+  --all or more than one resolved fixture records an unavailable correction,
+  marks its corrected report columns FAILED, and continues. A single named
+  fixture keeps the fail-fast correction gate.
 USAGE
 }
 
@@ -77,6 +86,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --all)
+      ALL_FIXTURES_REQUESTED=true
       FIXTURE_QUERIES+=("__all__")
       shift
       ;;
@@ -136,6 +146,13 @@ resolve_fixtures() {
   done
 }
 
+select_corpus_mode() {
+  # Whole-corpus and multi-fixture runs preserve later evidence after one unavailable correction.
+  if [[ "$ALL_FIXTURES_REQUESTED" == "true" || ${#FIXTURE_PATHS[@]} -gt 1 ]]; then
+    CORPUS_MODE=true
+  fi
+}
+
 require_ready_agent() {
   # Check that the local NeMo agent can accept replay and correction calls.
   # The virtualenv owns websocket and scorer dependencies for local evals.
@@ -147,6 +164,22 @@ require_ready_agent() {
   # A failed health check means replay would not produce scoreable artifacts.
   if ! curl -fsS "$AGENT_HTTP_URL/health" >/dev/null; then
     echo "error: agent health check failed at $AGENT_HTTP_URL/health" >&2
+    exit 2
+  fi
+}
+
+require_structured_agent_logs() {
+  # M02-grade role diagnostics must fail before streaming if JSON events are unavailable.
+  if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" ]]; then
+    return 0
+  fi
+
+  local log_format
+  log_format="$(
+    docker compose exec -T nemo-agent sh -c 'printf "%s" "$LOG_FORMAT"' 2>/dev/null || true
+  )"
+  if [[ "$log_format" != "json" ]]; then
+    echo "error: EVAL_REQUIRE_STRUCTURED_LOGS=1 requires nemo-agent LOG_FORMAT=json" >&2
     exit 2
   fi
 }
@@ -397,22 +430,39 @@ request_correction() {
   local request_path="$2"
   local response_path="$3"
 
-  curl -fsS \
-    -H 'Content-Type: application/json' \
-    --data-binary "@$request_path" \
-    "$AGENT_HTTP_URL/session/$session_id/correction" \
-    -o "$response_path"
+  # Transport failures are not safe corpus skips because no structured outcome exists.
+  if ! curl -fsS \
+      --max-time 120 \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$request_path" \
+      "$AGENT_HTTP_URL/session/$session_id/correction" \
+      -o "$response_path"; then
+    return 1
+  fi
 
-  "$PYTHON_BIN" - "$response_path" <<'PY'
+  "$PYTHON_BIN" - "$response_path" "$CORRECTION_UNAVAILABLE_EXIT_CODE" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+unavailable_exit_code = int(sys.argv[2])
 
-# Unavailable correction means the fixture cannot prove the corrected summary lane.
-if payload.get("status") != "ready":
-    raise SystemExit(f"correction unavailable: {payload}")
+# Ready is the only status that may continue into corrected transcript scoring.
+if payload.get("status") == "ready":
+    raise SystemExit(0)
+
+# Unavailable is a safe, explicit correction outcome that corpus mode can record.
+if payload.get("status") == "unavailable":
+    reason_category = str(payload.get("reason_category") or "unknown")
+    # Never echo raw server text into a long-running corpus operator log.
+    if re.fullmatch(r"[a-z0-9_]+", reason_category) is None:
+        reason_category = "unknown"
+    print(f"correction unavailable: reason_category={reason_category}", file=sys.stderr)
+    raise SystemExit(unavailable_exit_code)
+
+raise SystemExit("correction response has an unknown status")
 PY
 }
 
@@ -437,6 +487,33 @@ assert_no_websocket_errors() {
   fi
 }
 
+write_role_timeline() {
+  # Persist the role decisions that produced the history labels scored below.
+  local session_id="$1"
+  local timeline_path="$2"
+  local quality_path="$3"
+
+  # Tail-batch role updates can land after disconnect and the quality snapshot.
+  sleep "$ROLE_SETTLE_SECONDS"
+  docker compose logs nemo-agent --since "$RUN_STARTED_AT" 2>/dev/null \
+    | "$PYTHON_BIN" scripts/role-timeline.py --quality-json "$quality_path" "$session_id" \
+    > "$timeline_path"
+
+  # Console logs discard the structured fields needed to explain visible-role variance.
+  if ! grep -Eq '"event": "(role_inference|role_mapping)\.' "$timeline_path"; then
+    if [[ "$REQUIRE_STRUCTURED_LOGS" == "1" ]]; then
+      echo "error: no structured role events captured for $session_id despite LOG_FORMAT=json" >&2
+      exit 1
+    fi
+    echo "warn: no structured role events captured for $session_id; use EVAL_REQUIRE_STRUCTURED_LOGS=1 for diagnostic gates" >&2
+  fi
+
+  # A mismatch is evidence of post-snapshot decisions, not a reason to discard the timeline.
+  if grep -q '"flip_counts_match": false' "$timeline_path"; then
+    echo "warn: session.quality flip counters disagree with $timeline_path" >&2
+  fi
+}
+
 score_artifact() {
   # Score a live or corrected transcript artifact against TextGrid truth.
   local artifact_path="$1"
@@ -444,13 +521,41 @@ score_artifact() {
   local doctor_grid="$3"
   local patient_grid="$4"
   local score_path="$5"
+  local quality_path="$6"
+  local row_diagnostics_path="$7"
 
   "$PYTHON_BIN" scripts/transcript-quality.py \
+    --quality-json "$quality_path" \
+    --row-diagnostics-json "$row_diagnostics_path" \
     "$artifact_path" \
     "$cutoff_seconds" \
     "$doctor_grid" \
     "$patient_grid" \
     > "$score_path"
+}
+
+prepare_live_score_after_correction() {
+  # Finish role evidence and score the live rows the clinician can still review.
+  local session_id="$1"
+  local timeline_path="$2"
+  local quality_path="$3"
+  local history_path="$4"
+  local wav_path="$5"
+  local doctor_grid="$6"
+  local patient_grid="$7"
+  local live_score_path="$8"
+  local live_row_diagnostics_path="$9"
+
+  write_role_timeline "$session_id" "$timeline_path" "$quality_path"
+  # Re-fetch after the fixed settle window so scoring uses the timeline's final mapping.
+  fetch_json "$AGENT_HTTP_URL/session/$session_id/history" "$history_path"
+
+  local cutoff_seconds
+  cutoff_seconds="$(cutoff_seconds_for_history "$history_path" "$wav_path")"
+  score_artifact \
+    "$history_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" \
+    "$live_score_path" "$quality_path" "$live_row_diagnostics_path"
+  printf '%s\n' "$cutoff_seconds"
 }
 
 append_report_row() {
@@ -506,7 +611,105 @@ row = [
     seam(live_score),
     seam(corrected_score),
     str(correction.get("word_count", "")),
+    "ready",
     run_dir,
+]
+print("\t".join(row))
+PY
+}
+
+append_failed_report_row() {
+  # Persist a PHI-safe unavailable correction and print its explicit FAILED report row.
+  local fixture_name="$1"
+  local session_id="$2"
+  local live_score_path="$3"
+  local corrected_response_path="$4"
+  local fixture_run_dir="$5"
+
+  "$PYTHON_BIN" - \
+    "$fixture_name" \
+    "$session_id" \
+    "$live_score_path" \
+    "$corrected_response_path" \
+    "$fixture_run_dir" \
+    "$CORRECTION_FAILURE_LEDGER_PATH" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+fixture_name = sys.argv[1]
+session_id = sys.argv[2]
+live_score = Path(sys.argv[3]).read_text(encoding="utf-8")
+correction = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+fixture_run_dir = Path(sys.argv[5])
+failure_ledger_path = Path(sys.argv[6])
+
+
+def metric(text: str, pattern: str) -> str:
+    """Return one live metric retained beside a failed corrected lane."""
+    match = re.search(pattern, text)
+
+    # Missing live metrics would make the corpus failure row silently incomplete.
+    if match is None:
+        raise SystemExit(f"missing metric: {pattern}")
+
+    return match.group(1)
+
+
+def pct(text: str, label: str) -> str:
+    """Return the percentage part of one live scorer line."""
+    return metric(text, rf"{re.escape(label)}:\s+(n/a|[\d.]+%)")
+
+
+def positive_int_or_none(value: object) -> int | None:
+    """Keep positive ordinals only; missing metadata stays null."""
+    return value if isinstance(value, int) and value > 0 else None
+
+
+# Only the API's explicit unavailable shape is safe to aggregate and continue.
+if correction.get("status") != "unavailable":
+    raise SystemExit("failure report requires correction status unavailable")
+
+reason_category = str(correction.get("reason_category") or "unknown")
+# A category is support metadata, never a place for raw CUDA or clinical text.
+if re.fullmatch(r"[a-z0-9_]+", reason_category) is None:
+    reason_category = "unknown"
+
+failure = {
+    "fixture": fixture_name,
+    "session_id": session_id,
+    "status": "unavailable",
+    "reason_category": reason_category,
+    "attempts": max(0, int(correction.get("attempts", 0) or 0)),
+    "retried": bool(correction.get("retried", False)),
+    "failed_chunk_index": positive_int_or_none(
+        correction.get("failed_chunk_index")
+    ),
+    "chunk_count_planned": positive_int_or_none(
+        correction.get("chunk_count_planned")
+    ),
+}
+fixture_run_dir.joinpath("correction-failure.json").write_text(
+    json.dumps(failure, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+with failure_ledger_path.open("a", encoding="utf-8") as failure_ledger:
+    failure_ledger.write(json.dumps(failure, sort_keys=True) + "\n")
+
+row = [
+    fixture_name[:44],
+    pct(live_score, "strict attribution (non-overlap)"),
+    "FAILED",
+    pct(live_score, "word error rate (non-overlap)"),
+    "FAILED",
+    pct(live_score, "incorrect-confident rate (non-overlap)"),
+    "FAILED",
+    metric(live_score, r"seam re-read count:\s+(\d+)"),
+    "-",
+    "-",
+    f"FAILED:{reason_category}",
+    str(fixture_run_dir),
 ]
 print("\t".join(row))
 PY
@@ -537,6 +740,11 @@ PY
   local correction_response_path="$fixture_run_dir/correction-response.json"
   local live_score_path="$fixture_run_dir/live-transcript-quality.txt"
   local corrected_score_path="$fixture_run_dir/corrected-transcript-quality.txt"
+  local timeline_path="$fixture_run_dir/role-timeline.jsonl"
+  local live_row_diagnostics_path="$fixture_run_dir/live-row-diagnostics.json"
+  local corrected_row_diagnostics_path="$fixture_run_dir/corrected-row-diagnostics.json"
+
+  LAST_FIXTURE_OUTCOME="ready"
 
   printf 'corrected eval fixture=%s session_id=%s pace=%s chunk_ms=%s\n' \
     "$fixture_name" "$session_id" "$PACE_MODE" "$CHUNK_MS" >&2
@@ -545,13 +753,67 @@ PY
   wait_for_live_role_labels "$session_id" "$history_path"
   assert_no_websocket_errors "$session_id"
   write_correction_request "$history_path" "$correction_request_path"
-  request_correction "$session_id" "$correction_request_path" "$correction_response_path"
+  local correction_exit_code=0
+  request_correction \
+    "$session_id" "$correction_request_path" "$correction_response_path" \
+    || correction_exit_code=$?
+
+  # Only an explicit unavailable response is a recordable corpus outcome.
+  if [[ "$correction_exit_code" == "$CORRECTION_UNAVAILABLE_EXIT_CODE" ]]; then
+    local failed_cutoff_seconds
+    failed_cutoff_seconds="$(
+      prepare_live_score_after_correction \
+        "$session_id" \
+        "$timeline_path" \
+        "$quality_path" \
+        "$history_path" \
+        "$wav_path" \
+        "$doctor_grid" \
+        "$patient_grid" \
+        "$live_score_path" \
+        "$live_row_diagnostics_path"
+    )"
+    # Reading the value proves the live score finished before the FAILED row is saved.
+    if [[ -z "$failed_cutoff_seconds" ]]; then
+      echo "error: live cutoff missing for unavailable correction $session_id" >&2
+      return 1
+    fi
+    REPORT_ROWS+=(
+      "$(
+        append_failed_report_row \
+          "$fixture_name" \
+          "$session_id" \
+          "$live_score_path" \
+          "$correction_response_path" \
+          "$fixture_run_dir"
+      )"
+    )
+    LAST_FIXTURE_OUTCOME="correction_unavailable"
+    return 0
+  fi
+  # Transport or malformed-response failures remain hard errors in every mode.
+  if [[ "$correction_exit_code" != "0" ]]; then
+    return "$correction_exit_code"
+  fi
+
   fetch_json "$AGENT_HTTP_URL/session/$session_id/corrected-transcript" "$corrected_path"
 
   local cutoff_seconds
-  cutoff_seconds="$(cutoff_seconds_for_history "$history_path" "$wav_path")"
-  score_artifact "$history_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" "$live_score_path"
-  score_artifact "$corrected_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" "$corrected_score_path"
+  cutoff_seconds="$(
+    prepare_live_score_after_correction \
+      "$session_id" \
+      "$timeline_path" \
+      "$quality_path" \
+      "$history_path" \
+      "$wav_path" \
+      "$doctor_grid" \
+      "$patient_grid" \
+      "$live_score_path" \
+      "$live_row_diagnostics_path"
+  )"
+  score_artifact \
+    "$corrected_path" "$cutoff_seconds" "$doctor_grid" "$patient_grid" \
+    "$corrected_score_path" "$quality_path" "$corrected_row_diagnostics_path"
 
   REPORT_ROWS+=(
     "$(
@@ -575,47 +837,101 @@ score_source_chips_for_run() {
     > "$SOURCE_CHIP_SCORE_JSON_PATH"
 }
 
-resolve_fixtures
-require_ready_agent
-mkdir -p "$RUN_DIR"
+reset_fixture_counts() {
+  # Reset corpus counters before a developer run or the GPU-free control smoke.
+  FIXTURE_TOTAL=0
+  FIXTURE_OK=0
+  FIXTURE_FAILED=0
+  LAST_FIXTURE_OUTCOME="ready"
+}
 
-# Each selected fixture becomes one saved live/corrected comparison.
-for fixture_path in "${FIXTURE_PATHS[@]}"; do
-  run_fixture "$fixture_path"
-done
+run_selected_fixtures() {
+  # Visit every selected fixture unless a non-correction error makes evidence unsafe.
+  local fixture_path
+  for fixture_path in "${FIXTURE_PATHS[@]}"; do
+    FIXTURE_TOTAL=$((FIXTURE_TOTAL + 1))
+    LAST_FIXTURE_OUTCOME="ready"
+    run_fixture "$fixture_path"
+    # An unavailable correction is complete evidence in corpus mode, not a lost run.
+    if [[ "$LAST_FIXTURE_OUTCOME" == "correction_unavailable" ]]; then
+      FIXTURE_FAILED=$((FIXTURE_FAILED + 1))
+      # A named fixture remains a hard quality gate exactly as before M01.
+      if [[ "$CORPUS_MODE" != "true" ]]; then
+        echo "error: correction unavailable for single-fixture gate" >&2
+        return 1
+      fi
+      continue
+    fi
 
-printf '\nCorrected transcript fixture eval\n'
-printf '%-44s %8s %8s %8s %8s %8s %8s %4s %4s %5s %s\n' \
-  'fixture' 'liveStr' 'corrStr' 'liveWER' 'corrWER' 'liveBad' 'corrBad' 'lSea' 'cSea' 'words' 'artifacts'
-# The report keeps exact artifact paths so developers can inspect the rows.
-for row in "${REPORT_ROWS[@]}"; do
-  IFS=$'\t' read -r \
-    fixture live_strict corrected_strict live_wer corrected_wer \
-    live_bad corrected_bad live_seam corrected_seam word_count artifact_dir \
-    <<<"$row"
-  printf '%-44s %8s %8s %8s %8s %8s %8s %4s %4s %5s %s\n' \
-    "$fixture" "$live_strict" "$corrected_strict" "$live_wer" "$corrected_wer" \
-    "$live_bad" "$corrected_bad" "$live_seam" "$corrected_seam" "$word_count" "$artifact_dir"
-done
+    FIXTURE_OK=$((FIXTURE_OK + 1))
+  done
+}
 
-score_source_chips_for_run
+fixture_summary_line() {
+  # Give detached wrappers one stable terminal count after the last fixture.
+  printf 'fixtures=%s ok=%s failed=%s\n' \
+    "$FIXTURE_TOTAL" "$FIXTURE_OK" "$FIXTURE_FAILED"
+}
 
-# A missing summary line means the scorer report shape changed and this eval is unsafe.
-if ! source_chip_summary="$(grep -m1 '^artifacts=' "$SOURCE_CHIP_SCORE_TEXT_PATH")"; then
-  echo "error: source-chip summary line missing from $SOURCE_CHIP_SCORE_TEXT_PATH" >&2
-  exit 1
+print_fixture_report() {
+  # Render saved rows, keeping unavailable corrected lanes visibly marked FAILED.
+  printf '\nCorrected transcript fixture eval\n'
+  printf '%-44s %8s %8s %8s %8s %8s %8s %4s %4s %5s %-24s %s\n' \
+    'fixture' 'liveStr' 'corrStr' 'liveWER' 'corrWER' 'liveBad' 'corrBad' \
+    'lSea' 'cSea' 'words' 'outcome' 'artifacts'
+  # Exact artifact paths let developers inspect every healthy or failed row.
+  local row
+  for row in "${REPORT_ROWS[@]}"; do
+    local fixture live_strict corrected_strict live_wer corrected_wer
+    local live_bad corrected_bad live_seam corrected_seam word_count outcome artifact_dir
+    IFS=$'\t' read -r \
+      fixture live_strict corrected_strict live_wer corrected_wer \
+      live_bad corrected_bad live_seam corrected_seam word_count outcome artifact_dir \
+      <<<"$row"
+    printf '%-44s %8s %8s %8s %8s %8s %8s %4s %4s %5s %-24s %s\n' \
+      "$fixture" "$live_strict" "$corrected_strict" "$live_wer" "$corrected_wer" \
+      "$live_bad" "$corrected_bad" "$live_seam" "$corrected_seam" "$word_count" \
+      "$outcome" "$artifact_dir"
+  done
+}
+
+main() {
+  # Run the developer-facing corrected fixture evaluation from intake to terminal sentinel.
+  resolve_fixtures
+  select_corpus_mode
+  require_ready_agent
+  require_structured_agent_logs
+  mkdir -p "$RUN_DIR"
+  reset_fixture_counts
+  run_selected_fixtures
+  print_fixture_report
+
+  score_source_chips_for_run
+
+  local source_chip_summary
+  # A missing summary line means the scorer report shape changed and this eval is unsafe.
+  if ! source_chip_summary="$(grep -m1 '^artifacts=' "$SOURCE_CHIP_SCORE_TEXT_PATH")"; then
+    echo "error: source-chip summary line missing from $SOURCE_CHIP_SCORE_TEXT_PATH" >&2
+    return 1
+  fi
+  printf '\nsource-chip score: %s\n' "$source_chip_summary"
+  printf 'source-chip report: %s\n' "$SOURCE_CHIP_SCORE_TEXT_PATH"
+  printf 'source-chip json:   %s\n' "$SOURCE_CHIP_SCORE_JSON_PATH"
+
+  # Findings are QA evidence by default; strict callers opt into failing the eval,
+  # after the saved reports and summary above so the evidence is never lost.
+  if [[ "$SOURCE_CHIP_FAIL_ON_FINDINGS" == "1" ]] \
+    && [[ "$source_chip_summary" =~ findings=([0-9]+) ]] \
+    && [[ "${BASH_REMATCH[1]}" != "0" ]]; then
+    echo "error: corrected source-chip findings present; see $SOURCE_CHIP_SCORE_TEXT_PATH" >&2
+    return 1
+  fi
+
+  printf '\nrun artifacts: %s\n' "$RUN_DIR"
+  fixture_summary_line
+}
+
+# Sourced smokes may exercise corpus control without starting a real GPU replay.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-printf '\nsource-chip score: %s\n' "$source_chip_summary"
-printf 'source-chip report: %s\n' "$SOURCE_CHIP_SCORE_TEXT_PATH"
-printf 'source-chip json:   %s\n' "$SOURCE_CHIP_SCORE_JSON_PATH"
-
-# Findings are QA evidence by default; strict callers opt into failing the eval,
-# after the saved reports and summary above so the evidence is never lost.
-if [[ "$SOURCE_CHIP_FAIL_ON_FINDINGS" == "1" ]] \
-  && [[ "$source_chip_summary" =~ findings=([0-9]+) ]] \
-  && [[ "${BASH_REMATCH[1]}" != "0" ]]; then
-  echo "error: corrected source-chip findings present; see $SOURCE_CHIP_SCORE_TEXT_PATH" >&2
-  exit 1
-fi
-
-printf '\nrun artifacts: %s\n' "$RUN_DIR"

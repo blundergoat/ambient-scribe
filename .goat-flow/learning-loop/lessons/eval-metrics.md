@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-15
 ---
 
 # Eval and Metrics Lessons
@@ -39,6 +39,15 @@ sleep, so the scored labels depended on a fetch-vs-flip race, not on the change 
 test. Reordering the eval to fetch history after the role-timeline settle made the gate
 deterministic (55.0/55.0/55.0). Churn can still straddle any fixed settle window, so
 median-of-3 remains mandatory.
+
+M07 reproduced both sides of this lesson. An 8-second settle sampled c08 3.427 seconds before its
+complete correct tail map; a 20-second settle then produced five identical 84.4% good-mode scores.
+Its later c07 spot score moved -0.4pp, but canonical rows changed and the best-dyadic audio/identity
+ceiling moved -0.5pp while the final role map stayed correct. The non-regression stop was still
+honoured, but the evidence prevents misattributing an audio-row draw to the role-tool candidate.
+One approved unchanged c07 retry then reproduced the exact failed canonical hash and 86.8% score;
+that repeat is a decision result, not permission to keep retrying a literal non-regression gate.
+The candidate was subsequently rolled back and retained only as rejection evidence.
 
 **Lesson:** when a gate metric moves right after a change that cannot mechanically
 affect it, first check the gate's own sampling timing against asynchronous state
@@ -158,3 +167,122 @@ phase.
 During M17 channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
 
 **Lesson:** Eval tooling that creates server sessions must either omit session IDs and capture the generated one, or generate valid UUIDs with a run-specific salt. After changing session identity behavior, run the server path that validates the ID rather than only testing local helper formatting.
+
+## Lesson: Persisted fixture commands must use unique slugs (2026-07-10)
+
+**Created:** 2026-07-10
+**What happened:** M02's three-run command used `consultation03`, which had been unique when
+the plan was drafted but matched four WAVs after the local corpus expanded. The resolver
+correctly exited 2, while the outer loop repeated the same failure three times because its
+example omitted `set -e`.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "matched multiple files"),
+`.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search: "Phase 1 - zero-code
+5-second/1x discriminator").
+**Prevention:** Persist exact fixture slugs or direct paths in plans and handoffs, even when a
+short consultation number is unique today. Put multi-run eval loops under `set -e`, and run
+the resolver once before committing to an expensive GPU batch.
+
+## Lesson: Grace-bound actions run before diagnostic settle sleeps (2026-07-10)
+
+**Created:** 2026-07-10
+**What happened:** Role-timeline instrumentation initially inserted an eight-second settle
+before the corrected-fixture runner requested post-visit correction. The request then hung
+past the documented 120-second budget while reconnect grace expired, even though the live
+replay and timeline were already complete. M02 did not need correction to diagnose roles.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction" and
+"write_role_timeline"), `.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search:
+"Authoritative settled-role rerun").
+**Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
+fixed diagnostic waits and give its client an explicit timeout. Use the live-only evaluator
+for live-lane diagnostics instead of making unrelated correction success a prerequisite.
+
+## Lesson: Targeted attribution deltas do not replace corpus-wide quality gates
+
+**Created:** 2026-07-12
+**What happened:** M04's stable two-identity alias passed two named same-span gates with nine
+improvements, zero worsened spans, and no new identities, then reproduced all three flag-OFF
+hashes. The canonical 20-fixture run still regressed corrected strict by 1.290 points and raised
+incorrect-confident by 1.645 points, with large failures on two non-target c07 fixtures.
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search:
+"Stable-alias candidate rejected and removed") and
+`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-full-corpus-gate-verdict.md`.
+**Prevention:** Treat named causal fixtures as mechanism proof, not release coverage. A visit-long
+speaker policy must still pass the full corpus quality/identity gates even when targeted deltas
+and default-OFF compatibility are exact.
+
+## Lesson: A zero target count needs a causal guard event
+
+**Created:** 2026-07-12
+**What happened:** M05's exact guard-ON replay scored zero safe repeats, but logged no withheld row;
+the retained 67-row/3-phantom target instead became 63 rows/10 phantoms and its original pair was
+not reproduced. The zero could not be attributed to the guard or prove no word loss.
+**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search:
+"duplicate_row_withheld event").
+**Prevention:** Require the causal guard event plus a matched before/after target. A zero detector
+count alone is not improvement when the input behavior or adjacent identity metrics changed.
+
+## Lesson: Mixed JSONL metrics need exact event and phase filters
+
+**Created:** 2026-07-13
+**What happened:** M06's first delivery aggregation treated every JSONL object's `emitted_rows`
+as a per-window count. The file also contained `window_continuity.summary`, whose 274-row session
+total was then misreported as the largest browser burst; the real c01 maximum was 25 rows.
+**Evidence:** `var/quality/m06-emission-starvation-20260712T211015Z/retained-delivery-and-density-baseline.log`
+keeps the failed aggregation, while `retained-delivery-baseline-corrected.log` filters exact
+`nemo_session.window_continuity` events with `phase=chunk`.
+**Prevention:** Before reducing a mixed JSONL artifact, inspect its first and last object shapes
+and filter the exact owning event plus phase. Exclude finalize and summary totals from per-window
+delivery metrics unless the metric explicitly includes them.
+
+## Lesson: Cadence-quantized bounds need startup corpus coverage
+
+**Created:** 2026-07-13
+**What happened:** M06 selected a 10-second stability hold from two long-turn fixtures and both
+projected at or below a 15-second browser batch interval. The target and browser gates passed,
+but the 20-fixture run found four 20-25-second first-batch intervals. The worst window had five
+stable clock-ready rows yet only 9.8 seconds of measured hold, so a strict 10-second comparison
+waited for the next five-second evaluation step.
+**Evidence:** `var/quality/full-corpus-20260712T233933Z/m06-delivery-violation-details.txt` and
+`.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "CORPUS GATE REGRESSION").
+**Prevention:** When a policy is evaluated only on a fixed cadence, project and test boundary
+values just below the threshold as well as long established holds. Include time-to-first-row in
+the corpus delivery gate; mid-consultation target fixtures do not cover startup quantization.
+
+## Lesson: Regional WER interpretation needs cutoff parity and marker sensitivity
+
+**Created:** 2026-07-14
+**What happened:** M09 first recomputed overlap WER with rounded
+`corrected-transcript.json.duration_seconds`. Raw parity stopped on day5-c04: the report used the
+row diagnostic's 541.33-second cutoff, while 541.3 moved one final word outside overlap (expected
+hyp=63, recomputed 62). After exact parity, qualitative reading also rejected treating raw WER as
+literal word loss: `tokens()` counts TextGrid `<UNIN/>`, `<UNSURE>` wrappers, and
+`<INAUDIBLE_SPEECH/>` as reference words. They contributed 637/3,611 overlap tokens (17.6%); a
+tag-clean sensitivity still scored corrected overlap at 82.6%, but two simultaneous reference
+channels remain aligned to one mixed-mono stream.
+**Evidence:** `var/quality/overlap-speech-assessment-20260714T021304Z/overlap-sensitivity.json`
+reproduces all 20 accepted raw reports before stripping markers; `specimen-source.json` uses the
+same report-owned cutoffs.
+**Prevention:** Before interpreting a regional scorer as user loss, reproduce every raw S/I/D,
+reference, and hypothesis count with the exact diagnostic cutoff. Then disclose annotation-token,
+word-timing, and multi-reference/single-stream sensitivity; do not turn raw WER directly into a
+clinical-word-loss claim.
+
+## Lesson: Check role_source before attributing a wrong role label to the scaffold
+
+**Created:** 2026-07-15
+**What happened:** The M05 role-fixture sweep first classified 5.3 `corrected-0216` ("else
+outside work?" duplicated on a PATIENT row) as a scaffold/crosstalk echo the cue lanes never
+touched. The role re-score then read the row's provenance: `role_source=post_visit_alignment`,
+proving the PRE-GUARD cleanup borrow assigned that PATIENT label (the exact phase-1 failure
+class, already fixed at HEAD by `_fragment_shares_patient_cue_words`). Only the row DUPLICATION
+itself is upstream identity debt; the label was cue-lane. The sweep document was corrected the
+same day.
+**Evidence:** `var/quality/m05-role-rescore-20260715T/role-rescore.json` (search:
+"corrected-0216") and the corrected paragraph in
+`var/quality/m05-role-fixture-sweep-20260715T/classification.md` (search:
+"disproved this sweep's first reading").
+**Prevention:** A corrected-row role label has two possible authors: the live scaffold or the
+cleanup lane. `role_source=post_visit_alignment` names the cleanup; its absence names the
+scaffold (or a live-lane exception inherited through it — check the live twin's stored role
+too). Read the provenance field before classifying any wrong label as upstream debt, because the
+two classes route to different fixes.

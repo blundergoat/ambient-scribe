@@ -127,6 +127,7 @@ _DOCTOR_PROMPT_PATIENT_ANSWER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
 def prepare_corrected_source_segments(
     segments: list[dict[str, Any]],
     *,
@@ -143,7 +144,9 @@ def prepare_corrected_source_segments(
     Returns:
         Split and role-cleaned rows; empty stays empty for live-preview fallback.
     """
-    echo_split_segments = split_identity_echo_segments(segments, corrected_words, word_timings)
+    echo_split_segments = split_identity_echo_segments(
+        segments, corrected_words, word_timings
+    )
     return apply_role_cue_cleanup(split_mixed_corrected_segments(echo_split_segments))
 
 
@@ -163,7 +166,11 @@ def split_identity_echo_segments(
         Rows in the same order, with the age echo split off only when word timing proves the gap.
     """
     # Timing evidence must exist and describe exactly the second-pass words, or rows stay whole.
-    if not corrected_words or not word_timings or len(word_timings) != len(corrected_words):
+    if (
+        not corrected_words
+        or not word_timings
+        or len(word_timings) != len(corrected_words)
+    ):
         return segments
 
     split_segments: list[dict[str, Any]] = []
@@ -175,7 +182,9 @@ def split_identity_echo_segments(
             next_row_start = safe_source_time(segments[row_index + 1].get("start"))
 
         split_segments.extend(
-            split_one_identity_echo_segment(segment, next_row_start, corrected_words, word_timings)
+            split_one_identity_echo_segment(
+                segment, next_row_start, corrected_words, word_timings
+            )
         )
 
     return split_segments
@@ -390,13 +399,18 @@ def locate_row_word_span(
     if normalized_row_words == []:
         return None
 
-    normalized_stream = [normalize_corrected_role_word(word) for word in corrected_words]
+    normalized_stream = [
+        normalize_corrected_role_word(word) for word in corrected_words
+    ]
     span_length = len(normalized_row_words)
 
     # The row text was joined verbatim from stream words, so an exact window match finds it.
     for start_index in range(0, len(normalized_stream) - span_length + 1):
         # The first matching window is the span the allocator consumed for this row.
-        if normalized_stream[start_index : start_index + span_length] == normalized_row_words:
+        if (
+            normalized_stream[start_index : start_index + span_length]
+            == normalized_row_words
+        ):
             return start_index
 
     return None
@@ -432,7 +446,9 @@ def word_timing_value(
         return None
 
 
-def split_mixed_corrected_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def split_mixed_corrected_segments(
+    segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Split corrected rows that visibly contain both consultation speakers.
 
     Args:
@@ -508,7 +524,9 @@ def build_split_source_segments(
     start_time = safe_source_time(source_segment.get("start"))
     end_time = safe_source_time(source_segment.get("end"))
     duration = max(0.0, end_time - start_time)
-    base_segment_id = str(source_segment.get("segment_id", "")).strip() or "corrected-split"
+    base_segment_id = (
+        str(source_segment.get("segment_id", "")).strip() or "corrected-split"
+    )
     total_words = sum(max(1, len(text.split())) for _role, text in split_parts)
     consumed_words = 0
     split_segments: list[dict[str, Any]] = []
@@ -755,7 +773,10 @@ def infer_role_from_corrected_text(
 
     previous_phrase = normalize_corrected_role_phrase(f"{previous_text} {text}")
     # A short continuation can complete the previous doctor's prompt.
-    if previous_role == "DOCTOR" and role_from_corrected_phrase(previous_phrase) == "DOCTOR":
+    if (
+        previous_role == "DOCTOR"
+        and role_from_corrected_phrase(previous_phrase) == "DOCTOR"
+    ):
         return "DOCTOR"
 
     next_phrase = normalize_corrected_role_phrase(f"{text} {next_text}")
@@ -767,15 +788,63 @@ def infer_role_from_corrected_text(
     ):
         return "DOCTOR"
 
-    # Short symptom continuations can attach to nearby patient statements.
-    if previous_role == "PATIENT" and role_from_corrected_phrase(previous_phrase) == "PATIENT":
+    # Short symptom continuations can attach to nearby patient statements -
+    # but only with positive same-turn evidence: the fragment itself must
+    # supply words of the matched patient cue. A doctor question tail like
+    # "do for you?" must not inherit Patient just because the ANSWER next to
+    # it carries patient wording (the consult 5.3 reassignments).
+    if (
+        previous_role == "PATIENT"
+        and role_from_corrected_phrase(previous_phrase) == "PATIENT"
+        and _fragment_shares_patient_cue_words(normalized_text, previous_phrase)
+    ):
         return "PATIENT"
 
-    # A short lead-in can also borrow patient ownership from the next answer row.
-    if next_role == "PATIENT" and role_from_corrected_phrase(next_phrase) == "PATIENT":
+    # A short lead-in can also borrow patient ownership from the next answer
+    # row, under the same fragment-contributes-evidence requirement.
+    if (
+        next_role == "PATIENT"
+        and role_from_corrected_phrase(next_phrase) == "PATIENT"
+        and _fragment_shares_patient_cue_words(normalized_text, next_phrase)
+    ):
         return "PATIENT"
 
     return None
+
+
+def _fragment_shares_patient_cue_words(
+    fragment_phrase: str,
+    joined_phrase: str,
+) -> bool:
+    """Report whether the fragment contributes words to a matched patient cue.
+
+    Use before a short fragment borrows Patient from a neighbor: evidence
+    living entirely in the neighbor's text ("next-row text alone") says who
+    the NEIGHBOR is, not who spoke the fragment.
+
+    Args:
+        fragment_phrase: Normalized fragment text; empty contributes nothing.
+        joined_phrase: Normalized fragment+neighbor phrase already known to
+            read as Patient overall.
+
+    Returns:
+        True when any patient cue matched in the joined phrase shares at
+        least one word with the fragment itself.
+    """
+    fragment_words = set(fragment_phrase.split())
+    # An empty fragment cannot own any spoken evidence.
+    if not fragment_words:
+        return False
+
+    padded_phrase = f" {joined_phrase} "
+    # Each matched cue must borrow at least one word from the fragment's side.
+    for patient_cue in _PATIENT_CUES:
+        if f" {patient_cue} " in padded_phrase and (
+            set(patient_cue.split()) & fragment_words
+        ):
+            return True
+
+    return False
 
 
 def is_short_patient_answer_after_doctor_question(

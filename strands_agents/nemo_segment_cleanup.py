@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
+from nemo_confidence import transcript_row_confidence
 from nemo_pipeline import Segment
 
 _SENTENCE_JOIN_PATTERN = re.compile(r"(?<=[a-z0-9][.!?])(?=[A-Z])")
@@ -183,6 +184,10 @@ def _combine_visible_segments(
         end=max(previous_segment.end, current_segment.end),
         text=merged_text,
         is_interim=previous_segment.is_interim or current_segment.is_interim,
+        # The combined turn is only as clearly heard as its weakest part.
+        confidence=transcript_row_confidence(
+            [previous_segment.confidence, current_segment.confidence]
+        ),
     )
 
 

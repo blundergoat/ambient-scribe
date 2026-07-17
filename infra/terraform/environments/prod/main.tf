@@ -1,42 +1,8 @@
-# =============================================================================
-# PRODUCTION ENVIRONMENT - Main Infrastructure Configuration
-# =============================================================================
-#
-# Self-contained deployment for the Ambient Scribe application.
-# Creates its own VPC by default, or uses an existing VPC if provided.
-#
-# ARCHITECTURE:
-#
-#   Route 53 (scribe.blundergoat.com)
-#        |
-#        v
-#   Application Load Balancer (public subnets)
-#        |--- /.well-known/mercure*  ---> Mercure target group (port 3701)
-#        |--- default                ---> App target group (port 8080)
-#        |
-#        v
-#   ECS Fargate Task (private subnets)
-#     - App container (PHP Symfony, port 8080)      <-- ALB default target
-#     - Agent container (Python FastAPI, port 8000)  <-- internal sidecar
-#     - Mercure container (SSE hub, port 3701)       <-- ALB path-routed
-#          |
-#          +-- AWS Bedrock (model invocation)
-#          +-- DynamoDB (session persistence)
-#
-# The App container serves the web UI and calls the Agent at localhost:8000
-# and publishes to Mercure at localhost:3701 for real-time streaming
-# (same task, same network namespace -- no service discovery needed).
-#
-# MODULE DEPENDENCY ORDER:
-#   0. network (conditional - creates VPC if vpc_id not provided)
-#   1. dynamodb, ecr, ecr_app, observability, secrets (independent)
-#   2. security (needs vpc_id), iam (needs phase 1 ARNs)
-#   3. ecs (needs iam, observability, ecr), dns (needs hosted_zone_id)
-#   4. alb (needs security, dns cert, vpc/subnets)
-#   5. ecs_service (needs ecs, alb, security), waf (needs alb)
-#   6. alarms (needs alb, ecs)
-#
-# =============================================================================
+# Provision the production consultation UI, agent, Mercure hub, and storage.
+# Use this root module when an operator deploys Ambient Scribe to AWS.
+# The app, agent, and Mercure share one ECS task behind the public load balancer.
+# Bedrock handles role labels and notes; NeMo GPU hosting remains outside this stack.
+# Existing VPC inputs remain supported, while an empty VPC ID creates the network.
 
 provider "aws" {
   region = var.aws_region
@@ -82,8 +48,10 @@ locals {
   # Environment variables passed to the agent container.
   agent_env = {
     PORT                         = "8000"
-    MODEL_ID                     = var.model_id
-    MODEL_PROVIDER               = "bedrock"
+    ROLE_AGENT_MODEL_PROVIDER    = "bedrock"
+    ROLE_AGENT_MODEL_ID          = var.model_id
+    SUMMARY_AGENT_MODEL_PROVIDER = "bedrock"
+    SUMMARY_AGENT_MODEL_ID       = var.summary_model_id
     AWS_DEFAULT_REGION           = var.aws_region
     ALLOW_SYSTEM_PROMPT_OVERRIDE = "false"
     DYNAMODB_TABLE               = module.dynamodb.table_name

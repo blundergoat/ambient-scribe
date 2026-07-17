@@ -41,9 +41,6 @@ let latestQualityRecord = null;
 
 const segmentsBySpeaker = new Map();
 const manualOverrides = new Set();
-// Per-row role corrections keyed by the server row ID (`segment_id`). Row
-// corrections outrank speaker-level labels for exactly that transcript row.
-const rowRoleOverrides = new Map();
 // Automatic row exceptions from the server's cue lane (rows whose wording
 // contradicts their speaker's mapped role). Replaced wholesale on each role
 // update; the clinician's own row corrections always outrank these.

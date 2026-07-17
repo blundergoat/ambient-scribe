@@ -18,6 +18,33 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "strands_agents"))
 os.environ.setdefault("NEMO_MODEL_PROVIDER", "mock")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_summary_provider_calls():
+    """Fail fast if any test reaches the real summary agent.
+
+    This box carries live AWS credentials for approved replay campaigns, so an
+    unpatched generation path in a test would silently make a PAID Bedrock
+    call (it happened on 2026-07-15 during the M06 schema switch). Tests that
+    exercise generation must patch `_generate_validated_v2_draft` or the agent
+    itself (their patch simply overrides this stub for their scope); reaching
+    this guard is a test bug, never a provider call. Session-scoped with a
+    single setattr: a per-test fixture perturbed event-loop timing enough to
+    trip the latent grace-destroy/executor race in the transcription tests.
+    """
+    import agents
+
+    def _blocked_summary_agent(*_args, **_kwargs):
+        raise AssertionError(
+            "create_summary_agent() reached from a test - patch the generation"
+            " draft helper instead of letting the call reach a real provider"
+        )
+
+    original_factory = agents.create_summary_agent
+    agents.create_summary_agent = _blocked_summary_agent
+    yield
+    agents.create_summary_agent = original_factory
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     """Path to the test fixtures directory."""

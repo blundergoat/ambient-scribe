@@ -41,6 +41,37 @@ _UNSTABLE_TAIL_SECONDS = 1.0
 _MIN_NEW_AUDIO_SECONDS = 0.3
 # Medical visits are usually dyadic; set NEMO_SPEAKER_CAP=0 to keep every ID.
 _DEFAULT_SPEAKER_CAP = 2
+# Operator-only evidence is absent from normal clinician visits unless explicitly enabled.
+_STREAMING_SLOT_EVIDENCE_FLAG = "NEMO_STREAMING_SLOT_EVIDENCE"
+# Operators can trial the confirmed bleed guard without changing ordinary visit bytes.
+_STREAMING_CROSSTALK_GUARD_FLAG = "NEMO_STREAMING_CROSSTALK_GUARD"
+# Roughly four seconds of cumulative voice distinguishes a sustained turn from a decoder blip.
+_SUSTAINED_VOICE_MIN_FRAMES = 50
+# A visit-share floor stops long recordings from promoting accumulated low-level slot noise.
+_SUSTAINED_VOICE_MIN_SHARE = 0.015
+
+
+def _streaming_slot_evidence_enabled() -> bool:
+    """Return whether this replay should explain wrong-speaker fold decisions.
+
+    Operators enable it for a named QA specimen; normal clinician visits keep the extra log
+    fields absent.
+    """
+    # An unset or empty flag keeps routine visit logs free of detailed slot evidence.
+    configured_value = os.environ.get(_STREAMING_SLOT_EVIDENCE_FLAG, "").strip().lower()
+    return configured_value in {"1", "true", "yes", "on"}
+
+
+def _streaming_crosstalk_guard_enabled() -> bool:
+    """Return whether this QA run should protect sustained voices from a wrong-speaker fold.
+
+    Operators enable it for measured replays; an unset or empty value preserves release behavior.
+    """
+    # An unset or empty flag keeps the current fold policy for ordinary clinician visits.
+    configured_value = (
+        os.environ.get(_STREAMING_CROSSTALK_GUARD_FLAG, "").strip().lower()
+    )
+    return configured_value in {"1", "true", "yes", "on"}
 
 
 def _speaker_cap_from_env() -> int | None:
@@ -260,6 +291,13 @@ class TranscriptionSession:
         # the speaker cap; per-tick phantom merges feed the continuity log.
         self._engine_slot_durations: dict[str, float] = {}
         self._engine_window_phantom_merges: int = 0
+        # A named QA replay can retain count-only fold evidence; normal visits leave it absent.
+        self._should_log_streaming_slot_evidence = _streaming_slot_evidence_enabled()
+        # An operator-enabled replay may retain a sustained real voice under its own source chip.
+        self._should_guard_streaming_crosstalk = _streaming_crosstalk_guard_enabled()
+        self._previous_speaker_slot_voiced_frames: dict[str, int] = {}
+        self._latest_slot_share_evidence: list[dict] = []
+        self._latest_folded_word_spans: list[dict] = []
 
         # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
@@ -442,8 +480,7 @@ class TranscriptionSession:
             buffer_end_seconds = self.buffer.end_seconds
             while (
                 fresh_segments
-                and fresh_segments[-1].end
-                > buffer_end_seconds - _UNSTABLE_TAIL_SECONDS
+                and fresh_segments[-1].end > buffer_end_seconds - _UNSTABLE_TAIL_SECONDS
             ):
                 fresh_segments.pop()
                 held_segment_count += 1
@@ -474,7 +511,9 @@ class TranscriptionSession:
 
         return fresh_segments
 
-    def _emit_engine_rows(self, engine_rows: list, *, is_finalize: bool) -> list[Segment]:
+    def _emit_engine_rows(
+        self, engine_rows: list, *, is_finalize: bool
+    ) -> list[Segment]:
         """Turn streaming-engine rows into emitted transcript segments (M22).
 
         Engine rows arrive with session-absolute times and cache-stable
@@ -500,6 +539,9 @@ class TranscriptionSession:
                 text=self.pipeline.visible_text(row.text),
                 start=row.start,
                 end=row.end,
+                # Row confidence describes the audio span, so it survives the
+                # text normalisation above unchanged.
+                confidence=row.confidence,
             )
             for row in engine_rows
         ]
@@ -536,6 +578,18 @@ class TranscriptionSession:
             "late_slot_births": getattr(diagnostics, "late_slot_births", 0),
             "revision_resyncs": getattr(diagnostics, "revision_resyncs", 0),
         }
+        # An operator-enabled replay carries count-only evidence for this browser audio window.
+        if self._should_log_streaming_slot_evidence:
+            self._last_window_continuity["slot_share_evidence"] = list(
+                self._latest_slot_share_evidence
+            )
+            self._last_window_continuity["folded_word_spans"] = list(
+                self._latest_folded_word_spans
+            )
+            # The engine's count/time-only reason explains a named replay's visible pause.
+            self._last_window_continuity["emission_decision_evidence"] = dict(
+                getattr(engine, "emission_decision_evidence", {}) or {}
+            )
         self._log_window_continuity(
             window_start_seconds=emitted_from_seconds,
             emitted_from_seconds=emitted_from_seconds,
@@ -561,7 +615,10 @@ class TranscriptionSession:
             The same rows with capped speaker IDs.
         """
         self._engine_window_phantom_merges = 0
+        self._latest_slot_share_evidence = []
+        self._latest_folded_word_spans = []
 
+        # Each newly stable row updates the same cumulative duration used by the fold threshold.
         for segment in segments:
             self._engine_slot_durations[segment.speaker_id] = (
                 self._engine_slot_durations.get(segment.speaker_id, 0.0)
@@ -570,6 +627,12 @@ class TranscriptionSession:
 
         # Cap disabled means the UI shows every cache slot the engine emits.
         if self._speaker_cap is None:
+            self._capture_streaming_slot_evidence(
+                fold_threshold_seconds=None,
+                substantial_speaker_slots=[],
+                sustained_voice_speaker_slots=set(),
+                folded_word_spans=[],
+            )
             return segments
 
         # Fold only MARGINAL slots (hallucination-scale, mirroring the
@@ -580,16 +643,19 @@ class TranscriptionSession:
         # c03, where the doctor's speech spans two early cache slots.)
         total_speech = sum(self._engine_slot_durations.values())
         marginal_below = max(1.5, 0.05 * total_speech)
+        sustained_voice_speaker_slots = self._sustained_voice_speaker_slots()
         substantial_slots = [
             slot
             for slot, duration in self._engine_slot_durations.items()
-            if duration >= marginal_below
+            if duration >= marginal_below or slot in sustained_voice_speaker_slots
         ]
 
         capped_segments: list[Segment] = []
+        folded_word_spans: list[dict] = []
+        # Each stable row either keeps its cache slot or enters a visible consultation voice.
         for segment in segments:
-            duration = self._engine_slot_durations.get(segment.speaker_id, 0.0)
-            if duration >= marginal_below or not substantial_slots:
+            # Substantial voices remain separate so the user can correct their role if needed.
+            if segment.speaker_id in substantial_slots or not substantial_slots:
                 capped_segments.append(segment)
                 continue
 
@@ -611,9 +677,236 @@ class TranscriptionSession:
                     "engine": "streaming",
                 },
             )
+            folded_word_spans.append(
+                {
+                    "origin_speaker_slot": segment.speaker_id,
+                    "visible_speaker_slot": dominant_slot,
+                    "start_seconds": round(segment.start, 3),
+                    "end_seconds": round(segment.end, 3),
+                    "word_count": len(segment.text.split()),
+                }
+            )
             capped_segments.append(replace(segment, speaker_id=dominant_slot))
 
+        self._capture_streaming_slot_evidence(
+            fold_threshold_seconds=marginal_below,
+            substantial_speaker_slots=substantial_slots,
+            sustained_voice_speaker_slots=sustained_voice_speaker_slots,
+            folded_word_spans=folded_word_spans,
+        )
         return capped_segments
+
+    def _sustained_voice_speaker_slots(self) -> set[str]:
+        """Return cache slots whose acoustic history proves a persistent consultation voice.
+
+        Returns:
+            Protected slot IDs; empty means the guard is off or no slot met both thresholds.
+        """
+        # Flag-off visits keep the release fold policy byte-identical.
+        if not self._should_guard_streaming_crosstalk:
+            return set()
+
+        engine = self._streaming_engine
+        # The windowed path has no session-long cache evidence to protect.
+        if engine is None:
+            return set()
+
+        voiced_frames_by_speaker_slot = dict(
+            getattr(engine, "speaker_slot_voiced_frame_counts", {}) or {}
+        )
+        total_voiced_frames = sum(voiced_frames_by_speaker_slot.values())
+        # Silence or a missing diarizer snapshot cannot prove a real voice.
+        if total_voiced_frames <= 0:
+            return set()
+
+        # Each protected slot must clear both the absolute and visit-relative voice floors.
+        return {
+            speaker_slot
+            for speaker_slot, cumulative_voiced_frames in voiced_frames_by_speaker_slot.items()
+            if cumulative_voiced_frames >= _SUSTAINED_VOICE_MIN_FRAMES
+            and cumulative_voiced_frames / total_voiced_frames
+            >= _SUSTAINED_VOICE_MIN_SHARE
+        }
+
+    def _capture_streaming_slot_evidence(
+        self,
+        *,
+        fold_threshold_seconds: float | None,
+        substantial_speaker_slots: list[str],
+        sustained_voice_speaker_slots: set[str],
+        folded_word_spans: list[dict],
+    ) -> None:
+        """Capture count-only speaker evidence after one browser audio window.
+
+        Args:
+            fold_threshold_seconds: Duration below which a slot may fold; None means the user
+                configured no speaker cap, so no fold threshold applied.
+            substantial_speaker_slots: Slots eligible to stay visible; empty means no dominant
+                voice existed yet or the cap was disabled.
+            sustained_voice_speaker_slots: Acoustically protected slot IDs; empty means the
+                guard is off or no slot yet proves a persistent consultation voice.
+            folded_word_spans: PHI-safe timing/count records; empty means no visible row folded.
+        """
+        # Normal clinician visits do not need detailed operator evidence in their logs.
+        if not self._should_log_streaming_slot_evidence:
+            return
+
+        engine = self._streaming_engine
+        # A missing engine means the legacy windowed path has no cache slots to compare.
+        if engine is None:
+            return
+
+        # An engine with no voiced activity yields an empty frame map, not fabricated shares.
+        current_voiced_frames = dict(
+            getattr(engine, "speaker_slot_voiced_frame_counts", {}) or {}
+        )
+        total_voiced_frames = sum(current_voiced_frames.values())
+        total_emitted_seconds = sum(self._engine_slot_durations.values())
+        evidence_speaker_slots = sorted(
+            set(current_voiced_frames) | set(self._engine_slot_durations)
+        )
+
+        # One row per heard cache slot lets the operator align shares with a visible fold span.
+        self._latest_slot_share_evidence = [
+            self._speaker_slot_share_evidence(
+                speaker_slot=speaker_slot,
+                current_voiced_frames=current_voiced_frames,
+                total_voiced_frames=total_voiced_frames,
+                total_emitted_seconds=total_emitted_seconds,
+                fold_threshold_seconds=fold_threshold_seconds,
+                substantial_speaker_slots=substantial_speaker_slots,
+                sustained_voice_speaker_slots=sustained_voice_speaker_slots,
+            )
+            for speaker_slot in evidence_speaker_slots
+        ]
+        self._latest_folded_word_spans = list(folded_word_spans)
+        self._previous_speaker_slot_voiced_frames = current_voiced_frames
+
+    def _speaker_slot_share_evidence(
+        self,
+        *,
+        speaker_slot: str,
+        current_voiced_frames: dict[str, int],
+        total_voiced_frames: int,
+        total_emitted_seconds: float,
+        fold_threshold_seconds: float | None,
+        substantial_speaker_slots: list[str],
+        sustained_voice_speaker_slots: set[str],
+    ) -> dict:
+        """Build the count-only evidence row an operator compares with transcript timing.
+
+        Args:
+            speaker_slot: Cache identity under review; never empty for an emitted NeMo slot.
+            current_voiced_frames: Current slot totals; empty means the diarizer heard no voice.
+            total_voiced_frames: Visit-wide frame total; zero means the replay is still silent.
+            total_emitted_seconds: Stable transcript time; zero means no wording is visible yet.
+            fold_threshold_seconds: Active duration threshold; None means the cap is disabled.
+            substantial_speaker_slots: Independently visible voices; empty means none qualified.
+            sustained_voice_speaker_slots: Acoustically protected voices; empty means none.
+
+        Returns:
+            PHI-safe shares and decision; zero values mean no measurable evidence yet.
+        """
+        cumulative_voiced_frames = max(
+            0,
+            int(current_voiced_frames.get(speaker_slot, 0)),
+        )
+        prior_voiced_frames = self._previous_speaker_slot_voiced_frames.get(
+            speaker_slot,
+            0,
+        )
+        window_voiced_frames = max(
+            0,
+            cumulative_voiced_frames - prior_voiced_frames,
+        )
+        cumulative_emitted_seconds = max(
+            0.0,
+            self._engine_slot_durations.get(speaker_slot, 0.0),
+        )
+        voiced_share = 0.0
+        emitted_share = 0.0
+
+        # A non-silent visit gets a real acoustic share; silence remains an honest zero.
+        if total_voiced_frames > 0:
+            voiced_share = round(cumulative_voiced_frames / total_voiced_frames, 4)
+
+        # Stable emitted time is the exact share that currently drives the fold decision.
+        if total_emitted_seconds > 0:
+            emitted_share = round(
+                cumulative_emitted_seconds / total_emitted_seconds,
+                4,
+            )
+
+        logged_fold_threshold = None
+        # A configured cap gives the operator the exact threshold used for this window.
+        if fold_threshold_seconds is not None:
+            logged_fold_threshold = round(fold_threshold_seconds, 3)
+
+        evidence_row = {
+            "speaker_slot": speaker_slot,
+            "window_voiced_frames": window_voiced_frames,
+            "cumulative_voiced_frames": cumulative_voiced_frames,
+            "voiced_share": voiced_share,
+            "cumulative_emitted_seconds": round(cumulative_emitted_seconds, 3),
+            "emitted_share": emitted_share,
+            "fold_threshold_seconds": logged_fold_threshold,
+            "fold_decision": self._fold_decision_for_speaker_slot(
+                speaker_slot=speaker_slot,
+                fold_threshold_seconds=fold_threshold_seconds,
+                cumulative_emitted_seconds=cumulative_emitted_seconds,
+                substantial_speaker_slots=substantial_speaker_slots,
+                sustained_voice_speaker_slots=sustained_voice_speaker_slots,
+            ),
+        }
+        # Guard-enabled evidence records the exact policy an operator is trialling.
+        if self._should_guard_streaming_crosstalk:
+            evidence_row["sustained_voice_min_frames"] = _SUSTAINED_VOICE_MIN_FRAMES
+            evidence_row["sustained_voice_min_share"] = _SUSTAINED_VOICE_MIN_SHARE
+
+        return evidence_row
+
+    @staticmethod
+    def _fold_decision_for_speaker_slot(
+        *,
+        speaker_slot: str,
+        fold_threshold_seconds: float | None,
+        cumulative_emitted_seconds: float,
+        substantial_speaker_slots: list[str],
+        sustained_voice_speaker_slots: set[str],
+    ) -> str:
+        """Name why one cache slot stayed visible or folded for the operator artifact.
+
+        Args:
+            speaker_slot: Cache identity under review; never empty for an emitted NeMo slot.
+            fold_threshold_seconds: Active duration threshold; None means the cap is disabled.
+            cumulative_emitted_seconds: Stable wording time; zero means nothing visible yet.
+            substantial_speaker_slots: Voices eligible to stay separate; empty means none yet.
+            sustained_voice_speaker_slots: Acoustically protected voices; empty means none.
+
+        Returns:
+            Decision label; `no_stable_words` means the user has not seen wording from it yet.
+        """
+        # Frames without stable wording have not produced a visible fold decision yet.
+        if cumulative_emitted_seconds <= 0:
+            return "no_stable_words"
+
+        # No configured cap means every detected voice stays available to the user.
+        if fold_threshold_seconds is None:
+            return "cap_disabled"
+
+        # A substantial slot remains independently visible in the transcript.
+        if cumulative_emitted_seconds >= fold_threshold_seconds:
+            return "keep_substantial"
+
+        # Sustained acoustic evidence keeps an otherwise marginal turn under its own source chip.
+        if speaker_slot in sustained_voice_speaker_slots:
+            return "keep_sustained_voice"
+
+        # A marginal slot folds only after another substantial voice exists.
+        if substantial_speaker_slots:
+            return "fold_marginal"
+
+        return "no_stable_words"
 
     def _continue_anchor_speakers(self, segments: list[Segment]) -> list[Segment]:
         """Map each window-local speaker ID to a stable session speaker ID.
@@ -771,37 +1064,51 @@ class TranscriptionSession:
         # One row lands here for every ~5s chunk the clinician's browser sent,
         # plus one final row when they pressed Stop and the tail drained.
         continuity = self._last_window_continuity
+        continuity_log_fields = {
+            "session_id": self.session_id,
+            "window_index": self.chunk_count,
+            "phase": "finalize" if is_finalize else "chunk",
+            "window_start_seconds": round(window_start_seconds, 3),
+            "buffer_end_seconds": round(self.buffer.end_seconds, 3),
+            "emitted_from_seconds": round(emitted_from_seconds, 3),
+            "emitted_until_seconds": round(self._emitted_until_seconds, 3),
+            "raw_speaker_ids": continuity.get("raw_speaker_ids", []),
+            "known_speaker_ids": continuity.get("known_speaker_ids", []),
+            "canonical_speaker_ids": continuity.get("canonical_speaker_ids", []),
+            "speaker_id_map": continuity.get("speaker_id_map", {}),
+            "overlap_votes": continuity.get("overlap_votes", []),
+            "mapping_reasons": continuity.get("mapping_reasons", {}),
+            "window_remaps": continuity.get("window_remaps", 0),
+            "window_phantom_merges": continuity.get("window_phantom_merges", 0),
+            "cumulative_anchor_remaps": (self.quality_stats.speaker_anchor_remap_count),
+            "cumulative_phantom_merges": (
+                self.quality_stats.phantom_speaker_merge_count
+            ),
+            "emitted_rows": emitted_rows,
+            "held_rows": held_rows,
+        }
+        # A named replay adds count-only fold evidence; normal visit logs keep the old shape.
+        if self._should_log_streaming_slot_evidence:
+            continuity_log_fields["slot_share_evidence"] = continuity.get(
+                "slot_share_evidence",
+                [],
+            )
+            continuity_log_fields["folded_word_spans"] = continuity.get(
+                "folded_word_spans",
+                [],
+            )
+            continuity_log_fields["emission_decision_evidence"] = continuity.get(
+                "emission_decision_evidence",
+                {},
+            )
+
         logger.info(
             "nemo_session.window_continuity session_id=%s window_index=%s phase=%s emitted_rows=%s",
             self.session_id,
             self.chunk_count,
             "finalize" if is_finalize else "chunk",
             emitted_rows,
-            extra={
-                "session_id": self.session_id,
-                "window_index": self.chunk_count,
-                "phase": "finalize" if is_finalize else "chunk",
-                "window_start_seconds": round(window_start_seconds, 3),
-                "buffer_end_seconds": round(self.buffer.end_seconds, 3),
-                "emitted_from_seconds": round(emitted_from_seconds, 3),
-                "emitted_until_seconds": round(self._emitted_until_seconds, 3),
-                "raw_speaker_ids": continuity.get("raw_speaker_ids", []),
-                "known_speaker_ids": continuity.get("known_speaker_ids", []),
-                "canonical_speaker_ids": continuity.get("canonical_speaker_ids", []),
-                "speaker_id_map": continuity.get("speaker_id_map", {}),
-                "overlap_votes": continuity.get("overlap_votes", []),
-                "mapping_reasons": continuity.get("mapping_reasons", {}),
-                "window_remaps": continuity.get("window_remaps", 0),
-                "window_phantom_merges": continuity.get("window_phantom_merges", 0),
-                "cumulative_anchor_remaps": (
-                    self.quality_stats.speaker_anchor_remap_count
-                ),
-                "cumulative_phantom_merges": (
-                    self.quality_stats.phantom_speaker_merge_count
-                ),
-                "emitted_rows": emitted_rows,
-                "held_rows": held_rows,
-            },
+            extra=continuity_log_fields,
         )
 
     def _known_speaker_ids(self) -> list[str]:
@@ -878,7 +1185,10 @@ class TranscriptionSession:
             reverse=True,
         ):
             # Already-used IDs would create one-to-many visible speaker mappings.
-            if window_speaker_id in used_window_ids or known_speaker_id in used_known_ids:
+            if (
+                window_speaker_id in used_window_ids
+                or known_speaker_id in used_known_ids
+            ):
                 continue
 
             speaker_id_map[window_speaker_id] = known_speaker_id

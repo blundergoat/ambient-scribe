@@ -1,3 +1,9 @@
+{#
+  Ambient Scribe's browser workspace for recording, transcript review, and generated notes.
+  Clinicians reach this page to start or replay a consultation, correct speaker labels,
+  and review note/source notices after Stop. JavaScript modules own behavior; this file
+  provides the accessible structure and shared visual states they update.
+#}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -43,6 +49,9 @@
             --color-unknown-border: #e6e8eb;
             --color-success: #4e9e78;
             --color-danger: #c0392b;
+            --color-review: #a65f08;
+            --color-review-bg: #fff7e8;
+            --color-review-border: #e7b967;
             --shadow-sm: 0 1px 2px rgba(20,40,60,0.06);
             --shadow-md: 0 14px 34px -14px rgba(20,40,60,0.35);
             --radius: 0.5rem;
@@ -72,6 +81,9 @@
             --color-unknown-border: #243342;
             --color-success: #5fd0a8;
             --color-danger: #f87171;
+            --color-review: #f2b85b;
+            --color-review-bg: #2a2417;
+            --color-review-border: #7d642f;
             --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
             --shadow-md: 0 14px 34px -14px rgba(0,0,0,0.6);
         }
@@ -171,9 +183,10 @@
             gap: 0.875rem;
         }
 
-        /* Once the summary opens, transcript and summary split 5:5. */
+        /* Once the summary opens, the transcript keeps the wider track (M11):
+           the conversation is what the clinician reads most. */
         .consultation-workspace:has(.summary-panel:not(.hidden)) {
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
         }
 
         .summary-column {
@@ -191,6 +204,8 @@
             min-height: 0;
             max-height: none;
             overflow-y: auto;
+            /* Nothing inside the transcript may ever force a horizontal scrollbar. */
+            overflow-x: hidden;
             padding: 0.5rem;
         }
 
@@ -241,32 +256,6 @@
             100% { opacity: 1; transform: translateX(0); }
         }
 
-        .segment__avatar {
-            width: 2.125rem;
-            height: 2.125rem;
-            border-radius: var(--radius);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 0.6875rem;
-            flex-shrink: 0;
-            text-transform: uppercase;
-            letter-spacing: 0.02em;
-        }
-        .segment--DOCTOR .segment__avatar {
-            background: var(--color-speaker-a-border);
-            color: var(--color-speaker-a);
-        }
-        .segment--PATIENT .segment__avatar {
-            background: var(--color-speaker-b-border);
-            color: var(--color-speaker-b);
-        }
-        .segment--UNKNOWN .segment__avatar {
-            background: var(--color-unknown-border);
-            color: var(--color-unknown);
-        }
-
         .segment__body { flex: 1; min-width: 0; }
 
         .segment__header {
@@ -289,6 +278,70 @@
         .segment--DOCTOR .segment__speaker { color: var(--color-speaker-a); }
         .segment--PATIENT .segment__speaker { color: var(--color-speaker-b); }
         .segment--UNKNOWN .segment__speaker { color: var(--color-unknown); }
+
+        /* ---- Two-column temporal transcript (M11 rework) ----
+           Doctor turns fill the left column, patient turns the right, so
+           simultaneous talk sits side by side instead of stacking. Vertical
+           spacing carries time: silence longer than a few seconds renders as
+           a labelled gap chip, and a turn that began before the previous one
+           finished pulls tight against it under an overlap chip. Sides follow
+           the card's role class, which refreshSpeakerCardDisplay re-applies
+           on every role update or row correction - an unknown or mixed card
+           stays full-width and neutral, never guessed onto a side. */
+        .segment {
+            position: relative;
+        }
+        .segment--DOCTOR,
+        .segment--PATIENT {
+            max-width: 48%;
+        }
+        /* The squared corner points at the speaker's column, like a chat tail. */
+        .segment--DOCTOR {
+            border-top-left-radius: 0;
+        }
+        .segment--PATIENT {
+            margin-left: auto;
+            flex-direction: row-reverse;
+            border-top-right-radius: 0;
+        }
+        .segment--UNKNOWN {
+            max-width: 100%;
+            margin-left: 0;
+        }
+
+        /* Flow chips are generated from data-flow-note so the DOM stays flat
+           and chronological insertion logic never has to step over spacers. */
+        .segment--after-gap {
+            margin-top: 2.5rem;
+        }
+        .segment--after-gap::before,
+        .segment--overlap::before {
+            content: attr(data-flow-note);
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.0625rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        .segment--after-gap::before {
+            top: -1.9375rem;
+            color: var(--text-subtle);
+            border: 1px dashed var(--surface-border);
+            background: var(--surface-bg);
+        }
+        .segment--overlap {
+            margin-top: -0.25rem;
+        }
+        .segment--overlap::before {
+            top: -0.4375rem;
+            z-index: 5;
+            color: var(--warning-strong, #92400e);
+            border: 1px solid currentColor;
+            background: var(--surface-bg);
+        }
 
         .segment__speaker[style*="cursor: pointer"]:hover {
             background: color-mix(in srgb, currentColor 12%, transparent);
@@ -319,23 +372,8 @@
         .segment__text {
             display: inline;
         }
-        .segment__text + .segment__text::before {
-            content: ' ';
-        }
-        /* Rows with a stable ID are individually correctable by clicking. */
-        .segment__text[data-segment-id] {
-            cursor: pointer;
-        }
-        .segment__text[data-segment-id]:hover {
-            background: color-mix(in srgb, currentColor 8%, transparent);
-            border-radius: 3px;
-        }
-        /* A row the clinician corrected keeps a subtle marker even after
-           later automatic role updates restyle the surrounding card. */
-        .segment__text--corrected {
-            text-decoration: underline dotted;
-            text-underline-offset: 3px;
-        }
+        /* Row spacing is a real text node (normalizeRowSeparators) so copied,
+           searched, and screen-reader text keeps the same spaces users see. */
         .segment__row-role {
             display: inline-block;
             font-size: 0.625rem;
@@ -384,6 +422,34 @@
             font-weight: 600;
             font-size: 0.875rem;
             color: var(--text-strong);
+        }
+        /* Copy actions serialize application state; the buttons themselves and
+           other control chrome must never be harvested by a drag-select copy. */
+        .copy-button,
+        .summary-tabs,
+        .summary-provenance__toggle,
+        .summary-status__retry,
+        .summary-status__badge {
+            user-select: none;
+        }
+        .copy-button {
+            margin-left: auto;
+            padding: 0.25rem 0.625rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-strong);
+            background: transparent;
+            border: 1px solid var(--border, currentColor);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .copy-button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .copy-button--transcript {
+            margin: 0 0 0.625rem 0;
+            display: inline-block;
         }
         .summary-panel__body {
             padding: 0 1rem 1rem;
@@ -439,6 +505,17 @@
         }
         .summary-status__retry:hover { background: var(--surface-hover); }
         .summary-status__retry.hidden { display: none; }
+        .summary-status__notice {
+            flex-basis: 100%;
+            padding: 0.625rem 0.75rem;
+            color: var(--text-muted);
+            background: var(--surface-bg-alt);
+            border: 1px solid var(--surface-border);
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+        .summary-status__notice.hidden { display: none; }
         .summary-pending {
             display: flex;
             align-items: flex-start;
@@ -462,10 +539,21 @@
             height: 5px;
             background: var(--color-speaker-b);
             border-radius: 2px;
+            /* Each bar has its own peak and parked height so the trio reads
+               as a small waveform instead of three identical lines. */
+            --bar-peak: 15px;
+            --bar-rest: 12px;
             animation: summary-eqbar 0.9s ease-in-out infinite;
         }
+        .summary-pending__bar:nth-child(1) { --bar-peak: 10px; --bar-rest: 7px; }
         .summary-pending__bar:nth-child(2) { animation-delay: 0.15s; }
-        .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; }
+        .summary-pending__bar:nth-child(3) { animation-delay: 0.3s; --bar-peak: 12px; --bar-rest: 9px; }
+        /* Bars pulse only while the transcript is still being produced; once
+           the backend attests the final transcript they park still. */
+        .summary-pending--ready .summary-pending__bar {
+            animation: none;
+            height: var(--bar-rest);
+        }
         .summary-pending__text {
             font-size: 0.8125rem;
             line-height: 1.5;
@@ -473,10 +561,10 @@
         }
         @keyframes summary-eqbar {
             0%, 100% { height: 5px; }
-            50% { height: 15px; }
+            50% { height: var(--bar-peak); }
         }
         @media (prefers-reduced-motion: reduce) {
-            .summary-pending__bar { animation: none; height: 12px; }
+            .summary-pending__bar { animation: none; height: var(--bar-rest); }
         }
         .summary-section { margin-bottom: 1rem; }
         .summary-section:last-child { margin-bottom: 0; }
@@ -499,6 +587,11 @@
             margin-left: 0.25rem;
         }
         .summary-provenance__toggle {
+            /* Sits one layer above open popovers (z-index 30): an earlier
+               section's popover overlays the next section, and the next
+               toggle must still take a direct click (close-A-open-B). */
+            position: relative;
+            z-index: 31;
             font-size: 0.6875rem;
             font-weight: 700;
             line-height: 1;
@@ -529,6 +622,9 @@
             border-radius: 0.5rem;
             background: var(--surface-bg);
             box-shadow: var(--shadow-md);
+            /* Long citation lists scroll instead of blanketing later sections. */
+            max-height: 16rem;
+            overflow-y: auto;
         }
         .summary-provenance__open {
             align-self: flex-end;
@@ -544,9 +640,219 @@
         .summary-provenance__open:hover {
             background: var(--surface-hover);
         }
+        .summary-unverified {
+            /* A note sentence the fidelity checks could not support (M07):
+               visible but non-destructive, so the clinician judges it. */
+            border-bottom: 2px dotted #d97706;
+            cursor: help;
+        }
+        /* ---- Claim-level provenance (M06, schema v2) ---- */
+        .summary-v1-sources-note {
+            /* Honest label for the v1 adapter path: section-level sources. */
+            margin: 0 0 0.625rem;
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            font-style: italic;
+        }
+        .summary-claim__text--review {
+            /* A claim needing review: visible but non-destructive; the
+               explanation lives in the claim's disclosure, never a bare word. */
+            border-bottom: 2px dotted #d97706;
+            cursor: help;
+        }
+        .summary-claim__toggle {
+            display: inline-block;
+            margin-left: 0.25rem;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            line-height: 1;
+            vertical-align: super;
+            padding: 0.0625rem 0.375rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            background: var(--surface-bg-alt);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .summary-claim__toggle--basis {
+            /* Uncited/absence chips read as wording, not a citation count. */
+            font-weight: 600;
+            color: var(--text-subtle);
+        }
+        /* Cited chips are a disclosure chevron: down when collapsed, up when
+           open, centered in a small round button. Drawn as pseudo-content so
+           selected/copied text never picks up a stray glyph. */
+        .summary-claim__toggle--evidence {
+            position: relative;
+            width: 1lh;
+            height: 1lh;
+            margin-left: 0.125rem;
+            margin-right: 0.625rem;
+            padding: 0;
+            font-size: inherit;
+            line-height: inherit;
+            vertical-align: top;
+        }
+        .summary-claim__toggle--evidence::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 0.375rem;
+            height: 0.375rem;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: translate(-50%, -70%) rotate(45deg);
+            transition: transform 0.15s;
+        }
+        .summary-claim__toggle--evidence[aria-expanded="true"]::before {
+            transform: translate(-50%, -30%) rotate(225deg);
+        }
+        .summary-claim__toggle:hover,
+        .summary-claim__toggle[aria-expanded="true"] {
+            background: var(--surface-hover);
+            border-color: color-mix(in srgb, var(--accent) 35%, var(--surface-border));
+        }
+        .summary-claim__disclosure {
+            /* Non-modal, in-flow: expands below its claim and pushes the note
+               down. No overlay, no focus trap - the page stays interactive. */
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            margin: 0.375rem 0 0.5rem;
+            padding: 0.5rem;
+            border: 1px solid var(--surface-border);
+            border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--surface-border));
+            border-radius: 0.5rem;
+            background: var(--surface-bg-alt);
+            font-size: 0.8125rem;
+            overflow-wrap: anywhere;
+        }
+        .summary-claim__disclosure.hidden { display: none; }
+        .summary-claim__state {
+            margin: 0;
+            font-weight: 600;
+            color: var(--text-strong);
+        }
+        .summary-claim__reasons {
+            margin: 0;
+            padding-left: 1.125rem;
+            color: var(--color-review);
+        }
+        .summary-claim__evidence {
+            /* The disclosure's single internal scroll region: long turns
+               scroll here instead of stretching the page. */
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            max-height: 16rem;
+            overflow-y: auto;
+        }
+        .summary-claim__unit {
+            padding: 0.375rem 0.5rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 0.375rem;
+            background: var(--surface-bg);
+        }
+        .summary-claim__unit-meta {
+            display: block;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            color: var(--text-subtle);
+        }
+        .summary-claim__unit-text { color: var(--text-strong); }
+        .summary-claim__context {
+            /* Display-only neighbours: visibly separated reading aid that
+               never joins the evidence or its count. */
+            font-size: 0.75rem;
+            font-style: italic;
+            color: var(--text-subtle);
+        }
+        .summary-claim__actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+        .summary-claim__open,
+        .summary-claim__close {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.625rem;
+            border: 1px solid var(--surface-border);
+            border-radius: 999px;
+            background: var(--surface-bg-alt);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .summary-claim__close { color: var(--text-subtle); }
+        .summary-claim__open:hover,
+        .summary-claim__close:hover { background: var(--surface-hover); }
+        .summary-claim__help {
+            margin: 0;
+            font-size: 0.6875rem;
+            color: var(--text-subtle);
+        }
+        .summary-generate {
+            /* The on-demand note trigger (M11) sits with the pending copy. */
+            margin-left: 0.75rem;
+            white-space: nowrap;
+        }
+        .summary-generate:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .summary-low-confidence {
+            position: relative;
+            border-radius: 3px;
+            background: color-mix(in srgb, var(--color-review-bg) 58%, transparent);
+            cursor: help;
+            outline: none;
+            text-decoration-line: underline;
+            text-decoration-style: dotted;
+            text-decoration-color: var(--color-review);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+        }
+        .summary-low-confidence::after {
+            position: absolute;
+            z-index: 40;
+            left: 0;
+            bottom: calc(100% + 8px);
+            width: max-content;
+            max-width: 220px;
+            padding: 7px 9px;
+            border: 1px solid var(--surface-border);
+            border-radius: 6px;
+            background: var(--surface-bg);
+            box-shadow: var(--shadow-md);
+            color: var(--text-strong);
+            content: attr(data-confidence-tooltip);
+            font-size: 0.7rem;
+            line-height: 1.35;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(3px);
+            transition: opacity 0.14s, transform 0.14s;
+        }
+        .summary-low-confidence:hover::after,
+        .summary-low-confidence:focus-visible::after {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .summary-low-confidence:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
         .summary-key-points {
+            /* TL;DR strip: visually distinct from the SOAP sections below,
+               shared theme tokens only so both themes come free. */
             list-style: disc;
-            padding-left: 1.25rem;
+            padding: 0.625rem 0.875rem 0.625rem 2rem;
+            border: 1px solid var(--surface-border);
+            border-left: 3px solid var(--accent);
+            border-radius: 0.5rem;
+            background: var(--surface-bg-alt);
             font-size: 0.875rem;
             line-height: 1.6;
             color: var(--text-strong);
@@ -799,7 +1105,9 @@
             left: 0;
             right: 0;
             top: calc(100% + 0.375rem);
-            z-index: 30;
+            /* Above the raised provenance toggles (31): an open header
+               dropdown must always beat content superscripts. */
+            z-index: 32;
             background: var(--surface-bg);
             border: 1px solid var(--surface-border);
             border-radius: 0.625rem;
@@ -1042,6 +1350,13 @@
                 padding: 1rem;
             }
 
+            /* Half-width columns get cramped on phones; the left/right offset
+               alone still says who is speaking. */
+            .segment--DOCTOR,
+            .segment--PATIENT {
+                max-width: 85%;
+            }
+
             .scribe-header,
             .status-cluster {
                 align-items: flex-start;
@@ -1110,6 +1425,11 @@
                 <span id="startBtnLabel">Start Consultation</span>
                 <span class="text-xs opacity-70">(Space)</span>
             </button>
+            {# Pause suspends audio streaming without finalizing (M11): the
+               visit continues on the same session when the user presses
+               Continue; Stop remains the only terminal action. #}
+            <button id="pauseBtn" onclick="togglePauseSession()" type="button" class="btn hidden"
+                    aria-label="Pause the recording without ending the session">Pause</button>
             <button id="stopBtn" onclick="stopCurrentSession()" class="btn btn--danger hidden" aria-label="Stop current session (Space or Escape)" title="Stop current session (Space / Esc)">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>
                 Stop
@@ -1162,6 +1482,10 @@
                                     aria-selected="false" aria-controls="summaryTranscriptView" tabindex="-1"
                                     onclick="selectSummaryTab('transcript')">Transcript</button>
                         </div>
+                        {# Default export: the summary always copies WITH its source/review status. #}
+                        <button id="copyNoteBtn" type="button" class="copy-button" disabled
+                                aria-label="Copy - unavailable until a note is generated"
+                                onclick="copySummary(this)">Copy</button>
                     </div>
                     <div id="summaryBody" class="summary-panel__body">
                         <div id="summaryNoteView" role="tabpanel" aria-labelledby="summaryTabNote">
@@ -1171,7 +1495,13 @@
                                     <span class="summary-pending__bar"></span>
                                     <span class="summary-pending__bar"></span>
                                 </span>
-                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress, the summary will generate once consultation ends.</span>
+                                <span class="summary-pending__text" id="summaryPendingText">Recording in progress - press Generate summary when the consultation ends.</span>
+                                {# The note is generated on demand (M11): the button unlocks
+                                   only once the backend attests the finalized transcript, so
+                                   a pre-terminal snapshot can never feed a note. #}
+                                <button id="generateSummaryBtn" type="button" class="copy-button summary-generate" disabled
+                                        aria-label="Generate summary - available once the transcript is finalized"
+                                        onclick="requestSummary()">Generate summary</button>
                             </div>
                             <div id="summaryLoading" class="summary-panel__loading hidden">
                                 <span class="recording-dot recording-pulse"></span>
@@ -1180,10 +1510,15 @@
                             <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite">
                                 <span id="summaryStatusBadge" class="summary-status__badge"></span>
                                 <button id="summaryRetryBtn" type="button" class="summary-status__retry hidden" onclick="requestSummary()">Retry Summary</button>
+                                <span id="summarySourceNotice" class="summary-status__notice hidden"></span>
+                                <span id="summaryTruncationNotice" class="summary-status__notice hidden"></span>
                             </div>
                             <div id="summaryContent"></div>
                         </div>
                         <div id="summaryTranscriptView" role="tabpanel" aria-labelledby="summaryTabTranscript" class="hidden">
+                            {# Copies the displayed lane with per-row timestamps and speakers. #}
+                            <button id="copyTranscriptBtn" type="button" class="copy-button copy-button--transcript"
+                                    onclick="copyActiveTranscriptLane(this)">Copy transcript</button>
                             <p id="summaryTranscriptStatus" class="summary-transcript__status hidden"></p>
                             <p id="summaryTranscriptNotice" class="summary-transcript__status hidden" role="status" aria-live="polite"></p>
                             <div id="summaryTranscript" class="summary-transcript"></div>
@@ -1199,6 +1534,7 @@
         </div>
 
         <div id="srAnnounce" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+        <span id="confidenceWordingHelp" class="sr-only">Lower-confidence transcription - double-check this wording.</span>
     </main>
 
     {# ===== DEV PANEL (RIGHT RAIL) ===== #}
@@ -1280,10 +1616,13 @@
     {% endif %}
     </script>
     <script src="/js/scribe.js"></script>
+    <script src="/js/scribe-confidence.js"></script>
+    <script src="/js/scribe-flow.js"></script>
     <script src="/js/scribe-streaming.js"></script>
     <script src="/js/scribe-recording.js"></script>
     <script src="/js/scribe-transcript.js"></script>
     <script src="/js/scribe-stitch.js"></script>
+    <script src="/js/scribe-copy.js"></script>
     <script src="/js/scribe-output.js"></script>
     <script src="/js/scribe-summary-tabs.js"></script>
     <script src="/js/scribe-provenance.js"></script>

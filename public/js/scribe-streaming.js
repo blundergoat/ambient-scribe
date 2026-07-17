@@ -179,6 +179,12 @@ class PcmStreamer {
         this._silence.gain.value = 0;
 
         this._processor.onaudioprocess = (event) => {
+            // Paused audio is not part of the visit: drop it before any
+            // buffering so nothing leaks into the transcript later.
+            if (this._paused) {
+                return;
+            }
+
             const microphoneSamples = event.inputBuffer.getChannelData(0);
             const downsampledSamples = this._downsampleBuffer(
                 microphoneSamples,
@@ -240,6 +246,25 @@ class PcmStreamer {
         this._buffers = [];
         this._bufferedBytes = 0;
         this._onChunk(mergedChunk.buffer);
+    }
+
+    /**
+     * Suspends chunk emission without releasing the microphone or socket.
+     * Use for a mid-visit pause (M11): audio captured while paused is
+     * dropped entirely - never buffered and never padded with silence - so
+     * the server sees one seamless PCM stream when emission resumes.
+     */
+    pause() {
+        // What was heard before the pause still belongs to the visit.
+        this.flush();
+        this._paused = true;
+    }
+
+    /**
+     * Resumes chunk emission after a pause on the same session.
+     */
+    resume() {
+        this._paused = false;
     }
 
     /**

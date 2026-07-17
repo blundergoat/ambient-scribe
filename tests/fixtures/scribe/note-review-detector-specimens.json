@@ -1,0 +1,5501 @@
+{
+  "manifest": "note-review-detector-specimens",
+  "frozen": "2026-07-15",
+  "purpose": "Labelled development specimens for the note-review detector families (exact quote, risk pair, temporal/action state, term confidence, demographics/exam, hedge, coverage): every entry names its source rows, expected reason, severity, and hard negatives, frozen BEFORE detector code changes. Labels stay frozen; families that miss their gate are deferred, never tuned against relabelled specimens. Frozen under plan 0.4.0-improve-prime milestone 05.",
+  "provenance": {
+    "m08_audit": "var/quality/note-fidelity-audit-20260713T234904Z/replays",
+    "m02_replays": "var/quality/m02-acceptance-20260715T044500Z/replays",
+    "baseline": "var/quality/note-fidelity-audit-20260713T234904Z/aggregate.md (21 unsupported claims; fidelity 1TP/7FP 12.5%; low-confidence 3TP/12FP 20.0%)",
+    "role_label_caveat": "Embedded role labels reflect each retained artifact's build at capture time; the M05 role re-score task owns role-label truth, not this manifest."
+  },
+  "reason_codes": {
+    "quote_not_matched": {
+      "lane": "exact_quote",
+      "status": "proposed",
+      "meaning": "Quoted note wording has no exact match against a bounded contiguous run of the cited/selected source rows."
+    },
+    "risk_answer_context_lost": {
+      "lane": "risk_pair",
+      "status": "proposed",
+      "meaning": "A claim represents a paired mental-health/risk question answer but drops or inverts the denial, qualifier, or hedge that was attached to that answer."
+    },
+    "state_superseded": {
+      "lane": "temporal_action",
+      "status": "proposed",
+      "meaning": "A claim asserts a state (e.g. availability) that a later source row reverses; the note froze the intermediate state."
+    },
+    "action_not_confirmed_done": {
+      "lane": "temporal_action",
+      "status": "proposed",
+      "meaning": "A recommendation, order, promise, or instruction is asserted as a completed action, or its conditional ('might need') framing is dropped."
+    },
+    "temporal_context_lost": {
+      "lane": "temporal_action",
+      "status": "proposed",
+      "meaning": "Timing, duration, numeric range, or the conditional scope of an answer is resolved beyond what the source states."
+    },
+    "source_low_confidence": {
+      "lane": "term_confidence",
+      "status": "frozen-by-M04",
+      "meaning": "Non-canonical clinical wording whose predominant relevant corrected row is below 0.78; names offending terms and segment_ids. Not renamed clinical_term_unresolved (M04 never approved that)."
+    },
+    "unsupported_demographic": {
+      "lane": "demographics_exam",
+      "status": "proposed",
+      "meaning": "Exact age/sex or similar demographic asserted with no trusted metadata and no spoken statement; spoken DOB alone cannot produce an exact age."
+    },
+    "exam_not_performed": {
+      "lane": "demographics_exam",
+      "status": "proposed (existing fidelity rule exam-not-performed)",
+      "meaning": "Screening answers or reported symptoms presented as performed examination findings."
+    },
+    "mental_health_screen_missing": {
+      "lane": "coverage",
+      "status": "proposed",
+      "meaning": "Note-level: an answered mental-health screen is absent from the generated note."
+    },
+    "emergency_disposition_incomplete": {
+      "lane": "coverage",
+      "status": "proposed",
+      "meaning": "Note-level: a complete spoken emergency disposition (call/999/stay-with/interim medication/follow-up) is only partially represented in the generated note."
+    }
+  },
+  "lane_counts": {
+    "demographics_exam": {
+      "flag": 4,
+      "no_flag": 4
+    },
+    "unowned": {
+      "flag": 4,
+      "no_flag": 0
+    },
+    "temporal_action": {
+      "flag": 13,
+      "no_flag": 6
+    },
+    "hedge": {
+      "flag": 3,
+      "no_flag": 2
+    },
+    "term_confidence": {
+      "flag": 3,
+      "no_flag": 3
+    },
+    "risk_pair": {
+      "flag": 3,
+      "no_flag": 2
+    },
+    "exact_quote": {
+      "flag": 1,
+      "no_flag": 4
+    },
+    "coverage": {
+      "flag": 2,
+      "no_flag": 1
+    }
+  },
+  "specimens": [
+    {
+      "id": "a01",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m08-day5-c03",
+      "origin": "retained_note",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "unsupported_demographic",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c19",
+        "c21"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0006",
+          "role": "PATIENT",
+          "confidence": 0.9674,
+          "text": "my name is"
+        },
+        {
+          "segment_id": "corrected-0007",
+          "role": "PATIENT",
+          "confidence": 0.891,
+          "text": "Valerie Paul. My"
+        },
+        {
+          "segment_id": "corrected-0008",
+          "role": "PATIENT",
+          "confidence": 0.8954,
+          "text": "date of"
+        },
+        {
+          "segment_id": "corrected-0009",
+          "role": "PATIENT",
+          "confidence": 0.5901,
+          "text": "date for is the 19th of September 1993."
+        },
+        {
+          "segment_id": "corrected-0010",
+          "role": "PATIENT",
+          "confidence": 0.9822,
+          "text": "My address is"
+        },
+        {
+          "segment_id": "corrected-0011",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "64 Clivedon"
+        },
+        {
+          "segment_id": "corrected-0012",
+          "role": "PATIENT",
+          "confidence": 0.734,
+          "text": "uh 64 Clive Den place in South Wimbledon."
+        }
+      ],
+      "notes": "Rows give name, DOB 19 September 1993, and address; never age or sex. DOB implied 32 at audit date, not 30.",
+      "m08_family": "novel: unsupported demographics",
+      "location": "key_points",
+      "claim": "30-year-old woman presenting with 2-month history of anxiety coinciding with new stressful job in fashion retail; boss described as unsupportive"
+    },
+    {
+      "id": "a02",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "origin": "retained_note",
+      "lane": "unowned",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0195",
+          "role": "PATIENT",
+          "confidence": 0.9267,
+          "text": "Yeah, I've been I've been drinking a little bit more than"
+        },
+        {
+          "segment_id": "corrected-0196",
+          "role": "PATIENT",
+          "confidence": 0.8938,
+          "text": "the usual, but uh so"
+        },
+        {
+          "segment_id": "corrected-0197",
+          "role": "PATIENT",
+          "confidence": 0.7329,
+          "text": "but other other than that."
+        },
+        {
+          "segment_id": "corrected-0200",
+          "role": "PATIENT",
+          "confidence": 0.7291,
+          "text": "uh you're eating okay otherwise. Um maybe"
+        },
+        {
+          "segment_id": "corrected-0201",
+          "role": "PATIENT",
+          "confidence": 0.9983,
+          "text": "a bit less than"
+        },
+        {
+          "segment_id": "corrected-0202",
+          "role": "PATIENT",
+          "confidence": 0.9325,
+          "text": "uh than what I would usually have."
+        }
+      ],
+      "notes": "'drinking a little bit more than the usual' became the unstated symptom 'thirst'. No allowed family owns symptom inference; defer with documentation if unowned at algorithm freeze.",
+      "m08_family": "novel: symptom inference",
+      "location": "section 'Subjective'",
+      "claim": "Increased thirst but reduced appetite, eating slightly less than usual."
+    },
+    {
+      "id": "a03",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "temporal_context_lost",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": true,
+      "hard_negatives": [
+        "c13"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0110",
+          "role": "PATIENT",
+          "confidence": 0.8937,
+          "text": "I I had some some"
+        },
+        {
+          "segment_id": "corrected-0111",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "fever in the"
+        },
+        {
+          "segment_id": "corrected-0112",
+          "role": "PATIENT",
+          "confidence": 0.9417,
+          "text": "beginning, but it's now sort of uh going"
+        },
+        {
+          "segment_id": "corrected-0113",
+          "role": "PATIENT",
+          "confidence": 0.9524,
+          "text": "down. I I've"
+        },
+        {
+          "segment_id": "corrected-0114",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "been taking some"
+        },
+        {
+          "segment_id": "corrected-0115",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "parse at them"
+        },
+        {
+          "segment_id": "corrected-0116",
+          "role": "PATIENT",
+          "confidence": 0.8766,
+          "text": "paracetamol and ibuprofen for"
+        },
+        {
+          "segment_id": "corrected-0117",
+          "role": "DOCTOR",
+          "confidence": 0.9332,
+          "text": "Okay,"
+        },
+        {
+          "segment_id": "corrected-0118",
+          "role": "PATIENT",
+          "confidence": 0.7412,
+          "text": "that, and uh they they help."
+        },
+        {
+          "segment_id": "corrected-0220",
+          "role": "PATIENT",
+          "confidence": 0.9225,
+          "text": "Um so otherwise that"
+        },
+        {
+          "segment_id": "corrected-0221",
+          "role": "PATIENT",
+          "confidence": 0.9168,
+          "text": "uh I'm I'm fine. There's um there"
+        },
+        {
+          "segment_id": "corrected-0222",
+          "role": "PATIENT",
+          "confidence": 0.9949,
+          "text": "isn't anything"
+        },
+        {
+          "segment_id": "corrected-0223",
+          "role": "PATIENT",
+          "confidence": 0.9961,
+          "text": "that I'm"
+        },
+        {
+          "segment_id": "corrected-0224",
+          "role": "PATIENT",
+          "confidence": 0.8129,
+          "text": "taking or I'm being treated"
+        },
+        {
+          "segment_id": "corrected-0225",
+          "role": "PATIENT",
+          "confidence": 1.0,
+          "text": "for."
+        }
+      ],
+      "notes": "Patient reports taking paracetamol and ibuprofen; the later denial answers the regular-treatment question. The answer's conditional scope (regular medication) was dropped.",
+      "m08_family": "novel: medication-status generalisation",
+      "location": "section 'Subjective'",
+      "claim": "Otherwise healthy, no current medications."
+    },
+    {
+      "id": "a04",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "unowned",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0108",
+          "role": "DOCTOR",
+          "confidence": 0.845,
+          "text": "Um moving down to your chest."
+        },
+        {
+          "segment_id": "corrected-0109",
+          "role": "DOCTOR",
+          "confidence": 0.9262,
+          "text": "Um how's your breathing been?"
+        },
+        {
+          "segment_id": "corrected-0110",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "a duplicate,"
+        },
+        {
+          "segment_id": "corrected-0111",
+          "role": "DOCTOR",
+          "confidence": 0.8018,
+          "text": "So do you uh you feel more breathless"
+        },
+        {
+          "segment_id": "corrected-0112",
+          "role": "DOCTOR",
+          "confidence": 0.8576,
+          "text": "or tight in your chest?"
+        },
+        {
+          "segment_id": "corrected-0113",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "No, so"
+        },
+        {
+          "segment_id": "corrected-0114",
+          "role": "PATIENT",
+          "confidence": 0.7705,
+          "text": "Uh no. No, it's"
+        },
+        {
+          "segment_id": "corrected-0115",
+          "role": "DOCTOR",
+          "confidence": 0.7041,
+          "text": "not so you're breathing is sorry, what was that? Your breathing is"
+        },
+        {
+          "segment_id": "corrected-0116",
+          "role": "PATIENT",
+          "confidence": 0.8772,
+          "text": "sorry, what was"
+        },
+        {
+          "segment_id": "corrected-0117",
+          "role": "PATIENT",
+          "confidence": 0.9505,
+          "text": "what was that?"
+        },
+        {
+          "segment_id": "corrected-0118",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "How are"
+        },
+        {
+          "segment_id": "corrected-0119",
+          "role": "PATIENT",
+          "confidence": 0.7791,
+          "text": "fine, is it? You you're"
+        },
+        {
+          "segment_id": "corrected-0120",
+          "role": "DOCTOR",
+          "confidence": 0.7961,
+          "text": "that your breathing is fine, is it?"
+        },
+        {
+          "segment_id": "corrected-0121",
+          "role": "DOCTOR",
+          "confidence": 0.7296,
+          "text": "it's not laboured or"
+        },
+        {
+          "segment_id": "corrected-0122",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "it? No,"
+        },
+        {
+          "segment_id": "corrected-0123",
+          "role": "PATIENT",
+          "confidence": 0.9367,
+          "text": "no, it's"
+        },
+        {
+          "segment_id": "corrected-0124",
+          "role": "PATIENT",
+          "confidence": 0.9252,
+          "text": "it's it's it's not it's not good. It's not good."
+        },
+        {
+          "segment_id": "corrected-0125",
+          "role": "DOCTOR",
+          "confidence": 0.987,
+          "text": "It's not"
+        },
+        {
+          "segment_id": "corrected-0126",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "good."
+        },
+        {
+          "segment_id": "corrected-0127",
+          "role": "PATIENT",
+          "confidence": 0.778,
+          "text": "No,"
+        },
+        {
+          "segment_id": "corrected-0128",
+          "role": "PATIENT",
+          "confidence": 0.7705,
+          "text": "no, no."
+        },
+        {
+          "segment_id": "corrected-0129",
+          "role": "DOCTOR",
+          "confidence": 0.8143,
+          "text": "Okay, okay. So you've you're you're feeling more short of breath."
+        },
+        {
+          "segment_id": "corrected-0130",
+          "role": "PATIENT",
+          "confidence": 0.8971,
+          "text": "Yeah, yeah."
+        },
+        {
+          "segment_id": "corrected-0131",
+          "role": "DOCTOR",
+          "confidence": 0.7862,
+          "text": "Yeah. Okay,"
+        },
+        {
+          "segment_id": "corrected-0132",
+          "role": "DOCTOR",
+          "confidence": 0.7594,
+          "text": "okay. Okay. Um any pain in your chest at all."
+        },
+        {
+          "segment_id": "corrected-0133",
+          "role": "PATIENT",
+          "confidence": 0.778,
+          "text": "No,"
+        },
+        {
+          "segment_id": "corrected-0134",
+          "role": "PATIENT",
+          "confidence": 0.9367,
+          "text": "no, it's"
+        },
+        {
+          "segment_id": "corrected-0135",
+          "role": "PATIENT",
+          "confidence": 0.8592,
+          "text": "it's it's weird. It's it's just you know, it's just"
+        },
+        {
+          "segment_id": "corrected-0136",
+          "role": "PATIENT",
+          "confidence": 0.9977,
+          "text": "a wee bit,"
+        },
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "If you get shortness or breath,"
+        },
+        {
+          "segment_id": "corrected-0138",
+          "role": "PATIENT",
+          "confidence": 0.832,
+          "text": "it's just a wee bit of shortness of breath, but it's not"
+        },
+        {
+          "segment_id": "corrected-0139",
+          "role": "DOCTOR",
+          "confidence": 0.9075,
+          "text": "No, okay."
+        },
+        {
+          "segment_id": "corrected-0140",
+          "role": "DOCTOR",
+          "confidence": 0.7591,
+          "text": "it's it's not it's not pain, you know, as such. Okay."
+        },
+        {
+          "segment_id": "corrected-0197",
+          "role": "PATIENT",
+          "confidence": 0.9809,
+          "text": "I have noticed like when I you know when I'm bending down"
+        },
+        {
+          "segment_id": "corrected-0198",
+          "role": "PATIENT",
+          "confidence": 0.9822,
+          "text": "and you know moving about it's just"
+        },
+        {
+          "segment_id": "corrected-0199",
+          "role": "PATIENT",
+          "confidence": 0.7483,
+          "text": "a we a wee bit stiffer than than normal"
+        },
+        {
+          "segment_id": "corrected-0200",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "Normal"
+        },
+        {
+          "segment_id": "corrected-0201",
+          "role": "PATIENT",
+          "confidence": 0.8372,
+          "text": "you know and I'm I I think that might be to do with"
+        },
+        {
+          "segment_id": "corrected-0202",
+          "role": "PATIENT",
+          "confidence": 0.9994,
+          "text": "whatever this thing is but"
+        },
+        {
+          "segment_id": "corrected-0203",
+          "role": "PATIENT",
+          "confidence": 0.861,
+          "text": "again it's"
+        }
+      ],
+      "notes": "Breathing difficulty never connected to exertion in source; 'moving about' rows describe stiffness. Truncated-prompt note; rows retained in full so the text-level specimen stands.",
+      "m08_family": "patient-state-without-evidence",
+      "location": "key_points",
+      "claim": "50-year-old with 5-day history of viral symptoms: dry cough (worse in morning), rhinitis, sore throat, mild ear pain, night sweats, and exertional dyspnea"
+    },
+    {
+      "id": "a05",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "unowned",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0108",
+          "role": "DOCTOR",
+          "confidence": 0.845,
+          "text": "Um moving down to your chest."
+        },
+        {
+          "segment_id": "corrected-0109",
+          "role": "DOCTOR",
+          "confidence": 0.9262,
+          "text": "Um how's your breathing been?"
+        },
+        {
+          "segment_id": "corrected-0110",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "a duplicate,"
+        },
+        {
+          "segment_id": "corrected-0111",
+          "role": "DOCTOR",
+          "confidence": 0.8018,
+          "text": "So do you uh you feel more breathless"
+        },
+        {
+          "segment_id": "corrected-0112",
+          "role": "DOCTOR",
+          "confidence": 0.8576,
+          "text": "or tight in your chest?"
+        },
+        {
+          "segment_id": "corrected-0113",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "No, so"
+        },
+        {
+          "segment_id": "corrected-0114",
+          "role": "PATIENT",
+          "confidence": 0.7705,
+          "text": "Uh no. No, it's"
+        },
+        {
+          "segment_id": "corrected-0115",
+          "role": "DOCTOR",
+          "confidence": 0.7041,
+          "text": "not so you're breathing is sorry, what was that? Your breathing is"
+        },
+        {
+          "segment_id": "corrected-0116",
+          "role": "PATIENT",
+          "confidence": 0.8772,
+          "text": "sorry, what was"
+        },
+        {
+          "segment_id": "corrected-0117",
+          "role": "PATIENT",
+          "confidence": 0.9505,
+          "text": "what was that?"
+        },
+        {
+          "segment_id": "corrected-0118",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "How are"
+        },
+        {
+          "segment_id": "corrected-0119",
+          "role": "PATIENT",
+          "confidence": 0.7791,
+          "text": "fine, is it? You you're"
+        },
+        {
+          "segment_id": "corrected-0120",
+          "role": "DOCTOR",
+          "confidence": 0.7961,
+          "text": "that your breathing is fine, is it?"
+        },
+        {
+          "segment_id": "corrected-0121",
+          "role": "DOCTOR",
+          "confidence": 0.7296,
+          "text": "it's not laboured or"
+        },
+        {
+          "segment_id": "corrected-0122",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "it? No,"
+        },
+        {
+          "segment_id": "corrected-0123",
+          "role": "PATIENT",
+          "confidence": 0.9367,
+          "text": "no, it's"
+        },
+        {
+          "segment_id": "corrected-0124",
+          "role": "PATIENT",
+          "confidence": 0.9252,
+          "text": "it's it's it's not it's not good. It's not good."
+        },
+        {
+          "segment_id": "corrected-0125",
+          "role": "DOCTOR",
+          "confidence": 0.987,
+          "text": "It's not"
+        },
+        {
+          "segment_id": "corrected-0126",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "good."
+        },
+        {
+          "segment_id": "corrected-0127",
+          "role": "PATIENT",
+          "confidence": 0.778,
+          "text": "No,"
+        },
+        {
+          "segment_id": "corrected-0128",
+          "role": "PATIENT",
+          "confidence": 0.7705,
+          "text": "no, no."
+        },
+        {
+          "segment_id": "corrected-0129",
+          "role": "DOCTOR",
+          "confidence": 0.8143,
+          "text": "Okay, okay. So you've you're you're feeling more short of breath."
+        },
+        {
+          "segment_id": "corrected-0130",
+          "role": "PATIENT",
+          "confidence": 0.8971,
+          "text": "Yeah, yeah."
+        },
+        {
+          "segment_id": "corrected-0131",
+          "role": "DOCTOR",
+          "confidence": 0.7862,
+          "text": "Yeah. Okay,"
+        },
+        {
+          "segment_id": "corrected-0132",
+          "role": "DOCTOR",
+          "confidence": 0.7594,
+          "text": "okay. Okay. Um any pain in your chest at all."
+        },
+        {
+          "segment_id": "corrected-0133",
+          "role": "PATIENT",
+          "confidence": 0.778,
+          "text": "No,"
+        },
+        {
+          "segment_id": "corrected-0134",
+          "role": "PATIENT",
+          "confidence": 0.9367,
+          "text": "no, it's"
+        },
+        {
+          "segment_id": "corrected-0135",
+          "role": "PATIENT",
+          "confidence": 0.8592,
+          "text": "it's it's weird. It's it's just you know, it's just"
+        },
+        {
+          "segment_id": "corrected-0136",
+          "role": "PATIENT",
+          "confidence": 0.9977,
+          "text": "a wee bit,"
+        },
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "If you get shortness or breath,"
+        },
+        {
+          "segment_id": "corrected-0138",
+          "role": "PATIENT",
+          "confidence": 0.832,
+          "text": "it's just a wee bit of shortness of breath, but it's not"
+        },
+        {
+          "segment_id": "corrected-0139",
+          "role": "DOCTOR",
+          "confidence": 0.9075,
+          "text": "No, okay."
+        },
+        {
+          "segment_id": "corrected-0140",
+          "role": "DOCTOR",
+          "confidence": 0.7591,
+          "text": "it's it's not it's not pain, you know, as such. Okay."
+        }
+      ],
+      "notes": "Section twin of a04.",
+      "m08_family": "patient-state-without-evidence",
+      "location": "section 'Subjective'",
+      "claim": "Chief complaints include: dry cough, mostly dry with worse symptoms in the morning; runny nose; sore throat, which patient attributes partly to shouting while watching football; ear pain described as mild; shortness of breath on exertion but denies chest pain; and feeling hot and cold with sweating, notably at night requiring removal and replacement of blankets."
+    },
+    {
+      "id": "a06",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "exam_not_performed",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c23",
+        "c24"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0155",
+          "role": "DOCTOR",
+          "confidence": 0.9719,
+          "text": "Have"
+        },
+        {
+          "segment_id": "corrected-0156",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "you measured"
+        },
+        {
+          "segment_id": "corrected-0157",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "your temperature at all? Have you"
+        },
+        {
+          "segment_id": "corrected-0158",
+          "role": "DOCTOR",
+          "confidence": 0.9954,
+          "text": "got a"
+        },
+        {
+          "segment_id": "corrected-0159",
+          "role": "PATIENT",
+          "confidence": 0.7842,
+          "text": "Um I mean, no, I mean you know, I can I just feel"
+        },
+        {
+          "segment_id": "corrected-0160",
+          "role": "PATIENT",
+          "confidence": 0.9337,
+          "text": "it on"
+        },
+        {
+          "segment_id": "corrected-0161",
+          "role": "PATIENT",
+          "confidence": 0.9151,
+          "text": "my forehead, but"
+        },
+        {
+          "segment_id": "corrected-0162",
+          "role": "PATIENT",
+          "confidence": 0.7182,
+          "text": "I can I haven't I haven't you know used a"
+        },
+        {
+          "segment_id": "corrected-0163",
+          "role": "PATIENT",
+          "confidence": 0.9092,
+          "text": "thermometer or anything."
+        }
+      ],
+      "notes": "Absent thermometer correctly recorded, but no examination occurred; the examination clause is the violation.",
+      "m08_family": "screening-as-exam",
+      "location": "key_points",
+      "claim": "Temperature not measured; no fever documented on examination"
+    },
+    {
+      "id": "a07",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "temporal_context_lost",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c18"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0433",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "24"
+        },
+        {
+          "segment_id": "corrected-0434",
+          "role": "DOCTOR",
+          "confidence": 0.9209,
+          "text": "twenty-four to"
+        },
+        {
+          "segment_id": "corrected-0435",
+          "role": "DOCTOR",
+          "confidence": 0.935,
+          "text": "forty hours if your"
+        },
+        {
+          "segment_id": "corrected-0436",
+          "role": "DOCTOR",
+          "confidence": 0.946,
+          "text": "symptoms don't get better."
+        }
+      ],
+      "notes": "Corrected source says 'twenty-four to forty hours'; the doctor TextGrid says forty-eight, so the note repairs ASR against its own declared source. Flagging is correct source-relative behavior.",
+      "m08_family": "uncertainty-resolved (source-relative)",
+      "location": "key_points",
+      "claim": "Plan: supportive care (rest, fluids, paracetamol); antibiotic script for amoxicillin as backup if no improvement within 24\u201348 hours; review in one week if symptoms persist"
+    },
+    {
+      "id": "a08",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "temporal_context_lost",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c18"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0444",
+          "role": "DOCTOR",
+          "confidence": 0.836,
+          "text": "I'll I'll give you a script today. Give it"
+        },
+        {
+          "segment_id": "corrected-0445",
+          "role": "DOCTOR",
+          "confidence": 0.8095,
+          "text": "about twenty-four to"
+        },
+        {
+          "segment_id": "corrected-0446",
+          "role": "DOCTOR",
+          "confidence": 0.9182,
+          "text": "forty hours. If you feel like you're still"
+        },
+        {
+          "segment_id": "corrected-0447",
+          "role": "DOCTOR",
+          "confidence": 0.9568,
+          "text": "feeling breathless and run down, I think there's no harm"
+        }
+      ],
+      "notes": "Plan-section twin of a07.",
+      "m08_family": "uncertainty-resolved (source-relative)",
+      "location": "section 'Plan'",
+      "claim": "Antibiotic script prescribed (amoxicillin, one tablet three times daily) to be used if no improvement within 24\u201348 hours."
+    },
+    {
+      "id": "a09",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "temporal_context_lost",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c18"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0218",
+          "role": "PATIENT",
+          "confidence": 0.8056,
+          "text": "been what was it Saturday because"
+        },
+        {
+          "segment_id": "corrected-0219",
+          "role": "PATIENT",
+          "confidence": 0.9979,
+          "text": "I was out"
+        },
+        {
+          "segment_id": "corrected-0220",
+          "role": "PATIENT",
+          "confidence": 0.8579,
+          "text": "okay I was out having dinner and then yeah"
+        },
+        {
+          "segment_id": "corrected-0221",
+          "role": "PATIENT",
+          "confidence": 0.9368,
+          "text": "I I came yeah yeah yeah it would have been"
+        },
+        {
+          "segment_id": "corrected-0222",
+          "role": "PATIENT",
+          "confidence": 0.7462,
+          "text": "that because I was"
+        },
+        {
+          "segment_id": "corrected-0223",
+          "role": "PATIENT",
+          "confidence": 0.7897,
+          "text": "out from my wife's uh she's she was doing"
+        },
+        {
+          "segment_id": "corrected-0224",
+          "role": "PATIENT",
+          "confidence": 0.8972,
+          "text": "this we thing with a wee bit of a"
+        },
+        {
+          "segment_id": "corrected-0225",
+          "role": "PATIENT",
+          "confidence": 0.8103,
+          "text": "celebration so we're out for that and I remember saying to"
+        },
+        {
+          "segment_id": "corrected-0226",
+          "role": "PATIENT",
+          "confidence": 0.9695,
+          "text": "her I was like you know what"
+        },
+        {
+          "segment_id": "corrected-0227",
+          "role": "PATIENT",
+          "confidence": 0.9967,
+          "text": "I'm"
+        },
+        {
+          "segment_id": "corrected-0228",
+          "role": "PATIENT",
+          "confidence": 0.8245,
+          "text": "I'm I'm not feeling great you know I"
+        },
+        {
+          "segment_id": "corrected-0229",
+          "role": "PATIENT",
+          "confidence": 0.8204,
+          "text": "stuck it out with her but I it would"
+        },
+        {
+          "segment_id": "corrected-0230",
+          "role": "PATIENT",
+          "confidence": 0.9801,
+          "text": "have been that Saturday so what's that"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "book five?"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9487,
+          "text": "about five four five days"
+        },
+        {
+          "segment_id": "corrected-0233",
+          "role": "PATIENT",
+          "confidence": 0.8834,
+          "text": "five days ago"
+        }
+      ],
+      "notes": "Patient was already unwell while at the Saturday dinner; the note resolves onset to after it.",
+      "m08_family": "uncertainty-resolved (temporal)",
+      "location": "section 'Subjective'",
+      "claim": "Symptoms began approximately five days ago on Saturday after attending dinner with his wife."
+    },
+    {
+      "id": "a10",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "origin": "retained_note",
+      "lane": "unowned",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0426",
+          "role": "DOCTOR",
+          "confidence": 0.9721,
+          "text": "Um you mentioned feeling a bit short"
+        },
+        {
+          "segment_id": "corrected-0427",
+          "role": "DOCTOR",
+          "confidence": 0.7713,
+          "text": "of breath. Um I'm a little bit on the edge"
+        },
+        {
+          "segment_id": "corrected-0428",
+          "role": "DOCTOR",
+          "confidence": 0.9399,
+          "text": "about giving you antibiotics. I"
+        },
+        {
+          "segment_id": "corrected-0429",
+          "role": "DOCTOR",
+          "confidence": 0.9237,
+          "text": "don't think you've got a chest infection, but what we"
+        },
+        {
+          "segment_id": "corrected-0430",
+          "role": "DOCTOR",
+          "confidence": 0.7841,
+          "text": "could think about is giving you a a script"
+        },
+        {
+          "segment_id": "corrected-0431",
+          "role": "DOCTOR",
+          "confidence": 0.8365,
+          "text": "for antibiotics, which you can maybe"
+        },
+        {
+          "segment_id": "corrected-0432",
+          "role": "DOCTOR",
+          "confidence": 0.8708,
+          "text": "use in the next"
+        },
+        {
+          "segment_id": "corrected-0433",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "24"
+        },
+        {
+          "segment_id": "corrected-0434",
+          "role": "DOCTOR",
+          "confidence": 0.9209,
+          "text": "twenty-four to"
+        },
+        {
+          "segment_id": "corrected-0435",
+          "role": "DOCTOR",
+          "confidence": 0.935,
+          "text": "forty hours if your"
+        },
+        {
+          "segment_id": "corrected-0436",
+          "role": "DOCTOR",
+          "confidence": 0.946,
+          "text": "symptoms don't get better."
+        },
+        {
+          "segment_id": "corrected-0437",
+          "role": "PATIENT",
+          "confidence": 0.7638,
+          "text": "Right. So if I'm I just I"
+        },
+        {
+          "segment_id": "corrected-0438",
+          "role": "PATIENT",
+          "confidence": 0.9993,
+          "text": "just lie down and take"
+        },
+        {
+          "segment_id": "corrected-0439",
+          "role": "PATIENT",
+          "confidence": 0.764,
+          "text": "it easy. Yeah. If"
+        },
+        {
+          "segment_id": "corrected-0440",
+          "role": "DOCTOR",
+          "confidence": 0.8995,
+          "text": "yeah"
+        },
+        {
+          "segment_id": "corrected-0441",
+          "role": "PATIENT",
+          "confidence": 0.6363,
+          "text": "I'm still on a bit rubbish, then"
+        },
+        {
+          "segment_id": "corrected-0442",
+          "role": "DOCTOR",
+          "confidence": 0.4731,
+          "text": "I'll go and I'm gonna go. Yeah,"
+        },
+        {
+          "segment_id": "corrected-0443",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "I go and"
+        },
+        {
+          "segment_id": "corrected-0444",
+          "role": "DOCTOR",
+          "confidence": 0.836,
+          "text": "I'll I'll give you a script today. Give it"
+        },
+        {
+          "segment_id": "corrected-0445",
+          "role": "DOCTOR",
+          "confidence": 0.8095,
+          "text": "about twenty-four to"
+        },
+        {
+          "segment_id": "corrected-0446",
+          "role": "DOCTOR",
+          "confidence": 0.9182,
+          "text": "forty hours. If you feel like you're still"
+        },
+        {
+          "segment_id": "corrected-0447",
+          "role": "DOCTOR",
+          "confidence": 0.9568,
+          "text": "feeling breathless and run down, I think there's no harm"
+        },
+        {
+          "segment_id": "corrected-0448",
+          "role": "DOCTOR",
+          "confidence": 0.93,
+          "text": "in starting a course of antibiotics, something like"
+        },
+        {
+          "segment_id": "corrected-0449",
+          "role": "DOCTOR",
+          "confidence": 0.8686,
+          "text": "a moxicillin, one tablet three times a day."
+        },
+        {
+          "segment_id": "corrected-0450",
+          "role": "DOCTOR",
+          "confidence": 0.8354,
+          "text": "Um and then if you're still"
+        },
+        {
+          "segment_id": "corrected-0451",
+          "role": "DOCTOR",
+          "confidence": 0.8905,
+          "text": "not better by next week, come"
+        },
+        {
+          "segment_id": "corrected-0452",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "back and see"
+        },
+        {
+          "segment_id": "corrected-0453",
+          "role": "DOCTOR",
+          "confidence": 0.9758,
+          "text": "me and we can have another look."
+        }
+      ],
+      "notes": "Rows defer the antibiotic script without stating 'secondary infection'; rationale invention is clinical entailment, unowned.",
+      "m08_family": "novel: treatment rationale",
+      "location": "section 'Plan'",
+      "claim": "Doctor notes not currently prescribing antibiotics but providing script as precaution for potential secondary infection."
+    },
+    {
+      "id": "a11",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "temporal_context_lost",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c33"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0124",
+          "role": "PATIENT",
+          "confidence": 0.7977,
+          "text": "um yeah"
+        },
+        {
+          "segment_id": "corrected-0125",
+          "role": "PATIENT",
+          "confidence": 0.7803,
+          "text": "Yeah. Well, maybe. I remember"
+        },
+        {
+          "segment_id": "corrected-0126",
+          "role": "PATIENT",
+          "confidence": 0.8446,
+          "text": "like a year ago."
+        },
+        {
+          "segment_id": "corrected-0127",
+          "role": "PATIENT",
+          "confidence": 0.8559,
+          "text": "A year ago, I was"
+        },
+        {
+          "segment_id": "corrected-0128",
+          "role": "PATIENT",
+          "confidence": 0.9997,
+          "text": "out"
+        },
+        {
+          "segment_id": "corrected-0129",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "with my friends."
+        },
+        {
+          "segment_id": "corrected-0130",
+          "role": "PATIENT",
+          "confidence": 0.9882,
+          "text": "And I think we went"
+        },
+        {
+          "segment_id": "corrected-0131",
+          "role": "PATIENT",
+          "confidence": 0.986,
+          "text": "like to"
+        },
+        {
+          "segment_id": "corrected-0132",
+          "role": "PATIENT",
+          "confidence": 0.7762,
+          "text": "a late night kind"
+        },
+        {
+          "segment_id": "corrected-0133",
+          "role": "PATIENT",
+          "confidence": 0.8504,
+          "text": "of Chinese place. And"
+        },
+        {
+          "segment_id": "corrected-0134",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "I remember that I was quite"
+        },
+        {
+          "segment_id": "corrected-0135",
+          "role": "PATIENT",
+          "confidence": 0.9301,
+          "text": "drunk to be honest."
+        },
+        {
+          "segment_id": "corrected-0136",
+          "role": "PATIENT",
+          "confidence": 0.8837,
+          "text": "And I remember that after like having that very late,"
+        },
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": 0.9996,
+          "text": "I woke up"
+        },
+        {
+          "segment_id": "corrected-0138",
+          "role": "PATIENT",
+          "confidence": 0.9988,
+          "text": "the next morning quite swollen up and"
+        },
+        {
+          "segment_id": "corrected-0139",
+          "role": "PATIENT",
+          "confidence": 0.96,
+          "text": "had also like"
+        },
+        {
+          "segment_id": "corrected-0140",
+          "role": "DOCTOR",
+          "confidence": 0.8309,
+          "text": "Okay."
+        },
+        {
+          "segment_id": "corrected-0141",
+          "role": "PATIENT",
+          "confidence": 0.874,
+          "text": "felt really bad and quite difficult breathing. Right. But I"
+        },
+        {
+          "segment_id": "corrected-0142",
+          "role": "DOCTOR",
+          "confidence": 0.9999,
+          "text": "But"
+        },
+        {
+          "segment_id": "corrected-0143",
+          "role": "PATIENT",
+          "confidence": 0.7787,
+          "text": "don't know what it was I"
+        },
+        {
+          "segment_id": "corrected-0144",
+          "role": "PATIENT",
+          "confidence": 0.8995,
+          "text": "had. It was like"
+        },
+        {
+          "segment_id": "corrected-0145",
+          "role": "PATIENT",
+          "confidence": 0.9167,
+          "text": "a curry or something."
+        }
+      ],
+      "notes": "Patient ate late and woke swollen; onset moment and duration were never stated.",
+      "m08_family": "uncertainty-resolved (timing)",
+      "location": "key_points",
+      "claim": "History of similar reaction one year ago after Chinese food with prolonged swelling and breathing difficulty"
+    },
+    {
+      "id": "a12",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "state_superseded",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c32"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0206",
+          "role": "DOCTOR",
+          "confidence": 0.7215,
+          "text": "You feel crazy. Okay, right. Do you have any"
+        },
+        {
+          "segment_id": "corrected-0207",
+          "role": "DOCTOR",
+          "confidence": 0.9869,
+          "text": "kind of uh antihistamines"
+        },
+        {
+          "segment_id": "corrected-0208",
+          "role": "DOCTOR",
+          "confidence": 0.9169,
+          "text": "with you at the moment?"
+        },
+        {
+          "segment_id": "corrected-0209",
+          "role": "PATIENT",
+          "confidence": 0.9898,
+          "text": "No, I don't think"
+        },
+        {
+          "segment_id": "corrected-0210",
+          "role": "PATIENT",
+          "confidence": 0.711,
+          "text": "I have. Oh"
+        },
+        {
+          "segment_id": "corrected-0247",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "yes mom"
+        },
+        {
+          "segment_id": "corrected-0248",
+          "role": "PATIENT",
+          "confidence": 0.7637,
+          "text": "Yes, uh, mom, mom. Do we have any"
+        },
+        {
+          "segment_id": "corrected-0249",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "anticipants around"
+        },
+        {
+          "segment_id": "corrected-0250",
+          "role": "DOCTOR",
+          "confidence": 0.74,
+          "text": "antihistamines around? Yes, yes."
+        },
+        {
+          "segment_id": "corrected-0251",
+          "role": "PATIENT",
+          "confidence": 0.8287,
+          "text": "Oh,"
+        },
+        {
+          "segment_id": "corrected-0252",
+          "role": "PATIENT",
+          "confidence": 0.8609,
+          "text": "yeah,"
+        },
+        {
+          "segment_id": "corrected-0253",
+          "role": "PATIENT",
+          "confidence": 0.8028,
+          "text": "yeah, we do."
+        }
+      ],
+      "notes": "Initial absence is reversed when the mother finds antihistamines; the note froze the intermediate state.",
+      "m08_family": "novel: stale medication availability",
+      "location": "key_points",
+      "claim": "Currently on salbutamol inhaler for asthma; no antihistamines immediately available"
+    },
+    {
+      "id": "a13",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c11",
+        "c12"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0230",
+          "role": "DOCTOR",
+          "confidence": 0.7865,
+          "text": "moment. Okay, so hang on the line while I'll call the"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9936,
+          "text": "you. Okay,"
+        },
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        }
+      ],
+      "notes": "Clinician promises to call and instructs the mother to call 999; no row confirms either call completed.",
+      "m08_family": "patient-state-without-evidence (action completion)",
+      "location": "key_points",
+      "claim": "Clinician assessed as possible anaphylaxis; ambulance called with mother directed to call 999"
+    },
+    {
+      "id": "a14",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c11",
+        "c12"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0230",
+          "role": "DOCTOR",
+          "confidence": 0.7865,
+          "text": "moment. Okay, so hang on the line while I'll call the"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9936,
+          "text": "you. Okay,"
+        },
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        }
+      ],
+      "notes": "Plan-section twin of a13; carried a low-confidence marker but no fidelity warning.",
+      "m08_family": "patient-state-without-evidence (action completion)",
+      "location": "section 'Plan'",
+      "claim": "Ambulance called to patient's location."
+    },
+    {
+      "id": "a15",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c11"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0268",
+          "role": "DOCTOR",
+          "confidence": 0.7873,
+          "text": "and after you come up from the hospital, do you give us a ring back? We might need to"
+        },
+        {
+          "segment_id": "corrected-0269",
+          "role": "DOCTOR",
+          "confidence": 0.907,
+          "text": "sort you out um with your injections"
+        },
+        {
+          "segment_id": "corrected-0270",
+          "role": "DOCTOR",
+          "confidence": 0.7397,
+          "text": "and things like that. Okay,"
+        }
+      ],
+      "notes": "'give us a ring back ... might need to sort you out with your injections' is conditional; prescription/supply arrangement is asserted. The '(presumed ...)' auto-injector type inference is a separately unowned sub-issue for backlog documentation.",
+      "m08_family": "novel: future-plan elaboration",
+      "location": "section 'Plan'",
+      "claim": "Patient to call back after hospital discharge to arrange prescription and supply of injections (presumed epinephrine auto-injectors)."
+    },
+    {
+      "id": "a16",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "hedge",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": "negative-without-denial",
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c04"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0060",
+          "role": "DOCTOR",
+          "confidence": 0.9437,
+          "text": "Any change"
+        },
+        {
+          "segment_id": "corrected-0061",
+          "role": "DOCTOR",
+          "confidence": 0.9632,
+          "text": "in your weight"
+        },
+        {
+          "segment_id": "corrected-0062",
+          "role": "DOCTOR",
+          "confidence": 0.9261,
+          "text": "at all?"
+        },
+        {
+          "segment_id": "corrected-0063",
+          "role": "PATIENT",
+          "confidence": 0.8125,
+          "text": "Um, I don't think so."
+        },
+        {
+          "segment_id": "corrected-0064",
+          "role": "PATIENT",
+          "confidence": 0.7925,
+          "text": "I'm probably less hungry, but no no"
+        },
+        {
+          "segment_id": "corrected-0065",
+          "role": "PATIENT",
+          "confidence": 0.7547,
+          "text": "weight change, just a bit."
+        }
+      ],
+      "notes": "The exact retained DAY5_SELF_CORRECTED_WEIGHT_ROWS protection specimen reproduced without a final warning; recall, not a new family.",
+      "m08_family": "uncertainty-resolved / denial false negative",
+      "location": "section 'Subjective'",
+      "claim": "No weight change, though appetite has decreased and eating requires more effort."
+    },
+    {
+      "id": "a17",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "source_low_confidence",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": true,
+      "hard_negatives": [
+        "c28"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0093",
+          "role": "PATIENT",
+          "confidence": 0.77,
+          "text": "Uh I think sort of carp, back of my"
+        },
+        {
+          "segment_id": "corrected-0094",
+          "role": "PATIENT",
+          "confidence": 0.7616,
+          "text": "car, because I didn't notice it,"
+        }
+      ],
+      "notes": "'carp, back of my car' (TextGrid: calf) became 'on his back'. Key points carry no visible low-confidence field, so only the internal reason lane can name it. If bounded linkage cannot reach it without generic fuzzy matching, the family defers and this is a documented backlog miss for the human gate.",
+      "m08_family": "patient-state-without-evidence (anatomical)",
+      "location": "key_points",
+      "claim": "Transient rash on back (February) with possible concurrent fever and sore throat; noted by wife"
+    },
+    {
+      "id": "a18",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "source_low_confidence",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": true,
+      "hard_negatives": [
+        "c28"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0093",
+          "role": "PATIENT",
+          "confidence": 0.77,
+          "text": "Uh I think sort of carp, back of my"
+        },
+        {
+          "segment_id": "corrected-0094",
+          "role": "PATIENT",
+          "confidence": 0.7616,
+          "text": "car, because I didn't notice it,"
+        }
+      ],
+      "notes": "Section twin of a17; visibly flagged today but linked to unrelated corrected-0015 (see hc12).",
+      "m08_family": "patient-state-without-evidence (anatomical)",
+      "location": "section 'Subjective'",
+      "claim": "Additionally, a rash appeared on his back around end of February/mid-February, noticed by his wife; it caused minimal itching and resolved over a couple of weeks."
+    },
+    {
+      "id": "a19",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "hedge",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": "uncertainty-resolved",
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c04"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0135",
+          "role": "PATIENT",
+          "confidence": 0.9988,
+          "text": "sort"
+        },
+        {
+          "segment_id": "corrected-0136",
+          "role": "PATIENT",
+          "confidence": 0.7758,
+          "text": "Um headache, maybe in just generally feeling a bit"
+        },
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": 0.8612,
+          "text": "crappy."
+        }
+      ],
+      "notes": "'maybe' dropped; visible low-confidence marker fired on the wrong row (see hc13) and no fidelity warning.",
+      "m08_family": "uncertainty-resolved",
+      "location": "section 'Subjective'",
+      "claim": "Reports headache and general malaise."
+    },
+    {
+      "id": "a20",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "risk_pair",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "risk_answer_context_lost",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": true,
+      "hard_negatives": [
+        "c06"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0148",
+          "role": "DOCTOR",
+          "confidence": 0.8485,
+          "text": "Okay, and has your concentration"
+        },
+        {
+          "segment_id": "corrected-0149",
+          "role": "DOCTOR",
+          "confidence": 0.9999,
+          "text": "been"
+        },
+        {
+          "segment_id": "corrected-0150",
+          "role": "DOCTOR",
+          "confidence": 0.9968,
+          "text": "affected or your tiredness levels in the"
+        },
+        {
+          "segment_id": "corrected-0151",
+          "role": "DOCTOR",
+          "confidence": 0.912,
+          "text": "daytime at work?"
+        },
+        {
+          "segment_id": "corrected-0152",
+          "role": "PATIENT",
+          "confidence": 0.9821,
+          "text": "Yeah, definitely"
+        },
+        {
+          "segment_id": "corrected-0153",
+          "role": "PATIENT",
+          "confidence": 0.9892,
+          "text": "sort of tired and"
+        },
+        {
+          "segment_id": "corrected-0154",
+          "role": "PATIENT",
+          "confidence": 0.8441,
+          "text": "um yeah, less energy,"
+        },
+        {
+          "segment_id": "corrected-0155",
+          "role": "PATIENT",
+          "confidence": 0.9665,
+          "text": "sort of probably"
+        },
+        {
+          "segment_id": "corrected-0156",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "probably I think it's"
+        },
+        {
+          "segment_id": "corrected-0157",
+          "role": "PATIENT",
+          "confidence": 0.8037,
+          "text": "less engaged than I I would normally be."
+        }
+      ],
+      "notes": "Clinician asked concentration-or-tiredness; patient confirmed tiredness/energy/engagement. If the bounded pair algorithm is risk-question-gated this defers.",
+      "m08_family": "uncertainty-resolved (branch choice)",
+      "location": "section 'Subjective'",
+      "claim": "Despite fatigue and reduced energy at work, concentration remains affected."
+    },
+    {
+      "id": "a21",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c17",
+        "c18"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0238",
+          "role": "DOCTOR",
+          "confidence": 0.8617,
+          "text": "Um, I think it's important to"
+        },
+        {
+          "segment_id": "corrected-0239",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "get some blood"
+        },
+        {
+          "segment_id": "corrected-0240",
+          "role": "DOCTOR",
+          "confidence": 0.8151,
+          "text": "tests, checking"
+        },
+        {
+          "segment_id": "corrected-0241",
+          "role": "DOCTOR",
+          "confidence": 0.8647,
+          "text": "all the normal things like liver, kidneys, blood"
+        },
+        {
+          "segment_id": "corrected-0242",
+          "role": "DOCTOR",
+          "confidence": 0.8131,
+          "text": "count, etc.,"
+        },
+        {
+          "segment_id": "corrected-0243",
+          "role": "DOCTOR",
+          "confidence": 0.9991,
+          "text": "but also some"
+        },
+        {
+          "segment_id": "corrected-0244",
+          "role": "DOCTOR",
+          "confidence": 0.9338,
+          "text": "more specific things like um bacterial"
+        },
+        {
+          "segment_id": "corrected-0245",
+          "role": "DOCTOR",
+          "confidence": 0.9979,
+          "text": "infection you can sometimes"
+        },
+        {
+          "segment_id": "corrected-0246",
+          "role": "DOCTOR",
+          "confidence": 0.864,
+          "text": "get, uh including one that you can"
+        },
+        {
+          "segment_id": "corrected-0247",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "get which can produce"
+        },
+        {
+          "segment_id": "corrected-0248",
+          "role": "DOCTOR",
+          "confidence": 0.8787,
+          "text": "a rash like that. So"
+        },
+        {
+          "segment_id": "corrected-0249",
+          "role": "DOCTOR",
+          "confidence": 0.9136,
+          "text": "that"
+        },
+        {
+          "segment_id": "corrected-0250",
+          "role": "DOCTOR",
+          "confidence": 0.96,
+          "text": "that would involve blood tests."
+        },
+        {
+          "segment_id": "corrected-0251",
+          "role": "DOCTOR",
+          "confidence": 0.999,
+          "text": "Are"
+        },
+        {
+          "segment_id": "corrected-0252",
+          "role": "DOCTOR",
+          "confidence": 0.994,
+          "text": "you happy to do that?"
+        },
+        {
+          "segment_id": "corrected-0253",
+          "role": "PATIENT",
+          "confidence": 0.7723,
+          "text": "Uh yeah, I'm in general happy with"
+        },
+        {
+          "segment_id": "corrected-0273",
+          "role": "DOCTOR",
+          "confidence": 0.8825,
+          "text": "Okay. So"
+        },
+        {
+          "segment_id": "corrected-0274",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "if you're happy"
+        },
+        {
+          "segment_id": "corrected-0275",
+          "role": "DOCTOR",
+          "confidence": 0.9651,
+          "text": "to do that, if you book that through"
+        },
+        {
+          "segment_id": "corrected-0276",
+          "role": "DOCTOR",
+          "confidence": 0.9982,
+          "text": "the support line and"
+        },
+        {
+          "segment_id": "corrected-0277",
+          "role": "DOCTOR",
+          "confidence": 0.9896,
+          "text": "then when you've had"
+        },
+        {
+          "segment_id": "corrected-0278",
+          "role": "DOCTOR",
+          "confidence": 0.8346,
+          "text": "the test, arrange a"
+        },
+        {
+          "segment_id": "corrected-0279",
+          "role": "DOCTOR",
+          "confidence": 0.7172,
+          "text": "follow-up about a week after after you've had the test done."
+        }
+      ],
+      "notes": "Recommendation plus the patient's future support-line booking became a completed order.",
+      "m08_family": "novel: completed test ordering",
+      "location": "section 'Plan'",
+      "claim": "Blood tests ordered to check liver, kidneys, blood count, and specific bacterial infections including Lyme disease serology."
+    },
+    {
+      "id": "c01",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "risk_pair",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "risk_answer_context_lost",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c02",
+        "hf01"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0299",
+          "role": "DOCTOR",
+          "confidence": 0.7124,
+          "text": "And has your mood ever"
+        },
+        {
+          "segment_id": "corrected-0300",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "been so low that you felt like you just couldn't"
+        },
+        {
+          "segment_id": "corrected-0301",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "carry on with your job or"
+        },
+        {
+          "segment_id": "corrected-0302",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "with your life"
+        },
+        {
+          "segment_id": "corrected-0303",
+          "role": "DOCTOR",
+          "confidence": 0.7673,
+          "text": "or with your normal things as they"
+        },
+        {
+          "segment_id": "corrected-0304",
+          "role": "DOCTOR",
+          "confidence": 0.8443,
+          "text": "say were going I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0305",
+          "role": "PATIENT",
+          "confidence": 0.9335,
+          "text": "no, I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0306",
+          "role": "PATIENT",
+          "confidence": 0.9959,
+          "text": "say that I've had I haven't had any"
+        },
+        {
+          "segment_id": "corrected-0307",
+          "role": "PATIENT",
+          "confidence": 0.999,
+          "text": "suicidal thoughts or any"
+        },
+        {
+          "segment_id": "corrected-0308",
+          "role": "PATIENT",
+          "confidence": 0.8402,
+          "text": "thoughts that have been that extreme."
+        },
+        {
+          "segment_id": "corrected-0309",
+          "role": "PATIENT",
+          "confidence": 0.8385,
+          "text": "Like I don't you know I have I'd have a good support system, like I do have a good family and"
+        },
+        {
+          "segment_id": "corrected-0310",
+          "role": "PATIENT",
+          "confidence": 0.7866,
+          "text": "stuff. So I I have"
+        },
+        {
+          "segment_id": "corrected-0311",
+          "role": "PATIENT",
+          "confidence": 0.9954,
+          "text": "I don't have worries about actually wanting to"
+        },
+        {
+          "segment_id": "corrected-0312",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "imagine"
+        },
+        {
+          "segment_id": "corrected-0313",
+          "role": "PATIENT",
+          "confidence": 0.863,
+          "text": "um not"
+        },
+        {
+          "segment_id": "corrected-0314",
+          "role": "PATIENT",
+          "confidence": 0.7919,
+          "text": "go on. It's just"
+        },
+        {
+          "segment_id": "corrected-0315",
+          "role": "PATIENT",
+          "confidence": 0.8861,
+          "text": "that I don't want to go on like this."
+        }
+      ],
+      "notes": "Denial and support are represented, but the attached qualifier 'It's just that I don't want to go on like this' (corrected-0315) appears nowhere in the note.",
+      "location": "section 'Subjective'",
+      "claim": "She states she has not had suicidal thoughts and has good family support.",
+      "assert_absent_from_note": "go on like this"
+    },
+    {
+      "id": "c02",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "risk_pair",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0299",
+          "role": "DOCTOR",
+          "confidence": 0.7124,
+          "text": "And has your mood ever"
+        },
+        {
+          "segment_id": "corrected-0300",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "been so low that you felt like you just couldn't"
+        },
+        {
+          "segment_id": "corrected-0301",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "carry on with your job or"
+        },
+        {
+          "segment_id": "corrected-0302",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "with your life"
+        },
+        {
+          "segment_id": "corrected-0303",
+          "role": "DOCTOR",
+          "confidence": 0.7673,
+          "text": "or with your normal things as they"
+        },
+        {
+          "segment_id": "corrected-0304",
+          "role": "DOCTOR",
+          "confidence": 0.8443,
+          "text": "say were going I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0305",
+          "role": "PATIENT",
+          "confidence": 0.9335,
+          "text": "no, I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0306",
+          "role": "PATIENT",
+          "confidence": 0.9959,
+          "text": "say that I've had I haven't had any"
+        },
+        {
+          "segment_id": "corrected-0307",
+          "role": "PATIENT",
+          "confidence": 0.999,
+          "text": "suicidal thoughts or any"
+        },
+        {
+          "segment_id": "corrected-0308",
+          "role": "PATIENT",
+          "confidence": 0.8402,
+          "text": "thoughts that have been that extreme."
+        },
+        {
+          "segment_id": "corrected-0309",
+          "role": "PATIENT",
+          "confidence": 0.8385,
+          "text": "Like I don't you know I have I'd have a good support system, like I do have a good family and"
+        },
+        {
+          "segment_id": "corrected-0310",
+          "role": "PATIENT",
+          "confidence": 0.7866,
+          "text": "stuff. So I I have"
+        },
+        {
+          "segment_id": "corrected-0311",
+          "role": "PATIENT",
+          "confidence": 0.9954,
+          "text": "I don't have worries about actually wanting to"
+        },
+        {
+          "segment_id": "corrected-0312",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "imagine"
+        },
+        {
+          "segment_id": "corrected-0313",
+          "role": "PATIENT",
+          "confidence": 0.863,
+          "text": "um not"
+        },
+        {
+          "segment_id": "corrected-0314",
+          "role": "PATIENT",
+          "confidence": 0.7919,
+          "text": "go on. It's just"
+        },
+        {
+          "segment_id": "corrected-0315",
+          "role": "PATIENT",
+          "confidence": 0.8861,
+          "text": "that I don't want to go on like this."
+        }
+      ],
+      "notes": "Denial plus qualifier plus support all preserved; must not flag.",
+      "location": "constructed",
+      "claim": "She denies suicidal thoughts but states she does not want to go on like this; good family support."
+    },
+    {
+      "id": "c03",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "hedge",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": null,
+      "existing_rule": "uncertainty-resolved",
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c04"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0154",
+          "role": "DOCTOR",
+          "confidence": 0.8442,
+          "text": "Is it for like a regular fast beat or an irregular beat?"
+        },
+        {
+          "segment_id": "corrected-0155",
+          "role": "PATIENT",
+          "confidence": 0.9661,
+          "text": "Irregular I think"
+        }
+      ],
+      "notes": "'Irregular I think' (corrected-0155) resolved to a definite cardiac character; 'i think' is not in _UNCERTAINTY_PHRASES today.",
+      "location": "section 'Subjective'",
+      "claim": "Palpitations are irregular and variable in duration, ranging from a couple of minutes to 10 minutes."
+    },
+    {
+      "id": "c04",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "hedge",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0154",
+          "role": "DOCTOR",
+          "confidence": 0.8442,
+          "text": "Is it for like a regular fast beat or an irregular beat?"
+        },
+        {
+          "segment_id": "corrected-0155",
+          "role": "PATIENT",
+          "confidence": 0.9661,
+          "text": "Irregular I think"
+        }
+      ],
+      "notes": "Hedge preserved with an approved uncertainty marker; must not flag.",
+      "location": "constructed",
+      "claim": "Palpitations felt irregular, though the patient was not certain."
+    },
+    {
+      "id": "c05",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "risk_pair",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "risk_answer_context_lost",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c06"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0236",
+          "role": "DOCTOR",
+          "confidence": 0.9534,
+          "text": "And what's the worst that it's got? Have"
+        },
+        {
+          "segment_id": "corrected-0237",
+          "role": "DOCTOR",
+          "confidence": 0.9597,
+          "text": "you ever been um so overwhelmed that you couldn't"
+        },
+        {
+          "segment_id": "corrected-0238",
+          "role": "DOCTOR",
+          "confidence": 0.7788,
+          "text": "get into the office, you couldn't go"
+        },
+        {
+          "segment_id": "corrected-0239",
+          "role": "DOCTOR",
+          "confidence": 0.8381,
+          "text": "into a situation?"
+        },
+        {
+          "segment_id": "corrected-0240",
+          "role": "PATIENT",
+          "confidence": 0.7214,
+          "text": "Yeah, but um panic attack no, I wouldn't say so."
+        }
+      ],
+      "notes": "'Yeah, but um panic attack no, I wouldn't say so.' (corrected-0240) is a hedged, ambiguous answer to a severity screen; a bare definite negative drops the hedge.",
+      "location": "constructed",
+      "claim": "No panic attacks."
+    },
+    {
+      "id": "c06",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "risk_pair",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0102",
+          "role": "PATIENT",
+          "confidence": 0.9251,
+          "text": "I'm just like panicking that I'm gonna be late"
+        },
+        {
+          "segment_id": "corrected-0146",
+          "role": "PATIENT",
+          "confidence": 0.8293,
+          "text": "a panic thinking I am gonna be late so it's just kind of like"
+        }
+      ],
+      "notes": "Descriptive supported use of 'panic'; must not flag.",
+      "location": "key_points",
+      "claim": "Palpitations irregular, variable duration (2-10 minutes), triggered by morning panic about being late; patient initially feared cardiac cause"
+    },
+    {
+      "id": "c07",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "exact_quote",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0217",
+          "role": "DOCTOR",
+          "confidence": 0.9221,
+          "text": "um from what history you've"
+        },
+        {
+          "segment_id": "corrected-0218",
+          "role": "DOCTOR",
+          "confidence": 0.8246,
+          "text": "been telling me, it sounds like you could be"
+        },
+        {
+          "segment_id": "corrected-0219",
+          "role": "DOCTOR",
+          "confidence": 0.9996,
+          "text": "going into what we say"
+        },
+        {
+          "segment_id": "corrected-0220",
+          "role": "DOCTOR",
+          "confidence": 0.792,
+          "text": "an anaphylactic reaction. That's when"
+        },
+        {
+          "segment_id": "corrected-0221",
+          "role": "DOCTOR",
+          "confidence": 0.8114,
+          "text": "your throat and your chest, you know, closes in,"
+        },
+        {
+          "segment_id": "corrected-0222",
+          "role": "DOCTOR",
+          "confidence": 0.8023,
+          "text": "and you might need an injection, like what your"
+        }
+      ],
+      "notes": "The quoted clinician wording is contiguous across corrected-0218..0222; the bounded contiguous matcher must verify it. Mechanism of today's failure unconfirmed.",
+      "current_behavior": "flags today (non-verbatim-quote false positive)",
+      "location": "section 'Assessment'",
+      "claim": "The clinician stated concern based on the patient's clinical presentation, stating 'it sounds like you could be going into what we say an anaphylactic reaction. That's when your throat and your chest, you know, closes in, and you might need an injection'."
+    },
+    {
+      "id": "c08",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "exact_quote",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "quote_not_matched",
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [
+        "c09",
+        "c10"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0416",
+          "role": "DOCTOR",
+          "confidence": 0.796,
+          "text": "Um, in terms of the palpitations, it is"
+        },
+        {
+          "segment_id": "corrected-0417",
+          "role": "DOCTOR",
+          "confidence": 0.75,
+          "text": "more likely to be associated with"
+        },
+        {
+          "segment_id": "corrected-0418",
+          "role": "DOCTOR",
+          "confidence": 0.9439,
+          "text": "anxiety, but it's probably worth having a couple of"
+        }
+      ],
+      "notes": "Source says 'more likely to be associated with' anxiety (corrected-0416..0418); the remembered manual-session wording does not exactly match and must yield the verify-manually reason, not silent fuzzy acceptance.",
+      "location": "constructed",
+      "claim": "The clinician assessed the palpitations as 'most likely associated with anxiety'."
+    },
+    {
+      "id": "c09",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "exact_quote",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0416",
+          "role": "DOCTOR",
+          "confidence": 0.796,
+          "text": "Um, in terms of the palpitations, it is"
+        },
+        {
+          "segment_id": "corrected-0417",
+          "role": "DOCTOR",
+          "confidence": 0.75,
+          "text": "more likely to be associated with"
+        },
+        {
+          "segment_id": "corrected-0418",
+          "role": "DOCTOR",
+          "confidence": 0.9439,
+          "text": "anxiety, but it's probably worth having a couple of"
+        }
+      ],
+      "notes": "Exact wording spanning the row boundary between corrected-0417 and corrected-0418 must match as one bounded contiguous run.",
+      "location": "constructed",
+      "claim": "The clinician said it is 'more likely to be associated with anxiety'."
+    },
+    {
+      "id": "c10",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "exact_quote",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0416",
+          "role": "DOCTOR",
+          "confidence": 0.796,
+          "text": "Um, in terms of the palpitations, it is"
+        },
+        {
+          "segment_id": "corrected-0417",
+          "role": "DOCTOR",
+          "confidence": 0.75,
+          "text": "more likely to be associated with"
+        },
+        {
+          "segment_id": "corrected-0418",
+          "role": "DOCTOR",
+          "confidence": 0.9439,
+          "text": "anxiety, but it's probably worth having a couple of"
+        }
+      ],
+      "notes": "Unquoted paraphrase: source-linked, never quote-verified, and never flagged by the quote matcher.",
+      "location": "section 'Assessment'",
+      "claim": "The clinician noted that palpitations are more likely associated with anxiety."
+    },
+    {
+      "id": "c11",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0230",
+          "role": "DOCTOR",
+          "confidence": 0.7865,
+          "text": "moment. Okay, so hang on the line while I'll call the"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9936,
+          "text": "you. Okay,"
+        }
+      ],
+      "notes": "Faithful in-progress instruction framing; must not flag.",
+      "location": "section 'Plan'",
+      "claim": "Patient instructed to remain on line while clinician arranges ambulance dispatch."
+    },
+    {
+      "id": "c12",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        }
+      ],
+      "notes": "Instruction to a named actor, future-framed; must not flag.",
+      "location": "section 'Plan'",
+      "claim": "Mother to call 999 to request urgent dispatch for suspected anaphylactic reaction."
+    },
+    {
+      "id": "c13",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0242",
+          "role": "DOCTOR",
+          "confidence": 0.998,
+          "text": "Could you ask"
+        },
+        {
+          "segment_id": "corrected-0243",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "the person whether they"
+        },
+        {
+          "segment_id": "corrected-0244",
+          "role": "DOCTOR",
+          "confidence": 0.9875,
+          "text": "have any antihistamines around in the"
+        },
+        {
+          "segment_id": "corrected-0245",
+          "role": "DOCTOR",
+          "confidence": 0.8576,
+          "text": "interim while we're"
+        },
+        {
+          "segment_id": "corrected-0246",
+          "role": "DOCTOR",
+          "confidence": 0.8933,
+          "text": "waiting?"
+        },
+        {
+          "segment_id": "corrected-0247",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "yes mom"
+        },
+        {
+          "segment_id": "corrected-0248",
+          "role": "PATIENT",
+          "confidence": 0.7637,
+          "text": "Yes, uh, mom, mom. Do we have any"
+        },
+        {
+          "segment_id": "corrected-0249",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "anticipants around"
+        },
+        {
+          "segment_id": "corrected-0250",
+          "role": "DOCTOR",
+          "confidence": 0.74,
+          "text": "antihistamines around? Yes, yes."
+        },
+        {
+          "segment_id": "corrected-0251",
+          "role": "PATIENT",
+          "confidence": 0.8287,
+          "text": "Oh,"
+        },
+        {
+          "segment_id": "corrected-0252",
+          "role": "PATIENT",
+          "confidence": 0.8609,
+          "text": "yeah,"
+        },
+        {
+          "segment_id": "corrected-0253",
+          "role": "PATIENT",
+          "confidence": 0.8028,
+          "text": "yeah, we do."
+        },
+        {
+          "segment_id": "corrected-0264",
+          "role": "DOCTOR",
+          "confidence": 0.9959,
+          "text": "so straight away take the"
+        },
+        {
+          "segment_id": "corrected-0265",
+          "role": "DOCTOR",
+          "confidence": 0.8021,
+          "text": "antihistamines in the meantime, all right."
+        }
+      ],
+      "notes": "Conditional preserved; must not flag.",
+      "location": "section 'Plan'",
+      "claim": "Immediate administration of antihistamines if available."
+    },
+    {
+      "id": "c14",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c13"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0242",
+          "role": "DOCTOR",
+          "confidence": 0.998,
+          "text": "Could you ask"
+        },
+        {
+          "segment_id": "corrected-0243",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "the person whether they"
+        },
+        {
+          "segment_id": "corrected-0244",
+          "role": "DOCTOR",
+          "confidence": 0.9875,
+          "text": "have any antihistamines around in the"
+        },
+        {
+          "segment_id": "corrected-0245",
+          "role": "DOCTOR",
+          "confidence": 0.8576,
+          "text": "interim while we're"
+        },
+        {
+          "segment_id": "corrected-0246",
+          "role": "DOCTOR",
+          "confidence": 0.8933,
+          "text": "waiting?"
+        },
+        {
+          "segment_id": "corrected-0247",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "yes mom"
+        },
+        {
+          "segment_id": "corrected-0248",
+          "role": "PATIENT",
+          "confidence": 0.7637,
+          "text": "Yes, uh, mom, mom. Do we have any"
+        },
+        {
+          "segment_id": "corrected-0249",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "anticipants around"
+        },
+        {
+          "segment_id": "corrected-0250",
+          "role": "DOCTOR",
+          "confidence": 0.74,
+          "text": "antihistamines around? Yes, yes."
+        },
+        {
+          "segment_id": "corrected-0251",
+          "role": "PATIENT",
+          "confidence": 0.8287,
+          "text": "Oh,"
+        },
+        {
+          "segment_id": "corrected-0252",
+          "role": "PATIENT",
+          "confidence": 0.8609,
+          "text": "yeah,"
+        },
+        {
+          "segment_id": "corrected-0253",
+          "role": "PATIENT",
+          "confidence": 0.8028,
+          "text": "yeah, we do."
+        },
+        {
+          "segment_id": "corrected-0264",
+          "role": "DOCTOR",
+          "confidence": 0.9959,
+          "text": "so straight away take the"
+        },
+        {
+          "segment_id": "corrected-0265",
+          "role": "DOCTOR",
+          "confidence": 0.8021,
+          "text": "antihistamines in the meantime, all right."
+        }
+      ],
+      "notes": "Advice plus confirmed availability became completed administration; no row confirms the patient took them.",
+      "location": "key_points",
+      "claim": "Interim management included immediate antihistamine administration pending ambulance arrival; follow-up for epinephrine auto-injector prescription arranged"
+    },
+    {
+      "id": "c15",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": true,
+      "hard_negatives": [
+        "c11",
+        "c12"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0230",
+          "role": "DOCTOR",
+          "confidence": 0.7865,
+          "text": "moment. Okay, so hang on the line while I'll call the"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9936,
+          "text": "you. Okay,"
+        },
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        }
+      ],
+      "notes": "'arranged ... dispatch with urgent 999 call' asserts completed arrangement; rows hold a promise and an instruction. Borderline: the human gate adjudicates if the bounded rule cannot separate it from c11/c12 without generic event calculus.",
+      "location": "key_points",
+      "claim": "Clinician assessed as suspected anaphylactic reaction and arranged immediate emergency ambulance dispatch with urgent 999 call"
+    },
+    {
+      "id": "c16",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "action_not_confirmed_done",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c17",
+        "c18"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0418",
+          "role": "DOCTOR",
+          "confidence": 0.9439,
+          "text": "anxiety, but it's probably worth having a couple of"
+        },
+        {
+          "segment_id": "corrected-0419",
+          "role": "DOCTOR",
+          "confidence": 0.9975,
+          "text": "basic blood tests just to make sure"
+        },
+        {
+          "segment_id": "corrected-0420",
+          "role": "DOCTOR",
+          "confidence": 0.9996,
+          "text": "that there's not something triggering"
+        },
+        {
+          "segment_id": "corrected-0421",
+          "role": "DOCTOR",
+          "confidence": 0.7296,
+          "text": "that off, and then"
+        },
+        {
+          "segment_id": "corrected-0422",
+          "role": "DOCTOR",
+          "confidence": 0.8301,
+          "text": "arranging a GP follow-up a week after you've"
+        },
+        {
+          "segment_id": "corrected-0423",
+          "role": "DOCTOR",
+          "confidence": 0.7633,
+          "text": "had the test, so we can just go through the results with you."
+        },
+        {
+          "segment_id": "corrected-0426",
+          "role": "DOCTOR",
+          "confidence": 0.9963,
+          "text": "So if you call"
+        },
+        {
+          "segment_id": "corrected-0427",
+          "role": "DOCTOR",
+          "confidence": 0.9131,
+          "text": "the support line, you can arrange the"
+        },
+        {
+          "segment_id": "corrected-0428",
+          "role": "DOCTOR",
+          "confidence": 0.972,
+          "text": "and have"
+        },
+        {
+          "segment_id": "corrected-0429",
+          "role": "DOCTOR",
+          "confidence": 0.9874,
+          "text": "the blood test done."
+        }
+      ],
+      "notes": "Rows recommend tests and route arrangement through the patient's future support-line call; nothing was ordered.",
+      "location": "section 'Plan'",
+      "claim": "Blood tests ordered to exclude other causes of palpitations."
+    },
+    {
+      "id": "c17",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0426",
+          "role": "DOCTOR",
+          "confidence": 0.9963,
+          "text": "So if you call"
+        },
+        {
+          "segment_id": "corrected-0427",
+          "role": "DOCTOR",
+          "confidence": 0.9131,
+          "text": "the support line, you can arrange the"
+        },
+        {
+          "segment_id": "corrected-0428",
+          "role": "DOCTOR",
+          "confidence": 0.972,
+          "text": "and have"
+        },
+        {
+          "segment_id": "corrected-0429",
+          "role": "DOCTOR",
+          "confidence": 0.9874,
+          "text": "the blood test done."
+        }
+      ],
+      "notes": "Future patient action correctly framed; must not flag.",
+      "location": "section 'Plan'",
+      "claim": "Patient to call support line to arrange blood tests."
+    },
+    {
+      "id": "c18",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0418",
+          "role": "DOCTOR",
+          "confidence": 0.9439,
+          "text": "anxiety, but it's probably worth having a couple of"
+        },
+        {
+          "segment_id": "corrected-0419",
+          "role": "DOCTOR",
+          "confidence": 0.9975,
+          "text": "basic blood tests just to make sure"
+        },
+        {
+          "segment_id": "corrected-0420",
+          "role": "DOCTOR",
+          "confidence": 0.9996,
+          "text": "that there's not something triggering"
+        },
+        {
+          "segment_id": "corrected-0421",
+          "role": "DOCTOR",
+          "confidence": 0.7296,
+          "text": "that off, and then"
+        },
+        {
+          "segment_id": "corrected-0422",
+          "role": "DOCTOR",
+          "confidence": 0.8301,
+          "text": "arranging a GP follow-up a week after you've"
+        },
+        {
+          "segment_id": "corrected-0423",
+          "role": "DOCTOR",
+          "confidence": 0.7633,
+          "text": "had the test, so we can just go through the results with you."
+        }
+      ],
+      "notes": "Plan-framed ('Plan includes ...'); must not flag.",
+      "location": "key_points",
+      "claim": "Plan includes NHS self-referral for talking/behavioral therapy, blood tests to exclude organic causes, and GP follow-up in one week"
+    },
+    {
+      "id": "c19",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0212",
+          "role": "PATIENT",
+          "confidence": 0.8134,
+          "text": "I'm uh so you know I'm 31. Uh I yeah,"
+        },
+        {
+          "segment_id": "corrected-0008",
+          "role": "DOCTOR",
+          "confidence": 0.903,
+          "text": "I help you, sir?"
+        }
+      ],
+      "notes": "Age is spoken verbatim ('I'm 31', corrected-0212) and the clinician addresses the patient as 'sir'; supported demographics must not flag.",
+      "location": "section 'Subjective'",
+      "claim": "Patient is a 31-year-old male presenting with a sore and red, intensely itchy skin condition for the past four days."
+    },
+    {
+      "id": "c20",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "unsupported_demographic",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c19",
+        "c21"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0006",
+          "role": "PATIENT",
+          "confidence": 0.9674,
+          "text": "my name is"
+        },
+        {
+          "segment_id": "corrected-0007",
+          "role": "PATIENT",
+          "confidence": 0.891,
+          "text": "Valerie Paul. My"
+        },
+        {
+          "segment_id": "corrected-0008",
+          "role": "PATIENT",
+          "confidence": 0.8954,
+          "text": "date of"
+        },
+        {
+          "segment_id": "corrected-0009",
+          "role": "PATIENT",
+          "confidence": 0.5901,
+          "text": "date for is the 19th of September 1993."
+        },
+        {
+          "segment_id": "corrected-0010",
+          "role": "PATIENT",
+          "confidence": 0.9822,
+          "text": "My address is"
+        },
+        {
+          "segment_id": "corrected-0011",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "64 Clivedon"
+        },
+        {
+          "segment_id": "corrected-0012",
+          "role": "PATIENT",
+          "confidence": 0.734,
+          "text": "uh 64 Clive Den place in South Wimbledon."
+        }
+      ],
+      "notes": "Only name, DOB, and address are spoken; exact age requires trusted encounter metadata (CONTRACTS section 3) and sex is never stated.",
+      "location": "constructed",
+      "claim": "The patient is a 32-year-old woman."
+    },
+    {
+      "id": "c21",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0008",
+          "role": "PATIENT",
+          "confidence": 0.8954,
+          "text": "date of"
+        },
+        {
+          "segment_id": "corrected-0009",
+          "role": "PATIENT",
+          "confidence": 0.5901,
+          "text": "date for is the 19th of September 1993."
+        }
+      ],
+      "notes": "Verbatim DOB restatement without derivation; must not flag in the demographics lane (row confidence handling is a separate lane).",
+      "location": "constructed",
+      "claim": "Date of birth: 19 September 1993."
+    },
+    {
+      "id": "c22",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "constructed",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "exam_not_performed",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c23",
+        "c24"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0095",
+          "role": "DOCTOR",
+          "confidence": 0.9143,
+          "text": "Um have you noticed any uh"
+        },
+        {
+          "segment_id": "corrected-0096",
+          "role": "DOCTOR",
+          "confidence": 0.8541,
+          "text": "bleeding or discharge from your skins?"
+        },
+        {
+          "segment_id": "corrected-0097",
+          "role": "PATIENT",
+          "confidence": 0.8362,
+          "text": "No. Um so"
+        },
+        {
+          "segment_id": "corrected-0098",
+          "role": "PATIENT",
+          "confidence": 0.9175,
+          "text": "my skin is a bit cracked in some parts, like kind"
+        },
+        {
+          "segment_id": "corrected-0099",
+          "role": "PATIENT",
+          "confidence": 0.8241,
+          "text": "of cracked, if"
+        },
+        {
+          "segment_id": "corrected-0100",
+          "role": "PATIENT",
+          "confidence": 0.8994,
+          "text": "you see what I mean."
+        }
+      ],
+      "notes": "Screening answers presented as a performed examination.",
+      "location": "constructed",
+      "claim": "Skin examination performed: no bleeding or discharge; skin intact."
+    },
+    {
+      "id": "c23",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0095",
+          "role": "DOCTOR",
+          "confidence": 0.9143,
+          "text": "Um have you noticed any uh"
+        },
+        {
+          "segment_id": "corrected-0096",
+          "role": "DOCTOR",
+          "confidence": 0.8541,
+          "text": "bleeding or discharge from your skins?"
+        },
+        {
+          "segment_id": "corrected-0097",
+          "role": "PATIENT",
+          "confidence": 0.8362,
+          "text": "No. Um so"
+        }
+      ],
+      "notes": "Reported denial correctly framed as history; must not flag.",
+      "location": "section 'Subjective'",
+      "claim": "Denies bleeding or discharge from skin."
+    },
+    {
+      "id": "c24",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "demographics_exam",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0174",
+          "role": "DOCTOR",
+          "confidence": 0.9047,
+          "text": "So um normally at this stage I like to examine you"
+        },
+        {
+          "segment_id": "corrected-0175",
+          "role": "DOCTOR",
+          "confidence": 0.8332,
+          "text": "um to see the rash"
+        },
+        {
+          "segment_id": "corrected-0176",
+          "role": "DOCTOR",
+          "confidence": 0.8345,
+          "text": "yourself and see exactly what type"
+        },
+        {
+          "segment_id": "corrected-0177",
+          "role": "DOCTOR",
+          "confidence": 0.7888,
+          "text": "of rash it is. But from what"
+        }
+      ],
+      "notes": "Honest-absence and stated-intention framing (exam-intent exemption); must not flag.",
+      "location": "section 'Objective'",
+      "claim": "No physical examination findings are documented."
+    },
+    {
+      "id": "c25",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "flag",
+      "expected_reason": "source_low_confidence",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c26",
+        "c27"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0293",
+          "role": "DOCTOR",
+          "confidence": 0.6478,
+          "text": "Um something like Fexaphenidine, which I"
+        }
+      ],
+      "notes": "Known variant 'Fexaphenidine' with its row at 0.6478; the reason must name the term and corrected-0293.",
+      "current_behavior": "not flagged in this retained pre-M04 note; M04's clinical-term linkage now links the variant token",
+      "location": "section 'Plan'",
+      "claim": "Antihistamine Fexaphenidine prescribed despite patient's prior trial of antihistamines without benefit."
+    },
+    {
+      "id": "c26",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0259",
+          "role": "DOCTOR",
+          "confidence": 0.7956,
+          "text": "as I'm gonna give you something some emollients, which helps to moisturize"
+        },
+        {
+          "segment_id": "corrected-0260",
+          "role": "DOCTOR",
+          "confidence": 0.7922,
+          "text": "the skin, um to use in the bath and shower."
+        },
+        {
+          "segment_id": "corrected-0261",
+          "role": "DOCTOR",
+          "confidence": 0.8953,
+          "text": "And it's definitely worth uh using that for"
+        },
+        {
+          "segment_id": "corrected-0262",
+          "role": "DOCTOR",
+          "confidence": 0.9575,
+          "text": "the first seven to ten days"
+        }
+      ],
+      "notes": "Canonical spelling backed by the 0.7956 above-threshold row; no source_low_confidence reason (M04-pinned hard negative).",
+      "location": "section 'Plan'",
+      "claim": "Emollients for bath and shower use over 7\u201310 days."
+    },
+    {
+      "id": "c27",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "consult": "m02-day1-c02",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.9994,
+          "text": "giving you stronger"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.7818,
+          "text": "prescription of a str uh of a steroid may be beneficial,"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9632,
+          "text": "uh which I'm happy to prescribe to"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.7804,
+          "text": "you today, as well"
+        }
+      ],
+      "notes": "steroid-cream mapping was REJECTED by M04 (category ambiguous_product); rejected rows must not produce a resolved-term reason or rewrite.",
+      "location": "section 'Plan'",
+      "claim": "Prescription steroid cream (stronger than over-the-counter)."
+    },
+    {
+      "id": "c28",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "retained_note",
+      "lane": "term_confidence",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0320",
+          "role": "PATIENT",
+          "confidence": 0.7728,
+          "text": "Yeah, I live with my parents, my parents. Um"
+        }
+      ],
+      "notes": "No clinical variant term in the sentence, so the reason lane stays silent regardless of the visible threshold marker.",
+      "current_behavior": "visible low-confidence marker fires (0.7728 row)",
+      "location": "section 'Subjective'",
+      "claim": "She lives with her parents."
+    },
+    {
+      "id": "c29",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "coverage",
+      "kind": "note_coverage",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0230",
+          "role": "DOCTOR",
+          "confidence": 0.7865,
+          "text": "moment. Okay, so hang on the line while I'll call the"
+        },
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        },
+        {
+          "segment_id": "corrected-0232",
+          "role": "DOCTOR",
+          "confidence": 0.9936,
+          "text": "you. Okay,"
+        },
+        {
+          "segment_id": "corrected-0236",
+          "role": "DOCTOR",
+          "confidence": 0.8028,
+          "text": "just call the ambulance,"
+        },
+        {
+          "segment_id": "corrected-0237",
+          "role": "DOCTOR",
+          "confidence": 0.9975,
+          "text": "make sure that person's with you"
+        },
+        {
+          "segment_id": "corrected-0238",
+          "role": "DOCTOR",
+          "confidence": 0.8476,
+          "text": "till the ambulance comes."
+        },
+        {
+          "segment_id": "corrected-0242",
+          "role": "DOCTOR",
+          "confidence": 0.998,
+          "text": "Could you ask"
+        },
+        {
+          "segment_id": "corrected-0243",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "the person whether they"
+        },
+        {
+          "segment_id": "corrected-0244",
+          "role": "DOCTOR",
+          "confidence": 0.9875,
+          "text": "have any antihistamines around in the"
+        },
+        {
+          "segment_id": "corrected-0245",
+          "role": "DOCTOR",
+          "confidence": 0.8576,
+          "text": "interim while we're"
+        },
+        {
+          "segment_id": "corrected-0246",
+          "role": "DOCTOR",
+          "confidence": 0.8933,
+          "text": "waiting?"
+        },
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        },
+        {
+          "segment_id": "corrected-0264",
+          "role": "DOCTOR",
+          "confidence": 0.9959,
+          "text": "so straight away take the"
+        },
+        {
+          "segment_id": "corrected-0265",
+          "role": "DOCTOR",
+          "confidence": 0.8021,
+          "text": "antihistamines in the meantime, all right."
+        },
+        {
+          "segment_id": "corrected-0268",
+          "role": "DOCTOR",
+          "confidence": 0.7873,
+          "text": "and after you come up from the hospital, do you give us a ring back? We might need to"
+        },
+        {
+          "segment_id": "corrected-0269",
+          "role": "DOCTOR",
+          "confidence": 0.907,
+          "text": "sort you out um with your injections"
+        },
+        {
+          "segment_id": "corrected-0270",
+          "role": "DOCTOR",
+          "confidence": 0.7397,
+          "text": "and things like that. Okay,"
+        }
+      ],
+      "notes": "The retained complete-source note's Plan carries the full emergency disposition: ambulance, stay-with-person, interim antihistamines, mother/999, and injection follow-up; no emergency_disposition_incomplete reason."
+    },
+    {
+      "id": "c30",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "constructed",
+      "lane": "coverage",
+      "kind": "note_coverage",
+      "expected": "flag",
+      "expected_reason": "emergency_disposition_incomplete",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c29"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0236",
+          "role": "DOCTOR",
+          "confidence": 0.8028,
+          "text": "just call the ambulance,"
+        },
+        {
+          "segment_id": "corrected-0237",
+          "role": "DOCTOR",
+          "confidence": 0.9975,
+          "text": "make sure that person's with you"
+        },
+        {
+          "segment_id": "corrected-0238",
+          "role": "DOCTOR",
+          "confidence": 0.8476,
+          "text": "till the ambulance comes."
+        },
+        {
+          "segment_id": "corrected-0254",
+          "role": "DOCTOR",
+          "confidence": 0.7746,
+          "text": "Straight away, and if mom can call,"
+        },
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        },
+        {
+          "segment_id": "corrected-0256",
+          "role": "DOCTOR",
+          "confidence": 0.775,
+          "text": "yeah, and say that you're there is a"
+        },
+        {
+          "segment_id": "corrected-0257",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "suspected"
+        },
+        {
+          "segment_id": "corrected-0258",
+          "role": "DOCTOR",
+          "confidence": 0.8763,
+          "text": "anaphylactic reaction and they need to come straight away."
+        }
+      ],
+      "notes": "A spoken complete emergency disposition partially omitted from the note must be visible/exported as review-required even after the bounded retry.",
+      "construction": "the retained note minus its 999 and stay-with-person Plan sentences (the historical 214-row-source note shape)"
+    },
+    {
+      "id": "c31",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m02-day5-c03",
+      "origin": "constructed",
+      "lane": "coverage",
+      "kind": "note_coverage",
+      "expected": "flag",
+      "expected_reason": "mental_health_screen_missing",
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [
+        "c29"
+      ],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0299",
+          "role": "DOCTOR",
+          "confidence": 0.7124,
+          "text": "And has your mood ever"
+        },
+        {
+          "segment_id": "corrected-0300",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "been so low that you felt like you just couldn't"
+        },
+        {
+          "segment_id": "corrected-0301",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "carry on with your job or"
+        },
+        {
+          "segment_id": "corrected-0302",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "with your life"
+        },
+        {
+          "segment_id": "corrected-0303",
+          "role": "DOCTOR",
+          "confidence": 0.7673,
+          "text": "or with your normal things as they"
+        },
+        {
+          "segment_id": "corrected-0304",
+          "role": "DOCTOR",
+          "confidence": 0.8443,
+          "text": "say were going I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0305",
+          "role": "PATIENT",
+          "confidence": 0.9335,
+          "text": "no, I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0306",
+          "role": "PATIENT",
+          "confidence": 0.9959,
+          "text": "say that I've had I haven't had any"
+        },
+        {
+          "segment_id": "corrected-0307",
+          "role": "PATIENT",
+          "confidence": 0.999,
+          "text": "suicidal thoughts or any"
+        },
+        {
+          "segment_id": "corrected-0308",
+          "role": "PATIENT",
+          "confidence": 0.8402,
+          "text": "thoughts that have been that extreme."
+        },
+        {
+          "segment_id": "corrected-0309",
+          "role": "PATIENT",
+          "confidence": 0.8385,
+          "text": "Like I don't you know I have I'd have a good support system, like I do have a good family and"
+        },
+        {
+          "segment_id": "corrected-0310",
+          "role": "PATIENT",
+          "confidence": 0.7866,
+          "text": "stuff. So I I have"
+        },
+        {
+          "segment_id": "corrected-0311",
+          "role": "PATIENT",
+          "confidence": 0.9954,
+          "text": "I don't have worries about actually wanting to"
+        },
+        {
+          "segment_id": "corrected-0312",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "imagine"
+        },
+        {
+          "segment_id": "corrected-0313",
+          "role": "PATIENT",
+          "confidence": 0.863,
+          "text": "um not"
+        },
+        {
+          "segment_id": "corrected-0314",
+          "role": "PATIENT",
+          "confidence": 0.7919,
+          "text": "go on. It's just"
+        },
+        {
+          "segment_id": "corrected-0315",
+          "role": "PATIENT",
+          "confidence": 0.8861,
+          "text": "that I don't want to go on like this."
+        }
+      ],
+      "notes": "An answered mental-health screen absent from the note is a note-level coverage failure; c01 owns the qualifier-lost per-claim case, this owns full omission.",
+      "construction": "the retained note minus its suicidal-thoughts/support sentence"
+    },
+    {
+      "id": "c32",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "temporal_action",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "high",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0206",
+          "role": "DOCTOR",
+          "confidence": 0.7215,
+          "text": "You feel crazy. Okay, right. Do you have any"
+        },
+        {
+          "segment_id": "corrected-0207",
+          "role": "DOCTOR",
+          "confidence": 0.9869,
+          "text": "kind of uh antihistamines"
+        },
+        {
+          "segment_id": "corrected-0208",
+          "role": "DOCTOR",
+          "confidence": 0.9169,
+          "text": "with you at the moment?"
+        },
+        {
+          "segment_id": "corrected-0209",
+          "role": "PATIENT",
+          "confidence": 0.9898,
+          "text": "No, I don't think"
+        },
+        {
+          "segment_id": "corrected-0210",
+          "role": "PATIENT",
+          "confidence": 0.711,
+          "text": "I have. Oh"
+        },
+        {
+          "segment_id": "corrected-0247",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "yes mom"
+        },
+        {
+          "segment_id": "corrected-0248",
+          "role": "PATIENT",
+          "confidence": 0.7637,
+          "text": "Yes, uh, mom, mom. Do we have any"
+        },
+        {
+          "segment_id": "corrected-0249",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "anticipants around"
+        },
+        {
+          "segment_id": "corrected-0250",
+          "role": "DOCTOR",
+          "confidence": 0.74,
+          "text": "antihistamines around? Yes, yes."
+        },
+        {
+          "segment_id": "corrected-0251",
+          "role": "PATIENT",
+          "confidence": 0.8287,
+          "text": "Oh,"
+        },
+        {
+          "segment_id": "corrected-0252",
+          "role": "PATIENT",
+          "confidence": 0.8609,
+          "text": "yeah,"
+        },
+        {
+          "segment_id": "corrected-0253",
+          "role": "PATIENT",
+          "confidence": 0.8028,
+          "text": "yeah, we do."
+        }
+      ],
+      "notes": "Moment-anchored Subjective narration of the moment-of-asking state whose reversal the same note's Plan carries; family 3a's bounded scope is note-final availability claims (Plan/key points/Assessment), not history narration.",
+      "location": "section 'Subjective'",
+      "claim": "She reported sometimes taking antihistamines but does not have any with her at present."
+    },
+    {
+      "id": "c33",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "hedge",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0107",
+          "role": "DOCTOR",
+          "confidence": 0.8406,
+          "text": "you feel like like your chest is tight?"
+        },
+        {
+          "segment_id": "corrected-0108",
+          "role": "PATIENT",
+          "confidence": 0.8706,
+          "text": "I don't know"
+        },
+        {
+          "segment_id": "corrected-0109",
+          "role": "PATIENT",
+          "confidence": 0.8025,
+          "text": "if it's the chest, it just"
+        },
+        {
+          "segment_id": "corrected-0110",
+          "role": "PATIENT",
+          "confidence": 0.9634,
+          "text": "generally feels a"
+        },
+        {
+          "segment_id": "corrected-0111",
+          "role": "PATIENT",
+          "confidence": 0.9995,
+          "text": "little"
+        },
+        {
+          "segment_id": "corrected-0112",
+          "role": "PATIENT",
+          "confidence": 0.9628,
+          "text": "difficult."
+        }
+      ],
+      "notes": "'I don't know if it's the chest' preserved with an uncertainty marker; must not flag.",
+      "location": "section 'Subjective'",
+      "claim": "She reports difficulty breathing and describes her chest area as 'generally feels a little difficult', though stated uncertainty about specificity."
+    },
+    {
+      "id": "c34",
+      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m02-day3-c01",
+      "origin": "retained_note",
+      "lane": "exact_quote",
+      "kind": "claim",
+      "expected": "no_flag",
+      "expected_reason": null,
+      "existing_rule": null,
+      "severity": "medium",
+      "borderline": false,
+      "hard_negatives": [],
+      "source_rows": [
+        {
+          "segment_id": "corrected-0108",
+          "role": "PATIENT",
+          "confidence": 0.8706,
+          "text": "I don't know"
+        },
+        {
+          "segment_id": "corrected-0109",
+          "role": "PATIENT",
+          "confidence": 0.8025,
+          "text": "if it's the chest, it just"
+        },
+        {
+          "segment_id": "corrected-0110",
+          "role": "PATIENT",
+          "confidence": 0.9634,
+          "text": "generally feels a"
+        },
+        {
+          "segment_id": "corrected-0111",
+          "role": "PATIENT",
+          "confidence": 0.9995,
+          "text": "little"
+        },
+        {
+          "segment_id": "corrected-0112",
+          "role": "PATIENT",
+          "confidence": 0.9628,
+          "text": "difficult."
+        }
+      ],
+      "notes": "Working cross-row quote match the bounded matcher must keep working.",
+      "current_behavior": "verifies today (three-row contiguous quote)",
+      "location": "section 'Subjective'",
+      "claim": "She reports difficulty breathing and describes her chest area as 'generally feels a little difficult', though stated uncertainty about specificity."
+    }
+  ],
+  "historical_flags": [
+    {
+      "id": "hf01",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m08-day5-c03",
+      "flag_lane": "fidelity",
+      "location": "unverified_key_points",
+      "flagged_sentence": "Denies prior episodes of severe anxiety; no suicidal ideation; lives with parents; good family support",
+      "verdict": "false_positive",
+      "fp_class": "split_composite",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0269",
+          "role": "DOCTOR",
+          "confidence": 0.8272,
+          "text": "Okay. Before this, did you have any"
+        },
+        {
+          "segment_id": "corrected-0270",
+          "role": "DOCTOR",
+          "confidence": 0.962,
+          "text": "similar times in your life when you felt like this?"
+        },
+        {
+          "segment_id": "corrected-0271",
+          "role": "PATIENT",
+          "confidence": 0.687,
+          "text": "Not really. I um no, I would say"
+        },
+        {
+          "segment_id": "corrected-0272",
+          "role": "PATIENT",
+          "confidence": 0.7939,
+          "text": "I mean, everybody"
+        },
+        {
+          "segment_id": "corrected-0273",
+          "role": "PATIENT",
+          "confidence": 0.9641,
+          "text": "always has a bit of tension, a bit"
+        },
+        {
+          "segment_id": "corrected-0274",
+          "role": "PATIENT",
+          "confidence": 0.9037,
+          "text": "of anxiety,"
+        },
+        {
+          "segment_id": "corrected-0275",
+          "role": "PATIENT",
+          "confidence": 0.9917,
+          "text": "but I've never felt"
+        },
+        {
+          "segment_id": "corrected-0276",
+          "role": "PATIENT",
+          "confidence": 0.9547,
+          "text": "anything that's bad before."
+        },
+        {
+          "segment_id": "corrected-0299",
+          "role": "DOCTOR",
+          "confidence": 0.7124,
+          "text": "And has your mood ever"
+        },
+        {
+          "segment_id": "corrected-0300",
+          "role": "DOCTOR",
+          "confidence": 0.9997,
+          "text": "been so low that you felt like you just couldn't"
+        },
+        {
+          "segment_id": "corrected-0301",
+          "role": "DOCTOR",
+          "confidence": 0.9998,
+          "text": "carry on with your job or"
+        },
+        {
+          "segment_id": "corrected-0302",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "with your life"
+        },
+        {
+          "segment_id": "corrected-0303",
+          "role": "DOCTOR",
+          "confidence": 0.7673,
+          "text": "or with your normal things as they"
+        },
+        {
+          "segment_id": "corrected-0304",
+          "role": "DOCTOR",
+          "confidence": 0.8443,
+          "text": "say were going I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0305",
+          "role": "PATIENT",
+          "confidence": 0.9335,
+          "text": "no, I wouldn't"
+        },
+        {
+          "segment_id": "corrected-0306",
+          "role": "PATIENT",
+          "confidence": 0.9959,
+          "text": "say that I've had I haven't had any"
+        },
+        {
+          "segment_id": "corrected-0307",
+          "role": "PATIENT",
+          "confidence": 0.999,
+          "text": "suicidal thoughts or any"
+        },
+        {
+          "segment_id": "corrected-0308",
+          "role": "PATIENT",
+          "confidence": 0.8402,
+          "text": "thoughts that have been that extreme."
+        },
+        {
+          "segment_id": "corrected-0309",
+          "role": "PATIENT",
+          "confidence": 0.8385,
+          "text": "Like I don't you know I have I'd have a good support system, like I do have a good family and"
+        },
+        {
+          "segment_id": "corrected-0310",
+          "role": "PATIENT",
+          "confidence": 0.7866,
+          "text": "stuff. So I I have"
+        },
+        {
+          "segment_id": "corrected-0316",
+          "role": "DOCTOR",
+          "confidence": 0.828,
+          "text": "Yeah, okay. And where do you who do you live with at home?"
+        },
+        {
+          "segment_id": "corrected-0317",
+          "role": "DOCTOR",
+          "confidence": 0.7676,
+          "text": "Sorry?"
+        },
+        {
+          "segment_id": "corrected-0318",
+          "role": "DOCTOR",
+          "confidence": 0.8928,
+          "text": "Who do you live"
+        },
+        {
+          "segment_id": "corrected-0319",
+          "role": "DOCTOR",
+          "confidence": 0.9799,
+          "text": "with at home?"
+        },
+        {
+          "segment_id": "corrected-0320",
+          "role": "PATIENT",
+          "confidence": 0.7728,
+          "text": "Yeah, I live with my parents, my parents. Um"
+        }
+      ],
+      "notes": "Multi-clause denial; every clause individually supported. Also the risk_pair hard-negative shape (denial + support kept)."
+    },
+    {
+      "id": "hf02",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Denies vision problems and light sensitivity.",
+      "verdict": "false_positive",
+      "fp_class": "split_composite",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0171",
+          "role": "DOCTOR",
+          "confidence": 0.7484,
+          "text": "Okay. And with his headaches, have you"
+        },
+        {
+          "segment_id": "corrected-0172",
+          "role": "DOCTOR",
+          "confidence": 0.9867,
+          "text": "any problems with"
+        },
+        {
+          "segment_id": "corrected-0173",
+          "role": "DOCTOR",
+          "confidence": 0.8421,
+          "text": "your with your eyesight, your vision?"
+        },
+        {
+          "segment_id": "corrected-0174",
+          "role": "PATIENT",
+          "confidence": 0.8801,
+          "text": "Um, no."
+        },
+        {
+          "segment_id": "corrected-0175",
+          "role": "DOCTOR",
+          "confidence": 0.9257,
+          "text": "Any difficulty with seeing bright lights?"
+        },
+        {
+          "segment_id": "corrected-0176",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "no no no no"
+        },
+        {
+          "segment_id": "corrected-0177",
+          "role": "PATIENT",
+          "confidence": 0.8801,
+          "text": "No,"
+        },
+        {
+          "segment_id": "corrected-0178",
+          "role": "PATIENT",
+          "confidence": 0.8815,
+          "text": "I don't"
+        },
+        {
+          "segment_id": "corrected-0179",
+          "role": "PATIENT",
+          "confidence": 0.7845,
+          "text": "think so. No,"
+        }
+      ],
+      "notes": "Both topics have direct patient negatives across split rows."
+    },
+    {
+      "id": "hf03",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Works as an accountant; illness has caused some slowing at work during a stressful end-of-year period, but patient denies mood impact.",
+      "verdict": "false_positive",
+      "fp_class": "split_composite",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0261",
+          "role": "DOCTOR",
+          "confidence": 0.778,
+          "text": "Okay. And uh you said you're working at"
+        },
+        {
+          "segment_id": "corrected-0262",
+          "role": "DOCTOR",
+          "confidence": 0.7838,
+          "text": "the moment, is that right?"
+        },
+        {
+          "segment_id": "corrected-0263",
+          "role": "PATIENT",
+          "confidence": 0.8724,
+          "text": "Yeah, yeah."
+        },
+        {
+          "segment_id": "corrected-0264",
+          "role": "DOCTOR",
+          "confidence": 0.8112,
+          "text": "What do you do for work?"
+        },
+        {
+          "segment_id": "corrected-0265",
+          "role": "PATIENT",
+          "confidence": null,
+          "text": "i'm um"
+        },
+        {
+          "segment_id": "corrected-0266",
+          "role": "PATIENT",
+          "confidence": 0.9177,
+          "text": "Um I'm an accountant."
+        },
+        {
+          "segment_id": "corrected-0267",
+          "role": "DOCTOR",
+          "confidence": 0.8627,
+          "text": "Okay, and how's"
+        },
+        {
+          "segment_id": "corrected-0268",
+          "role": "DOCTOR",
+          "confidence": 0.8363,
+          "text": "your work going at the moment?"
+        },
+        {
+          "segment_id": "corrected-0269",
+          "role": "DOCTOR",
+          "confidence": 0.7626,
+          "text": "Uh last"
+        },
+        {
+          "segment_id": "corrected-0270",
+          "role": "DOCTOR",
+          "confidence": 0.8473,
+          "text": "has it has it been affecting your work?"
+        },
+        {
+          "segment_id": "corrected-0271",
+          "role": "PATIENT",
+          "confidence": 0.8585,
+          "text": "Um a little bit. I've"
+        },
+        {
+          "segment_id": "corrected-0272",
+          "role": "PATIENT",
+          "confidence": 0.8732,
+          "text": "been a bit slower, and you know it's uh it's"
+        },
+        {
+          "segment_id": "corrected-0273",
+          "role": "PATIENT",
+          "confidence": 0.9798,
+          "text": "it's a bit of"
+        },
+        {
+          "segment_id": "corrected-0274",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "a stressful period"
+        },
+        {
+          "segment_id": "corrected-0275",
+          "role": "PATIENT",
+          "confidence": 0.6849,
+          "text": "just around the um end of the year. All right."
+        },
+        {
+          "segment_id": "corrected-0276",
+          "role": "DOCTOR",
+          "confidence": 0.7933,
+          "text": "Okay. Is that"
+        },
+        {
+          "segment_id": "corrected-0277",
+          "role": "DOCTOR",
+          "confidence": 0.7802,
+          "text": "affecting your um your mood at all any in any way?"
+        },
+        {
+          "segment_id": "corrected-0278",
+          "role": "PATIENT",
+          "confidence": 0.8801,
+          "text": "Um no, I think I think it's it's the you"
+        },
+        {
+          "segment_id": "corrected-0279",
+          "role": "PATIENT",
+          "confidence": 0.7952,
+          "text": "know, it's the good kind of stress. It's yeah,"
+        },
+        {
+          "segment_id": "corrected-0280",
+          "role": "DOCTOR",
+          "confidence": 0.87,
+          "text": "okay. It's"
+        },
+        {
+          "segment_id": "corrected-0281",
+          "role": "PATIENT",
+          "confidence": 0.944,
+          "text": "good work."
+        },
+        {
+          "segment_id": "corrected-0282",
+          "role": "DOCTOR",
+          "confidence": 0.9959,
+          "text": "so"
+        },
+        {
+          "segment_id": "corrected-0283",
+          "role": "DOCTOR",
+          "confidence": 0.8678,
+          "text": "Well, if there's anything you ever want to talk to me about, you can always come see me"
+        },
+        {
+          "segment_id": "corrected-0284",
+          "role": "DOCTOR",
+          "confidence": 0.8641,
+          "text": "about your mood and stress, anxiety."
+        },
+        {
+          "segment_id": "corrected-0285",
+          "role": "DOCTOR",
+          "confidence": 0.7854,
+          "text": "We're happy to help. No, no,"
+        },
+        {
+          "segment_id": "corrected-0286",
+          "role": "PATIENT",
+          "confidence": 0.767,
+          "text": "I I I"
+        },
+        {
+          "segment_id": "corrected-0287",
+          "role": "PATIENT",
+          "confidence": 0.9999,
+          "text": "like my"
+        },
+        {
+          "segment_id": "corrected-0288",
+          "role": "PATIENT",
+          "confidence": 0.8187,
+          "text": "job, it's just"
+        },
+        {
+          "segment_id": "corrected-0289",
+          "role": "PATIENT",
+          "confidence": 0.8285,
+          "text": "you know, it's a bit more work."
+        }
+      ],
+      "notes": "Mood impact explicitly answered 'no'; stress described as the good kind."
+    },
+    {
+      "id": "hf04",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "consult": "m08-day1-c07",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Denies nausea or vomiting.",
+      "verdict": "false_positive",
+      "fp_class": "role_fold",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0166",
+          "role": "DOCTOR",
+          "confidence": 0.9029,
+          "text": "Um any other symptoms,"
+        },
+        {
+          "segment_id": "corrected-0167",
+          "role": "DOCTOR",
+          "confidence": 0.9407,
+          "text": "any nausea, any vomiting, any tummy"
+        },
+        {
+          "segment_id": "corrected-0168",
+          "role": "DOCTOR",
+          "confidence": 0.8709,
+          "text": "pain."
+        },
+        {
+          "segment_id": "corrected-0169",
+          "role": "PATIENT",
+          "confidence": 0.91,
+          "text": "Uh the the first"
+        },
+        {
+          "segment_id": "corrected-0170",
+          "role": "PATIENT",
+          "confidence": 0.809,
+          "text": "the first day I had"
+        },
+        {
+          "segment_id": "corrected-0171",
+          "role": "PATIENT",
+          "confidence": 0.9829,
+          "text": "you know a"
+        },
+        {
+          "segment_id": "corrected-0172",
+          "role": "PATIENT",
+          "confidence": 0.832,
+          "text": "wee bit of"
+        },
+        {
+          "segment_id": "corrected-0173",
+          "role": "PATIENT",
+          "confidence": 0.8561,
+          "text": "diarrhea."
+        },
+        {
+          "segment_id": "corrected-0174",
+          "role": "PATIENT",
+          "confidence": 0.6914,
+          "text": "uh what would you know you know the rot like a wee bit of diarrhea, you know, but but that"
+        },
+        {
+          "segment_id": "corrected-0175",
+          "role": "DOCTOR",
+          "confidence": 0.831,
+          "text": "that's that's fine now. Um yeah, but apart from that, no. Okay. And how's your appetite? Are you eating and drinking okay?"
+        }
+      ],
+      "notes": "Final patient answer folded onto a DOCTOR row upstream; role-attribution evidence, not a checker predicate error."
+    },
+    {
+      "id": "hf05",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Past history: Approximately one year ago after eating at a late-night Chinese restaurant, she woke the next morning \"quite swollen up\" and \"had also like felt really bad and quite difficult breathing\".",
+      "verdict": "false_positive",
+      "fp_class": "quote_backchannel",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": 0.9996,
+          "text": "I woke up"
+        },
+        {
+          "segment_id": "corrected-0138",
+          "role": "PATIENT",
+          "confidence": 0.9988,
+          "text": "the next morning quite swollen up and"
+        },
+        {
+          "segment_id": "corrected-0139",
+          "role": "PATIENT",
+          "confidence": 0.96,
+          "text": "had also like"
+        },
+        {
+          "segment_id": "corrected-0140",
+          "role": "DOCTOR",
+          "confidence": 0.8309,
+          "text": "Okay."
+        },
+        {
+          "segment_id": "corrected-0141",
+          "role": "PATIENT",
+          "confidence": 0.874,
+          "text": "felt really bad and quite difficult breathing. Right. But I"
+        }
+      ],
+      "notes": "Exact patient wording joined across a brief clinician backchannel; the bounded contiguous exact-quote matcher must verify this shape (exact_quote lane hard negative)."
+    },
+    {
+      "id": "hf06",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "She states she sometimes takes antihistamines for the allergy but is unsure which specific ones.",
+      "verdict": "false_positive",
+      "fp_class": "explicit_state",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0173",
+          "role": "PATIENT",
+          "confidence": 0.7005,
+          "text": "No. No, I do sometimes, but I don't know"
+        },
+        {
+          "segment_id": "corrected-0174",
+          "role": "PATIENT",
+          "confidence": 0.9194,
+          "text": "which ones. So I have"
+        },
+        {
+          "segment_id": "corrected-0175",
+          "role": "PATIENT",
+          "confidence": 0.9192,
+          "text": "a peanut allergy as well."
+        },
+        {
+          "segment_id": "corrected-0176",
+          "role": "PATIENT",
+          "confidence": 0.8341,
+          "text": "Yeah. Like I've"
+        },
+        {
+          "segment_id": "corrected-0177",
+          "role": "PATIENT",
+          "confidence": 0.9034,
+          "text": "always had it."
+        },
+        {
+          "segment_id": "corrected-0178",
+          "role": "DOCTOR",
+          "confidence": 0.8609,
+          "text": "Yeah."
+        },
+        {
+          "segment_id": "corrected-0179",
+          "role": "PATIENT",
+          "confidence": 0.8736,
+          "text": "And I think I do"
+        },
+        {
+          "segment_id": "corrected-0180",
+          "role": "PATIENT",
+          "confidence": 0.9091,
+          "text": "get antihistamines"
+        },
+        {
+          "segment_id": "corrected-0181",
+          "role": "PATIENT",
+          "confidence": 0.9479,
+          "text": "for that, but I'm not sure which ones."
+        }
+      ],
+      "notes": "Explicitly supported patient state."
+    },
+    {
+      "id": "hf07",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "He denies chest infections, diarrhoea, or vomiting during travel.",
+      "verdict": "true_positive",
+      "fp_class": null,
+      "source_rows": [
+        {
+          "segment_id": "corrected-0043",
+          "role": "DOCTOR",
+          "confidence": 0.9617,
+          "text": "did you"
+        },
+        {
+          "segment_id": "corrected-0044",
+          "role": "DOCTOR",
+          "confidence": 0.9598,
+          "text": "get any infections, chest infections,"
+        },
+        {
+          "segment_id": "corrected-0045",
+          "role": "DOCTOR",
+          "confidence": 0.8936,
+          "text": "diarrhoea, vomiting, anything like that?"
+        },
+        {
+          "segment_id": "corrected-0046",
+          "role": "PATIENT",
+          "confidence": 0.8796,
+          "text": "Um no, not that I recall."
+        },
+        {
+          "segment_id": "corrected-0047",
+          "role": "PATIENT",
+          "confidence": 0.9203,
+          "text": "Um yeah, not"
+        },
+        {
+          "segment_id": "corrected-0048",
+          "role": "PATIENT",
+          "confidence": 0.7677,
+          "text": "no, the symptoms sort of"
+        },
+        {
+          "segment_id": "corrected-0049",
+          "role": "PATIENT",
+          "confidence": 0.9518,
+          "text": "all started afterwards."
+        }
+      ],
+      "notes": "'no, not that I recall' became a definite denial; hedge-lane true positive that must never be lost."
+    },
+    {
+      "id": "hf08",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "fidelity",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "He reports no persistent cold symptoms, sore throat, cough, or shortness of breath.",
+      "verdict": "false_positive",
+      "fp_class": "split_composite",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0050",
+          "role": "DOCTOR",
+          "confidence": 0.8825,
+          "text": "Okay, so just tell me what symptoms you've been"
+        },
+        {
+          "segment_id": "corrected-0051",
+          "role": "DOCTOR",
+          "confidence": 0.7581,
+          "text": "having. In terms of"
+        },
+        {
+          "segment_id": "corrected-0052",
+          "role": "DOCTOR",
+          "confidence": 0.9985,
+          "text": "just your general"
+        },
+        {
+          "segment_id": "corrected-0053",
+          "role": "DOCTOR",
+          "confidence": 0.8805,
+          "text": "health, any persistent"
+        },
+        {
+          "segment_id": "corrected-0054",
+          "role": "DOCTOR",
+          "confidence": 0.987,
+          "text": "cold symptoms"
+        },
+        {
+          "segment_id": "corrected-0055",
+          "role": "DOCTOR",
+          "confidence": 0.8056,
+          "text": "or earrate, sore throat, chest,"
+        },
+        {
+          "segment_id": "corrected-0056",
+          "role": "DOCTOR",
+          "confidence": 0.942,
+          "text": "chest cough, shortness of"
+        },
+        {
+          "segment_id": "corrected-0057",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "breath, flirm,"
+        },
+        {
+          "segment_id": "corrected-0058",
+          "role": "DOCTOR",
+          "confidence": 0.8187,
+          "text": "breath, phlegm, anything like that?"
+        },
+        {
+          "segment_id": "corrected-0059",
+          "role": "PATIENT",
+          "confidence": 0.7838,
+          "text": "Uh no."
+        }
+      ],
+      "notes": "Composite question rows then an explicit 'no'; split-question M02 precision recurrence."
+    },
+    {
+      "id": "hc01",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "consult": "m08-day5-c03",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Living situation: Lives with parents.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0320",
+          "role": "PATIENT",
+          "confidence": 0.7728,
+          "text": "Yeah, I live with my parents, my parents. Um"
+        }
+      ],
+      "notes": "0.7728 row is correct per diagnostics and TextGrid; no clinical variant term, so no source_low_confidence reason."
+    },
+    {
+      "id": "hc02",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Bowels and urination normal.",
+      "verdict": "false_positive",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0031",
+          "role": "PATIENT",
+          "confidence": 0.7757,
+          "text": "the it it started as normal sore"
+        },
+        {
+          "segment_id": "corrected-0186",
+          "role": "DOCTOR",
+          "confidence": 0.8967,
+          "text": "about your bowels. Are your"
+        },
+        {
+          "segment_id": "corrected-0187",
+          "role": "DOCTOR",
+          "confidence": 0.8967,
+          "text": "bowels"
+        },
+        {
+          "segment_id": "corrected-0188",
+          "role": "DOCTOR",
+          "confidence": 0.8368,
+          "text": "working okay?"
+        },
+        {
+          "segment_id": "corrected-0189",
+          "role": "PATIENT",
+          "confidence": 0.8131,
+          "text": "Um, yeah, yeah, I think so."
+        },
+        {
+          "segment_id": "corrected-0190",
+          "role": "DOCTOR",
+          "confidence": null,
+          "text": "Bossing urine, okay."
+        },
+        {
+          "segment_id": "corrected-0191",
+          "role": "PATIENT",
+          "confidence": 0.8724,
+          "text": "Yeah, yeah."
+        }
+      ],
+      "notes": "Linked only to unrelated 'normal sore' (0.7757); actual answers all exceed 0.78."
+    },
+    {
+      "id": "hc03",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "consult": "m08-day1-c04",
+      "flag_lane": "low_confidence",
+      "location": "section 'Plan'",
+      "flagged_sentence": "Patient to call for earlier review if concerning symptoms develop.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0354",
+          "role": "DOCTOR",
+          "confidence": 0.7264,
+          "text": "a call,"
+        }
+      ],
+      "notes": "'a call' (0.7264) matches the doctor TextGrid safety-net advice."
+    },
+    {
+      "id": "hc04",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "consult": "m08-day1-c03",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Patient reports a severe headache that started at midday, located on the left side and making her feel unwell.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0006",
+          "role": "PATIENT",
+          "confidence": 0.7751,
+          "text": "headache since midday. Um on the left side, it's just making me feel so ill. I"
+        }
+      ],
+      "notes": "0.7751 row marked correct; wording matches patient TextGrid."
+    },
+    {
+      "id": "hc05",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "consult": "m08-day1-c03",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "The headache is throbbing in nature on the left side and worsens when she moves, leans forward, or moves her head or neck.",
+      "verdict": "false_positive",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0006",
+          "role": "PATIENT",
+          "confidence": 0.7751,
+          "text": "headache since midday. Um on the left side, it's just making me feel so ill. I"
+        },
+        {
+          "segment_id": "corrected-0042",
+          "role": "DOCTOR",
+          "confidence": 0.9771,
+          "text": "it throbbing or was it more of a"
+        },
+        {
+          "segment_id": "corrected-0043",
+          "role": "DOCTOR",
+          "confidence": 0.989,
+          "text": "sharp pain?"
+        },
+        {
+          "segment_id": "corrected-0044",
+          "role": "PATIENT",
+          "confidence": 0.9719,
+          "text": "Yeah, I guess it's"
+        },
+        {
+          "segment_id": "corrected-0045",
+          "role": "PATIENT",
+          "confidence": 0.9362,
+          "text": "yeah, I guess it's throbbing"
+        },
+        {
+          "segment_id": "corrected-0046",
+          "role": "PATIENT",
+          "confidence": 0.8781,
+          "text": "um on that left side."
+        },
+        {
+          "segment_id": "corrected-0047",
+          "role": "DOCTOR",
+          "confidence": 0.9769,
+          "text": "And is it moving anywhere else"
+        },
+        {
+          "segment_id": "corrected-0048",
+          "role": "DOCTOR",
+          "confidence": 0.9907,
+          "text": "at"
+        },
+        {
+          "segment_id": "corrected-0049",
+          "role": "PATIENT",
+          "confidence": 0.9912,
+          "text": "all?"
+        },
+        {
+          "segment_id": "corrected-0050",
+          "role": "PATIENT",
+          "confidence": 0.9754,
+          "text": "No, but it's worse when I move."
+        },
+        {
+          "segment_id": "corrected-0051",
+          "role": "DOCTOR",
+          "confidence": 0.8595,
+          "text": "Okay. Is that when you move"
+        },
+        {
+          "segment_id": "corrected-0052",
+          "role": "DOCTOR",
+          "confidence": 0.8289,
+          "text": "your neck?"
+        },
+        {
+          "segment_id": "corrected-0053",
+          "role": "PATIENT",
+          "confidence": 0.9732,
+          "text": "Well, like if I lean forward or like"
+        },
+        {
+          "segment_id": "corrected-0054",
+          "role": "PATIENT",
+          "confidence": 0.8941,
+          "text": "move my head or neck,"
+        },
+        {
+          "segment_id": "corrected-0055",
+          "role": "PATIENT",
+          "confidence": 0.8532,
+          "text": "yeah, the headache gets worse."
+        },
+        {
+          "segment_id": "corrected-0056",
+          "role": "DOCTOR",
+          "confidence": 0.9315,
+          "text": "Okay. Um"
+        },
+        {
+          "segment_id": "corrected-0057",
+          "role": "PATIENT",
+          "confidence": 0.7814,
+          "text": "I'm just really worried. Like, I've just been"
+        }
+      ],
+      "notes": "Linked to corrected-0006 only via shared 'left side'; actual supporting rows are above threshold."
+    },
+    {
+      "id": "hc06",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "consult": "m08-day1-c03",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "She has no medical diagnosis of migraines.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0177",
+          "role": "PATIENT",
+          "confidence": 0.7798,
+          "text": "My mum has has migraines, but I've I've not"
+        },
+        {
+          "segment_id": "corrected-0178",
+          "role": "PATIENT",
+          "confidence": 1.0,
+          "text": "been"
+        },
+        {
+          "segment_id": "corrected-0179",
+          "role": "PATIENT",
+          "confidence": 0.9524,
+          "text": "diagnosed."
+        }
+      ],
+      "notes": "0.7798 row correct: mother has migraines, patient never diagnosed."
+    },
+    {
+      "id": "hc07",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "She describes the swelling as \"really pumping a lot\" and getting progressively worse.",
+      "verdict": "true_positive",
+      "fp_class": null,
+      "source_rows": [
+        {
+          "segment_id": "corrected-0091",
+          "role": "PATIENT",
+          "confidence": 0.721,
+          "text": "it's it's it's you can still feel it like really pumping"
+        }
+      ],
+      "notes": "TextGrid says 'really pumping blood'; the note inherited the uncertain substitution. Must never be lost."
+    },
+    {
+      "id": "hc08",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "flag_lane": "low_confidence",
+      "location": "section 'Plan'",
+      "flagged_sentence": "Ambulance called to patient's location.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0231",
+          "role": "DOCTOR",
+          "confidence": 0.7703,
+          "text": "ambulance, okay, and I'll send them right to"
+        }
+      ],
+      "notes": "0.7703 row accurately transcribes the future promise; the unsupported completion is a summary inference (a14), not uncertain transcription."
+    },
+    {
+      "id": "hc09",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "consult": "m08-day3-c01",
+      "flag_lane": "low_confidence",
+      "location": "section 'Plan'",
+      "flagged_sentence": "Patient instructed to remain on the line; mother (who arrived during consultation) directed to call 999 and report a suspected anaphylactic reaction.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0255",
+          "role": "DOCTOR",
+          "confidence": 0.7353,
+          "text": "mom, if you can call the uh 999,"
+        }
+      ],
+      "notes": "0.7353 row matches the doctor TextGrid."
+    },
+    {
+      "id": "hc10",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Patient reports generalised aching and fatigue for approximately six weeks, though onset may have been slightly longer.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0015",
+          "role": "PATIENT",
+          "confidence": 0.7666,
+          "text": "Um in I don't really know what's been going on, but it's just aching all over. But definitely the last six weeks, it"
+        }
+      ],
+      "notes": "0.7666 row matches the patient TextGrid."
+    },
+    {
+      "id": "hc11",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "He felt well at Christmas/New Year, then was on holiday in the States near Yosemite, where he felt \"very active\".",
+      "verdict": "false_positive",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0023",
+          "role": "PATIENT",
+          "confidence": 0.7505,
+          "text": "Uh where are we now? We're just"
+        }
+      ],
+      "notes": "Linked only to a date fragment (0.7505); visible wording is supported elsewhere."
+    },
+    {
+      "id": "hc12",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Additionally, a rash appeared on his back around end of February/mid-February, noticed by his wife; it caused minimal itching and resolved over a couple of weeks.",
+      "verdict": "true_positive_wrong_linkage",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0015",
+          "role": "PATIENT",
+          "confidence": 0.7666,
+          "text": "Um in I don't really know what's been going on, but it's just aching all over. But definitely the last six weeks, it"
+        },
+        {
+          "segment_id": "corrected-0093",
+          "role": "PATIENT",
+          "confidence": 0.77,
+          "text": "Uh I think sort of carp, back of my"
+        },
+        {
+          "segment_id": "corrected-0094",
+          "role": "PATIENT",
+          "confidence": 0.7616,
+          "text": "car, because I didn't notice it,"
+        }
+      ],
+      "notes": "Anatomy genuinely conflicts with calf TextGrid evidence, but the marker linked unrelated corrected-0015. Flag must survive AND the a18 reason must name corrected-0093/0094."
+    },
+    {
+      "id": "hc13",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Reports headache and general malaise.",
+      "verdict": "true_positive_wrong_linkage",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0081",
+          "role": "DOCTOR",
+          "confidence": 0.688,
+          "text": "any other general symptoms like rashes?"
+        },
+        {
+          "segment_id": "corrected-0135",
+          "role": "PATIENT",
+          "confidence": 0.9988,
+          "text": "sort"
+        },
+        {
+          "segment_id": "corrected-0136",
+          "role": "PATIENT",
+          "confidence": 0.7758,
+          "text": "Um headache, maybe in just generally feeling a bit"
+        },
+        {
+          "segment_id": "corrected-0137",
+          "role": "PATIENT",
+          "confidence": 0.8612,
+          "text": "crappy."
+        }
+      ],
+      "notes": "Prose drops the patient's 'maybe' but linked the unrelated rash-question row."
+    },
+    {
+      "id": "hc14",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Subjective'",
+      "flagged_sentence": "Mental health is good; stress levels have improved.",
+      "verdict": "false_positive",
+      "fp_class": "wrong_linkage",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0166",
+          "role": "DOCTOR",
+          "confidence": 0.7026,
+          "text": "Okay, right. And um how's your mental health,"
+        }
+      ],
+      "notes": "Linked to the clinician's question (0.7026); the answer says mental health is currently good."
+    },
+    {
+      "id": "hc15",
+      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "consult": "m08-day5-c09",
+      "flag_lane": "low_confidence",
+      "location": "section 'Plan'",
+      "flagged_sentence": "Patient to book blood test through support line and arrange phone follow-up appointment approximately one week after test completion.",
+      "verdict": "false_positive",
+      "fp_class": "threshold_correct_wording",
+      "source_rows": [
+        {
+          "segment_id": "corrected-0281",
+          "role": "DOCTOR",
+          "confidence": 0.7635,
+          "text": "first and then and that follow-up we"
+        },
+        {
+          "segment_id": "corrected-0273",
+          "role": "DOCTOR",
+          "confidence": 0.8825,
+          "text": "Okay. So"
+        },
+        {
+          "segment_id": "corrected-0274",
+          "role": "DOCTOR",
+          "confidence": 0.9993,
+          "text": "if you're happy"
+        },
+        {
+          "segment_id": "corrected-0275",
+          "role": "DOCTOR",
+          "confidence": 0.9651,
+          "text": "to do that, if you book that through"
+        },
+        {
+          "segment_id": "corrected-0276",
+          "role": "DOCTOR",
+          "confidence": 0.9982,
+          "text": "the support line and"
+        },
+        {
+          "segment_id": "corrected-0277",
+          "role": "DOCTOR",
+          "confidence": 0.9896,
+          "text": "then when you've had"
+        },
+        {
+          "segment_id": "corrected-0278",
+          "role": "DOCTOR",
+          "confidence": 0.8346,
+          "text": "the test, arrange a"
+        },
+        {
+          "segment_id": "corrected-0279",
+          "role": "DOCTOR",
+          "confidence": 0.7172,
+          "text": "follow-up about a week after after you've had the test done."
+        },
+        {
+          "segment_id": "corrected-0280",
+          "role": "DOCTOR",
+          "confidence": 0.8257,
+          "text": "Okay, so do the test"
+        },
+        {
+          "segment_id": "corrected-0281",
+          "role": "DOCTOR",
+          "confidence": 0.7635,
+          "text": "first and then and that follow-up we"
+        },
+        {
+          "segment_id": "corrected-0282",
+          "role": "PATIENT",
+          "confidence": 0.8397,
+          "text": "can just do over the phone again."
+        },
+        {
+          "segment_id": "corrected-0283",
+          "role": "PATIENT",
+          "confidence": 0.7517,
+          "text": "Or yeah. Yeah,"
+        },
+        {
+          "segment_id": "corrected-0284",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "we"
+        },
+        {
+          "segment_id": "corrected-0285",
+          "role": "DOCTOR",
+          "confidence": 0.9973,
+          "text": "can do that over the phone"
+        },
+        {
+          "segment_id": "corrected-0286",
+          "role": "DOCTOR",
+          "confidence": 0.9999,
+          "text": "to start"
+        },
+        {
+          "segment_id": "corrected-0287",
+          "role": "DOCTOR",
+          "confidence": 1.0,
+          "text": "with."
+        }
+      ],
+      "notes": "Accurately reflects the rows and the doctor TextGrid."
+    }
+  ],
+  "historical_flag_rule": "Audited true positives (verdict true_positive*) must never be lost by any detector change; audited false positives may clear only via a bounded fix matching their fp_class. The m05-baseline-rescore PASS/FAIL semantics apply to true positives after detector edits begin.",
+  "existing_unit_specimens": [
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "C03_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "DAY3_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "C03_SCREENING_ROWS",
+      "lane": "demographics_exam"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "C03_COMPOSITE_DENIAL_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "C03_LATER_DENIAL_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "DAY5_SPLIT_SCREENING_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "DAY5_SELF_CORRECTED_WEIGHT_ROWS",
+      "lane": "hedge"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "C03_FAMILY_HISTORY_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "DAY5_MEDICATION_ROWS",
+      "lane": "denial_precision"
+    },
+    {
+      "file": "tests/python/test_summary_fidelity.py",
+      "constant": "DAY3_QUOTE_ROWS",
+      "lane": "exact_quote"
+    },
+    {
+      "file": "tests/python/test_summary_confidence.py",
+      "constant": "CONSULT12_MEDICATION_ROWS",
+      "lane": "term_confidence"
+    }
+  ]
+}

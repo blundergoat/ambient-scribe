@@ -197,12 +197,122 @@ function showRecordingUi() {
     reconnectAttempts = 0;
     setElementHidden('startBtn', true);
     setElementHidden('stopBtn', false);
+    setElementHidden('pauseBtn', false);
     setElementHidden('reconnectBtn', true);
     setElementHidden('emptyState', true);
     setElementHidden('timer', false);
     setRecordingStatus('Recording', 'color:#ef4444;font-weight:500;');
     announce('Recording started');
     showRoleIdentificationPending();
+}
+
+// Pause suspends audio streaming mid-visit without finalizing (M11). The
+// session, socket, and transcript all stay live; Stop remains terminal.
+let isSessionPaused = false;
+let sessionPausedAt = null;
+
+/**
+ * Pauses or continues the active session's audio streaming.
+ * Use from the Pause/Continue button during live recording or demo replay.
+ * A paused microphone drops its audio entirely (never silence-padded), a
+ * paused replay simply halts its audio clock, and the elapsed timer freezes
+ * so displayed time stays talk-time.
+ */
+function togglePauseSession() {
+    // Replay pause rides the audio clock: pausing the element stops chunk
+    // pacing without touching the socket or the streamed-bytes ledger.
+    if (isReplayActive) {
+        const replayAudio = document.getElementById('replayAudio');
+
+        // A replay without local audio markup cannot pause meaningfully.
+        if (!replayAudio) {
+            return;
+        }
+
+        if (!isSessionPaused) {
+            replayAudio.pause();
+            enterPausedSessionUi('Replay paused - press Continue to keep going');
+        } else {
+            replayAudio.play().catch((playError) => {
+                console.warn('Replay resume blocked:', playError);
+            });
+            leavePausedSessionUi('Replaying audio');
+        }
+        return;
+    }
+
+    // Live recording: gate the PCM streamer and freeze the elapsed timer.
+    if (!isRecording) {
+        return;
+    }
+
+    if (!isSessionPaused) {
+        pcmStreamer?.pause();
+        clearInterval(timerInterval);
+        timerInterval = null;
+        sessionPausedAt = Date.now();
+        enterPausedSessionUi('Paused - recording will continue');
+    } else {
+        pcmStreamer?.resume();
+
+        // Shift the start so elapsed time excludes the pause.
+        if (sessionPausedAt && startTime) {
+            startTime += Date.now() - sessionPausedAt;
+        }
+
+        sessionPausedAt = null;
+        timerInterval = setInterval(updateTimer, 1000);
+        leavePausedSessionUi('Recording');
+    }
+}
+
+/**
+ * Applies the visible paused state and flips the button to Continue.
+ */
+function enterPausedSessionUi(statusMessage) {
+    isSessionPaused = true;
+    const pauseButton = document.getElementById('pauseBtn');
+
+    if (pauseButton) {
+        pauseButton.textContent = 'Continue';
+        pauseButton.setAttribute('aria-label', 'Continue the paused recording');
+    }
+
+    setRecordingStatus(statusMessage, 'color:var(--color-review);font-weight:500;');
+    announce('Recording paused');
+}
+
+/**
+ * Clears the paused state and flips the button back to Pause.
+ */
+function leavePausedSessionUi(statusMessage) {
+    isSessionPaused = false;
+    const pauseButton = document.getElementById('pauseBtn');
+
+    if (pauseButton) {
+        pauseButton.textContent = 'Pause';
+        pauseButton.setAttribute('aria-label', 'Pause the recording without ending the session');
+    }
+
+    setRecordingStatus(statusMessage, 'color:var(--color-speaker-a);font-weight:500;');
+    announce('Recording resumed');
+}
+
+/**
+ * Hides the pause control and clears pause state for stop and reset paths.
+ * Use whenever a session ends: a terminal visit can no longer be paused.
+ */
+function resetPauseState() {
+    isSessionPaused = false;
+    sessionPausedAt = null;
+    const pauseButton = document.getElementById('pauseBtn');
+
+    if (pauseButton) {
+        pauseButton.textContent = 'Pause';
+        pauseButton.setAttribute('aria-label', 'Pause the recording without ending the session');
+    }
+
+    setElementHidden('pauseBtn', true);
 }
 
 /**
@@ -246,6 +356,8 @@ function stopRecording() {
 
     setElementHidden('stopBtn', true);
     setElementHidden('reconnectBtn', true);
+    // Stop is terminal, so the pause control leaves with it.
+    resetPauseState();
     hideAudioLevel();
 
     const confidenceBadge = document.getElementById('confidenceBadge');
@@ -277,7 +389,9 @@ function endLiveStop() {
     setElementHidden('startBtn', false);
     setPlainStatus('Session ended');
     revealPostVisitActions();
-    requestSummary();
+    // The note is generated on demand (M11): finalizing only unlocks the
+    // Generate summary button; the clinician decides when to run it.
+    updateGenerateSummaryAvailability();
 }
 
 /**
@@ -338,6 +452,8 @@ function resetVisitState() {
     confidence = 0;
     // Stability evidence belongs to the previous visit's speaker identities.
     roleStability = null;
+    // A fresh visit has no finalized transcript yet, so no note is allowed.
+    terminalAttestation = null;
     // Corrected transcript state belongs to the previous visit's audio.
     if (typeof resetPostVisitCorrectionState === 'function') {
         resetPostVisitCorrectionState();
@@ -345,7 +461,6 @@ function resetVisitState() {
     latestQualityRecord = null;
     startTime = null;
     manualOverrides.clear();
-    rowRoleOverrides.clear();
     autoRowRoles.clear();
     segmentsBySpeaker.clear();
     lastSpeakerId = null;
@@ -394,7 +509,7 @@ function resetVisitUi() {
     document.getElementById('summaryLoading').classList.add('hidden');
     document.getElementById('summaryTitle').textContent = 'Session Summary';
     setSummaryStatus('pending');
-    setSummaryPendingText('Recording in progress, the summary will generate once consultation ends.');
+    setSummaryPendingText('Recording in progress - press Generate summary when the consultation ends.');
 
     const confidenceBadge = document.getElementById('confidenceBadge');
 

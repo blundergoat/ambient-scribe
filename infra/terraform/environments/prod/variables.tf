@@ -1,6 +1,10 @@
 # =============================================================================
 # PROD ENVIRONMENT VARIABLES - All Configurable Settings
 # =============================================================================
+# Define the production choices an operator reviews before deploying Scribe.
+# Defaults keep role labels and final notes on the approved Sydney model stack.
+# Empty optional infrastructure values mean Terraform should create that resource.
+# Secret values are supplied outside this file and never exposed to app users.
 
 # =============================================================================
 # Core Settings
@@ -9,7 +13,7 @@
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-southeast-2"
 }
 
 variable "environment" {
@@ -133,9 +137,15 @@ variable "alb_idle_timeout_seconds" {
 # =============================================================================
 
 variable "model_id" {
-  description = "Bedrock model ID for the agent"
+  description = "Bedrock model ID for consultation speaker-role inference"
   type        = string
-  default     = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+  default     = "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "summary_model_id" {
+  description = "Bedrock model ID for lower-cost consultation note generation"
+  type        = string
+  default     = "au.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "agent_image_tag" {

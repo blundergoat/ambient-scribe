@@ -1,9 +1,143 @@
 ---
 category: verification
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-16
 ---
 
 # READ / SCOPE / VERIFY Lessons
+
+## Lesson: A truncated sweep grep ships an incomplete removal
+
+**Added:** 2026-07-17 · **Trigger:** VERIFY (full pytest) failed on a test the removal sweep never listed
+
+Removing row-level role corrections (PR #5 cleanup), the work-list came from
+`grep -rn "user_row|compute_row_role_exceptions" ... | head -20`; the truncation hid
+`test_clinician_corrected_orphan_rows_stay_untouched`, a second lane pinning the removed
+guard, so the first pytest run failed on a file the sweep had already "cleared". A feature's
+own test suite is never its whole surface: markers and side effects (`role_source ==
+"user_row"`) are pinned by other lanes' tests too.
+Prevention: never `head`-truncate the grep that builds a removal work-list - count the hits
+first (`grep -c`) or write them all to a file, and treat the full suite as part of the sweep,
+not a formality after it.
+
+## Lesson: When a milestone makes timing user-controlled, re-verify every timer it now races
+
+**Added:** 2026-07-16 · **Trigger:** user-reported regression after M11 acceptance testing
+
+M11 replaced the instant auto-summary with an on-demand button, converting
+"time between finalize and summarize" from ~0 ms into an unbounded user decision. The
+milestone's RISKY investigation proved MID-VISIT pause tolerance (WS idle, `SESSION_TTL`,
+audio-time windows) but nobody re-checked POST-FINALIZE timers — and
+`session_lifecycle.py:143` destroys the audio 30 s after finalize, so a user who reads the
+transcript before clicking silently loses the corrected note source
+(session `61747213`: click +112 s → `audio_expired` → live fallback → all claims
+mislabelled Absence-based). The first live verification runs also masked it: agent scripts
+and quick demo clicks all summarized within 7 s.
+
+**Why:** an investigation scoped to "does the gap during the visit break anything" does not
+cover "what expires after the visit ends"; converting any automatic step to manual changes
+the reachable timing envelope on BOTH sides of it.
+
+**How to apply:** when a milestone moves a step from automatic to user-triggered, enumerate
+every timeout/TTL/grace between the old trigger point and its new latest-possible time
+(`rg "sleep|grace|ttl|expire" strands_agents/`) and test at a delay PAST each one; add the
+longest-delay case to the milestone's Manual gate.
+
+**Created:** 2026-07-12
+**What happened:** M04's first guarded replay correctly kept a dominant speaker visible, but
+reported `keep_sustained_voice` because the diagnostic checked the new acoustic guard before the
+older emitted-duration rule. The behavior was safe; the label falsely credited the new policy,
+so the replay was stopped at 25 seconds and restarted after precedence was pinned.
+**Evidence:**
+`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1-attempt1-label-abort-agent.log`
+(search: `"window_index": 5`) and `phase1-green-after-label-fix.log`.
+**Prevention:** For policy diagnostics, evaluate and test the ordinary decisive branch before a
+fallback/guard branch. Pin one control that already passes the old rule and one specimen whose
+outcome changes only because of the new rule before spending a full replay.
+
+## Lesson: A detached eval is not running until its sentinel path advances
+
+**Created:** 2026-07-12
+**What happened:** M04 Phase 0's first nested `nohup` launch returned without an active replay or
+log progress. No audio ran, but relying on the launch command alone would have left a silent,
+incomplete evidence directory.
+**Evidence:** `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase0-eval.log` and the later
+managed runner's `M04_PHASE0_EVAL_EXIT=0` sentinel show the difference.
+**Prevention:** Put the exit sentinel inside an evidence-owned runner, keep long commands in a
+managed process/session (or a proven new session), and verify the first fixture line plus live
+process state immediately. A successful shell launch is not an eval start signal.
+
+## Lesson: CSS pseudo-content does not preserve copied or accessible text
+
+**Created:** 2026-07-11
+**What happened:** M03 split corrected stitched utterances into row-local confidence spans and
+used `::before { content: ' ' }` to separate them visually. The full Playwright lane failed
+two provenance contracts because DOM text concatenated adjacent rows (`twicedaily`,
+`red.Itches`) even though the browser looked spaced correctly.
+**Evidence:**
+`var/quality/m03-confidence-styling-20260711T100804Z/full-playwright-first-failure.log`
+records 46/48 passing and both exact text mismatches.
+**Prevention:** When a separator belongs to copied, searched, or screen-reader text, insert a
+real text node. Use pseudo-content only for decoration, and keep an assertion over the owning
+component's combined DOM text whenever display rows are split into local spans.
+
+## Lesson: Register dynamic modules before executing dataclass definitions
+
+**Created:** 2026-07-11
+**What happened:** M03's corpus-mining tool loaded `scripts/transcript-quality.py` through
+`importlib`, but executed it before adding the module to `sys.modules`. Python's dataclass
+annotation lookup then dereferenced a missing module and the first evidence run failed.
+**Evidence:** `var/quality/m03-confidence-styling-phase0-20260711T093609Z/mining-run-first-failure.log`
+(search: "AttributeError: 'NoneType' object has no attribute '__dict__'").
+**Prevention:** After `module_from_spec`, assign the module under `spec.name` in `sys.modules`
+before `exec_module` whenever dynamically loaded code defines dataclasses or resolves annotations.
+
+## Lesson: Re-run formatting after the last regression pin
+
+**Created:** 2026-07-11
+**What happened:** M02's late same-row denial regression passed focused and full Python tests,
+but the final Ruff format gate still found one test file requiring mechanical formatting.
+**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/ruff-format-check.log`
+first recorded `Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
+**Prevention:** Treat formatting as a final-code gate: rerun it after the last test edit, then
+rerun affected tests so the formatted file—not the pre-format version—is the verified artifact.
+**Follow-up (M03):** A final exception-comment audit again left three otherwise green Python files
+needing Ruff formatting. The formatter and all 130 affected summary/fidelity tests were rerun
+before the broad suite, confirming the final edited bytes rather than the earlier focused pass.
+
+## Lesson: Verification wrappers must preserve the producer's exit status
+
+**Created:** 2026-07-11
+**What happened:** M02's first focused pytest run printed `2 failed, 6 passed`, but a trailing
+`sed` made the shell command exit 0. The first clean-campaign resume then crashed after saving
+generation 1, while `python ... | tee ...` again returned 0 because pipefail was absent. The
+final Playwright monitor also kept waiting after all 43 tests passed because its `pgrep -f`
+pattern matched the polling shell itself.
+**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/phase1-focused-first-green.log`
+(search: "2 failed, 6 passed") and
+`var/quality/m02-fidelity-denial-precision-20260711T083957Z/c03-campaign-final-resume.log`
+(search: "requests_remaining=4"), and
+`var/quality/m02-fidelity-denial-precision-20260711T083957Z/playwright.log`
+(search: "43 passed") - literal output and saved responses exposed each masked or stale
+wrapper status.
+**Prevention:** Capture the producer status before any display command (`status=$?; sed ...;
+exit "$status"`), and use `set -o pipefail` whenever `tee` records a test/eval run. Read the
+pass/fail line even when the wrapper reports success. Poll a captured PID, or use a bracketed
+process pattern such as `[p]laywright test`, so the monitor cannot match its own command line.
+
+## Lesson: A compound-question repro needs the complete bounded exchange
+
+**Created:** 2026-07-11
+**What happened:** The first day5 respiratory fixture copied `cold symptoms` onward but
+omitted the earlier retained fragment `health, any persistent`. VERIFY correctly stayed red,
+but the missing test evidence briefly looked like a checker failure.
+**Evidence:** `tests/python/test_summary_fidelity.py` (search:
+"DAY5_SPLIT_SCREENING_ROWS") - the fixture now includes the full clinician context before
+the patient's short `no`.
+**Prevention:** Before changing row-shape logic, compare the unit fixture with the persisted
+row IDs and retain the complete locality window. A summary sentence's compound adjective may
+live several UI cards before the final question mark. When older fragments complete a
+compound topic, require the immediate follow-up question to overlap that same topic first;
+otherwise a later `No` can overwrite an earlier affirmative answer.
 
 ## Lesson: Post-visit correction smoke tests must stay inside reconnect grace
 
@@ -84,13 +218,6 @@ After renaming `mercure_topic_raw` to `mercure_topic_segments`, stale references
 
 **Lesson:** Always run `rg <old_symbol>` after renames and confirm zero remaining refs (DoD gate #6).
 
-## Lesson: Browser stream state ordering needs a focused regression check (2026-07-04)
-
-**Source:** git history (auto-seeded)
-**Evidence:** `templates/scribe/index.html.twig` + commit `0125a6b` fixed the StreamOrchestrator `_active` ordering bug.
-
-**Lesson:** When changing EventSource subscription setup or stream lifecycle state, run a browser or contract regression that proves subscriptions can connect, reconnect, and shut down in that order.
-
 ## Lesson: Live transcription fixes need cross-layer verification, not one-service checks (2026-07-04)
 
 **Source:** git history (auto-seeded)
@@ -135,15 +262,6 @@ strict `>` comparison. The existing emit-once regression then hid a segment with
 the comparison match the product wording. "At least N seconds of new audio" is inclusive;
 strict comparisons can silently drop short user utterances at the acceptance boundary.
 
-## Lesson: Hidden sidebars need layout-state smoke tests (2026-07-04)
-
-**Created:** 2026-07-04
-**Evidence:** `templates/scribe/index.html.twig` (search: ".summary-column:not(:has(.summary-panel:not(.hidden)))"), `public/js/scribe-output.js` (search: "function renderSummary").
-
-During M12, the first clinical-hints UI pass hid the sidebar element but left a dedicated desktop grid column in the base layout. Static analyzers and API tests stayed green, but the clinician page would have opened with blank right-side space until hints arrived.
-
-**Lesson:** When adding a hidden/dismissible panel that changes page columns, verify both empty and populated layout states with a DOM or browser smoke test. The hidden state must remove reserved layout space, not only hide panel contents.
-
 ## Lesson: Optional JSON knowledge files need malformed-file coverage (2026-07-04)
 
 **Created:** 2026-07-04
@@ -156,29 +274,11 @@ During M12, the clinical KB loader handled missing files and invalid shapes but 
 ## Lesson: Model stack docs need env, Compose, and code defaults checked together (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `README_STACK.md` (search: "Compose still has a no-"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=ollama"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
+**Evidence:** `README_STACK.md` (search: "bare Compose falls back to"), `.env.example` (search: "ROLE_AGENT_MODEL_PROVIDER=bedrock"), `strands_agents/agents/transcription_agent.py` (search: "ROLE_AGENT_MODEL_PROVIDER").
 
 While creating the stack inventory, the root README still described Bedrock as the role-inference default, `.env.example` described Ollama as the local default, Compose passed Ollama by default, and the Python agent retained Bedrock defaults for missing env vars. Reading only one source would have produced another stale model summary.
 
 **Lesson:** For docs that name model providers or IDs, verify `.env.example`, `docker-compose.yml`, agent factory code, and any existing README before writing the final wording. Call out intentional fallback differences instead of flattening them into one default.
-
-## Lesson: Browser replay smokes need a trustworthy origin (2026-07-04)
-
-**Created:** 2026-07-04
-**Evidence:** `public/js/scribe-recording.js` (search: "crypto.randomUUID"), `public/js/scribe-fixtures.js` (search: "startReplay(replayFile, { audioUrl").
-
-While testing the Demo Audio picker, a Playwright smoke loaded the page on `http://app.test/`. The replay flow called `resetSession()`, which uses `crypto.randomUUID()`, and Chromium denied that API on the non-trustworthy fake origin. The same smoke passed when routed through `http://localhost/`, matching local app behavior.
-
-**Lesson:** Browser smokes that exercise recording or replay session reset should run on `localhost` or HTTPS, not arbitrary fake HTTP hosts. Otherwise secure-context browser APIs can fail before the app flow is actually tested.
-
-## Lesson: Populated transcript layouts need populated browser smokes (2026-07-04)
-
-**Created:** 2026-07-04
-**Evidence:** `templates/scribe/index.html.twig` (search: "consultation-workspace"), `public/js/scribe-transcript.js` (search: "Any visible transcript text means the start prompt is no longer useful.").
-
-During the 0.3.0 mockup refresh, an empty-state screenshot made the new workspace layout look clean, but a populated transcript/summary browser smoke exposed that direct transcript events could leave the start prompt visible above real rows.
-
-**Lesson:** For transcript, summary, or hidden-panel layout changes, capture both empty and populated browser states. Include DOM assertions for card count, empty-state visibility, overlap, and removed controls so visual verification covers the state users actually review.
 
 ## Lesson: Delivery-race claims need receiver-side evidence (2026-07-06)
 
@@ -237,31 +337,6 @@ missing-anchor live rows improved corrected strict attribution from 90.3% to 96.
 an utterance that live preview captured. Missing anchors should preserve live text or remain
 empty; they must not consume neighboring corrected words just to keep every row populated.
 
-## Lesson: Full-page screenshot compression can misreport theme rendering
-
-**Created:** 2026-07-07
-**What happened:** During summary UX M4, a downscaled full-page dark-mode screenshot made
-the summary panel look white-on-dark, suggesting the new tab CSS ignored the dark theme.
-Computed-style probes (`getComputedStyle(...).backgroundColor`) showed the panel at the
-correct dark token (#16202b), and an element-level screenshot of `#summaryPanel` rendered
-plainly dark - the "white panel" was a rendering/compression artifact of the 1280px
-full-page capture.
-**Prevention:** For theme verification, assert computed styles for the changed elements
-and screenshot the component (`locator(...).screenshot()`), not only the page. Do not
-file or fix a theme bug from a downscaled full-page PNG alone.
-
-## Lesson: A block class rendered in two views breaks strict-mode e2e locators
-
-**Created:** 2026-07-07
-**What happened:** The M5 provenance popover deliberately reuses the Transcript tab's
-`.summary-transcript__block` builder so cited utterances look identical in both places.
-The first migrated e2e test located `.summary-transcript__block` bare and failed with a
-Playwright strict-mode violation: the class now resolves in BOTH the popover and the tab.
-**Evidence:** `tests/e2e/browser.spec.js` (search: "scope to the transcript tab body").
-**Prevention:** When a component builder is reused across views, scope e2e locators to
-the owning container (`#summaryTranscript .summary-transcript__block`). Audit existing
-locators for a class the moment a second consumer of its builder lands.
-
 ## Lesson: pytest owns extra root log handlers; assert on the app's handler only
 
 **Created:** 2026-07-07
@@ -297,3 +372,145 @@ fastapi and every runtime dep in the working venv was installation history. It n
 `-r ../../strands_agents/requirements.txt` (proven by building a throwaway venv from the
 single documented command), and the publisher imports pyjwt at module load so a broken
 image fails at startup instead of silently skipping publishes.
+
+## Lesson: "Peek instead of create" needs a liveness signal when the call is a write (2026-07-07)
+
+Replacing `get_or_create_state` with `peek_state` in the speaker-scope role override
+(0.4.0-slice-1 M04) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
+role worker has created any state, and peek-only meant that early override never became a
+confirmed override - the next agent update could undo the clinician. An existing regression
+(`tests/python/test_api.py`, search: "survives_later_agent_update") caught it immediately.
+The fix gates on lifecycle (`is_active` or `has_pending_destroy` -> create; finished visit ->
+peek). The row-scope path never had this problem because row corrections persist in
+transcript storage, not role state. When removing a state-creation side effect, first
+enumerate who legitimately relies on the creation: "reads must not create" is right for
+reads (`roles_snapshot`), but an override is a write.
+
+## Lesson: Environment-variable checks are not device-liveness checks (2026-07-08)
+
+The M06 phase-2 gate followed the standing rule "verify the RUNNING container env, not
+compose defaults" - `NEMO_SESSION_ENGINE=streaming` and `MEDICAL_BOOST_ENABLED=1` were
+confirmed in the container before the eval - and the eval STILL ran on the wrong hardware:
+WSL had silently dropped the GPU adapter, a hot-reload had loaded both models on CPU, and
+env vars said nothing about it. The false byte-identity failure cost two attribution evals
+and one control run to unwind (footguns/runtime.md, search: "silently move NeMo to CPU").
+Env inspection proves CONFIGURATION; it never proves the RESOURCE is attached. Before a
+baseline-gated run, also assert the resource itself: `torch.cuda.is_available()` in the
+serving container for GPU gates, and generally one probe of the physical dependency any
+byte-identity claim rides on. Attribution order when a gate diff appears: (1) device parity
+with the baseline, (2) same-code same-device rerun for run-to-run stability, (3) only then
+suspect the code.
+
+## Lesson: Styling-carried UI state does not survive text paste - read fidelity and correction outcomes from logs
+
+**Created:** 2026-07-09
+**What happened:** During the 2026-07-08 (UTC) manual round, a pasted c03 note showed no
+"Unverified against transcript" markers and the review concluded "zero flags fired". The agent
+log showed `summary.fidelity_flagged flagged=3` for that exact session - the amber marker is
+styling, and a text copy strips it. The same analysis initially reported "no errors in the test
+window" because the sweep grepped `ERROR|Traceback|CUDA error`; the evening's only real failure
+was logged at WARNING as `correction.unavailable ... CUDA driver error: device not ready`, which
+none of those patterns match. Both wrong claims were corrected only by reading the logs.
+**Prevention:** Pasted UI text is evidence of CONTENT, never of styling-carried state (fidelity
+flags, confidence tinting, badges) and never of absence. Before claiming anything about a
+session's fidelity or correction outcome, grep the agent log for `summary.fidelity_` and
+`correction.` with the session id. Error sweeps over this stack must match loosely
+(`-i "unavailable|failed|cuda"`), not exact phrases or level names.
+
+## Lesson: Field-session fixture replays must preserve the original stop time
+
+**Created:** 2026-07-10
+**What happened:** M11 needed fresh rows for a field note captured 228 seconds into a
+510-second day3 WAV. The first recapture started the full fixture at browser cadence, which
+would have mixed later consultation facts into a replay meant to reproduce the cut-off note;
+it was stopped only after the WAV duration and field cutoff were compared. M05 repeated the
+cutoff error through headless UI timing: a 132.8-second target reached 215.6 seconds while tool
+polls lagged the faster audio clock, and the first stale control click hit hidden microphone Start
+instead of replay Stop. The eventual Stop also triggered one automatic 6,401-token summary.
+**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M11-note-phrasing-fidelity.md` (search: "initial
+uncapped replay") and
+`var/quality/m05-dual-identity-duplicates-20260712T060345Z/instrumented-browser-20260712T081246Z/mechanism-verdict.md`.
+**Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
+field session's stop time. Pass that stop time explicitly with `--seconds` and verify the
+saved row duration before using the artifact for prompt or fidelity acceptance. For UI-driven
+replays, poll the audio timer at one-second cadence near cutoff and use Escape rather than a stale
+element index. Count the Stop flow's automatic correction/summary generation in approval and cost.
+
+## Lesson: Long evals must capture rotating service logs during the run
+
+**Created:** 2026-07-11
+**What happened:** The first 20-fixture full-corpus sweep waited until the end to inspect Docker
+logs, but rotation had already discarded 13 of 15 early `correction.completed` lines. The
+operator's live ledger was the only surviving duration/chunk evidence for those fixtures.
+**Evidence:** `var/quality/full-corpus-20260710T2328Z/run-manifest.md` (search:
+"Correction-health ledger") records the rotation loss and the operator-captured replacement.
+**Prevention:** For long detached evals, append `correction.completed`,
+`correction.unavailable`, and milestone instrumentation lines to the run directory while each
+fixture executes. Do not treat an end-of-run `docker compose logs` read as durable evidence.
+
+## Lesson: Source-based shell smokes need the main guard before the first run
+
+**Created:** 2026-07-11
+**What happened:** M01's first GPU-free corpus smoke sourced the existing eval runner before a
+library guard existed, so sourcing immediately entered the real fixture main path. The run was
+terminated, health/CUDA/error checks stayed clean, and the smoke was rerun only after the guard.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "fixture_summary_line") and
+`tests/eval-corrected-fixtures-smoke.sh` (search: "append_failed_report_row") pin the
+corrected order.
+**Prevention:** When a shell smoke will source an executable runner, land and syntax-check the
+`BASH_SOURCE[0] == $0` main guard before the first source attempt; then add the source-based red
+assertion. Never assume an executable script is already library-safe.
+
+## Lesson: Guard both ends of long-running work, not just its entry
+
+**Created:** 2026-07-15
+**What happened:** M02's stale-role gate checked `_closed_role_revisions` only at the TOP of
+`_infer_and_publish_role_update`. A role inference already inside the executor when settlement
+froze the visit (`failed_frozen`) still applied its mapping and published after closure — the
+exact kill-criterion behavior ("a role result silently changes an already rendered/copied
+artifact"). The automated suite passed because its late-result test started the worker AFTER
+closure (hits the entry gate); nothing covered in-flight-at-closure. The gap was found while
+designing the acceptance round's slow-provider injection, before running it.
+**Evidence:** `strands_agents/api/role_inference_queue.py` (search: "visit can freeze while")
+and `tests/python/test_terminal_source_integrity.py` (search: "in_flight_at_close") — the test
+was red against commit `890c7e1`, green after the post-executor recheck.
+**Prevention:** Any revoke/close/freeze flag raced by long-running work (executor calls, provider
+awaits) must be rechecked AFTER the work returns, immediately before applying results — an entry
+gate alone only rejects work that has not started. When writing the "late result rejected" test,
+always add the sibling case where the result is already in flight when the door closes.
+
+## Lesson: Build acceptance specimens from real artifacts before the human gate
+
+**Created:** 2026-07-15
+**What happened:** M03's `Review required (<n>)` badge counted reason CATEGORIES, and the unit
+test agreed with the implementation ("(2)") because its expectation was written from the code.
+Generating the acceptance specimens from the REAL consult-1.2 note (M02 replay artifacts run
+through the production serializer) rendered "(2)" directly above a breakdown listing 1 + 3
+flagged items - a contradiction no synthetic fixture had encoded.
+**Evidence:** `var/quality/m03-copy-specimens-20260715T/` (search: "Review required") and
+`M03-design-proposal.md` amendment 4; fix in `public/js/scribe-copy.js` (search:
+"flaggedItemCount").
+**Prevention:** Before any human acceptance gate, run the shipped code over real captured
+artifacts and read the output as the reviewer would. Synthetic fixtures inherit the author's
+assumptions; real data contradicts them. Writing a unit expectation by observing the
+implementation's current output is recording, not testing.
+
+## Lesson: An adjacent answer does not prove which question it resolves
+
+**Created:** 2026-07-16
+**What happened:** While reviewing consult 5.3, the explicit doctor question "Have you ever
+had a panic attack?" followed by the patient's "No I wouldn't say so" was initially treated
+as a proven negative screen. Time-aligned cross-examination showed that the doctor had first
+asked whether anxiety had ever prevented the patient entering the office, the panic question
+overlapped only an unintelligible patient filler, and the later answer continued "I've always
+managed to make it to work." Its semantics therefore fit the earlier functional question more
+directly; at most, the panic response is ambiguous.
+**Evidence:**
+`tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.doctor.TextGrid`
+(search: `Have you ever <UNSURE>had a</UNSURE> panic attack?`) and
+`tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.patient.TextGrid`
+(search: `No I wouldn't say so, I think, I've always managed to make it to work.`).
+**Prevention:** Align answers using timing, overlap, and semantic fit across the complete
+bounded exchange. When consecutive questions compete for one delayed response, record
+"asked; response ambiguous" unless the answer directly identifies the topic; adjacency alone
+must not become a positive or negative clinical fact.

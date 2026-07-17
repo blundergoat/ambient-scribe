@@ -37,6 +37,12 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  */
 final class ScribeControllerTest extends TestCase
 {
+    /** Full transcript size returned by the mocked FastAPI summary response. */
+    private const int SUMMARY_ORIGINAL_TRANSCRIPT_CHARS = 48_000;
+
+    /** Selected transcript size returned by the mocked FastAPI summary response. */
+    private const int SUMMARY_KEPT_TRANSCRIPT_CHARS = 32_000;
+
     /**
      * Ensures users landing on `/` are sent to the actual scribe workspace.
      *
@@ -271,7 +277,12 @@ final class ScribeControllerTest extends TestCase
         $response = $controller->summary($sessionId, $request);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame('Session Summary', $this->decodeJsonResponse($response)['title']);
+        $responsePayload = $this->decodeJsonResponse($response);
+        self::assertSame('Session Summary', $responsePayload['title']);
+        self::assertSame('browser', $responsePayload['transcript_source']);
+        self::assertTrue($responsePayload['transcript_truncated']);
+        self::assertSame(self::SUMMARY_ORIGINAL_TRANSCRIPT_CHARS, $responsePayload['original_transcript_chars']);
+        self::assertSame(self::SUMMARY_KEPT_TRANSCRIPT_CHARS, $responsePayload['kept_transcript_chars']);
         self::assertCount(1, $seenRequests);
         self::assertSame('POST', $seenRequests[0]['method']);
         self::assertSame("http://agent.test/session/{$sessionId}/summary", $seenRequests[0]['url']);
@@ -279,39 +290,68 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Proxies post-stop correction requests before the summary is generated.
-     *
-     * @return void No payload; failure means the browser cannot create corrected transcript rows.
+     * Safe recovery metadata a recovered correction reports to the note UI.
+     * One retry over three audio chunks; the browser shows provenance from these
+     * exact fields, so the proxy must not rename, drop, or retype any of them.
      */
-    public function testCorrectionProxyForwardsToAgent(): void
+    private const CORRECTION_RECOVERY_METADATA = [
+        'attempted' => true,
+        'attempts' => 2,
+        'retried' => true,
+        'chunk_count' => 3,
+        'reason_category' => 'gpu_transient',
+    ];
+
+    /**
+     * Proxies post-stop correction and returns the agent's recovery metadata unchanged.
+     *
+     * @return void No payload; failure means the note UI would lose retry/chunk provenance.
+     */
+    public function testCorrectionProxyReturnsRecoveryMetadataUnchanged(): void
     {
         $sessionId = '00000000-0000-4000-8000-000000000299';
         $seenRequests = [];
-        $httpClient = new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'status' => 'ready',
-                        'segments' => 2,
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
+        $httpClient = $this->createJsonAgentStub(
+            $seenRequests,
+            ['session_id' => $sessionId, 'status' => 'ready', 'segments' => 2]
+                + self::CORRECTION_RECOVERY_METADATA,
         );
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
         $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
-            'segments' => [
-                ['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT'],
-            ],
+            'segments' => [['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT']],
         ]);
+
         $response = $controller->correction($sessionId, $request);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame('ready', $this->decodeJsonResponse($response)['status']);
+        $correctionPayload = $this->decodeJsonResponse($response);
+        self::assertSame('ready', $correctionPayload['status']);
+        // Every recovery field must survive the proxy for the browser's source notice.
+        foreach (self::CORRECTION_RECOVERY_METADATA as $field => $expectedValue) {
+            self::assertSame($expectedValue, $correctionPayload[$field], "correction field: {$field}");
+        }
+    }
+
+    /**
+     * Sends the browser's visible rows to the agent correction endpoint exactly once.
+     *
+     * @return void No payload; failure means corrected rows would lose the user's live context.
+     */
+    public function testCorrectionProxySendsVisibleRowsToAgentOnce(): void
+    {
+        $sessionId = '00000000-0000-4000-8000-000000000299';
+        $seenRequests = [];
+        $httpClient = $this->createJsonAgentStub(
+            $seenRequests,
+            ['session_id' => $sessionId, 'status' => 'ready', 'segments' => 2],
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
+        $request = $this->createJsonPostRequest("/session/{$sessionId}/correction", [
+            'segments' => [['speaker_id' => 'spk_1', 'text' => 'Live preview text.', 'role' => 'PATIENT']],
+        ]);
+
+        $controller->correction($sessionId, $request);
+
         self::assertCount(1, $seenRequests);
         self::assertSame('POST', $seenRequests[0]['method']);
         self::assertSame("http://agent.test/session/{$sessionId}/correction", $seenRequests[0]['url']);
@@ -319,7 +359,7 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
-     * Proxies corrected transcript reads for the summary Transcript tab.
+     * Proxies corrected transcript reads for the summary Transcript tab, once and as a GET.
      *
      * @return void No payload; failure means the tab cannot show the rows the note used.
      */
@@ -327,29 +367,13 @@ final class ScribeControllerTest extends TestCase
     {
         $sessionId = '00000000-0000-4000-8000-000000000399';
         $seenRequests = [];
-        $httpClient = new MockHttpClient(
-            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $sessionId): MockResponse {
-                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
-
-                return new MockResponse(
-                    body: json_encode([
-                        'session_id' => $sessionId,
-                        'source' => 'corrected_segments',
-                        'segments' => [
-                            [
-                                'segment_id' => 'corrected-0001',
-                                'role' => 'PATIENT',
-                                'text' => 'My skin is quite red.',
-                                'start' => 3.1,
-                                'end' => 4.2,
-                            ],
-                        ],
-                    ], JSON_THROW_ON_ERROR),
-                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
-                );
-            },
-            baseUri: 'http://agent.test',
-        );
+        $httpClient = $this->createJsonAgentStub($seenRequests, [
+            'session_id' => $sessionId,
+            'source' => 'corrected_segments',
+            'segments' => [
+                ['segment_id' => 'corrected-0001', 'role' => 'PATIENT', 'text' => 'My skin is quite red.', 'start' => 3.1, 'end' => 4.2],
+            ],
+        ]);
         $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://agent.test');
         $response = $controller->correctedTranscript($sessionId);
 
@@ -640,6 +664,31 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
+     * Builds an agent stub that answers every proxied call with one JSON payload and records each request.
+     * Use in same-origin proxy tests that assert what the browser's page forwards to FastAPI.
+     *
+     * @param array<int, array<string, mixed>> $seenRequests - filled with each proxied call; staying empty
+     *   means the proxy never reached the agent, so the page would show a local error instead of agent data
+     * @param array<string, mixed> $agentPayload - JSON body the stubbed agent returns for the page to render
+     *
+     * @return MockHttpClient client the controller uses in place of the real FastAPI agent
+     */
+    private function createJsonAgentStub(array &$seenRequests, array $agentPayload): MockHttpClient
+    {
+        return new MockHttpClient(
+            responseFactory: static function (string $method, string $url, array $options) use (&$seenRequests, $agentPayload): MockResponse {
+                $seenRequests[] = ['method' => $method, 'url' => $url, 'options' => $options];
+
+                return new MockResponse(
+                    body: json_encode($agentPayload, JSON_THROW_ON_ERROR),
+                    info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
+                );
+            },
+            baseUri: 'http://agent.test',
+        );
+    }
+
+    /**
      * Decodes controller JSON in the same shape the browser would consume.
      *
      * @param JsonResponse $response Controller response; empty content means the page received no JSON payload.
@@ -705,6 +754,10 @@ final class ScribeControllerTest extends TestCase
                         'session_id' => $sessionId,
                         'title' => 'Session Summary',
                         'sections' => [],
+                        'transcript_source' => 'browser',
+                        'transcript_truncated' => true,
+                        'original_transcript_chars' => self::SUMMARY_ORIGINAL_TRANSCRIPT_CHARS,
+                        'kept_transcript_chars' => self::SUMMARY_KEPT_TRANSCRIPT_CHARS,
                     ], JSON_THROW_ON_ERROR),
                     info: ['http_code' => 200, 'response_headers' => ['content-type' => 'application/json']],
                 );

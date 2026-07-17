@@ -14,7 +14,11 @@ function revealPostVisitActions() {
     // Replayed transcript text can be summarized like live text.
     if (segmentIndex > 0) {
         setElementHidden('resetBtn', false);
-        setSummaryPendingText('Consultation ended - generating summary now.');
+        // The note is on demand (M11): say what is actually true - either
+        // the transcript is ready for the button, or it is still finalizing.
+        if (typeof refreshSummaryPendingCopy === 'function') {
+            refreshSummaryPendingCopy();
+        }
     }
 }
 
@@ -28,6 +32,11 @@ function setSummaryPendingText(message) {
     // Isolated test pages may not render the summary panel.
     if (pendingText) {
         pendingText.textContent = message;
+    }
+
+    // Every state that changes this copy also decides whether the bars move.
+    if (typeof refreshSummaryPendingMotion === 'function') {
+        refreshSummaryPendingMotion();
     }
 }
 

@@ -1,33 +1,8 @@
-# =============================================================================
-# Docker Compose - Orchestrates the Ambient Scribe stack
-# =============================================================================
-#
-# Run with: docker compose up --build
-#
-# SERVICES:
-#
-#   nemo-agent  - Python FastAPI + NeMo GPU inference (WebSocket + HTTP)
-#   app         - PHP Symfony web application (UI + session management)
-#   mercure     - Real-time SSE hub for transcript streaming
-#   ollama      - CPU-only role/summary LLM (profile `ollama`; skipped on Bedrock)
-#
-# DATA FLOW:
-#
-#   Browser ──(WebSocket audio)──► nemo-agent (NeMo GPU)
-#                                       │
-#                                       ├──(publish segments)──► mercure ──(SSE)──► Browser
-#                                       │
-#   Browser ──(HTTP)──► app (PHP) ──(HTTP)──► nemo-agent (session history)
-#
-# PORTS:
-#   http://localhost:48082  - Scribe UI (PHP app)
-#   http://localhost:48101  - NeMo agent API (for debugging)
-#   http://localhost:48137  - Mercure hub (for SSE subscriptions)
-#
-# GPU REQUIREMENT:
-#   The nemo-agent service requires an NVIDIA GPU with the NVIDIA Container
-#   Toolkit installed. See: https://docs.nvidia.com/datacenter/cloud-native/
-# =============================================================================
+# Ambient Scribe local services for the consultation UI, transcription agent,
+# Mercure updates, and optional CPU-only role/summary generation with Ollama.
+# Use this stack when a developer records or replays a consultation locally.
+# NeMo alone receives the NVIDIA GPU; every other service remains off-GPU.
+# The UI, agent, and Mercure endpoints keep their documented localhost ports.
 
 services:
   # ===========================================================================
@@ -63,8 +38,15 @@ services:
       - NEMO_BUFFER_MAX_DURATION=${NEMO_BUFFER_MAX_DURATION:-900}
       - NEMO_SPEAKER_CAP=${NEMO_SPEAKER_CAP:-2}
       - NEMO_SESSION_ENGINE=${NEMO_SESSION_ENGINE:-windowed}
+      # Off by default; named QA replays log only speaker IDs, counts, shares, and timings.
+      - NEMO_STREAMING_SLOT_EVIDENCE=${NEMO_STREAMING_SLOT_EVIDENCE:-0}
+      # Zero keeps strict spoken order; a measured positive value bounds stable-row delivery.
+      - NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS=${NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS:-0}
+      # Keep the rejected QA guard off; guarded corpus attribution regressed.
+      - NEMO_STREAMING_CROSSTALK_GUARD=${NEMO_STREAMING_CROSSTALK_GUARD:-0}
       - MAX_SESSIONS=${MAX_SESSIONS:-100}
       - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-7200}
+      - SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS=${SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS:-900}
       - SESSION_STORAGE=${SESSION_STORAGE:-memory}
       - SESSION_DB_PATH=${SESSION_DB_PATH:-/data/sessions.db}
       - LOG_FORMAT=${LOG_FORMAT:-json}
@@ -74,10 +56,16 @@ services:
       - MERCURE_JWT=${MERCURE_PUBLISHER_JWT:-}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-ambient-scribe-mercure-dev-secret-key}
 
-      # --- Role inference agent (uses Bedrock by default, Ollama optional) ---
+      # --- Role and summary agents (bare Compose uses Ollama; env may select Bedrock) ---
       - ROLE_AGENT_MODEL_PROVIDER=${ROLE_AGENT_MODEL_PROVIDER:-ollama}
-      - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-us.anthropic.claude-sonnet-4-20250514-v1:0}
+      - ROLE_AGENT_MODEL_ID=${ROLE_AGENT_MODEL_ID:-au.anthropic.claude-haiku-4-5-20251001-v1:0}
       - ROLE_AGENT_OLLAMA_MODEL=${ROLE_AGENT_OLLAMA_MODEL:-qwen3.5:9b}
+      # The note follows the role provider unless an operator deliberately separates it.
+      - SUMMARY_AGENT_MODEL_PROVIDER=${SUMMARY_AGENT_MODEL_PROVIDER:-${ROLE_AGENT_MODEL_PROVIDER:-ollama}}
+      # The note follows the selected role model while preserving Haiku as the final fallback.
+      - SUMMARY_AGENT_MODEL_ID=${SUMMARY_AGENT_MODEL_ID:-${ROLE_AGENT_MODEL_ID:-au.anthropic.claude-haiku-4-5-20251001-v1:0}}
+      # Local role and note generation share the same exact Ollama tag by default.
+      - SUMMARY_AGENT_OLLAMA_MODEL=${SUMMARY_AGENT_OLLAMA_MODEL:-${ROLE_AGENT_OLLAMA_MODEL:-qwen3.5:9b}}
       # Pinned to the bundled `ollama` service (container-to-container). This is NOT
       # overridable by .env on purpose: `host.docker.internal` is unreachable from the
       # agent container on some Docker/WSL2 setups, and a stale .env value silently
@@ -185,6 +173,10 @@ services:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
+      # Hide every supported accelerator so the consultation's NeMo models keep the only GPU.
+      - CUDA_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+      - GGML_VK_VISIBLE_DEVICES=-1
 
 volumes:
   session_data:

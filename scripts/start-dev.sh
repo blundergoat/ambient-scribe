@@ -37,6 +37,8 @@
 #   MERCURE_PORT   - Mercure hub port (default: 48137)
 #   OLLAMA_HOST    - Ollama URL (default: http://localhost:11434)
 #   OLLAMA_MODEL   - Model name (default: from .env or qwen3.5:9b)
+#   START_DEV_LOG_TAIL - Historical nemo-agent log lines to show before
+#                        following new logs (default: 0; use 'all' for full)
 #
 # Press Ctrl+C to stop all services and containers started by this script.
 # =============================================================================
@@ -240,6 +242,14 @@ NEMO_MODEL_PROVIDER="${NEMO_MODEL_PROVIDER:-local}"
 
 # GPU is required - NeMo transcription is the core feature
 if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
+    # The tooling exists but no adapter answered: WSL2 dropped the GPU, and the
+    # nemo-agent container would fail with "no adapters were found".
+    if [[ "$NVIDIA_SMI_PRESENT" == "true" ]]; then
+        echo -e "  ${FAIL} ${RED}nvidia-smi reports NO adapter - WSL2 lost the GPU${RESET}"
+        echo -e "     ${DIM}Fix from Windows (not inside WSL): quit Docker Desktop, run 'wsl --shutdown',${RESET}"
+        echo -e "     ${DIM}start Docker Desktop again, then re-run this script. Reboot Windows if it persists.${RESET}"
+        exit 1
+    fi
     echo -e "  ${FAIL} ${RED}NVIDIA GPU required for NeMo transcription${RESET}"
     echo -e "     ${DIM}Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/${RESET}"
     echo -e "     ${DIM}Or set NEMO_MODEL_PROVIDER=mock in .env for test/development only${RESET}"
@@ -302,10 +312,20 @@ else
 fi
 
 step "nvidia-smi"
+# A named adapter means live transcription can run on the GPU.
 if [[ "$HAS_NVIDIA_SMI" == "true" ]]; then
     pass "${GPU_NAME}"
+# Mock mode never touches the GPU, so a missing adapter is only a warning.
 elif [[ "$NEMO_MODEL_PROVIDER" == "mock" ]]; then
     echo -e "${WARN}  ${DIM}no GPU - using mock NeMo pipeline (scenarios will work, live transcription won't)${RESET}"
+# The driver tooling exists but no adapter answered: the WSL2 GPU has dropped
+# and the nemo-agent container would fail with "no adapters were found".
+elif [[ "$NVIDIA_SMI_PRESENT" == "true" ]]; then
+    fail "nvidia-smi reports NO adapter - WSL2 lost the GPU"
+    echo -e "     ${DIM}Fix from Windows (not inside WSL): quit Docker Desktop, run 'wsl --shutdown',${RESET}"
+    echo -e "     ${DIM}start Docker Desktop again, then re-run this script. Reboot Windows if it persists.${RESET}"
+    echo ""
+    exit 1
 else
     fail "not found - GPU required for NeMo (set NEMO_MODEL_PROVIDER=mock for UI-only testing)"
     echo ""
@@ -432,10 +452,16 @@ echo ""
 # =============================================================================
 # STEP 6: Stream Logs + Wait
 # =============================================================================
-echo -e "  ${DIM}Streaming nemo-agent logs (Ctrl+C to stop)...${RESET}"
+START_DEV_LOG_TAIL="${START_DEV_LOG_TAIL:-0}"
+if ! [[ "$START_DEV_LOG_TAIL" =~ ^([0-9]+|all)$ ]]; then
+    echo -e "  ${YELLOW}${BOLD}Warning:${RESET} ${DIM}Invalid START_DEV_LOG_TAIL='${START_DEV_LOG_TAIL}', using 0${RESET}"
+    START_DEV_LOG_TAIL=0
+fi
+
+echo -e "  ${DIM}Streaming new nemo-agent logs (Ctrl+C to stop; START_DEV_LOG_TAIL=N for history)...${RESET}"
 echo ""
 
-dc logs -f nemo-agent 2>&1 | while IFS= read -r line; do
+dc logs -f --tail="$START_DEV_LOG_TAIL" nemo-agent 2>&1 | while IFS= read -r line; do
     case "$line" in
         *"/health"*) ;; # skip Docker healthcheck spam
         *WARNING*|*ERROR*|*Traceback*|*"POST "*|*"GET "*|*WebSocket*|*"model"*|*"loaded"*)

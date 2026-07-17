@@ -1,6 +1,6 @@
 ---
 category: role-agent
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-14
 ---
 
 # Role-Attribution Agent Footguns
@@ -59,3 +59,13 @@ last_reviewed: 2026-07-07
 - **What breaks:** Flip damping intentionally keeps the current DOCTOR/PATIENT mapping and does not append a new mapping-history row. If runtime code treats "history did not grow" as "the tool was not invoked", it falls through to the keyword fallback, which can apply the same flip the tool just suppressed and relabel the user's whole transcript anyway.
 - **Evidence:** During M16, consultation-03 and consultation-08 logs showed `role_mapping.flip_suppressed`, then `role_inference.tool_not_invoked`, then fallback `role_mapping.flip_detected`. The regression test `tests/python/test_role_inference.py` (search: "test_suppressed_flip_counts_as_tool_decision") now proves a suppressed flip returns a `path: tool` payload with the established mapping.
 - **Prevention:** Role-agent runtime must count either mapping-history growth OR suppressed-flip count growth as a successful tool decision. Any change to tool invocation detection needs a focused test where `assign_roles` suppresses a flip and fallback must not run.
+
+## Footgun: A correct partial role map can still fail strict attribution
+
+**Status:** active | **Created:** 2026-07-14 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/api/role_inference_queue.py` (search: "speaker_evidence_rows")
+- **Files:** `scripts/role-timeline.py` (search: "final_mapping")
+- **What breaks:** A role-agent call can correctly label every speaker it returns while omitting a newly observed speaker, or the scorer can fetch history before that speaker's queued tail-evidence call finishes. Those rows remain UNKNOWN in the sampled browser history, so a plausible partial map still misses strict attribution.
+- **Evidence:** M07 c08 session `bf459d4c-3d28-452e-b4a9-bcc27ff8600c` exposed the missing-key contract at 78.1% strict. After that contract was enforced, session `be6f808c-0856-4c02-bdcf-b5081288e6ce` was still sampled at 78.1% after an 8-second settle, but its complete correct four-speaker map arrived 11.578 seconds after finalize and 3.427 seconds after history collection. Evidence: `var/quality/m07-role-map-bifurcation-acceptance-v2-20260713T204633Z/`.
+- **Prevention:** A future candidate must cover every bounded evidence ID, reject incomplete tool calls without changing UI state, and let replay gates wait for the tail role queue rather than assuming a short sleep drained it. Inspect UNKNOWN clean rows and compare sampled map keys with emitted speaker IDs. M07's implementation was rejected at corpus non-regression and rolled back, so this guard is not active product behavior.

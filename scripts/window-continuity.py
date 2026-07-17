@@ -37,6 +37,8 @@ _WINDOW_ROW_FIELDS = (
     "mapping_reasons",
     "window_remaps",
     "window_phantom_merges",
+    "slot_share_evidence",
+    "folded_word_spans",
     "cumulative_anchor_remaps",
     "cumulative_phantom_merges",
     "emitted_rows",

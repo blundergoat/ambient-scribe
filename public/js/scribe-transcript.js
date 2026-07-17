@@ -20,6 +20,10 @@ let replayDrainTimeout = null;
 let isLiveDraining = false;
 let liveDrainTimeout = null;
 const MIXED_ROW_ROLE_LABEL = 'Review labels';
+// Terminal source attestation from the backend `finalized` event. Until it
+// arrives, the visit's transcript is not complete and no note may be
+// requested - a Stop-wait timeout only releases the UI, never the note.
+let terminalAttestation = null;
 
 /**
  * Builds summary rows from the transcript rows visible in the browser.
@@ -38,14 +42,23 @@ function readVisibleTranscriptSegments() {
         // clinician correction > automatic row exception > speaker mapping.
         for (const rowSpan of segmentElement.querySelectorAll('.segment__text')) {
             const segmentId = rowSpan.dataset.segmentId ?? '';
-            visibleSegments.push({
+            const summaryRow = {
                 segment_id: segmentId,
                 speaker_id: cardSpeakerId,
                 role: resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId),
                 text: rowTextFromSpan(rowSpan),
                 start: Number.parseFloat(rowSpan.dataset.start) || 0,
                 end: Number.parseFloat(rowSpan.dataset.end) || 0,
-            });
+            };
+
+            // Measured rows echo their heard-confidence back so a server
+            // restore keeps it; unmeasured rows stay absent-is-absent.
+            const rowConfidence = Number.parseFloat(rowSpan.dataset.confidence);
+            if (Number.isFinite(rowConfidence)) {
+                summaryRow.confidence = rowConfidence;
+            }
+
+            visibleSegments.push(summaryRow);
         }
     }
 
@@ -73,12 +86,7 @@ function rowTextFromSpan(rowSpan) {
 function resolvedRoleForTranscriptRow(rowSpan, cardSpeakerId) {
     const segmentId = rowSpan.dataset.segmentId ?? '';
 
-    // A clinician-pinned row is the strongest visible evidence.
-    if (rowRoleOverrides.has(segmentId)) {
-        return rowRoleOverrides.get(segmentId);
-    }
-
-    // Automatic row cues are used when the clinician has not corrected that line.
+    // Automatic row cues outrank the card's speaker mapping for that line.
     if (autoRowRoles.has(segmentId)) {
         return autoRowRoles.get(segmentId);
     }
@@ -114,7 +122,6 @@ function visibleCardRoleState(segmentBlock) {
     if (rowRoles.size > 1) {
         return {
             roleClass: 'UNKNOWN',
-            avatar: '?',
             label: MIXED_ROW_ROLE_LABEL,
             isMixed: true,
             showManualConfirmation: false,
@@ -139,7 +146,6 @@ function displayStateForSingleRole(visibleRole, speakerId, followsSpeakerMapping
     const roleForDisplay = visibleRole === '' ? 'UNKNOWN' : (visibleRole ?? 'UNKNOWN');
     return {
         roleClass: roleForDisplay,
-        avatar: roleForDisplay === 'UNKNOWN' ? '?' : getAvatarLabel(roleForDisplay),
         label: roleForDisplay === 'UNKNOWN' ? speakerId : getRoleLabel(roleForDisplay),
         isMixed: false,
         showManualConfirmation: followsSpeakerMapping && manualOverrides.has(speakerId),
@@ -168,17 +174,16 @@ function refreshSpeakerCardDisplay(segmentBlock) {
         segmentBlock.classList.add('segment--mixed');
     }
 
+    // Rebuilding the class list above dropped any gap/overlap marker, and a
+    // role update only moves a card sideways - its spoken time is unchanged.
+    applyFlowClassesFromDataset(segmentBlock);
+
     const labelElement = segmentBlock.querySelector('.segment__speaker');
     // Partial test DOMs may not render card labels.
     if (labelElement) {
         setSpeakerLabelContent(labelElement, displayState.label, displayState.showManualConfirmation);
     }
 
-    const avatarElement = segmentBlock.querySelector('.segment__avatar');
-    // Partial test DOMs may not render avatars.
-    if (avatarElement) {
-        avatarElement.textContent = displayState.avatar;
-    }
 }
 
 /**
@@ -191,6 +196,84 @@ function refreshSpeakerCardDisplay(segmentBlock) {
  */
 function refreshCardDisplayForRow(rowSpan) {
     refreshSpeakerCardDisplay(rowSpan.closest('.segment'));
+}
+
+/**
+ * Reads one card's spoken-time bounds from the rows it currently holds.
+ * Use when flow markers need real intervals after inserts, splits, or merges.
+ *
+ * @param {HTMLElement} segmentBlock - transcript card; a card without timed
+ *   rows falls back to its own dataset bounds, which may be unmeasured.
+ * @returns {{start: number, end: number}} bounds; NaN marks unmeasured cards.
+ */
+function transcriptCardInterval(segmentBlock) {
+    let startSeconds = Infinity;
+    let endSeconds = -Infinity;
+
+    // Rows are the truth: cards keep min/max as rows are inserted or split off.
+    for (const rowSpan of segmentBlock.querySelectorAll('.segment__text')) {
+        const rowStart = parseFloat(rowSpan.dataset.start);
+        const rowEnd = parseFloat(rowSpan.dataset.end);
+        if (Number.isFinite(rowStart)) {
+            startSeconds = Math.min(startSeconds, rowStart);
+        }
+        if (Number.isFinite(rowEnd)) {
+            endSeconds = Math.max(endSeconds, rowEnd);
+        }
+    }
+
+    return {
+        start: Number.isFinite(startSeconds) ? startSeconds : parseFloat(segmentBlock.dataset.start),
+        end: Number.isFinite(endSeconds) ? endSeconds : parseFloat(segmentBlock.dataset.end),
+    };
+}
+
+/**
+ * Applies the gap/overlap class a card's stored flow marker calls for.
+ * Use whenever a card's class list is rebuilt, so role updates and row
+ * corrections cannot silently drop the temporal markers.
+ *
+ * @param {HTMLElement} segmentBlock - transcript card; cards without a stored
+ *   marker just lose any stale flow class.
+ * @returns {void} Toggles only the two flow classes.
+ */
+function applyFlowClassesFromDataset(segmentBlock) {
+    segmentBlock.classList.toggle('segment--after-gap', segmentBlock.dataset.flowKind === 'gap');
+    segmentBlock.classList.toggle('segment--overlap', segmentBlock.dataset.flowKind === 'overlap');
+}
+
+/**
+ * Recomputes the silence-gap and overlap markers across the whole transcript.
+ * Use after any change that adds cards or re-times rows; one pass keeps the
+ * markers consistent when late rows land between existing turns.
+ *
+ * @returns {void} Stores each card's marker in its dataset and class list.
+ */
+function applyTranscriptFlowMarkers() {
+    const transcriptContainer = document.getElementById('transcript');
+
+    // Test pages may load this module without the flow classifier.
+    if (!transcriptContainer || typeof classifyTranscriptFlow !== 'function') {
+        return;
+    }
+
+    const speakerCards = Array.from(transcriptContainer.querySelectorAll('.segment'));
+    const flowEntries = classifyTranscriptFlow(speakerCards.map(transcriptCardInterval));
+
+    speakerCards.forEach((segmentBlock, cardIndex) => {
+        const flowNote = transcriptFlowNote(flowEntries[cardIndex]);
+
+        // The marker lives in the dataset so class rebuilds can restore it.
+        if (flowNote) {
+            segmentBlock.dataset.flowKind = flowEntries[cardIndex].kind;
+            segmentBlock.dataset.flowNote = flowNote;
+        } else {
+            delete segmentBlock.dataset.flowKind;
+            delete segmentBlock.dataset.flowNote;
+        }
+
+        applyFlowClassesFromDataset(segmentBlock);
+    });
 }
 
 /**
@@ -216,14 +299,42 @@ function announce(message) {
  * Use whenever the clinician should see new transcript text or final status.
  */
 function handleRawSegment(segmentEvent) {
+    // An event stamped for another visit is a stale delivery queued before the
+    // old stream closed; acting on it would mark the fresh visit terminal (or
+    // add ghost rows). Events without a session id keep working: older
+    // backends and dev replay payloads never carried one.
+    if (segmentEvent.session_id && segmentEvent.session_id !== CONFIG.sessionId) {
+        return;
+    }
+
     // Finalized events close replay or mark live transcription complete.
     if (segmentEvent.type === 'finalized') {
+        // The backend just attested the terminal transcript; notes are now
+        // allowed. Older backends without the fields still count as terminal.
+        terminalAttestation = {
+            id: segmentEvent.attestation_id ?? null,
+            rowCount: segmentEvent.terminal_row_count ?? null,
+            roleSettlement: segmentEvent.role_settlement ?? null,
+        };
+        // Warm the free GPU correction now so however long the clinician reads
+        // before clicking Generate, the corrected lane is ready. The summary
+        // itself still never starts without their click (M11 gate), and a
+        // failed warm-up is retried by the click path.
+        if (typeof ensureCorrectedTranscriptReady === 'function') {
+            void ensureCorrectedTranscriptReady();
+        }
         if (isReplayActive) {
             endReplay();
         } else if (isLiveDraining) {
             endLiveStop();
         } else {
+            // The visit UI already ended on the bounded timeout; this late
+            // finalize means the complete source finally exists, so the note
+            // the user is waiting for can start now.
             setPlainStatus('Transcript finalized');
+            if (typeof resumeSummaryAfterLateFinalize === 'function') {
+                resumeSummaryAfterLateFinalize();
+            }
         }
         return;
     }
@@ -277,6 +388,7 @@ function appendSegment(segment, role) {
         && (lastCardStart === null || segment.start >= lastCardStart)
     ) {
         appendTextToExistingSegment(segment, transcriptContainer);
+        applyTranscriptFlowMarkers();
         return;
     }
 
@@ -286,6 +398,7 @@ function appendSegment(segment, role) {
     const lastRow = getLastTranscriptRow(transcriptContainer);
     if (lastRow && segment.start < parseFloat(lastRow.dataset.start)) {
         insertSegmentChronologically(segment, role, transcriptContainer);
+        applyTranscriptFlowMarkers();
         return;
     }
 
@@ -296,18 +409,24 @@ function appendSegment(segment, role) {
     lastSegmentBlock = segmentBlock;
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     document.getElementById('segmentCount').textContent = segmentIndex;
-
+    applyTranscriptFlowMarkers();
 }
 
 /**
  * Inserts one late-arriving row where its spoken time belongs.
  * Use when a segment starts earlier than the newest visible card, which the
  * streaming engine's dormant-slot drain can legitimately produce.
+ *
+ * @param {object} segment - transcript event; missing row ID means the row cannot be corrected.
+ * @param {string} role - visible speaker role; `UNKNOWN` means the UI must not guess a label.
+ * @param {HTMLElement} transcriptContainer - transcript list; empty means this row starts the visit.
+ * @returns {void} Places the row chronologically without changing its speaker identity.
  */
 function insertSegmentChronologically(segment, role, transcriptContainer) {
     const segmentBlock = createSegmentBlock(segment, role);
     const nextRow = findFirstTranscriptRowAfter(transcriptContainer, segment.start);
 
+    // With no later wording on screen, this delayed row belongs at the end.
     if (!nextRow) {
         transcriptContainer.appendChild(segmentBlock);
         trackSpeakerSegment(segment.speaker_id, segmentBlock);
@@ -317,9 +436,27 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
         return;
     }
 
+    // A visible row should own a card; null remains a safe fallback for malformed DOM state.
     const nextCard = nextRow.closest('.segment');
     const firstRowInCard = nextCard?.querySelector('.segment__text');
+    // Only a real preceding transcript card can absorb delayed wording; the empty-state node cannot.
+    const precedingElement = nextCard?.previousElementSibling;
+    const precedingSpeakerCard = precedingElement?.classList.contains('segment')
+        ? precedingElement
+        : null;
 
+    // A delayed continuation before the next turn stays in the same speaker card the user was reading.
+    if (
+        nextRow === firstRowInCard
+        && precedingSpeakerCard?.dataset.speakerId === segment.speaker_id
+    ) {
+        insertRowIntoCard(segment, precedingSpeakerCard);
+        trackSpeakerSegment(segment.speaker_id, precedingSpeakerCard);
+        document.getElementById('segmentCount').textContent = segmentIndex;
+        return;
+    }
+
+    // A different speaker at a card boundary still starts a separate visible turn.
     if (!nextCard || nextRow === firstRowInCard) {
         transcriptContainer.insertBefore(segmentBlock, nextCard);
         trackSpeakerSegment(segment.speaker_id, segmentBlock);
@@ -327,6 +464,7 @@ function insertSegmentChronologically(segment, role, transcriptContainer) {
         return;
     }
 
+    // Delayed wording inside its own existing card joins that card in spoken order.
     if (nextCard.dataset.speakerId === segment.speaker_id) {
         insertRowIntoCard(segment, nextCard, nextRow);
         trackSpeakerSegment(segment.speaker_id, nextCard);
@@ -391,11 +529,47 @@ function insertRowIntoCard(segment, segmentBlock, nextRow = null) {
     const textSpan = createRowTextSpan(segment);
 
     textContainer.insertBefore(textSpan, nextRow);
+    normalizeRowSeparators(textContainer);
     segmentBlock.dataset.end = Math.max(
         parseFloat(segmentBlock.dataset.end) || segment.end,
         segment.end
     );
     refreshSpeakerCardDisplay(segmentBlock);
+}
+
+/**
+ * Keeps exactly one real space between adjacent rows of a transcript card.
+ * Visible spacing and copied/searched/screen-reader text must be the same
+ * characters - CSS-only spacing silently vanished whenever a clinician
+ * copied a card into the clinical record. Safe to call after any row
+ * insertion, move, or card split; repeat calls are no-ops.
+ *
+ * @param {HTMLElement|null} textContainer - a card's row list; null (malformed
+ *   DOM fallback) means there is nothing to space.
+ * @returns {void} Rewrites only separator text nodes, never row spans.
+ */
+function normalizeRowSeparators(textContainer) {
+    // A card shell that lost its row list has no spacing to maintain.
+    if (!textContainer) {
+        return;
+    }
+
+    let childNode = textContainer.firstChild;
+    // Drop every existing separator first: rows moving between cards leave
+    // stray leading/trailing spaces behind, and doubles would widen copies.
+    while (childNode) {
+        const nextNode = childNode.nextSibling;
+        if (childNode.nodeType === Node.TEXT_NODE) {
+            childNode.remove();
+        }
+        childNode = nextNode;
+    }
+
+    const rowSpans = textContainer.querySelectorAll('.segment__text');
+    // Every row after the first gets one real space the clipboard keeps.
+    for (let rowIndex = 1; rowIndex < rowSpans.length; rowIndex += 1) {
+        textContainer.insertBefore(document.createTextNode(' '), rowSpans[rowIndex]);
+    }
 }
 
 /**
@@ -426,6 +600,9 @@ function splitSegmentCardAtRow(segmentBlock, firstTailRow) {
     const tailBlock = createSegmentBlockShell(speakerId, role, tailStart, tailEnd);
 
     tailBlock.querySelector('.segment__texts').append(...tailRows);
+    // Moving rows leaves their old separators behind; respace both cards.
+    normalizeRowSeparators(textContainer);
+    normalizeRowSeparators(tailBlock.querySelector('.segment__texts'));
     segmentBlock.after(tailBlock);
     trackSpeakerSegment(speakerId, tailBlock);
 
@@ -483,10 +660,6 @@ function createSegmentBlockShell(speakerId, role, start, end) {
             end,
         },
     });
-    const avatar = createElement('div', {
-        className: 'segment__avatar',
-        text: role === 'UNKNOWN' ? '?' : getAvatarLabel(role),
-    });
     const speakerLabel = createElement('span', { className: 'segment__speaker' });
     const displayLabel = role === 'UNKNOWN' ? speakerId : getRoleLabel(role);
     setSpeakerLabelContent(speakerLabel, displayLabel, manualOverrides.has(speakerId));
@@ -500,16 +673,15 @@ function createSegmentBlockShell(speakerId, role, start, end) {
     ]);
     const textContainer = createElement('div', { className: 'segment__texts' });
     const body = createElement('div', { className: 'segment__body' }, [header, textContainer]);
-    segmentBlock.append(avatar, body);
+    segmentBlock.append(body);
     return segmentBlock;
 }
 
 /**
- * Builds one correctable transcript row span for a card.
+ * Builds one transcript row span for a card.
  * Cards coalesce same-speaker rows, so this is where each row keeps its own
- * server row ID - letting the clinician fix exactly the line that is wrong
- * (e.g. one doctor question rendered inside a Patient card) without
- * relabeling the whole speaker.
+ * server row ID - citations deep-link to it and automatic row exceptions
+ * restyle exactly the line they flag.
  */
 function createRowTextSpan(segment) {
     const rowSpan = createElement('span', {
@@ -518,99 +690,24 @@ function createRowTextSpan(segment) {
         dataset: { start: segment.start, end: segment.end },
     });
 
-    // Rows without a server row ID (older histories) cannot be corrected individually.
+    // Measured rows keep the same value for summary round-trips.
+    if (Number.isFinite(segment.confidence)) {
+        rowSpan.dataset.confidence = segment.confidence;
+    }
+
+    // Rows without a server row ID (older histories) carry no row identity.
     if (!segment.segment_id) {
         return rowSpan;
     }
 
     rowSpan.dataset.segmentId = segment.segment_id;
-    rowSpan.title = 'Click to correct who said this line';
-    rowSpan.addEventListener('click', (clickEvent) => {
-        // The card's speaker label has its own click behavior; keep them separate.
-        clickEvent.stopPropagation();
-        cycleRowRole(rowSpan);
-    });
 
-    // A correction may already exist when history rows re-render after replay.
-    const existingRowRole = rowRoleOverrides.get(segment.segment_id);
-    if (existingRowRole !== undefined) {
-        renderRowRoleMarker(rowSpan, existingRowRole);
-    } else if (autoRowRoles.has(segment.segment_id)) {
-        // A known automatic exception restyles the row as soon as it renders.
+    // A known automatic exception restyles the row as soon as it renders.
+    if (autoRowRoles.has(segment.segment_id)) {
         renderAutoRowMarker(rowSpan, autoRowRoles.get(segment.segment_id));
     }
 
     return rowSpan;
-}
-
-/**
- * Cycles one transcript row through Doctor, Patient, and Unknown labels.
- * Use when the clinician clicks a row whose speaker is wrong; Unknown marks
- * the row explicitly uncertain instead of guessing.
- */
-function cycleRowRole(rowSpan) {
-    const segmentId = rowSpan.dataset.segmentId;
-    const cardSpeakerId = rowSpan.closest('.segment')?.dataset.speakerId ?? '';
-    const currentRowRole = rowRoleOverrides.get(segmentId)
-        ?? autoRowRoles.get(segmentId)
-        ?? roleMapping[cardSpeakerId]
-        ?? 'UNKNOWN';
-    const currentRoleIndex = MEDICAL_ROLE_CYCLE.indexOf(currentRowRole);
-    let nextRole;
-
-    // Unknown or unexpected labels move to the first medical role.
-    if (currentRoleIndex === -1) {
-        nextRole = MEDICAL_ROLE_CYCLE[0];
-    } else if (currentRoleIndex === MEDICAL_ROLE_CYCLE.length - 1) {
-        // The last medical role wraps to Unknown so users can mark a row uncertain.
-        nextRole = 'UNKNOWN';
-    } else {
-        nextRole = MEDICAL_ROLE_CYCLE[currentRoleIndex + 1];
-    }
-
-    rowRoleOverrides.set(segmentId, nextRole);
-    renderRowRoleMarker(rowSpan, nextRole);
-    announce(`Row corrected to ${nextRole === 'UNKNOWN' ? 'unknown speaker' : getRoleLabel(nextRole)}`);
-    sendRowRoleOverride(segmentId, nextRole);
-}
-
-/**
- * Shows the corrected-row chip ("Dr ✓") on one transcript row.
- * The chip survives later speaker-level relabeling, so the clinician can see
- * which rows they personally pinned.
- */
-function renderRowRoleMarker(rowSpan, role) {
-    rowSpan.classList.add('segment__text--corrected');
-    rowSpan.querySelector('.segment__row-role')?.remove();
-
-    const chipLabel = role === 'UNKNOWN' ? '?' : getAvatarLabel(role);
-    rowSpan.appendChild(createElement('span', {
-        className: 'segment__row-role',
-        text: `${chipLabel} ✓`,
-        attributes: { title: 'Corrected by you' },
-    }));
-    refreshCardDisplayForRow(rowSpan);
-}
-
-/**
- * Sends a per-row role correction to the Python row-correction store.
- * Reports save failures as warnings because the visible row label already changed.
- */
-async function sendRowRoleOverride(segmentId, role) {
-    try {
-        const response = await fetch(`/scribe/${CONFIG.sessionId}/roles/override`, {
-            method: 'POST',
-            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ segment_id: segmentId, role }),
-        });
-
-        // A rejected save leaves the local row label visible but not protected server-side.
-        if (!response.ok) {
-            console.warn('Row role override save failed:', response.status);
-        }
-    } catch (overrideError) {
-        console.warn('Row role override failed:', overrideError);
-    }
 }
 
 /**
@@ -691,6 +788,7 @@ async function sendRoleOverride(speakerId, role) {
             console.warn('Role override save failed:', response.status);
         }
     } catch (overrideError) {
+        // Example: the clinician changes a speaker label while the save request loses connection.
         console.warn('Role override failed:', overrideError);
     }
 }
@@ -713,7 +811,6 @@ function handleRoleUpdate(roleUpdateEvent) {
     // A missing stability field means no new identity evidence (older server
     // or post-disconnect drain), so the badge keeps the last known state.
     roleStability = roleUpdateEvent.role_stability ?? roleStability;
-    applyRowRoleOverrides(roleUpdateEvent.row_overrides ?? {});
 
     // Automatic row exceptions arrive as the full current set for this
     // mapping, so stale markers from the previous mapping are cleared.
@@ -770,29 +867,6 @@ function applySpeakerRoleMapping(speakerRoleMapping) {
 }
 
 /**
- * Applies row-scoped role overrides from this tab or another tab.
- * Use when one transcript line has a stronger user correction than its
- * surrounding speaker card.
- *
- * @param {object} rowOverrides - row-to-role map; empty means no row chips are changed.
- * @returns {void} Updates visible row chips and their owning card headers.
- */
-function applyRowRoleOverrides(rowOverrides) {
-    // Row overrides pin exactly one row; they never relabel the rest of the speaker's rows.
-    for (const [segmentId, rowRole] of Object.entries(rowOverrides)) {
-        rowRoleOverrides.set(segmentId, rowRole);
-        const rowSpan = document.querySelector(
-            `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
-        );
-
-        // The row may not be rendered yet on a freshly reconnected tab.
-        if (rowSpan) {
-            renderRowRoleMarker(rowSpan, rowRole);
-        }
-    }
-}
-
-/**
  * Replaces the automatic row-exception markers with the server's latest set.
  * These flag rows whose wording contradicts their card's role (e.g. a doctor
  * question inside a Patient card) - relabeled or shown uncertain per row,
@@ -816,11 +890,6 @@ function applyAutoRowExceptions(rowExceptions) {
     for (const [segmentId, rowRole] of Object.entries(rowExceptions)) {
         autoRowRoles.set(segmentId, rowRole);
 
-        // The clinician's own correction chip stays authoritative on screen.
-        if (rowRoleOverrides.has(segmentId)) {
-            continue;
-        }
-
         const rowSpan = document.querySelector(
             `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
         );
@@ -832,7 +901,7 @@ function applyAutoRowExceptions(rowExceptions) {
 }
 
 /**
- * Removes any row marker (auto or corrected) from one transcript row.
+ * Removes the automatic row marker from one transcript row.
  * Use when a new mapping explains a row the previous mapping contradicted.
  */
 function removeRowRoleMarker(segmentId) {
@@ -840,24 +909,22 @@ function removeRowRoleMarker(segmentId) {
         `.segment__text[data-segment-id="${CSS.escape(segmentId)}"]`
     );
 
-    // Rows corrected by the clinician keep their own chip.
-    if (!rowSpan || rowRoleOverrides.has(segmentId)) {
+    // The row may not be rendered yet on a freshly reconnected tab.
+    if (!rowSpan) {
         return;
     }
 
-    rowSpan.classList.remove('segment__text--corrected');
     rowSpan.querySelector('.segment__row-role')?.remove();
     refreshCardDisplayForRow(rowSpan);
 }
 
 /**
  * Shows the automatic row-exception chip ("Dr auto" / "?") on one row.
- * Unlike the clinician's "✓" chip, this marks a machine judgment the
- * clinician can still override by clicking the row.
+ * This marks a machine judgment; the speaker label on the card remains the
+ * clinician's control for relabeling.
  */
 function renderAutoRowMarker(rowSpan, rowRole) {
     rowSpan.querySelector('.segment__row-role')?.remove();
-    rowSpan.classList.remove('segment__text--corrected');
 
     const isUncertain = rowRole === 'UNKNOWN';
     rowSpan.appendChild(createElement('span', {
@@ -908,7 +975,8 @@ function updateConfidenceBadge() {
     if (confidence >= 0.8 && isSpeakerIdentityStable()) {
         badge.textContent = `Roles identified (${Math.round(confidence * 100)}%)`;
         badge.className = 'confidence-badge text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800';
-        badge.title = '';
+        // The percentage grades the doctor/patient mapping, not each row's label.
+        badge.title = 'Confidence in the doctor/patient mapping overall - individual rows can still be mislabeled. Click a row to correct it.';
         return;
     }
 

@@ -10,10 +10,13 @@
 // session id (not a boolean) lets a reset visit request its own summary while
 // the previous visit's request is still running.
 let summaryRequestSessionId = null;
-// Correction runs once before summary so the final note can use better rows.
+// Correction runs once before summary, and its safe outcome explains note provenance.
 let correctionRequestPromise = null;
 let correctionSessionId = null;
-let hasCorrectionReadyForSession = false;
+let correctionOutcomeForVisibleSession = null;
+// The rendered note payload backs the Copy summary export and the note
+// status truths; null means no note artifact exists for the visible session.
+let latestRenderedSummaryPayload = null;
 
 /**
  * Decodes a WAV file, plays it locally, and streams its PCM to live transcription.
@@ -95,9 +98,11 @@ async function startReplay(file, options = {}) {
         }
 
         setElementHidden('stopBtn', false);
+        setElementHidden('pauseBtn', false);
         setReplayControlsBusy(false, 'Upload WAV');
         return true;
     } catch (replayError) {
+        // Example: the user selected a corrupt WAV or the transcription socket closed during setup.
         console.error('Replay failed:', replayError);
         setPlainStatus(`Replay error: ${replayError.message}`);
         setReplayControlsBusy(false, 'Upload WAV');
@@ -187,6 +192,7 @@ async function startReplayAudioPlayback(file, suppliedAudioUrl = null) {
         hasReplayAudioPlaybackStarted = true;
         updateReplayProgress();
     } catch (playError) {
+        // Example: the browser blocked autoplay until the user presses the visible audio control.
         console.warn('Browser blocked replay autoplay:', playError);
         setPlainStatus('Audio ready - press play to hear replay');
     }
@@ -365,6 +371,10 @@ function enterReplayDrain(reason) {
     // Closing the socket tells the backend to finalize and publish `finalized`.
     transcriptionSocket?.close();
     setElementHidden('stopBtn', true);
+    // The drain is terminal, so the pause control leaves with it.
+    if (typeof resetPauseState === 'function') {
+        resetPauseState();
+    }
     setRecordingStatus('Finishing transcription...', 'color:var(--color-speaker-a);font-weight:500;');
     replayDrainTimeout = setTimeout(endReplay, REPLAY_FINALIZE_TIMEOUT_MS);
 }
@@ -394,8 +404,9 @@ function endReplay() {
     replayDrainReason = null;
     revealPostVisitActions();
 
-    // Replay has finalized, so start correction while retained audio is still available.
-    requestSummary();
+    // The note is generated on demand (M11): finalizing only unlocks the
+    // Generate summary button; the clinician decides when to run it.
+    updateGenerateSummaryAvailability();
 }
 
 /**
@@ -418,6 +429,14 @@ async function requestSummary() {
         return;
     }
 
+    // No terminal attestation means the backend is still finishing the visit
+    // (e.g. the Stop wait timed out first). Requesting a note now is how an
+    // emergency plan once went missing - wait and auto-resume instead.
+    if (!terminalAttestation) {
+        showSummaryWaitingForSource();
+        return;
+    }
+
     // One in-flight request per session keeps auto-trigger and retry from overlapping.
     if (summaryRequestSessionId === CONFIG.sessionId) {
         return;
@@ -431,12 +450,32 @@ async function requestSummary() {
 
     summaryPanel.classList.remove('hidden');
     setSummaryStatus('generating');
+    renderNoteStatus({ phase: 'generating' });
     summaryLoading.classList.remove('hidden');
     clearElement(summaryContent);
 
     try {
         setSummaryLoadingText('Improving transcript...');
         await ensureCorrectedTranscriptReady();
+
+        // A blocked source means no honest note can exist yet (still
+        // finalizing, lineage changed, or correction lost rows) - show the
+        // specific reason instead of generating from a bad source.
+        if (
+            correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+            && correctionOutcomeForVisibleSession.status === 'blocked'
+        ) {
+            setSummaryStatus('failed');
+            renderNoteStatus({
+                phase: 'blocked',
+                blockedReason: correctionOutcomeForVisibleSession.reasonCategory,
+            });
+            showSummaryMessage(
+                blockedSourceMessage(correctionOutcomeForVisibleSession.reasonCategory)
+            );
+            return;
+        }
+
         setSummaryLoadingText('Generating summary...');
         const response = await fetch(`/session/${requestedSessionId}/summary`, {
             method: 'POST',
@@ -452,6 +491,7 @@ async function requestSummary() {
         }
         renderSummaryResponse(response, summaryPayload);
     } catch (summaryError) {
+        // Example: the clinician stopped a visit while the summary proxy was temporarily unreachable.
         console.error('Summary request failed:', summaryError);
         if (CONFIG.sessionId === requestedSessionId) {
             showSummaryFailure('Could not reach the summary service.');
@@ -470,6 +510,266 @@ async function requestSummary() {
 }
 
 /**
+ * Shows that the note is waiting for the backend to finish the transcript.
+ * Use when the user's Stop wait ended before the `finalized` event arrived;
+ * the note starts automatically once the terminal source exists.
+ */
+function showSummaryWaitingForSource() {
+    const summaryPanel = document.getElementById('summaryPanel');
+    const summaryPendingText = document.getElementById('summaryPendingText');
+
+    // Test pages without the panel still capture transcript safely.
+    if (!summaryPanel) {
+        return;
+    }
+
+    summaryPanel.classList.remove('hidden');
+    setSummaryStatus('pending');
+    renderNoteStatus({ phase: 'waiting' });
+
+    // The pending row explains the wait instead of implying generation began.
+    if (summaryPendingText) {
+        summaryPendingText.textContent =
+            'Waiting for the final transcript - Generate summary will unlock when it is ready.';
+    }
+
+    refreshSummaryPendingMotion();
+    updateGenerateSummaryAvailability();
+}
+
+/**
+ * Unlocks the note after a late `finalized` event ends the source wait.
+ * Use from the transcript stream handler when the visit UI already ended on
+ * the bounded timeout but the backend has now attested the full transcript.
+ * The note itself stays on demand (M11): only the button state changes.
+ */
+function resumeSummaryAfterLateFinalize() {
+    updateGenerateSummaryAvailability();
+    // The waiting copy promised the button would unlock; say that it has.
+    refreshSummaryPendingCopy();
+}
+
+/**
+ * Points the pending copy at the truthful next step for the note (M11).
+ * Use on every finalize/stop transition: with an attested transcript the
+ * user is invited to generate; without one the copy explains the wait and
+ * never claims generation has begun.
+ */
+function refreshSummaryPendingCopy() {
+    const summaryPendingText = document.getElementById('summaryPendingText');
+
+    // Test pages without the pending row have no copy to refresh.
+    if (!summaryPendingText) {
+        return;
+    }
+
+    const noteIsPossible = typeof terminalAttestation !== 'undefined'
+        && !!terminalAttestation
+        && segmentIndex > 0;
+    summaryPendingText.textContent = noteIsPossible
+        ? 'Final transcript ready - press Generate summary when you are.'
+        : 'Waiting for the final transcript - Generate summary will unlock when it is ready.';
+    refreshSummaryPendingMotion();
+}
+
+/**
+ * Matches the pending-row bars' motion to whether the transcript is done.
+ * Use with every pending-copy change: the bars pulse while the visit is
+ * still producing transcript and park once the backend attests the final
+ * transcript, so motion never claims work that is not happening.
+ *
+ * @returns {void} Toggles one modifier class on the pending row.
+ */
+function refreshSummaryPendingMotion() {
+    const pendingRow = document.getElementById('summaryPending');
+
+    // Test pages without the pending row have no bars to sync.
+    if (!pendingRow) {
+        return;
+    }
+
+    const transcriptIsFinal = typeof terminalAttestation !== 'undefined' && !!terminalAttestation;
+    pendingRow.classList.toggle('summary-pending--ready', transcriptIsFinal);
+}
+
+/**
+ * Matches the Generate summary button to whether an honest note is possible.
+ * Use on every finalize/reset transition: the button unlocks only once the
+ * backend has attested the terminal transcript, so a pre-terminal snapshot
+ * can never feed a note - the same gate `requestSummary` enforces itself.
+ */
+function updateGenerateSummaryAvailability() {
+    const generateButton = document.getElementById('generateSummaryBtn');
+
+    // Test pages without the button still keep the requestSummary gate.
+    if (!generateButton) {
+        return;
+    }
+
+    const noteIsPossible = typeof terminalAttestation !== 'undefined'
+        && !!terminalAttestation
+        && segmentIndex > 0;
+    generateButton.disabled = !noteIsPossible;
+    generateButton.setAttribute(
+        'aria-label',
+        noteIsPossible
+            ? 'Generate the draft note from the finalized transcript'
+            : 'Generate summary - available once the transcript is finalized'
+    );
+}
+
+/**
+ * Maps a blocked note source to the sentence the clinician should see.
+ * Empty/unknown reasons fall back to a safe generic explanation.
+ */
+function blockedSourceMessage(reason) {
+    const messages = {
+        source_not_terminal: 'Source still finalizing - note unavailable.',
+        stale_lineage: 'The transcript changed after finalization - note unavailable.',
+        unaccounted_meaningful_rows: 'Correction lost part of the visit - note unavailable.',
+        correction_pending: 'Transcript correction has not completed - note unavailable.',
+        source_exceeds_note_limit: 'The visit exceeds the note input limit - the transcript remains available.',
+        empty_visit: 'No usable audio was captured - note unavailable.',
+    };
+    return messages[reason] ?? 'The note source is unavailable for this visit.';
+}
+
+/**
+ * Gathers the note's current state for the three status axes.
+ * Use when a note has just rendered or is being copied, so export status and
+ * copy availability describe the same source, flags, and clinician-review
+ * truth.
+ *
+ * @param {object|null} summaryPayload - the rendered note; null means no
+ *   artifact exists and callers should use a non-generated phase instead.
+ * @returns {object} statusModel accepted by deriveNoteStatusLines.
+ */
+function collectNoteStatusModel(summaryPayload) {
+    // A missing payload still produces a valid zero-flag model.
+    const {
+        unverified_key_points: unverifiedKeyPoints = [],
+        sections = [],
+        source_state: sourceState = null,
+    } = summaryPayload ?? {};
+
+    // A v2 note counts review flags per claim; the shared payload walk lives
+    // beside the copy serializer so screen and clipboard always agree.
+    if (summaryPayload?.schema_version === 2 && typeof v2ReviewCountsFrom === 'function') {
+        return {
+            phase: 'generated',
+            sourceState,
+            roleSettlement: attestedRoleSettlement(),
+            ...v2ReviewCountsFrom(summaryPayload),
+        };
+    }
+
+    let unverifiedCount = unverifiedKeyPoints.length;
+    let lowConfidenceCount = 0;
+
+    // Section-level flags add to the review count the axes announce.
+    for (const section of sections) {
+        unverifiedCount += (section.unverified ?? []).length;
+        lowConfidenceCount += (section.low_confidence ?? []).length;
+    }
+
+    return {
+        phase: 'generated',
+        sourceState,
+        roleSettlement: attestedRoleSettlement(),
+        unverifiedCount,
+        lowConfidenceCount,
+    };
+}
+
+/**
+ * Reads the visit's role-settlement outcome from the held attestation.
+ * Use when the axes need to know whether speaker labels finished settling -
+ * a frozen settlement becomes a review reason in the copied note status.
+ *
+ * @returns {string|null} 'settled', 'failed_frozen', or null when no
+ *   finalized attestation exists yet (test pages, or a visit still running).
+ */
+function attestedRoleSettlement() {
+    // Test pages load without the transcript module's attestation state.
+    if (typeof terminalAttestation === 'undefined' || !terminalAttestation) {
+        return null;
+    }
+
+    return terminalAttestation.roleSettlement ?? null;
+}
+
+/**
+ * Builds the "Covers 00:00 - MM:SS" wording from the visible transcript rows.
+ * Use for the copied note's header; an empty string means no timed rows are
+ * on screen.
+ *
+ * @returns {string} readable coverage span, or '' when nothing is timed.
+ */
+function transcriptCoverageText() {
+    let latestRowEnd = 0;
+
+    for (const rowSpan of document.querySelectorAll('#transcript .segment__text')) {
+        const rowEnd = Number.parseFloat(rowSpan.dataset.end);
+        if (Number.isFinite(rowEnd) && rowEnd > latestRowEnd) {
+            latestRowEnd = rowEnd;
+        }
+    }
+
+    // A note without any timed transcript rows has no honest span to state.
+    if (latestRowEnd <= 0 || typeof formatTime !== 'function') {
+        return '';
+    }
+
+    return `Covers 00:00 - ${formatTime(latestRowEnd)} of the recording`;
+}
+
+/**
+ * Derives the note's status truths and gates copying.
+ * Use on every note lifecycle change: copying stays disabled until an honest
+ * note artifact exists, and the full source/automated/clinician status still
+ * travels with every copy without adding a separate status list to the UI.
+ *
+ * @param {object} statusModel - see deriveNoteStatusLines; phase decides
+ *   whether an honest note is available.
+ * @returns {void} Updates the copy button.
+ */
+function renderNoteStatus(statusModel) {
+    // Test pages without the copy module have no status wording to derive.
+    if (typeof deriveNoteStatusLines !== 'function') {
+        return;
+    }
+
+    setCopyNoteAvailability(deriveNoteStatusLines(statusModel));
+}
+
+/**
+ * Enables or disables the Copy summary action to match note availability.
+ * Use on every status render: an unavailable source must never be copyable,
+ * and the disabled button explains exactly why.
+ *
+ * @param {object} statusLines - derived axis state; noteAvailable false
+ *   disables the button with the specific reason as its accessible label.
+ * @returns {void} Updates the button's disabled state and aria-label.
+ */
+function setCopyNoteAvailability(statusLines) {
+    const copyNoteButton = document.getElementById('copyNoteBtn');
+
+    // Test pages without the copy button have nothing to gate.
+    if (!copyNoteButton) {
+        return;
+    }
+
+    copyNoteButton.disabled = !statusLines.noteAvailable;
+    // The label says why copying is unavailable, for keyboard and AT users too.
+    copyNoteButton.setAttribute(
+        'aria-label',
+        statusLines.noteAvailable
+            ? 'Copy the summary with its source and review status'
+            : `Copy - unavailable: ${statusLines.sourceLine ?? 'note generation failed'}`
+    );
+}
+
+/**
  * Resets post-visit correction state for the next visible consultation.
  * Use when New Session clears the transcript; otherwise a prior corrected
  * artifact could make the next summary skip correction.
@@ -477,7 +777,13 @@ async function requestSummary() {
 function resetPostVisitCorrectionState() {
     correctionRequestPromise = null;
     correctionSessionId = null;
-    hasCorrectionReadyForSession = false;
+    correctionOutcomeForVisibleSession = null;
+    // A new visit starts with no note artifact: nothing to copy, no axes yet,
+    // and the Generate summary button locks until the next attestation.
+    latestRenderedSummaryPayload = null;
+    renderNoteStatus({ phase: 'reset' });
+    updateGenerateSummaryAvailability();
+    setSummarySourceNotice(null);
 
     // The Transcript tab caches corrected rows per session; test pages load without it.
     if (typeof resetSummaryTabsState === 'function') {
@@ -492,7 +798,10 @@ function resetPostVisitCorrectionState() {
  */
 async function ensureCorrectedTranscriptReady() {
     // A corrected artifact already exists for this browser session.
-    if (hasCorrectionReadyForSession && correctionSessionId === CONFIG.sessionId) {
+    if (
+        correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+        && correctionOutcomeForVisibleSession.status === 'ready'
+    ) {
         return;
     }
 
@@ -502,18 +811,41 @@ async function ensureCorrectedTranscriptReady() {
         return;
     }
 
-    correctionSessionId = CONFIG.sessionId;
-    correctionRequestPromise = requestTranscriptCorrection();
+    const correctionRequestedSessionId = CONFIG.sessionId;
+    correctionSessionId = correctionRequestedSessionId;
+    const correctionRequestForThisSession = requestTranscriptCorrection(
+        correctionRequestedSessionId,
+    );
+    correctionRequestPromise = correctionRequestForThisSession;
 
     try {
-        const correctionPayload = await correctionRequestPromise;
+        const correctionPayload = await correctionRequestForThisSession;
 
-        // Ready means the summary endpoint will now prefer corrected rows.
-        if (correctionPayload?.status === 'ready') {
-            hasCorrectionReadyForSession = true;
+        // A reset can finish while the old visit's correction request is still returning.
+        if (CONFIG.sessionId === correctionRequestedSessionId) {
+            // Blocked keeps its specific reason so the panel can explain why
+            // no note exists; ready/unavailable keep today's meanings.
+            const correctionStatus = correctionPayload?.status === 'ready'
+                ? 'ready'
+                : correctionPayload?.status === 'blocked'
+                    ? 'blocked'
+                    : 'unavailable';
+            correctionOutcomeForVisibleSession = {
+                sessionId: correctionRequestedSessionId,
+                status: correctionStatus,
+                reasonCategory: typeof correctionPayload?.reason === 'string'
+                    ? correctionPayload.reason
+                    : typeof correctionPayload?.reason_category === 'string'
+                        ? correctionPayload.reason_category
+                        : null,
+                attempted: correctionPayload?.attempted === true,
+            };
         }
     } finally {
-        correctionRequestPromise = null;
+        // A prior visit finishing late must not clear a newer visit's pending correction.
+        if (correctionRequestPromise === correctionRequestForThisSession) {
+            correctionRequestPromise = null;
+        }
     }
 }
 
@@ -521,10 +853,13 @@ async function ensureCorrectedTranscriptReady() {
  * Calls the same-origin correction proxy with the current visible transcript.
  * Use before summary generation; failures are logged and converted into a live
  * transcript fallback so the user still receives a note.
+ *
+ * @param {string} requestedSessionId - Visible visit UUID; empty cannot map to retained audio.
+ * @returns {Promise<object>} Safe correction outcome; unavailable means use visible live rows.
  */
-async function requestTranscriptCorrection() {
+async function requestTranscriptCorrection(requestedSessionId = CONFIG.sessionId) {
     try {
-        const response = await fetch(`/session/${CONFIG.sessionId}/correction`, {
+        const response = await fetch(`/session/${requestedSessionId}/correction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ segments: readVisibleTranscriptSegments() }),
@@ -534,13 +869,25 @@ async function requestTranscriptCorrection() {
         // Non-OK proxy responses mean the live transcript remains the summary source.
         if (!response.ok || correctionPayload.isFallbackPayload) {
             console.warn('Transcript correction unavailable:', correctionPayload.detail ?? response.status);
-            return { status: 'unavailable' };
+            return {
+                ...correctionPayload,
+                status: 'unavailable',
+                attempted: correctionPayload.attempted === true,
+                reason_category: typeof correctionPayload.reason_category === 'string'
+                    ? correctionPayload.reason_category
+                    : 'request_unavailable',
+            };
         }
 
         return correctionPayload;
     } catch (correctionError) {
+        // Example: the user stops a visit just as the same-origin correction proxy disconnects.
         console.warn('Transcript correction failed:', correctionError);
-        return { status: 'unavailable' };
+        return {
+            status: 'unavailable',
+            attempted: false,
+            reason_category: 'request_failed',
+        };
     }
 }
 
@@ -565,6 +912,15 @@ function setSummaryLoadingText(message) {
  * (502/503) mean the model or service failed and get an actionable fix note.
  */
 function renderSummaryResponse(response, summaryPayload) {
+    // The backend refused to build a note from an unattested source; the
+    // transcript stays reviewable and the panel explains the specific reason.
+    if (response.ok && summaryPayload.status === 'blocked') {
+        setSummaryStatus('failed');
+        renderNoteStatus({ phase: 'blocked', blockedReason: summaryPayload.reason });
+        showSummaryMessage(blockedSourceMessage(summaryPayload.reason));
+        return;
+    }
+
     if (response.ok && !summaryPayload.isFallbackPayload) {
         renderSummary(summaryPayload);
         return;
@@ -577,7 +933,10 @@ function renderSummaryResponse(response, summaryPayload) {
         return;
     }
 
-    showSummaryFailure(summaryPayload.detail || 'Summary generation failed.');
+    showSummaryFailure(
+        summaryPayload.detail || 'Summary generation failed.',
+        summaryPayload.reason ?? null,
+    );
 }
 
 /**
@@ -607,22 +966,48 @@ function renderSummary(summaryPayload) {
     const summaryPanel = document.getElementById('summaryPanel');
     summaryPanel.classList.remove('hidden');
     clearElement(summaryContent);
+    // The previous note's open evidence disclosure died with its DOM nodes.
+    openClaimDisclosure = null;
 
     // Key points lead as the TL;DR strip, then the SOAP sections (summary UX M4).
-    const renderedBlocks = [
-        ...createSummaryKeyPointBlocks(summaryPayload.key_points ?? []),
-        ...createSummarySectionBlocks(summaryPayload.sections ?? []),
-    ];
+    // A v2 payload renders atomic claims with claim-scoped evidence (M06);
+    // v1 keeps the section renderer behind its honest source label.
+    const isClaimSchema = summaryPayload.schema_version === 2;
+    const renderedBlocks = isClaimSchema
+        ? [
+            ...createClaimKeyPointBlocks(summaryPayload),
+            ...createClaimSectionBlocks(summaryPayload),
+        ]
+        : [
+            ...createSummaryKeyPointBlocks(
+                summaryPayload.key_points ?? [],
+                summaryPayload.unverified_key_points ?? [],
+            ),
+            ...createSummarySectionBlocks(summaryPayload.sections ?? []),
+        ];
+
+    // An older v1 note names its provenance form, so section-level sources
+    // can never read as claim-level evidence.
+    if (!isClaimSchema && v1SectionsCarryCitations(summaryPayload.sections ?? [])) {
+        renderedBlocks.unshift(createV1SectionSourcesNotice());
+    }
 
     // Empty summary payloads should explain that no content is available.
     if (renderedBlocks.length === 0) {
+        latestRenderedSummaryPayload = null;
         setSummaryStatus('failed');
+        renderNoteStatus({ phase: 'failed' });
         showSummaryMessage('No summary content available.');
         return;
     }
 
     summaryContent.replaceChildren(...renderedBlocks);
+    // The rendered payload becomes the copy source and the axes' input.
+    latestRenderedSummaryPayload = summaryPayload;
     setSummaryStatus('generated');
+    renderNoteStatus(collectNoteStatusModel(summaryPayload));
+    setSummarySourceNotice(summaryPayload);
+    setSummaryTruncationNotice(summaryPayload);
     // A rendered summary means the model recovered, so clear any stale warning banner.
     hideSystemBanner();
 }
@@ -639,10 +1024,19 @@ function createSummarySectionBlocks(sections) {
 
     // Each backend section becomes one readable block in the order the clinician reviews it.
     for (const section of sections) {
-        const contentBlock = createElement('div', {
-            className: 'summary-section__content',
-            text: section.content,
-        });
+        // Missing prose or marker arrays mean the section renders plain rather than failing.
+        const sectionContent = section.content ?? '';
+        const unverifiedSentences = section.unverified ?? [];
+        const lowConfidenceSentences = section.low_confidence ?? [];
+        const contentBlock = createElement(
+            'div',
+            { className: 'summary-section__content' },
+            createNoteProseNodes(
+                sectionContent,
+                unverifiedSentences,
+                lowConfidenceSentences,
+            ),
+        );
         // Cited sections get a superscript provenance affordance after the prose;
         // uncited sections and test pages without the popover script stay plain.
         const provenanceBlock = typeof createSectionProvenanceBlock === 'function'
@@ -665,8 +1059,13 @@ function createSummarySectionBlocks(sections) {
 /**
  * Creates the Key Points list in the summary panel.
  * Empty key points mean no list is shown to the clinician.
+ *
+ * @param {string[]} keyPoints - TL;DR lines from the backend; empty hides the strip entirely.
+ * @param {string[]} unverifiedKeyPoints - lines the fidelity checks could not support; empty
+ *   means every key point renders plain, exactly as before M07.
+ * @returns {HTMLElement[]} the strip block, or empty when there is nothing to list.
  */
-function createSummaryKeyPointBlocks(keyPoints) {
+function createSummaryKeyPointBlocks(keyPoints, unverifiedKeyPoints = []) {
     // No key points means the sections alone carry the generated note.
     if (keyPoints.length === 0) {
         return [];
@@ -676,7 +1075,12 @@ function createSummaryKeyPointBlocks(keyPoints) {
 
     // Every model key point is textContent so it cannot inject markup.
     for (const keyPoint of keyPoints) {
-        keyPointList.appendChild(createElement('li', { text: keyPoint }));
+        // A line the transcript could not support carries the visible marker (M07).
+        if (unverifiedKeyPoints.includes(keyPoint)) {
+            keyPointList.appendChild(createElement('li', {}, [createUnverifiedMarker(keyPoint)]));
+        } else {
+            keyPointList.appendChild(createElement('li', { text: keyPoint }));
+        }
     }
 
     return [
@@ -686,6 +1090,546 @@ function createSummaryKeyPointBlocks(keyPoints) {
         ]),
     ];
 }
+
+// =========================================================================
+// Claim-level provenance rendering (M06, schema v2).
+// Each atomic claim carries its own evidence affordance; activating it opens
+// a non-modal in-flow disclosure showing the complete cited source turns,
+// labelled display context, and the exact quote/review state. The page
+// behind the disclosure stays fully interactive - this is never a dialog.
+// =========================================================================
+
+// At most one claim disclosure is open; Escape closes it and focus returns
+// to its toggle only when the reviewer was inside it.
+let openClaimDisclosure = null;
+// Fallback for disclosure ids when a claim arrives without its server id.
+let claimDisclosureSequence = 0;
+
+// The disclosure's fixed reminder that linkage is not clinical review (M06).
+const CLAIM_EVIDENCE_HELP_TEXT =
+    'Source links and quote matching are limited automated checks - not clinical review or approval.';
+
+/**
+ * Says whether any v1 section carries citations worth labelling.
+ * Use before showing the v1 adapter label; an uncited note has no source
+ * form to explain, so no label renders.
+ *
+ * @param {Array<object>} sections - v1 sections; empty means no citations.
+ * @returns {boolean} true when at least one section cites rows.
+ */
+function v1SectionsCarryCitations(sections) {
+    return sections.some((section) => (section.citations ?? []).length > 0);
+}
+
+/**
+ * Builds the honest label for v1 payloads rendered by the adapter path.
+ * Use above the note body so section-level counters are never mistaken for
+ * claim-level evidence; the wording is fixed by CONTRACTS.md.
+ */
+function createV1SectionSourcesNotice() {
+    return createElement('p', {
+        className: 'summary-v1-sources-note',
+        text: 'Section sources - not mapped to individual claims',
+        attributes: { role: 'note' },
+    });
+}
+
+/**
+ * Indexes the payload's deduplicated source units by their unit id.
+ * Use once per render so each claim resolves its citations without rescanning.
+ *
+ * @param {object} summaryPayload - v2 payload; a missing pool means claims
+ *   resolve zero units and render their honest uncited state.
+ * @returns {Map<string, object>} unit id → hydrated unit.
+ */
+function summaryUnitsById(summaryPayload) {
+    const unitsById = new Map();
+
+    for (const sourceUnit of summaryPayload.source_units ?? []) {
+        const unitId = String(sourceUnit.unit_id ?? '').trim();
+
+        // A unit without identity can never be cited by a claim.
+        if (unitId !== '') {
+            unitsById.set(unitId, sourceUnit);
+        }
+    }
+
+    return unitsById;
+}
+
+/**
+ * Resolves one claim's cited unit ids against the hydrated unit pool.
+ * Use when rendering the claim; the server already validated ids, so a
+ * missing unit is dropped defensively rather than rendered as a blank.
+ *
+ * @param {object} claim - v2 claim; empty ids resolve to no units.
+ * @param {Map<string, object>} unitsById - hydrated pool for this payload.
+ * @returns {Array<object>} the claim's own evidence units, payload order.
+ */
+function resolvedClaimUnits(claim, unitsById) {
+    return (claim.source_unit_ids ?? [])
+        .map((unitId) => unitsById.get(String(unitId)))
+        .filter((sourceUnit) => sourceUnit !== undefined);
+}
+
+/**
+ * Creates DOM blocks for schema-v2 SOAP sections of ordered atomic claims.
+ * Use from the summary renderer when the payload declares schema v2.
+ *
+ * @param {object} summaryPayload - v2 payload; empty sections render nothing.
+ * @returns {HTMLElement[]} one block per section, claims in reading order.
+ */
+function createClaimSectionBlocks(summaryPayload) {
+    const unitsById = summaryUnitsById(summaryPayload);
+    const sectionBlocks = [];
+
+    // Each section renders its claims as flowing prose in reading order.
+    for (const section of summaryPayload.sections ?? []) {
+        const contentBlock = createElement('div', {
+            className: 'summary-section__content summary-section__content--claims',
+        });
+
+        for (const claim of section.claims ?? []) {
+            appendClaimNodes(contentBlock, claim, unitsById);
+        }
+
+        sectionBlocks.push(createElement('div', { className: 'summary-section' }, [
+            createElement('div', { className: 'summary-section__heading', text: section.heading }),
+            contentBlock,
+        ]));
+    }
+
+    return sectionBlocks;
+}
+
+/**
+ * Creates the Key Points strip for schema-v2 claim key points.
+ * Use from the summary renderer; each point is a claim with its own
+ * evidence affordance, exactly like a section claim.
+ *
+ * @param {object} summaryPayload - v2 payload; no key points hides the strip.
+ * @returns {HTMLElement[]} the strip block, or empty when there is none.
+ */
+function createClaimKeyPointBlocks(summaryPayload) {
+    const keyPointClaims = summaryPayload.key_points ?? [];
+
+    // No key points means the sections alone carry the generated note.
+    if (keyPointClaims.length === 0) {
+        return [];
+    }
+
+    const unitsById = summaryUnitsById(summaryPayload);
+    const keyPointList = createElement('ul', { className: 'summary-key-points' });
+
+    for (const claim of keyPointClaims) {
+        const keyPointItem = createElement('li', {});
+        appendClaimNodes(keyPointItem, claim, unitsById);
+        keyPointList.appendChild(keyPointItem);
+    }
+
+    return [
+        createElement('div', { className: 'summary-section' }, [
+            createElement('div', { className: 'summary-section__heading', text: 'Key Points' }),
+            keyPointList,
+        ]),
+    ];
+}
+
+/**
+ * Appends one claim's prose, evidence affordance, and disclosure region.
+ * Use for section claims and key points so both share one interaction.
+ * The disclosure sits in the document flow directly after its claim - it
+ * pushes content down instead of overlaying it, and never traps focus.
+ *
+ * @param {HTMLElement} claimContainer - section content div or key-point li.
+ * @param {object} claim - one v2 claim; flag fields may be absent.
+ * @param {Map<string, object>} unitsById - hydrated unit pool.
+ * @returns {void} Mutates claimContainer.
+ */
+function appendClaimNodes(claimContainer, claim, unitsById) {
+    // Real spaces keep copied and assistive reading natural between claims.
+    if (claimContainer.childNodes.length > 0) {
+        claimContainer.appendChild(document.createTextNode(' '));
+    }
+
+    claimDisclosureSequence += 1;
+    const disclosureId = `claimEvidence-${String(claim.claim_id ?? '').trim() || claimDisclosureSequence}`;
+    const citedUnits = resolvedClaimUnits(claim, unitsById);
+    const evidenceToggle = createClaimEvidenceToggle(claim, citedUnits, disclosureId);
+    const disclosureRegion = createClaimDisclosure(claim, citedUnits, disclosureId);
+    // The no-break space glues the chip to the claim's last word so a chip
+    // can never wrap onto a line of its own.
+    const claimBody = createElement('span', {
+        className: 'summary-claim',
+        dataset: { claimId: String(claim.claim_id ?? '') },
+    }, [createClaimTextSpan(claim), document.createTextNode(' '), evidenceToggle]);
+
+    evidenceToggle.addEventListener('click', () => {
+        toggleClaimEvidence(evidenceToggle, disclosureRegion);
+    });
+
+    claimContainer.appendChild(claimBody);
+    claimContainer.appendChild(disclosureRegion);
+}
+
+/**
+ * Builds the visible prose span for one claim, review cues attached.
+ * Use inside the claim body: flagged claims carry a visible style and an
+ * explanatory title, and the exact wording lives in the disclosure - a
+ * bare unexplained "Unverified" never renders.
+ *
+ * @param {object} claim - one v2 claim; no flags renders plain text.
+ * @returns {HTMLElement} the claim's text span.
+ */
+function createClaimTextSpan(claim) {
+    // The shared flag reader keeps the panel and the clipboard in agreement.
+    const claimFlags = typeof claimReviewFlags === 'function'
+        ? claimReviewFlags(claim)
+        : { uncited: false, reasonFlagged: false, wordingReview: false };
+    const reviewExplanations = [];
+
+    if (claimFlags.uncited) {
+        reviewExplanations.push('No cited transcript evidence - review required');
+    }
+    // Each deterministic reason explains itself in the reviewer's tooltip too.
+    if (claimFlags.reasonFlagged) {
+        for (const reviewReason of claim.review_reasons ?? []) {
+            reviewExplanations.push(String(reviewReason.detail || reviewReason.reason || ''));
+        }
+    }
+
+    const claimText = createElement('span', {
+        className: reviewExplanations.length > 0
+            ? 'summary-claim__text summary-claim__text--review'
+            : 'summary-claim__text',
+        text: String(claim.text ?? ''),
+    });
+
+    // The claim-scoped M03 wording cue keeps its established styling and help.
+    if (claimFlags.wordingReview) {
+        claimText.classList.add('summary-low-confidence');
+        claimText.tabIndex = 0;
+        claimText.setAttribute('aria-describedby', 'confidenceWordingHelp');
+        claimText.dataset.confidenceTooltip = 'Low-confidence transcription';
+        reviewExplanations.push('Low-confidence transcription');
+    }
+
+    if (reviewExplanations.length > 0) {
+        claimText.setAttribute('title', reviewExplanations.filter(Boolean).join('; '));
+    }
+
+    return claimText;
+}
+
+/**
+ * Builds one claim's evidence affordance button.
+ * Use beside the claim text: cited claims show their own unit count and
+ * uncited/absence claims show an honest wording chip instead - a count of
+ * zero or a fabricated link never renders.
+ *
+ * @param {object} claim - one v2 claim.
+ * @param {Array<object>} citedUnits - the claim's resolved units.
+ * @param {string} disclosureId - id of the region this button controls.
+ * @returns {HTMLElement} toggle button with aria-expanded state.
+ */
+function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
+    const hasCitedEvidence = claim.evidence_basis === 'source_unit' && citedUnits.length > 0;
+    let toggleText;
+    let toggleLabel;
+
+    if (hasCitedEvidence) {
+        const turnNoun = citedUnits.length === 1 ? 'source turn' : 'source turns';
+        // Cited chips are a pure disclosure affordance (a CSS chevron); the
+        // unit count lives in the accessible label and the opened evidence
+        // list, so no number competes with the clinical text.
+        toggleText = '';
+        toggleLabel = `View evidence for this claim, ${citedUnits.length} ${turnNoun}`;
+    } else if (claim.evidence_basis === 'transcript_absence') {
+        toggleText = 'Absence-based';
+        toggleLabel = 'About this statement - based on absence from the transcript';
+    } else {
+        // Basis none and anything unknown read as uncited, review required.
+        toggleText = 'No cited evidence';
+        toggleLabel = 'About this statement - no transcript evidence cited, review required';
+    }
+
+    return createElement('button', {
+        className: hasCitedEvidence
+            ? 'summary-claim__toggle summary-claim__toggle--evidence'
+            : 'summary-claim__toggle summary-claim__toggle--basis',
+        attributes: {
+            type: 'button',
+            'aria-expanded': 'false',
+            'aria-controls': disclosureId,
+            'aria-label': toggleLabel,
+        },
+        text: toggleText,
+    });
+}
+
+/**
+ * States the claim's evidence/quote status in the contract's limiting language.
+ * Use as the disclosure's first line so automated linkage can never read as
+ * clinical verification.
+ *
+ * @param {object} claim - one v2 claim.
+ * @param {boolean} hasCitedEvidence - whether resolved cited units exist.
+ * @returns {string} one explanatory sentence.
+ */
+function claimEvidenceStateText(claim, hasCitedEvidence) {
+    // Uncited and absence-based claims explain themselves without a link.
+    if (!hasCitedEvidence) {
+        return claim.evidence_basis === 'transcript_absence'
+            ? 'This statement is based on absence: bounded automated checks found no mention in the selected visit transcript - verify manually.'
+            : 'No transcript evidence was cited for this statement - review required.';
+    }
+
+    if (claim.quote_state === 'verified') {
+        return 'Exact quoted wording matched the cited transcript - an automated check, not clinical approval.';
+    }
+    if (claim.quote_state === 'not_matched') {
+        return 'Quoted wording could not be matched to the cited transcript - verify manually.';
+    }
+    if (claim.quote_state === 'wrong_role') {
+        return 'Quoted wording was found under a different speaker than cited - verify manually.';
+    }
+
+    // No quotation marks in the claim: linked wording is a paraphrase.
+    return 'Source linked - the claim paraphrases the cited transcript; wording is not a verbatim quote.';
+}
+
+/**
+ * Builds one claim's non-modal in-flow evidence disclosure.
+ * Use once per claim. The region shows the complete cited turns with
+ * timestamp and speaker, visibly separated display context, the exact
+ * quote/review state, claim-scoped "Open in transcript", an explicit
+ * Close, and the fixed automated-check limitation text. It supports
+ * Escape and focus return and keeps normal Tab order - never a focus trap.
+ *
+ * @param {object} claim - one v2 claim.
+ * @param {Array<object>} citedUnits - the claim's resolved units.
+ * @param {string} disclosureId - id the toggle's aria-controls points at.
+ * @returns {HTMLElement} hidden disclosure region, in-flow after the claim.
+ */
+function createClaimDisclosure(claim, citedUnits, disclosureId) {
+    const hasCitedEvidence = claim.evidence_basis === 'source_unit' && citedUnits.length > 0;
+    const disclosureRegion = createElement('div', {
+        className: 'summary-claim__disclosure hidden',
+        attributes: {
+            id: disclosureId,
+            role: 'region',
+            'aria-label': `Evidence for claim: ${String(claim.text ?? '').slice(0, 80)}`,
+            tabindex: '-1',
+        },
+    });
+
+    disclosureRegion.appendChild(createElement('p', {
+        className: 'summary-claim__state',
+        text: claimEvidenceStateText(claim, hasCitedEvidence),
+    }));
+
+    // Every deterministic review reason reads in full where the evidence is.
+    const reviewReasons = claim.review_reasons ?? [];
+    if (reviewReasons.length > 0) {
+        disclosureRegion.appendChild(createElement(
+            'ul',
+            { className: 'summary-claim__reasons' },
+            reviewReasons.map((reviewReason) => createElement('li', {
+                text: String(reviewReason.detail || reviewReason.reason || ''),
+            })),
+        ));
+    }
+
+    // Cited turns render inside the disclosure's single scroll region.
+    if (hasCitedEvidence) {
+        disclosureRegion.appendChild(createElement(
+            'div',
+            { className: 'summary-claim__evidence' },
+            citedUnits.map(createEvidenceUnitBlock),
+        ));
+    }
+
+    const actionsRow = createElement('div', { className: 'summary-claim__actions' });
+
+    // Only real cited evidence earns a transcript jump; uncited and
+    // absence-based claims must not expose a misleading deep link.
+    if (hasCitedEvidence) {
+        const citedSegmentIds = citedUnits.flatMap(
+            (sourceUnit) => (sourceUnit.rows ?? []).map((unitRow) => String(unitRow.segment_id))
+        ).filter((segmentId) => segmentId !== '');
+        const openInTranscriptButton = createElement('button', {
+            className: 'summary-claim__open',
+            attributes: { type: 'button' },
+            text: 'Open in transcript',
+        });
+        openInTranscriptButton.addEventListener('click', () => {
+            // Test pages without the tabs script keep the disclosure-only behaviour.
+            if (typeof openTranscriptDeepLink !== 'function') {
+                selectSummaryTab('transcript');
+                return;
+            }
+
+            openTranscriptDeepLink(citedSegmentIds).catch((deepLinkError) => {
+                console.warn('Transcript deep link failed:', deepLinkError);
+            });
+        });
+        actionsRow.appendChild(openInTranscriptButton);
+    }
+
+    const closeButton = createElement('button', {
+        className: 'summary-claim__close',
+        attributes: { type: 'button' },
+        text: 'Close',
+    });
+    closeButton.addEventListener('click', () => {
+        closeClaimEvidence(disclosureRegion);
+    });
+    actionsRow.appendChild(closeButton);
+    disclosureRegion.appendChild(actionsRow);
+
+    // The fixed reminder that source linkage is never clinical review.
+    disclosureRegion.appendChild(createElement('p', {
+        className: 'summary-claim__help',
+        text: CLAIM_EVIDENCE_HELP_TEXT,
+    }));
+
+    return disclosureRegion;
+}
+
+/**
+ * Builds one complete evidence unit inside a claim disclosure.
+ * Use per cited unit: the full turn text derives from its hydrated ordered
+ * rows, and neighbour rows render visibly separated as display-only context
+ * that never joins the evidence or its count.
+ *
+ * @param {object} sourceUnit - hydrated unit {unit_id, role, start, end,
+ *   rows, context_before, context_after}; missing arrays act empty.
+ * @returns {HTMLElement} one unit block.
+ */
+function createEvidenceUnitBlock(sourceUnit) {
+    const unitBlock = createElement('div', {
+        className: 'summary-claim__unit',
+        dataset: {
+            unitId: String(sourceUnit.unit_id ?? ''),
+            segmentIds: (sourceUnit.rows ?? [])
+                .map((unitRow) => String(unitRow.segment_id ?? ''))
+                .filter((segmentId) => segmentId !== '')
+                .join(' '),
+        },
+    });
+
+    // Preceding neighbour rows are reading aid only, and say so.
+    for (const contextRow of sourceUnit.context_before ?? []) {
+        unitBlock.appendChild(createContextRowLine(contextRow));
+    }
+
+    const speakerLabel = typeof getRoleLabel === 'function'
+        ? getRoleLabel(sourceUnit.role)
+        : String(sourceUnit.role ?? '');
+    const unitTimeSpan = Number.isFinite(sourceUnit.start) && Number.isFinite(sourceUnit.end)
+        ? `${formatTime(sourceUnit.start)}–${formatTime(sourceUnit.end)}`
+        : '';
+    unitBlock.appendChild(createElement('div', { className: 'summary-claim__unit-evidence' }, [
+        createElement('span', { className: 'summary-claim__unit-meta', text: `[${unitTimeSpan}] ${speakerLabel}` }),
+        createElement('span', {
+            className: 'summary-claim__unit-text',
+            // The complete turn stitches from its ordered rows with real spaces.
+            text: (sourceUnit.rows ?? [])
+                .map((unitRow) => String(unitRow.text ?? '').trim())
+                .filter((rowText) => rowText !== '')
+                .join(' '),
+        }),
+    ]));
+
+    // Following neighbour rows are likewise labelled, never counted.
+    for (const contextRow of sourceUnit.context_after ?? []) {
+        unitBlock.appendChild(createContextRowLine(contextRow));
+    }
+
+    return unitBlock;
+}
+
+/**
+ * Builds one visibly labelled display-context row line.
+ * Use around a unit's evidence text; rows carry no speaker role, so the
+ * line never invents one.
+ *
+ * @param {object} contextRow - {segment_id, start, end, text}.
+ * @returns {HTMLElement} labelled context line.
+ */
+function createContextRowLine(contextRow) {
+    const contextTime = Number.isFinite(contextRow.start) ? `[${formatTime(contextRow.start)}] ` : '';
+
+    return createElement('div', {
+        className: 'summary-claim__context',
+        text: `Context (not evidence) - ${contextTime}${String(contextRow.text ?? '')}`,
+    });
+}
+
+/**
+ * Opens or shuts one claim's evidence disclosure from its toggle.
+ * Use from the toggle click; opening one closes any other so Escape and
+ * the visible expansion stay unambiguous.
+ */
+function toggleClaimEvidence(evidenceToggle, disclosureRegion) {
+    // A second activation of the open claim's toggle closes it.
+    if (evidenceToggle.getAttribute('aria-expanded') === 'true') {
+        closeClaimEvidence(disclosureRegion);
+        return;
+    }
+
+    closeOpenClaimEvidence();
+    disclosureRegion.classList.remove('hidden');
+    evidenceToggle.setAttribute('aria-expanded', 'true');
+    openClaimDisclosure = { evidenceToggle, disclosureRegion };
+}
+
+/**
+ * Closes one claim disclosure and keeps the reviewer's focus anchored.
+ * Use from the Close button, Escape, and toggle re-activation; focus
+ * returns to the owning toggle only when it was inside the region, so
+ * closing never yanks focus from elsewhere on the page.
+ */
+function closeClaimEvidence(disclosureRegion) {
+    const owningToggle = openClaimDisclosure?.disclosureRegion === disclosureRegion
+        ? openClaimDisclosure.evidenceToggle
+        : document.querySelector(`[aria-controls="${disclosureRegion.id}"]`);
+    const hadFocusInside = disclosureRegion.contains(document.activeElement)
+        || document.activeElement === owningToggle;
+
+    disclosureRegion.classList.add('hidden');
+    owningToggle?.setAttribute('aria-expanded', 'false');
+
+    if (openClaimDisclosure?.disclosureRegion === disclosureRegion) {
+        openClaimDisclosure = null;
+    }
+
+    // Escape and Close keep keyboard users anchored on the claim's toggle.
+    if (hadFocusInside) {
+        owningToggle?.focus();
+    }
+}
+
+/**
+ * Closes whichever claim disclosure is open, if any.
+ * Use before opening another claim's evidence.
+ */
+function closeOpenClaimEvidence() {
+    // Nothing is open, so there is nothing to close.
+    if (!openClaimDisclosure) {
+        return;
+    }
+
+    closeClaimEvidence(openClaimDisclosure.disclosureRegion);
+}
+
+// Escape closes the open claim disclosure no matter where focus sits.
+document.addEventListener('keydown', (keyEvent) => {
+    if (keyEvent.key === 'Escape' && openClaimDisclosure) {
+        keyEvent.stopPropagation();
+        closeClaimEvidence(openClaimDisclosure.disclosureRegion);
+    }
+});
 
 /**
  * Shows a plain summary-panel message.
@@ -702,12 +1646,21 @@ function showSummaryMessage(message) {
 }
 
 /**
- * Renders a summary failure with an actionable fix note and a page-level warning.
- * Use for provider/service errors (Ollama or Bedrock unreachable, 502/503, network) so the
- * clinician sees the likely cause and how to recover while the transcript stays visible.
+ * Renders a summary failure with guidance matched to its actual cause.
+ * A named reason from the backend gets honest, specific copy; everything
+ * else keeps the provider-unavailable guidance (Ollama or Bedrock
+ * unreachable, 502/503, network) so the clinician sees the likely cause
+ * and how to recover while the transcript stays visible.
+ *
+ * @param {string} detail - clinician-facing failure sentence from the backend.
+ * @param {string|null} failureReason - machine reason from the 502 body;
+ *   null/unknown means the generic provider guidance applies.
  */
-function showSummaryFailure(detail) {
+function showSummaryFailure(detail, failureReason = null) {
+    // A failure replaces any rendered note, so copying must disable with it.
+    latestRenderedSummaryPayload = null;
     setSummaryStatus('failed');
+    renderNoteStatus({ phase: 'failed' });
 
     const summaryContent = document.getElementById('summaryContent');
     const failureMessage = createElement('p', {
@@ -715,6 +1668,23 @@ function showSummaryFailure(detail) {
         text: detail,
         style: 'color:var(--text-strong); margin:0 0 0.5rem',
     });
+
+    // An output-limit failure is not a provider outage: the model was up
+    // and generating. Telling the operator to restart it wastes their time,
+    // so this path gets its own copy and no page-level model warning.
+    if (failureReason === 'note_output_limit') {
+        const limitNote = createElement('p', {
+            className: 'text-xs',
+            text: 'This visit’s note is longer than the current generation limit, so retrying is unlikely to help. The transcript remains available for review.',
+            style: 'color:var(--text-subtle); margin:0; line-height:1.5',
+        });
+        summaryContent.replaceChildren(failureMessage, limitNote);
+        // A stale model-unavailable banner from an earlier failure would
+        // contradict this message; the model demonstrably responded.
+        hideSystemBanner();
+        return;
+    }
+
     const fixNote = createElement('p', {
         className: 'text-xs',
         text: 'The AI model is unavailable. Run  ./scripts/check-ai-model.sh  to start it, then use Retry Summary.',
@@ -741,6 +1711,7 @@ async function ensureAiModelAvailable() {
         isModelAvailable = payload.available === true;
         detail = payload.detail || detail;
     } catch (modelHealthError) {
+        // Example: the clinician opens the page while the off-GPU note provider is restarting.
         console.warn('Model health check failed:', modelHealthError);
     }
 
@@ -775,6 +1746,8 @@ function setSummaryStatus(summaryState) {
     // The pending placeholder only shows before a summary has been requested.
     summaryPending?.classList.toggle('hidden', summaryState !== 'pending');
     summaryStatusBadge.classList.remove('summary-status__badge--generated', 'summary-status__badge--failed');
+    setSummarySourceNotice(null);
+    setSummaryTruncationNotice(null);
 
     if (summaryState === 'generated') {
         summaryStatusBadge.textContent = '✓ Generated';
@@ -795,6 +1768,72 @@ function setSummaryStatus(summaryState) {
     // Pending and generating both hide the badge; the pending row or loading row speaks instead.
     summaryStatus.classList.add('hidden');
     summaryRetryButton?.classList.add('hidden');
+}
+
+/**
+ * Shows which transcript actually built the note without inventing a failure.
+ * Use after HTTP or Mercure summary delivery; null clears prior-visit wording.
+ *
+ * @param {object|null} summaryPayload - Summary metadata; null or missing source hides the notice.
+ * @returns {void} Updates persistent source wording beside the generated status.
+ */
+function setSummarySourceNotice(summaryPayload) {
+    const summarySourceNotice = document.getElementById('summarySourceNotice');
+
+    // Older templates have no source row, so generated notes still render normally.
+    if (!summarySourceNotice) {
+        return;
+    }
+
+    const actualTranscriptSource = summaryPayload?.transcript_source;
+    const isCorrectedTranscriptSource = [
+        'corrected_segments',
+        'corrected',
+    ].includes(actualTranscriptSource);
+    const isLiveTranscriptSource = [
+        'browser_visible_segments',
+        'session_store',
+        'live_segments',
+        'browser',
+    ].includes(actualTranscriptSource);
+
+    // Corrected or unknown sources must not carry a stale live-fallback notice.
+    if (isCorrectedTranscriptSource || !isLiveTranscriptSource) {
+        summarySourceNotice.textContent = '';
+        summarySourceNotice.classList.add('hidden');
+        return;
+    }
+
+    const didThisBrowserObserveUnavailableCorrection = (
+        correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
+        && correctionOutcomeForVisibleSession.status === 'unavailable'
+    );
+    summarySourceNotice.textContent = didThisBrowserObserveUnavailableCorrection
+        ? 'Built from the live transcript; post-visit correction was unavailable.'
+        : 'Built from the live transcript.';
+    summarySourceNotice.classList.remove('hidden');
+}
+
+/**
+ * Keeps transcript-input elision visible beside a successfully generated note.
+ * The notice describes input selection only; it does not imply correction failure.
+ */
+function setSummaryTruncationNotice(summaryPayload) {
+    const summaryTruncationNotice = document.getElementById('summaryTruncationNotice');
+
+    // Older templates and non-truncated notes need no additional provenance notice.
+    if (!summaryTruncationNotice) {
+        return;
+    }
+
+    if (summaryPayload?.transcript_truncated !== true) {
+        summaryTruncationNotice.textContent = '';
+        summaryTruncationNotice.classList.add('hidden');
+        return;
+    }
+
+    summaryTruncationNotice.textContent = 'Selected opening and closing transcript rows were used for this note because the full transcript exceeded the summary input limit. Review the transcript for omitted middle content.';
+    summaryTruncationNotice.classList.remove('hidden');
 }
 
 /**

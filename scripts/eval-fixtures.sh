@@ -19,7 +19,9 @@ RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${QUALITY_RUN_DIR:-var/quality/runs/$RUN_ID}"
 CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
+PACE_MODE="${EVAL_PACE:-fast}"
 ROLE_TIMELINE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-1}"
+REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 REPORT_ONLY=0
 declare -a FIXTURE_QUERIES=()
@@ -34,7 +36,7 @@ Usage:
   scripts/eval-fixtures.sh --report
 
 Examples:
-  scripts/eval-fixtures.sh --seconds 31 consultation02
+  scripts/eval-fixtures.sh --seconds 60 consultation03-i-have-terrible-headache
   scripts/eval-fixtures.sh --all
   scripts/eval-fixtures.sh --report
 
@@ -43,8 +45,11 @@ Environment:
   AGENT_WS_URL                default ws://localhost:48101
   EVAL_FIXTURE_SECONDS        optional cutoff to stream from each WAV
   EVAL_CHUNK_MS               PCM chunk size in milliseconds, default 5000
+  EVAL_PACE                   fast (default) or 1x real-time pacing
   EVAL_ROLE_TIMELINE_SETTLE_SECONDS
                               seconds to wait for final role logs, default 1
+  EVAL_REQUIRE_STRUCTURED_LOGS
+                              set 1 to require LOG_FORMAT=json before replay; default 0
   SESSION_QUALITY_HOST_PATH   default strands_agents/var/quality/sessions.jsonl
   QUALITY_TREND_FILE          default var/quality/trend.jsonl
 USAGE
@@ -236,6 +241,22 @@ require_ready_agent() {
   fi
 }
 
+require_structured_agent_logs() {
+  # Diagnostic gates need structured role/window rows, not console-only summaries.
+  if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" ]]; then
+    return 0
+  fi
+
+  local log_format
+  log_format="$(
+    docker compose exec -T nemo-agent sh -c 'printf "%s" "$LOG_FORMAT"' 2>/dev/null || true
+  )"
+  if [[ "$log_format" != "json" ]]; then
+    echo "error: EVAL_REQUIRE_STRUCTURED_LOGS=1 requires nemo-agent LOG_FORMAT=json" >&2
+    exit 2
+  fi
+}
+
 fixture_textgrid_paths() {
   local wav_path="$1"
   local stem="${wav_path%.wav}"
@@ -255,14 +276,16 @@ stream_fixture_to_websocket() {
   local wav_path="$1"
   local session_id="$2"
 
-  "$PYTHON_BIN" - "$wav_path" "$SECONDS_LIMIT" "$AGENT_WS_URL" "$session_id" "$CHUNK_MS" <<'PY'
+  "$PYTHON_BIN" - \
+    "$wav_path" "$SECONDS_LIMIT" "$AGENT_WS_URL" "$session_id" "$CHUNK_MS" "$PACE_MODE" <<'PY'
 import asyncio
 import sys
+import time
 import wave
 
 import websockets
 
-wav_path, seconds_limit, agent_ws_url, session_id, chunk_ms = sys.argv[1:6]
+wav_path, seconds_limit, agent_ws_url, session_id, chunk_ms, pace_mode = sys.argv[1:7]
 
 
 async def main() -> None:
@@ -286,11 +309,19 @@ async def main() -> None:
         sent_frames = 0
         uri = f"{agent_ws_url.rstrip('/')}/ws/transcribe/{session_id}"
 
+        stream_started = time.monotonic()
         async with websockets.connect(
             uri,
             additional_headers={"x-correlation-id": f"eval-fixture-{session_id}"},
         ) as websocket:
             while sent_frames < frame_limit:
+                # At 1x, send each chunk when its first sample is due on the audio clock.
+                if pace_mode == "1x":
+                    audio_clock = sent_frames / sample_rate
+                    lag = audio_clock - (time.monotonic() - stream_started)
+                    if lag > 0:
+                        await asyncio.sleep(lag)
+
                 frames_to_read = min(chunk_frames, frame_limit - sent_frames)
                 audio_chunk = wav_file.readframes(frames_to_read)
 
@@ -415,6 +446,15 @@ write_role_timeline() {
     | "$PYTHON_BIN" scripts/role-timeline.py --quality-json "$quality_path" "$session_id" \
     > "$timeline_path"
 
+  # Plain console logs cannot prove which decisions produced the visible labels.
+  if ! grep -Eq '"event": "(role_inference|role_mapping)\.' "$timeline_path"; then
+    if [[ "$REQUIRE_STRUCTURED_LOGS" == "1" ]]; then
+      echo "error: no structured role events captured for $session_id despite LOG_FORMAT=json" >&2
+      exit 1
+    fi
+    echo "warn: no structured role events captured for $session_id; use EVAL_REQUIRE_STRUCTURED_LOGS=1 for diagnostic gates" >&2
+  fi
+
   # A mismatch usually means role decisions landed after the quality snapshot.
   if grep -q '"flip_counts_match": false' "$timeline_path"; then
     echo "warn: session.quality flip counters disagree with the role timeline for $session_id (see $timeline_path)" >&2
@@ -432,7 +472,11 @@ write_window_continuity() {
 
   # Zero windows means the agent is not logging JSON continuity rows (LOG_FORMAT).
   if grep -q '"window_count": 0' "$window_path"; then
-    echo "warn: no window-continuity rows captured for $session_id - is nemo-agent running with LOG_FORMAT=json?" >&2
+    if [[ "$REQUIRE_STRUCTURED_LOGS" == "1" ]]; then
+      echo "error: no window-continuity rows captured for $session_id despite LOG_FORMAT=json" >&2
+      exit 1
+    fi
+    echo "warn: no window-continuity rows captured for $session_id; use EVAL_REQUIRE_STRUCTURED_LOGS=1 for diagnostic gates" >&2
   fi
 }
 
@@ -788,7 +832,8 @@ PY
   local window_path="$fixture_run_dir/window-continuity.jsonl"
   local row_diagnostics_path="$fixture_run_dir/row-diagnostics.json"
 
-  printf 'eval fixture=%s session_id=%s\n' "$fixture_name" "$session_id" >&2
+  printf 'eval fixture=%s session_id=%s pace=%s chunk_ms=%s\n' \
+    "$fixture_name" "$session_id" "$PACE_MODE" "$CHUNK_MS" >&2
   stream_fixture_to_websocket "$wav_path" "$session_id"
   wait_for_quality_record "$session_id" "$quality_path"
   # The role queue keeps applying tail-batch flips for several seconds after
@@ -835,6 +880,7 @@ fi
 
 resolve_fixtures
 require_ready_agent
+require_structured_agent_logs
 mkdir -p "$RUN_DIR" "$(dirname "$TREND_FILE")"
 
 for fixture_path in "${FIXTURE_PATHS[@]}"; do
