@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 - Unreleased
+## v0.5.0 - Unreleased
 
 Work in progress: builds a fixed, auditable quality baseline before changing transcription or
 clinical-note behaviour.
