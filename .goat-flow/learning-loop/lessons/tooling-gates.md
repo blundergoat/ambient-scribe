@@ -8,6 +8,53 @@ last_reviewed: 2026-07-18
 Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
 
+## Lesson: Checkpoint byte checks must dereference snapshot symlinks
+
+**Created:** 2026-07-18
+**What happened:** M00.9's first manifest verifier hashed the Unified checkpoint correctly but used
+`stat -c %s` on its Hugging Face snapshot path. The hash read the target bytes while `stat` reported the
+76-byte symlink, creating a false size mismatch; the nested Docker command also consumed the verifier loop's
+stdin before later rows were checked.
+**Evidence:** `var/quality/0.5.0-m00-unified-asr-20260718T034719Z/verification/m00.9-manifest-verify-attempt-1.txt`.
+**Prevention:** Verify container checkpoints outside any manifest-input loop, use `Path.stat()` or
+`stat -Lc %s`, and preserve a matching content hash separately from link metadata.
+
+## Lesson: Derive GPU call caps from frozen durations and runtime tail rules
+
+**Created:** 2026-07-18
+**What happened:** M00A's approval packet hand-counted 36 post-visit transcribe calls per ten-case arm. The
+unchanged chunker correctly made 37: consult 1 is 559.2 seconds, so its 19.2-second remainder is above the
+10-second merge threshold and becomes a fourth 180-second-series chunk. The discrepancy appeared only after
+the complete TDT arm because the packet had copied the arithmetic instead of executing it over frozen WAV
+durations.
+**Evidence:** `var/quality/0.5.0-m00a-unified-recovery-20260718T054731Z/verification/m00a.6-tdt-audit.txt`.
+**Prevention:** Before requesting a decode cap, compute each planned chunk count from the frozen WAV duration
+through the production chunk-boundary function (including final-tail merging), preserve the ordered vector,
+and make the approval cap equal its sum. Stop for renewed approval if runtime metadata differs.
+
+## Lesson: A host dry run does not prove a container import path
+
+**Created:** 2026-07-18
+**What happened:** M00.4's production-shaped evaluator passed mock and host dry tests, but its first
+container run supplied `PYTHONPATH=/app/strands_agents`. Compose mounts that host directory at `/app`,
+so `/app/post_visit_correction.py` existed while `/app/strands_agents/post_visit_correction.py` did not.
+The first TDT case failed before model load, and an uncaught metadata import also prevented the required
+empty failure artifact.
+**Evidence:** `var/quality/0.5.0-m00-unified-asr-20260718T034719Z/arms/tdt/campaign-failure.txt`.
+**Prevention:** Before approving a container-backed corpus runner, execute one import-only smoke check in
+the real mounted container and force the failure-artifact writer through the same module path. A host dry
+run proves corpus routing, not container module topology.
+
+M00A repeated the import-topology trap one level earlier after splitting an oversized evaluator: a host
+`runpy.run_path("scripts/second_pass_asr.py")` preflight did not add `scripts/` to `sys.path`, so its sibling
+helper import failed before source access. Evidence:
+`var/quality/0.5.0-m00a-unified-recovery-20260718T054731Z/verification/m00a.2-host-dry-preflight-failure.txt`.
+Load a dependency-free leaf helper directly for host selection checks, and copy every sibling module beside
+the container entry script before testing the `/app` application import. A second preflight then showed that
+`bash -n` does not compile embedded Python: accidental indentation inside a column-zero here-document failed
+at runtime. Extract and `compile()` embedded Python in a focused test whenever a shell runner uses it as a
+blocking corpus gate.
+
 ## Lesson: Placement proofs must not default missing telemetry to zero
 
 **Created:** 2026-07-13
@@ -40,6 +87,21 @@ as changed scope even though no behavior remained.
 `.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
 **Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
 but do not widen a debt-heavy symbol to chase formatter debt outside scope.
+
+M00.4 repeated the trap when whole-file Ruff formatting touched the pre-existing
+`transcribe_audio_with_nemo` symbol and made its inherited length finding look newly scoped. The
+behavioral tests were green, but the changed-symbol hook correctly forced removal of every unrelated
+formatting hunk before the task was accepted. Evidence:
+`var/quality/0.5.0-m00-unified-asr-20260718T034719Z/verification/m00.4-static.txt`.
+For debt-heavy hot paths, format new files directly, inspect the tracked diff before retaining
+whole-file formatter output, and require the changed-symbol hook to report zero introduced findings.
+
+M00A.5 repeated this during the pinned-checkpoint loader repair: the approved whole-file Ruff command
+reformatted the legacy module and pulled the unchanged 110-line transcription function into Gruff's changed
+scope. The formatter candidate and its failure output were retained, then every unrelated formatting hunk
+was removed. The focused plan-owned files and loader tests stayed formatted, while the inherited whole-file
+format discrepancy remained explicit. Do not use whole-file formatter churn to make a scoped verification
+packet appear green; preserve the mismatch and prove the actual changed lines separately.
 
 ## Lesson: Evidence CLI documentation is part of its gate
 
@@ -344,9 +406,16 @@ The fallback `nvidia/parakeet-tdt-0.6b-v3` loaded and produced scoreable artifac
 same container, proving the issue was model/runtime API compatibility rather than the
 fixture runner.
 
+M00A later bound the exact downloaded revision, verified its file size and SHA-256, and loaded it through
+`ASRModel.restore_from`. Construction still failed on the same encoder argument before the first transcript
+chunk. Exact checkpoint provenance prevents drift; it does not adapt a checkpoint config to an older runtime.
+Evidence: `var/quality/0.5.0-m00a-unified-recovery-20260718T054731Z/verification/m00a.6-unified-terminal.txt`.
+
 **Lesson:** Treat model-card recommendations as candidates, not implementation facts.
-Before planning product wiring for a newer ASR checkpoint, run it inside the exact pinned
-Docker runtime and record a fixture score or a precise compatibility failure.
+Before planning product wiring for a newer ASR checkpoint, restore the exact local artifact inside the pinned
+Docker runtime and require successful construction plus a fixture score. A hash match alone is not runtime
+compatibility proof; any config adaptation, dependency upgrade, or image change needs a separate scope and
+approval packet.
 
 ## Lesson: Gruff PHP file intent must precede the strict-types declaration
 

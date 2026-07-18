@@ -11,6 +11,7 @@ can consume without changing live Mercure contracts.
 from __future__ import annotations
 
 import gc
+import hashlib
 import logging
 import os
 import re
@@ -51,7 +52,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "POST_VISIT_ASR_MODEL",
-    "nvidia/parakeet-tdt-0.6b-v3",
+    "nvidia/parakeet-unified-en-0.6b",
+)
+# Keep the selected model available after the service is recreated for a later visit.
+POST_VISIT_MODEL_CACHE_DIR = Path(
+    os.environ.get(
+        "POST_VISIT_MODEL_CACHE_DIR",
+        "/data/post_visit_model_cache",
+    )
 )
 DEFAULT_MAX_WORDS_WITHOUT_SCAFFOLD = 18
 _AUDIO_SAMPLE_RATE = 16000
@@ -65,6 +73,44 @@ _AUDIO_CHUNK_SECONDS = 180.0
 _MIN_FINAL_CHUNK_SECONDS = 10.0
 _TRANSIENT_RETRY_BACKOFF_SECONDS = 2.0
 _DEVICE_NOT_READY_PATTERN = re.compile(r"\bdevice\s+not\s+ready\b", re.IGNORECASE)
+_CHECKPOINT_HASH_BLOCK_BYTES = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedPostVisitCheckpoint:
+    """Identify one locally cached correction checkpoint exactly.
+
+    Use this before a stopped visit loads NeMo so the clinician receives the
+    checkpoint that passed evaluation, never a floating repository revision.
+    """
+
+    repository_id: str
+    revision: str
+    filename: str
+    expected_bytes: int
+    expected_sha256: str
+
+
+_PINNED_POST_VISIT_CHECKPOINTS = {
+    "nvidia/parakeet-tdt-0.6b-v3": _PinnedPostVisitCheckpoint(
+        repository_id="nvidia/parakeet-tdt-0.6b-v3",
+        revision="7c35754d166cca382ad1e53e68b01e7c575f3a1d",
+        filename="parakeet-tdt-0.6b-v3.nemo",
+        expected_bytes=2_509_332_480,
+        expected_sha256=(
+            "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d"
+        ),
+    ),
+    "nvidia/parakeet-unified-en-0.6b": _PinnedPostVisitCheckpoint(
+        repository_id="nvidia/parakeet-unified-en-0.6b",
+        revision="fe53cd885760c96b6a5f51a0bfd362cb4584a98b",
+        filename="parakeet-unified-en-0.6b.nemo",
+        expected_bytes=2_474_055_680,
+        expected_sha256=(
+            "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b"
+        ),
+    ),
+}
 
 
 class PostVisitCorrectionError(RuntimeError):
@@ -417,6 +463,52 @@ def _release_cached_cuda_memory_before_model_restore() -> None:
         )
 
 
+def _prepare_loaded_post_visit_asr_model(
+    asr_model: Any,
+    model_name: str,
+) -> Any:
+    """Give exact Unified the empty loader config it needs for transcription.
+
+    Use after restore so a stopped visit can reach NeMo decoding without changing
+    transcript settings or any other selected model.
+
+    Args:
+        asr_model: Restored speech model; missing config means no corrected transcript.
+        model_name: Operator-selected model; empty or another ID stays unchanged.
+
+    Returns:
+        The same ready model; this function never returns null to the user flow.
+    """
+    # Other selected models retain their checkpoint-defined transcription setup.
+    if model_name != "nvidia/parakeet-unified-en-0.6b":
+        return asr_model
+
+    unified_model_config = getattr(asr_model, "cfg", None)
+    # Missing Unified config cannot produce a safe corrected transcript.
+    if unified_model_config is None:
+        raise PostVisitCorrectionError(
+            "Unified post-visit ASR has no model configuration.",
+            reason_category="model_load_failed",
+        )
+
+    unified_validation_config = getattr(
+        unified_model_config,
+        "validation_ds",
+        None,
+    )
+    # A checkpoint-supplied validation config already supports its transcript loader.
+    if unified_validation_config is not None:
+        return asr_model
+
+    from omegaconf import open_dict
+
+    # The empty config selects NeMo's existing false default without tuning decoding.
+    with open_dict(unified_model_config):
+        unified_model_config.validation_ds = {}
+
+    return asr_model
+
+
 def _load_post_visit_asr_model(model_name: str) -> Any:
     """Restore the configured correction model once for one user request.
 
@@ -433,13 +525,101 @@ def _load_post_visit_asr_model(model_name: str) -> Any:
         ) from import_error
 
     try:
+        verified_checkpoint_path = _verified_checkpoint_path(model_name)
+        # A pinned model restores the exact artifact that earned clinician use.
+        if verified_checkpoint_path is not None:
+            restored_post_visit_model = nemo_asr.models.ASRModel.restore_from(
+                restore_path=str(verified_checkpoint_path)
+            )
+            return _prepare_loaded_post_visit_asr_model(restored_post_visit_model, model_name)
+
         return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
+    except PostVisitCorrectionError:
+        raise
     except Exception as model_load_error:  # pragma: no cover - GPU/model-specific.
         # Example: the clinician clicks Summarise while the configured checkpoint cannot load.
         raise PostVisitCorrectionError(
             f"Second-pass ASR model failed to load: {type(model_load_error).__name__}",
             reason_category="model_load_failed",
         ) from model_load_error
+
+
+def _checkpoint_sha256(checkpoint_path: Path) -> str:
+    """Hash one local NeMo artifact in bounded blocks.
+
+    Use before loading a stopped visit so cache drift cannot silently change
+    the transcript model behind the existing clinician workflow.
+    """
+    checkpoint_hash = hashlib.sha256()
+    with checkpoint_path.open("rb") as checkpoint_file:
+        # Bounded reads verify the large model without exhausting app memory.
+        while checkpoint_block := checkpoint_file.read(_CHECKPOINT_HASH_BLOCK_BYTES):
+            checkpoint_hash.update(checkpoint_block)
+    return checkpoint_hash.hexdigest()
+
+
+def _verified_checkpoint_path(model_name: str) -> Path | None:
+    """Resolve and verify a known correction checkpoint from local cache.
+
+    Use before NeMo restore; null means an explicit operator override keeps
+    the existing repository-ID loading behavior for the stopped visit.
+    """
+    pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS.get(model_name)
+    # An unknown explicit override retains the pre-existing operator seam.
+    if pinned_checkpoint is None:
+        return None
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        checkpoint_path = Path(
+            hf_hub_download(
+                repo_id=pinned_checkpoint.repository_id,
+                revision=pinned_checkpoint.revision,
+                filename=pinned_checkpoint.filename,
+                cache_dir=str(POST_VISIT_MODEL_CACHE_DIR),
+                local_files_only=True,
+            )
+        ).resolve(strict=True)
+    except Exception as checkpoint_cache_error:
+        # Example: the clinician stops a visit after the pinned cache file was removed.
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint is unavailable from local cache.",
+            reason_category="model_load_failed",
+        ) from checkpoint_cache_error
+
+    # A directory or broken cache target cannot produce the evaluated transcript.
+    if not checkpoint_path.is_file():
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint is not a file.",
+            reason_category="model_load_failed",
+        )
+
+    try:
+        checkpoint_bytes = checkpoint_path.stat().st_size
+        checkpoint_sha256 = _checkpoint_sha256(checkpoint_path)
+    except OSError as checkpoint_read_error:
+        # Example: cache permissions change while the user's stopped visit is awaiting correction.
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint could not be verified.",
+            reason_category="model_load_failed",
+        ) from checkpoint_read_error
+
+    # A byte-size mismatch means this is not the frozen candidate or baseline.
+    if checkpoint_bytes != pinned_checkpoint.expected_bytes:
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint size does not match.",
+            reason_category="model_load_failed",
+        )
+
+    # A hash mismatch blocks a plausible but different model from reaching the note.
+    if checkpoint_sha256 != pinned_checkpoint.expected_sha256:
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint hash does not match.",
+            reason_category="model_load_failed",
+        )
+
+    return checkpoint_path
 
 
 def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:

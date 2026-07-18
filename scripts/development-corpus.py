@@ -51,6 +51,7 @@ FILE_SUFFIXES = {
     "patient_textgrid": ".patient.TextGrid",
 }
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+FROZEN_SCORER_PATH = Path("scripts/transcript-quality.py")
 
 
 class DevelopmentCorpusError(ValueError):
@@ -113,6 +114,75 @@ def _development_file_sha256(development_file_path: Path) -> str:
         for file_chunk in iter(lambda: development_file.read(1024 * 1024), b""):
             file_digest.update(file_chunk)
     return file_digest.hexdigest()
+
+
+def _verify_frozen_scorer_identity(
+    manifest_document: dict[str, Any],
+    workspace_root: Path,
+) -> None:
+    """Prove the frozen scorer still matches before consultation files are opened.
+    Use before a quality run so changed scoring cannot be mistaken for better transcription.
+
+    Args:
+        manifest_document: Parsed development contract; empty means no scorer is authorized.
+        workspace_root: Checkout containing the scorer; an absent root means it cannot be verified.
+
+    Returns:
+        None; success lets fixture validation continue, while any missing identity raises.
+
+    Raises:
+        DevelopmentCorpusError: The scorer path, byte size, or SHA-256 differs from the manifest.
+    """
+    manifest_scorer_record = manifest_document.get("scorer")
+
+    # No scorer contract means the developer cannot reproduce the displayed quality result.
+    if not isinstance(manifest_scorer_record, dict):
+        raise _development_selection_error(
+            "scorer_identity", "scorer must be an object"
+        )
+
+    manifest_scorer_path = manifest_scorer_record.get("path")
+    # A redirected scorer could change the reported result without changing consultation bytes.
+    if manifest_scorer_path != FROZEN_SCORER_PATH.as_posix():
+        raise _development_selection_error(
+            "scorer_identity", f"scorer path must be {FROZEN_SCORER_PATH}"
+        )
+
+    expected_scorer_bytes = manifest_scorer_record.get("bytes")
+    # Missing or invalid size evidence cannot prove which scoring rules the reviewer received.
+    if not isinstance(expected_scorer_bytes, int) or expected_scorer_bytes < 0:
+        raise _development_selection_error(
+            "scorer_size_drift", "invalid scorer byte size"
+        )
+
+    expected_scorer_sha256 = manifest_scorer_record.get("sha256")
+    # Missing or malformed hash evidence leaves the scorer version floating.
+    if (
+        not isinstance(expected_scorer_sha256, str)
+        or SHA256_PATTERN.fullmatch(expected_scorer_sha256) is None
+    ):
+        raise _development_selection_error(
+            "scorer_hash_drift", "invalid scorer SHA-256"
+        )
+
+    frozen_scorer_path = workspace_root / FROZEN_SCORER_PATH
+    # A missing scorer stops before the developer opens any consultation evidence.
+    if not frozen_scorer_path.is_file():
+        raise _development_selection_error(
+            "scorer_identity", FROZEN_SCORER_PATH.as_posix()
+        )
+
+    # Changed size means the quality report no longer uses the frozen scorer bytes.
+    if frozen_scorer_path.stat().st_size != expected_scorer_bytes:
+        raise _development_selection_error(
+            "scorer_size_drift", FROZEN_SCORER_PATH.as_posix()
+        )
+
+    # Same-sized changed content is still a different quality contract for the reviewer.
+    if _development_file_sha256(frozen_scorer_path) != expected_scorer_sha256:
+        raise _development_selection_error(
+            "scorer_hash_drift", FROZEN_SCORER_PATH.as_posix()
+        )
 
 
 def _manifest_fixture_records(
@@ -419,6 +489,7 @@ def load_development_fixtures(
             "schema_mismatch", f"expected {SCHEMA_VERSION}"
         )
 
+    _verify_frozen_scorer_identity(manifest_document, workspace_root)
     manifest_fixture_records = _manifest_fixture_records(manifest_document)
     _validate_frozen_fixture_order(manifest_fixture_records)
 

@@ -5,6 +5,7 @@
 Work in progress: builds a fixed, auditable quality baseline before changing transcription or
 clinical-note behaviour.
 
+- **Unified post-visit ASR ready for manual review** - Stopped visits now select the exact `parakeet-unified-en-0.6b` checkpoint through its compatible pinned NeMo runtime and persistent local cache; this records setup availability only, not an accuracy acceptance claim, and leaves live transcription and the clinician workflow unchanged.
 - **Clinical truth kept separate** - Quality checks now distinguish what was officially spoken, what the saved transcript safely supports, and what a SOAP note may claim, preventing gold transcripts from silently repairing garbled or wrong-speaker evidence.
 - **Ten-case development corpus locked** - Evaluation tooling uses one ordered ten-consultation manifest, verifies every source hash, and rejects missing, extra, reordered, or sealed cases before scoring.
 - **Demo picker matches evaluation exactly** - The generated developer catalog now exposes the same ten ordered consultations as the quality manifest, while non-development and sealed cases are filtered before note or audio selection.

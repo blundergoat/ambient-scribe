@@ -6,7 +6,8 @@
   "scorer": {
     "version": "ambient-scribe-transcript-quality/0.5.0",
     "path": "scripts/transcript-quality.py",
-    "sha256": "a0c42d3259656af43b44393f10edfb6e835a7de895eec3cb5b435876281ca165"
+    "bytes": 99534,
+    "sha256": "bb91823432e1103c4bf3f3c5f12f2f7c3cacff7afef3ddaf20148a528685ee1e"
   },
   "selection": {
     "mode": "explicit_ordered",

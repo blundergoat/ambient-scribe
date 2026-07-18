@@ -116,6 +116,45 @@ def test_sealed_stem_request_fails_before_fixture_selection() -> None:
         development_corpus_helper.validate_requested_stems([SEALED_SPECIMEN])
 
 
+@pytest.mark.parametrize(
+    ("scorer_field", "unsafe_scorer_value", "expected_error_category"),
+    [
+        ("path", "scripts/unapproved-scorer.py", "scorer_identity"),
+        ("bytes", 99535, "scorer_size_drift"),
+        ("sha256", "0" * 64, "scorer_hash_drift"),
+    ],
+)
+def test_scorer_drift_fails_before_fixture_selection(
+    tmp_path: Path,
+    scorer_field: str,
+    unsafe_scorer_value: object,
+    expected_error_category: str,
+) -> None:
+    """A changed scorer stops before any consultation record can be selected."""
+    development_corpus_helper = load_development_corpus_helper()
+    drifted_manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    drifted_manifest["scorer"][scorer_field] = unsafe_scorer_value
+    drifted_manifest_path = tmp_path / "development-corpus-with-scorer-drift.json"
+    drifted_manifest_path.write_text(
+        json.dumps(drifted_manifest),
+        encoding="utf-8",
+    )
+
+    with mock.patch.object(
+        development_corpus_helper, "_manifest_fixture_records"
+    ) as fixture_record_reader:
+        with pytest.raises(
+            development_corpus_helper.DevelopmentCorpusError,
+            match=rf"^{expected_error_category}:",
+        ):
+            development_corpus_helper.load_development_fixtures(
+                drifted_manifest_path,
+                REPO_ROOT,
+            )
+
+    fixture_record_reader.assert_not_called()
+
+
 def test_manifest_registers_consult_29_cross_lane_evidence() -> None:
     """The reviewer sees consult-2.9 lane, timing, confidence, and source limits together."""
     development_manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -125,7 +164,8 @@ def test_manifest_registers_consult_29_cross_lane_evidence() -> None:
     assert development_manifest["scorer"] == {
         "version": "ambient-scribe-transcript-quality/0.5.0",
         "path": "scripts/transcript-quality.py",
-        "sha256": "a0c42d3259656af43b44393f10edfb6e835a7de895eec3cb5b435876281ca165",
+        "bytes": 99534,
+        "sha256": "bb91823432e1103c4bf3f3c5f12f2f7c3cacff7afef3ddaf20148a528685ee1e",
     }
     assert development_manifest["picker_catalog"] == {
         "path": "tests/fixtures/audio/generated-manifest.json",
