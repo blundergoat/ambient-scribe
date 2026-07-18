@@ -5,7 +5,6 @@
 Work in progress: builds a fixed, auditable quality baseline before changing transcription or
 clinical-note behaviour.
 
-- **Release plans renumbered clearly** - The active clinician-quality programme now lives under `1.0.0`, its frozen baseline and contract references are grouped under `reference/`, and forward clinical-intelligence work now lives under `2.0.0`; runtime behaviour and preserved evidence identifiers are unchanged.
 - **Clinical truth kept separate** - Quality checks now distinguish what was officially spoken, what the saved transcript safely supports, and what a SOAP note may claim, preventing gold transcripts from silently repairing garbled or wrong-speaker evidence.
 - **Ten-case development corpus locked** - Evaluation tooling uses one ordered ten-consultation manifest, verifies every source hash, and rejects missing, extra, reordered, or sealed cases before scoring.
 - **Demo picker matches evaluation exactly** - The generated developer catalog now exposes the same ten ordered consultations as the quality manifest, while non-development and sealed cases are filtered before note or audio selection.
