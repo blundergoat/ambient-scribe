@@ -1,16 +1,18 @@
 # Changelog
 
-## v0.5.0 - Unreleased
+## v1.0.0 - Unreleased
 
 Work in progress: builds a fixed, auditable quality baseline before changing transcription or
 clinical-note behaviour.
 
+- **Release plans renumbered clearly** - The active clinician-quality programme now lives under `1.0.0`, its frozen baseline and contract references are grouped under `reference/`, and forward clinical-intelligence work now lives under `2.0.0`; runtime behaviour and preserved evidence identifiers are unchanged.
 - **Clinical truth kept separate** - Quality checks now distinguish what was officially spoken, what the saved transcript safely supports, and what a SOAP note may claim, preventing gold transcripts from silently repairing garbled or wrong-speaker evidence.
 - **Ten-case development corpus locked** - Evaluation tooling uses one ordered ten-consultation manifest, verifies every source hash, and rejects missing, extra, reordered, or sealed cases before scoring.
 - **Demo picker matches evaluation exactly** - The generated developer catalog now exposes the same ten ordered consultations as the quality manifest, while non-development and sealed cases are filtered before note or audio selection.
 - **Sealed holdouts protected** - Corpus checks and the medical-term collision sweep no longer discover every local TextGrid; six holdouts remain unavailable to development work, with earlier vocabulary-only exposure recorded rather than hidden.
 - **Holdout identity check completed safely** - The six sealed triplets now have filename, byte-size, and SHA-256 registrations from 18 explicit paths; every digest matches the prior seal, while replay, parsing, provider work, GPU work, and all clinical-content access remain prohibited.
-- **Baseline replay rules frozen first** - Future live and corrected measurements must use the same ten named visits, full-length browser pacing, sequential GPU work, continuous health/resource evidence, and three complete runs per lane if ratified; failed or poor visits cannot be selectively replaced.
+- **Baseline replay rules frozen first** - Future live and corrected measurements must use the same ten named visits, full-length browser pacing, sequential GPU work, continuous health/resource evidence, and three complete runs per lane; failed or poor visits cannot be selectively replaced.
+- **Quality acceptance limits ratified before replay** - The ten-visit comparison now has fixed transcript, note, latency, GPU, reviewer, aggregation, retry, and minimum-improvement rules, so clinicians see quality claims judged against limits chosen before any new baseline or candidate result.
 - **Provider baseline deferred safely** - M01 makes zero provider requests and zero generations because clinical context must first become schema-validated, inactive by default, and explicitly switchable; retained notes remain defect examples rather than a quantitative prompt baseline.
 - **Transcript and note gates stay independent** - Every quality measure now has explicit arithmetic and criticality, so lower word error cannot hide an unsupported SOAP claim, wrong speaker, source mismatch, unsafe action state, or missing required evidence.
 - **Anxiety-consult outcomes made executable** - Seven source-conditioned checks preserve uncertain therapy wording, single-endpoint alcohol history, conflicting chest pain, ambiguous panic, unsafe drug-denial evidence, supported suicidality denial, and the true blood-test arrangement state.

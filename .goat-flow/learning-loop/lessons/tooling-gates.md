@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-17
+last_reviewed: 2026-07-18
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -144,6 +144,61 @@ to review safely.
 fixture-only script with `apply_patch`, compile it, and then run the script through the
 container. This gives the hook and reviewer a stable artifact instead of a dense terminal blob.
 
+## Lesson: Long wall-clock campaigns need an active suspend-gap watchdog
+
+**Created:** 2026-07-17
+**What happened:** A 0.5.0 baseline repetition resumed after the operator laptop slept. The
+health monitor exposed an 18,389-second sample gap, while the campaign helper checked its frozen
+9,000-second wall-clock cap only after a normal runner return. The run was stopped after eight
+fixtures, preserved as failed, and the runtime was rolled back without using the partial result.
+**Evidence:** `var/quality/0.5.0-baseline-20260717T091841Z/live/repetition-02/monitors/gap-summary.txt`
+and `var/quality/0.5.0-baseline-20260717T091841Z/campaign-stopped-report.md`.
+**Prevention:** Before another multi-hour campaign, require an approved active wall-clock watchdog
+that stops work as soon as the cap is observed, rejects an over-limit monitor gap after resume,
+and records its reason independently of the fixture runner. Use an explicit host sleep inhibitor
+when available; an end-only duration check cannot enforce a live kill criterion.
+
+The fresh retry on 2026-07-18 showed that binary presence is not inhibitor availability:
+`command -v systemd-inhibit` passed, but the dedicated WSL guard exited immediately with
+`Failed to connect to bus: No such file or directory` before its Windows child started. Evidence:
+`var/quality/0.5.0-baseline-20260717T192617Z/campaign-stopped-report.md`. Before touching a GPU
+runtime, actually acquire each inhibitor, prove its live request through the owning system, and
+stop if any required layer is unavailable. In WSL, test the system bus rather than inferring it
+from `/usr/bin/systemd-inhibit`; keep the host-side guard and active runner timeout independent.
+
+The direct Windows retry then showed that parse success is not runtime proof. Windows PowerShell
+5.1 parsed the guard but treated `0x80000001` and `0x80000000` as negative signed values, so both
+`[uint32]` casts failed at execution. Because those were non-terminating errors, the script still
+printed a PID and stayed alive without constructing the approved flags. Evidence:
+`var/quality/0.5.0-baseline-20260717T202405Z/campaign-stopped-report.md`. Make guard setup errors
+terminating, construct high-bit flags with a PowerShell-5.1-safe unsigned conversion, and print
+readiness only after the native call returns a non-zero result. A parser-only check cannot certify
+an operating-system request.
+
+The same retry found that `powercfg.exe /requests` requires an elevated prompt on this host. The
+non-elevated proof command exited 1, and no elevation was attempted. Before promising a host-power
+verification in an approval packet, run the exact read-only command at the intended privilege
+level. If it is unavailable, stop and obtain approval for a different non-elevated proof rather
+than substituting one after runtime work begins.
+
+The corrected native guard then needed longer than an arbitrary 20-second polling window to compile
+and print readiness. The valid non-zero return arrived after the poll had already reported a
+timeout. Evidence: `var/quality/0.5.0-baseline-20260717T203831Z/campaign-stopped-report.md`. Keep
+the guard process and its error channel authoritative: allow the measured startup window, stop
+immediately if the process exits, and do not classify a still-running startup as rejection merely
+because an unratified short poll elapsed.
+
+## Lesson: Container identity evidence must whitelist environment values
+
+**Created:** 2026-07-18
+**What happened:** The T03.3 JSON-runtime preflight wrote the full container environment to an
+evidence file. A filename-only scan showed that it included credential-bearing variables, so the
+unsafe artifact was deleted before the root was sealed and replaced with a non-secret whitelist.
+**Evidence:** `var/quality/0.5.0-baseline-20260717T204434Z/identity/identity-capture-correction.md`.
+**Prevention:** Never persist `docker inspect`'s complete `.Config.Env`. Select only named runtime
+identity fields needed by the gate, scan the evidence root for credential assignments before
+sealing, and record the security correction without copying or printing secret values.
+
 ## Lesson: Semantic anchors should prefer function names over escaped route strings (2026-07-04)
 
 `./scripts/context-validate.sh` rejected a generated footgun citation that used an escaped decorator string for the WebSocket route in `strands_agents/api/server.py`. The route existed, but the checker did not accept the escaped quote form.
@@ -197,6 +252,22 @@ During M14 review, a PHP accepted-debt baseline was written as `gruff-baseline.j
 During M14 review, direct `composer validate --strict` exited 1 for the intentionally commit-pinned Strands PHP client, but preflight had been grepping for "is valid" and therefore reported the step green despite the non-zero exit. The fix moved the exception into a wrapper that checks the exit code and allows only the reviewed warning.
 
 **Lesson:** Validation steps should key off the command exit code first; if one warning is intentionally accepted, encode that exact exception in a wrapper instead of grepping for success text in mixed success/warning output.
+
+The 0.5.0 baseline helper repeated this error before GPU decode. `bash -n` printed a syntax error,
+but the surrounding command continued and wrote `exit_code=0`; the independently captured
+ShellCheck exit exposed the false record. Its stopped-run collector then assumed `artifacts/`
+existed and raised a secondary `find` error after the real runner guard had already returned `2`.
+Evidence: `var/quality/0.5.0-baseline-20260717T083838Z/preflight/helper-verification-failure.md`
+and `live/repetition-01/runner-exit.txt` below the same root. Capture the tested command's literal
+exit before writing success, and make post-run collectors record an absent output directory as an
+explicit unavailable/zero-stage result without masking the primary failure.
+
+The stopped 2026-07-18 retry added the opposite exit-code trap: a post-stop process-count pipeline
+expected `rg` to find nothing, but `pipefail` propagated that normal exit 1 before `wc -l` could
+record zero. Evidence: `var/quality/0.5.0-baseline-20260717T192617Z/preflight/post-stop-runtime.txt`
+and `post-stop-runtime-corrected.txt` beside it. When zero matches is the passing state, handle it
+explicitly or use a counter that exits zero; never let an expected absence abort later integrity
+checks.
 
 ## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
 
@@ -297,6 +368,13 @@ used `LOG_FORMAT=console` while `EVAL_REQUIRE_STRUCTURED_LOGS=1` required JSON. 
 **Prevention:** Before a structured fixture run, verify `LOG_FORMAT=json` in the running agent as
 well as feature flags and CUDA; restore normal log mode after the evidence run.
 
+The same omission recurred in the 0.5.0 T03.3 no-download preflight on 2026-07-17. Container,
+health, CUDA, provider, source, and GPU identity all passed, but the sanitized runtime check omitted
+`LOG_FORMAT`; live repetition 01 then stopped before its first fixture because the running value was
+`console`. Evidence: `var/quality/0.5.0-baseline-20260717T083838Z/live/repetition-01/runner.log`.
+Treat the exact running `LOG_FORMAT=json` check as a blocking preflight predicate, not merely an
+identity field recorded after the runner rejects the service.
+
 The same session found that a bare `nohup ... &` child launched by a one-shot command runner was
 reaped immediately with empty logs. For long evals, verify both the saved child PID and the first
 fixture line; when the runner reaps descendants, keep a managed parent session waiting on the
@@ -308,6 +386,15 @@ The M06 live-only gate reconfirmed the check: three saved background PIDs vanish
 run log and no fixture directory, while named `tmux` sessions immediately produced the first
 fixture UUID and completed. Treat an empty log after the launch check as no run, never as a gate
 failure or pass.
+
+The T03.3 retry showed that a named tmux session is not sufficient by itself. The pane kept its
+wrapper shell as the foreground process group while the runner used another group; with stdin still
+attached to the pane, the runner stopped under terminal job control during `docker compose exec -T`
+before fixture decoding began. Evidence:
+`var/quality/0.5.0-baseline-20260717T204434Z/live/repetition-01-stalled-status.txt`. For unattended
+tmux campaigns, detach stdin explicitly (for example, `< /dev/null`) and require an early smoke
+proof that the runner is not in `T` state and has crossed its runtime preflight before starting the
+multi-hour evidence clock.
 
 ## Lesson: Run changed-symbol Gruff before a hot-path module crosses its size gate
 
@@ -369,3 +456,14 @@ means network. Bonus finding: a per-test autouse fixture perturbed event-loop ti
 trip a latent grace-destroy/dead-executor race in the transcription tests two files away —
 prefer session-scoped single-setattr guards, and treat new order-dependent failures after a
 conftest change as YOUR change until bisected (`git stash push -- <file>` isolates it fast).
+
+The 0.5.0 baseline helper repeated the boundary failure during GPU replay. It recorded
+`role-provider-events-exit=0` but enforced only the SOAP scan, while a second narrower scan omitted
+the structured role event fields and falsely reported zero paid-provider activity. Live repetition
+02 then started after live 01 had already issued 726 role-agent completions; the two rejected runs
+retained 1,454 `role_inference.completed` events with `tool_invoked=true`. Evidence:
+`var/quality/0.5.0-baseline-20260717T212133Z/campaign-stopped-report.md` (search: "Blocking failure").
+When a campaign cap is zero, enforce every provider scan before the next repetition and key the
+gate to the structured completion event plus `tool_invoked`, not a partial token-field vocabulary.
+If normal runtime behavior cannot meet the frozen cap, stop at the human contract gate before
+inventing a provider-free substitute.

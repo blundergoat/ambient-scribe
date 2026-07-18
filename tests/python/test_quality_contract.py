@@ -11,7 +11,9 @@ import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-QUALITY_CONTRACT_PATH = REPOSITORY_ROOT / ".goat-flow/plans/0.5.0/QUALITY-CONTRACT.md"
+QUALITY_CONTRACT_PATH = (
+    REPOSITORY_ROOT / ".goat-flow/plans/1.0.0/reference/QUALITY-CONTRACT.md"
+)
 QUALITY_CONTRACT_TEXT = QUALITY_CONTRACT_PATH.read_text(encoding="utf-8")
 
 TRANSCRIPT_METRIC_FORMULAS = (
@@ -149,8 +151,10 @@ def test_promotion_arithmetic_keeps_failures_and_zero_call_branches() -> None:
     )
 
     assert "F = 10" in promotion_arithmetic
-    assert "R_ASR = HUMAN-PENDING" in promotion_arithmetic
-    assert "G_NOTE = HUMAN-PENDING" in promotion_arithmetic
+    assert "R_ASR = 3" in promotion_arithmetic
+    assert "G_NOTE = 3" in promotion_arithmetic
+    assert "RETRY_NOTE = 1" in promotion_arithmetic
+    assert "30 requests / 60 generations" in promotion_arithmetic
     assert "0 requests / 0 generations" in promotion_arithmetic
     assert "Missing, failed, fallback" in promotion_arithmetic
     assert "no-candidate" in promotion_arithmetic
@@ -158,3 +162,14 @@ def test_promotion_arithmetic_keeps_failures_and_zero_call_branches() -> None:
     assert "not-run" in promotion_arithmetic
     assert "invalid" in promotion_arithmetic
     assert "candidate_eligible AND primary_absolute_pass" in promotion_arithmetic
+
+
+def test_human_owned_values_are_fully_ratified() -> None:
+    """Block replay while any clinician-facing acceptance decision is unresolved."""
+    assert "0.5.0-frozen.1" in QUALITY_CONTRACT_TEXT
+    assert "Ratified date: `2026-07-17`" in QUALITY_CONTRACT_TEXT
+    assert "`MI-A`, ratified" in QUALITY_CONTRACT_TEXT
+    assert "Worst observed peak `<=14,000 MiB`" in QUALITY_CONTRACT_TEXT
+
+    # No unresolved decision label may survive into a clinician-facing comparison.
+    assert "HUMAN-PENDING" not in QUALITY_CONTRACT_TEXT

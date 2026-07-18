@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BASELINE_PROTOCOL_PATH = (
-    REPOSITORY_ROOT / ".goat-flow/plans/0.5.0/BASELINE-RUN-PROTOCOL.md"
+    REPOSITORY_ROOT / ".goat-flow/plans/1.0.0/reference/BASELINE-RUN-PROTOCOL.md"
 )
 DEVELOPMENT_MANIFEST_PATH = (
     REPOSITORY_ROOT / "tests/fixtures/audio/development-corpus-0.5.0.json"
@@ -81,6 +81,11 @@ def test_protocol_pins_repetition_runtime_and_failure_evidence() -> None:
         "never selectively replaced",
         "do not rerun the failed fixture",
         "must never overlap",
+        "human-ratified at T01.8",
+        "Macro-per-fixture is the primary corpus statistic",
+        "`150 minutes`",
+        "`14,000 MiB`",
+        "`0 requests / 0 generations`",
     )
 
     # Every phrase closes a path that could make the clinician-facing comparison misleading.
