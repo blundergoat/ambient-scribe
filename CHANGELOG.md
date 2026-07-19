@@ -1,40 +1,38 @@
 # Changelog
 
-## v0.5.0 - Unreleased
+## v0.5.0 - 2026-07-20
 
-Work in progress: builds a fixed, auditable quality baseline before changing transcription or
-clinical-note behaviour.
+Establishes auditable clinical quality through safer SOAP claims, traceable evidence, deterministic evaluation, protected holdouts, and manual ASR review.
 
-- **Unsupported completed actions now ask for review** - SOAP notes use the existing review marker when recommended tests or follow-up are presented as arranged, scheduled, booked, or completed without matching saved-transcript evidence; note wording and the clinician workflow remain unchanged.
-- **Unified post-visit ASR ready for manual review** - Stopped visits now select the exact `parakeet-unified-en-0.6b` checkpoint through its compatible pinned NeMo runtime and persistent local cache; this records setup availability only, not an accuracy acceptance claim, and leaves live transcription and the clinician workflow unchanged.
-- **Clinical truth kept separate** - Quality checks now distinguish what was officially spoken, what the saved transcript safely supports, and what a SOAP note may claim, preventing gold transcripts from silently repairing garbled or wrong-speaker evidence.
-- **Ten-case development corpus locked** - Evaluation tooling uses one ordered ten-consultation manifest, verifies every source hash, and rejects missing, extra, reordered, or sealed cases before scoring.
-- **Demo picker matches evaluation exactly** - The generated developer catalog now exposes the same ten ordered consultations as the quality manifest, while non-development and sealed cases are filtered before note or audio selection.
-- **Sealed holdouts protected** - Corpus checks and the medical-term collision sweep no longer discover every local TextGrid; six holdouts remain unavailable to development work, with earlier vocabulary-only exposure recorded rather than hidden.
-- **Holdout identity check completed safely** - The six sealed triplets now have filename, byte-size, and SHA-256 registrations from 18 explicit paths; every digest matches the prior seal, while replay, parsing, provider work, GPU work, and all clinical-content access remain prohibited.
-- **Baseline replay rules frozen first** - Future live and corrected measurements must use the same ten named visits, full-length browser pacing, sequential GPU work, continuous health/resource evidence, and three complete runs per lane; failed or poor visits cannot be selectively replaced.
-- **Quality acceptance limits ratified before replay** - The ten-visit comparison now has fixed transcript, note, latency, GPU, reviewer, aggregation, retry, and minimum-improvement rules, so clinicians see quality claims judged against limits chosen before any new baseline or candidate result.
-- **Provider baseline deferred safely** - M01 makes zero provider requests and zero generations because clinical context must first become schema-validated, inactive by default, and explicitly switchable; retained notes remain defect examples rather than a quantitative prompt baseline.
-- **Transcript and note gates stay independent** - Every quality measure now has explicit arithmetic and criticality, so lower word error cannot hide an unsupported SOAP claim, wrong speaker, source mismatch, unsafe action state, or missing required evidence.
-- **Anxiety-consult outcomes made executable** - Seven source-conditioned checks preserve uncertain therapy wording, single-endpoint alcohol history, conflicting chest pain, ambiguous panic, unsafe drug-denial evidence, supported suicidality denial, and the true blood-test arrangement state.
-- **Anxiety truth fixture versioned** - Each of those seven checks now carries exact speech/source identities, persisted row IDs, allowed and prohibited states, and an independent unsafe mock note for deterministic scoring.
-- **High-risk note failures pinned first** - Red acceptance specimens independently cover seven anxiety-consult outcomes, live versus corrected transcript separation, overlap timing, deterministic reports, instruction-like transcript prose, and missing-fixture failures.
-- **Medication and allergy regression frozen** - Three retained runs preserve the exact Metformin, losartan, amlodipine, and penicillin failures by lane, speaker, timing, confidence, and source identity without approving a silent rewrite or claiming an unobserved SOAP result.
-- **Cross-lane evidence registered** - The left-arm consultation manifest now binds its medication/allergy time-overlap span to six immutable live/corrected artifacts and keeps null confidence, selected-source truth, and SOAP output explicitly unavailable where they were not observed.
-- **Medication/allergy scoring cases pinned** - Seven CPU-only cases now keep omissions, wrong terms, garbles, false insertions, wrong-speaker wording, low-trust review, and faithful SOAP abstention independently testable without turning official truth into a clinician draft claim.
-- **Transcript quality stays lane-specific** - The standalone reviewer now scores live and corrected wording independently, assigns words to clean or overlapping speech by timing, checks critical terms and speaker ownership, and exposes assembly defects without loading runtime services or silently repairing clinical text.
-- **Saved-note evidence stays traceable** - A deterministic offline reviewer now blocks notes from the wrong or incomplete source, resolves every citation against the exact saved rows, separates unsupported claims from wrong citations, and preserves the pinned anxiety, medication, action-state, and safety-screen failures.
-- **Spoken instructions remain clinical text** - A synthetic safety fixture now proves that patient wording asking the evaluator to change its schema, verdict, or output cannot control the offline quality report or consume provider, GPU, corpus, or holdout resources.
-- **Quality reports repeat byte-for-byte** - Re-running the transcript and saved-note scorers over the same immutable evidence now produces identical files, while the known high word error and unsafe note omissions remain visible instead of being cleaned up.
-- **Clinical data contracts separated** - Quality evidence now distinguishes prompt-only knowledge reminders, live transcript rewrites, corrected-lane term flags, and still-inactive decoder proposals; the existing canonical-level lexicon check was shown to leave 39 executable variant pairs without exact pair authorization.
-- **Clinical asset safety rules frozen** - A versioned, inactive-by-default knowledge contract and exact pair-level medical-term ledger now pin source, reviewer, locale, privacy, consumer, and ordering rules, with eight red cases preventing missing reviews, collisions, semantic rewrites, inactive prompt injection, or sealed-data derivation from passing silently.
-- **Clinical assets checked before users see them** - A deterministic CPU-only command now gives developers stable JSON and a readable review table before any knowledge reminder or medical-term rewrite can reach a clinician; it rejects missing pair approval, unsafe provenance, ambiguous wording, implicit fixture discovery, sealed cases, and reused evidence without loading application or speech-model services.
-- **Clinical-data debt made explicit** - The untouched baseline now records that none of the three existing prompt cards meets the new default-off review contract, 39 executable medical-term variants lack exact pair authorization, and today’s substring matcher selects legacy cards in six of ten development cases; these findings remain visible for gated repair instead of being silently normalized into a pass.
+- **Unsupported completed actions now ask for review** - SOAP notes flag completed/arranged actions lacking transcript evidence; wording and workflow remain unchanged.
+- **Saved-note evidence stays traceable** - Offline checks reject bad sources, validate saved-row citations, and separate unsupported claims.
+- **Clinical truth kept separate** - Checks separate spoken truth, saved evidence, and valid SOAP claims without gold-transcript repair.
+- **Transcript and note gates stay independent** - Independent gates stop lower word error masking unsafe claims, attribution/source errors, or actions.
+- **Clinical assets checked before users see them** - A CPU-only gate blocks unapproved, unsafe, ambiguous, sealed, or reused clinical assets.
+- **Unified post-visit ASR ready for manual review** - Stopped visits use exact `parakeet-unified-en-0.6b` via pinned NeMo and persistent cache, proving setup—not accuracy—without affecting live transcription.
+- **Spoken instructions remain clinical text** - A fixture proves patient instructions cannot alter evaluation or consume model/corpus/holdout resources.
+- **Anxiety-consult outcomes made executable** - Seven checks pin therapy/alcohol uncertainty, chest-pain/panic conflict, unsafe drug denial, supported suicidality, and blood-test status.
+- **Medication/allergy scoring cases pinned** - Seven CPU-only cases test term/speaker errors, omissions, insertions, trust, and SOAP abstention.
+- **High-risk note failures pinned first** - Red specimens pin anxiety, lane/overlap handling, deterministic reports, transcript instructions, and missing fixtures.
+- **Transcript quality stays lane-specific** - Offline scoring separates lanes/overlap, checks terms/speakers, and exposes unrepaired assembly defects.
+- **Quality acceptance limits ratified before replay** - Fixed limits cover quality, latency, GPU, review, aggregation, retries, and improvement.
+- **Baseline replay rules frozen first** - Fixed visits, browser pacing, sequential GPU, health evidence, and three runs prevent replacement.
+- **Quality reports repeat byte-for-byte** - Immutable evidence yields byte-identical reports without hiding errors or unsafe omissions.
+- **Ten-case development corpus locked** - One ordered ten-visit manifest verifies hashes and rejects missing, extra, reordered, or sealed cases.
+- **Demo picker matches evaluation exactly** - The picker mirrors the manifest and excludes non-development/sealed cases.
+- **Sealed holdouts protected** - Narrow discovery keeps six holdouts sealed and records prior vocabulary-only exposure.
+- **Holdout identity check completed safely** - Eighteen filename/size/SHA-256 records match the seal; replay, parsing, model work, and content access stay prohibited.
+- **Provider baseline deferred safely** - M01 stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
+- **Anxiety truth fixture versioned** - Seven checks pin source/row identities, allowed states, and an unsafe note for deterministic scoring.
+- **Medication and allergy regression frozen** - Three runs pin Metformin, losartan, amlodipine, and penicillin failures with lane/source metadata without implying rewrites or unseen results.
+- **Cross-lane evidence registered** - Six artifacts bind the left-arm overlap; unobserved confidence, source choice, and SOAP output stay unavailable.
+- **Clinical asset safety rules frozen** - A default-off contract, pair ledger, and eight red cases block unreviewed, rewritten, injected, or holdout-derived assets.
+- **Clinical data contracts separated** - Evidence separates prompt/live/corrected/inactive-decoder lanes; 39 variants lack exact-pair approval.
+- **Clinical-data debt made explicit** - Debt remains: three cards fail review, 39 variants lack approval, and legacy matching affects six of ten cases.
 
 ## v0.4.0 - 2026-07-17
 
-Improves transcript reliability, note safety, confidence cues, long-visit handling, and local
-setup.
+Improves transcript reliability, note safety, confidence cues, long-visit handling, and local setup.
 
 - **Incomplete-note race pinned for repair** - The case where a note was generated from an incomplete transcript and silently omitted the visit's emergency instructions is now frozen as a deterministic fixture with integrity tests, so the upcoming terminal-source gate can be built and proven against the exact failure a clinician would experience.
 - **Notes only from the finished visit** - Summaries and transcript correction now bind to a terminal source attestation captured at finalization: a browser timeout can release the waiting screen but can no longer trigger a note from a partial transcript, a correction that loses any meaningful row is rejected instead of stored, over-limit visits get an explicit note-unavailable state instead of a silently shortened note, and a late role result can no longer relabel a finished draft. When finalization arrives after the wait, it unlocks note generation and prepares transcript correction but never starts a note without a clinician click.
