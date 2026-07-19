@@ -11,9 +11,7 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-BASELINE_PROTOCOL_PATH = (
-    REPOSITORY_ROOT / ".goat-flow/plans/1.0.0/reference/BASELINE-RUN-PROTOCOL.md"
-)
+BASELINE_PROTOCOL_PATH = REPOSITORY_ROOT / "docs/baseline-run-protocol-0.5.0.md"
 DEVELOPMENT_MANIFEST_PATH = (
     REPOSITORY_ROOT / "tests/fixtures/audio/development-corpus-0.5.0.json"
 )

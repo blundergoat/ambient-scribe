@@ -17,7 +17,7 @@ import wave
 from pathlib import Path
 from typing import Any
 
-DEFAULT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
+DEFAULT_MODEL = "nvidia/parakeet-unified-en-0.6b"
 DEFAULT_SECONDS = 15.0
 MAX_PREVIEW_CHARS = 300
 

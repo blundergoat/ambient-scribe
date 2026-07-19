@@ -91,11 +91,10 @@ Ask First checklist:
 ## Definition of Done
 
 1. Lint/typecheck/tests green on changed files (or failure is explicitly explained)
-2. `./scripts/context-validate.sh` passes after instruction-file or workflow-file changes
-3. No Ask First boundary changed without explicit approval
-4. Log entry written when a VERIFY trigger above fired
-5. Current state captured in `.goat-flow/logs/sessions/` before stopping incomplete work
-6. After any rename or move, `rg <old-name>` across all files (`.md`, `.json`, `.yaml`, config included) returns zero refs
+2. No Ask First boundary changed without explicit approval
+3. Log entry written when a VERIFY trigger above fired
+4. Current state captured in `.goat-flow/logs/sessions/` before stopping incomplete work
+5. After any rename or move, `rg <old-name>` across all files (`.md`, `.json`, `.yaml`, config included) returns zero refs
 
 ## Artifact Routing
 
@@ -139,7 +138,6 @@ Footguns go to `.goat-flow/learning-loop/footguns/`; lessons go to `.goat-flow/l
 
 ```bash
 ./scripts/preflight-checks.sh    # All quality gates (MUST before done)
-./scripts/context-validate.sh    # Workflow-file structural check
 composer test                    # PHPUnit
 composer analyse                 # PHPStan Level 10
 strands_agents/.venv/bin/pytest tests/python/ -q  # Python tests

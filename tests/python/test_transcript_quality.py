@@ -807,11 +807,15 @@ def test_live_and_corrected_lane_scores_keep_word_defects_independent() -> None:
     assert lane_scores["live"]["omissions"] == []
     assert lane_scores["live"]["false_insertions"] == ["aspirin"]
     assert lane_scores["live"]["duplicates"] == ["metformin"]
+    assert lane_scores["live"]["false_insertion_rate"] == 1.0
+    assert lane_scores["live"]["omission_rate"] == 0.0
     assert lane_scores["live"]["artifact_sha256"] == "a" * 64
     assert lane_scores["corrected"]["omissions"] == ["metformin"]
     assert lane_scores["corrected"]["false_insertions"] == []
     assert lane_scores["corrected"]["duplicates"] == []
     assert lane_scores["corrected"]["wrong_or_garbled_words"] == ["meltformin"]
+    assert lane_scores["corrected"]["false_insertion_rate"] == 0.0
+    assert lane_scores["corrected"]["omission_rate"] == 1.0
     assert lane_scores["corrected"]["artifact_sha256"] == "b" * 64
 
 
@@ -962,6 +966,42 @@ def test_turn_coherence_reports_identity_chronology_rewrite_and_duplicates() -> 
     ]
 
 
+def test_turn_coherence_scores_first_unit_preservation_defects() -> None:
+    """A corrupted opening unit makes its first adjacent transition defective."""
+    transcript_quality_scorer = load_transcript_quality_scorer()
+    coherence_score = transcript_quality_scorer.score_turn_coherence(
+        [
+            {
+                "source_unit_id": "unit-01",
+                "start": 0.0,
+                "role": "DOCTOR",
+                "text": "Take warfarin",
+                "source_text": "Take metformin",
+            },
+            {
+                "source_unit_id": "unit-02",
+                "start": 1.0,
+                "role": "PATIENT",
+                "text": "Understood",
+                "source_text": "Understood",
+            },
+        ]
+    )
+
+    assert coherence_score["coherent_transitions"] == 0
+    assert coherence_score["eligible_transitions"] == 1
+    assert coherence_score["turn_coherence"] == 0.0
+    assert coherence_score["assembly_defects"] == 1
+    assert coherence_score["transition_defects"] == [
+        {
+            "transition_index": 0,
+            "from_source_unit_id": "unit-01",
+            "to_source_unit_id": "unit-02",
+            "reasons": ["lexical_rewrite"],
+        }
+    ]
+
+
 def test_empty_turn_sequence_reports_unavailable_instead_of_a_favorable_pass() -> None:
     """An empty transcript gives the reviewer unavailable coherence, never a clean score."""
     transcript_quality_scorer = load_transcript_quality_scorer()
@@ -981,13 +1021,27 @@ def test_empty_turn_sequence_reports_unavailable_instead_of_a_favorable_pass() -
 
 def test_transcript_scorer_import_stays_cpu_only() -> None:
     """A developer can import the scorer without loading API, provider, NeMo, or GPU code."""
-    module_names_before_import = set(sys.modules)
+    dependency_probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib.util, json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("cpu_only_transcript_probe", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+roots = {name.partition(".")[0] for name in sys.modules}
+forbidden = {"fastapi", "nemo", "strands", "strands_agents", "torch"}
+print(json.dumps(sorted(forbidden & roots)))
+""",
+            str(TRANSCRIPT_QUALITY_SCORER_PATH),
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
 
-    load_transcript_quality_scorer()
-
-    newly_loaded_module_roots = {
-        module_name.partition(".")[0]
-        # Every newly imported module is reduced to its top-level runtime dependency.
-        for module_name in set(sys.modules) - module_names_before_import
-    }
-    assert {"fastapi", "nemo", "strands", "torch"}.isdisjoint(newly_loaded_module_roots)
+    assert json.loads(dependency_probe.stdout) == []

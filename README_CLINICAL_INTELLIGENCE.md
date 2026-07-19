@@ -3,13 +3,13 @@
 This file explains the current clinical-intelligence layers that remain after
 the clinical hints UI lane was removed:
 
-- `.goat-flow/plans/0.3.0/done/M11-medical-phrase-boosting.md`
-- `.goat-flow/plans/0.3.0/done/M12-clinical-rag-hints.md` (historical origin for summary grounding)
+- `.goat-flow/plans/_done/0.3.0/done/M11-medical-phrase-boosting.md`
+- `.goat-flow/plans/_done/0.3.0/done/M12-clinical-rag-hints.md` (historical origin for summary grounding)
 
 Both plan files are gitignored local workflow state; this README carries the
 durable summary.
 
-Last checked: 2026-07-07 against the local repo.
+Last checked: 2026-07-20 against the local repo.
 
 ## Short Version
 
@@ -51,10 +51,14 @@ medical documentation workspace.
 ## Medical Phrase Normalisation
 
 M11's original goal was NeMo decode-time phrase boosting for the multitalker
-transducer model. That exact GPU-container API is still pending proof.
+transducer model. That exact GPU-container API is still pending proof. The
+post-visit correction lane now carries a decode-phrase hook that stays
+inactive by default (`DEFAULT_POST_VISIT_CORRECTION_PHRASE = None` in
+`strands_agents/post_visit_correction.py`, with one reviewed phrase approved
+for experiments), so decode-time boosting remains unproven in both lanes.
 
-What is shipped now is deliberately narrower: an opt-in post-ASR correction
-fallback.
+What is shipped now is deliberately narrower: an on-by-default post-ASR
+correction fallback.
 
 ### What The User Sees
 
@@ -134,10 +138,11 @@ After a consult is summarised, the UI can show:
 Runtime path:
 
 ```text
-visible role-attributed transcript
-  -> retrieve_clinical_context()
-  -> summary_generation_prompt()
-  -> off-GPU Strands summary agent
+settled transcript rows (corrected when current, else live)
+  -> build_summary_context()
+  -> retrieve_clinical_context()  (only when a caller enables context)
+  -> summary prompt (api/summary_generation.py)
+  -> off-GPU Strands summary agent + fidelity checks (one retry)
   -> JSON summary returned to browser
 ```
 
@@ -194,7 +199,7 @@ They should:
 
 | Toggle | Default | Effect |
 | --- | --- | --- |
-| `MEDICAL_BOOST_ENABLED` | `0` | Enables post-ASR exact medical term normalisation. |
+| `MEDICAL_BOOST_ENABLED` | `1` (on) | Post-ASR exact medical term normalisation; set `0` for baseline raw ASR. |
 | `MEDICAL_LEXICON_PATH` | `/app/data/medical_lexicon.txt` | Points the pipeline at the lexicon file. |
 
 ## Verification
@@ -214,7 +219,6 @@ Use broader checks before shipping cross-boundary changes:
 strands_agents/.venv/bin/pytest tests/python/ -q
 composer test
 npx playwright test tests/e2e/browser.spec.js
-./scripts/context-validate.sh
 ```
 
 GPU proof still needed for true M11 decode-time phrase boosting:
@@ -230,7 +234,7 @@ hypotheses on a clinical audio clip.
 - `README_STACK.md` lists these features in the full model and runtime
   inventory.
 - `docs/medical-phrase-boosting.md` explains how to extend the lexicon.
-- `.goat-flow/plans/0.3.0/done/M11-medical-phrase-boosting.md` tracks the phrase
-  boosting milestone and its pending GPU proof (gitignored local plan file).
-- `.goat-flow/plans/0.3.0/done/M12-clinical-rag-hints.md` is the historical plan
-  for summary grounding and the removed hints lane (gitignored local plan file).
+- `.goat-flow/plans/_done/0.3.0/done/M11-medical-phrase-boosting.md` tracks the
+  phrase boosting milestone and its pending GPU proof (gitignored local plan file).
+- `.goat-flow/plans/_done/0.3.0/done/M12-clinical-rag-hints.md` is the historical
+  plan for summary grounding and the removed hints lane (gitignored local plan file).

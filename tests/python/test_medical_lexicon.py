@@ -8,12 +8,16 @@ text replacement, and the pipeline seam that feeds the browser and summaries.
 from __future__ import annotations
 
 import hashlib
-import json
 import importlib.util
+import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 from medical_lexicon import (
     MedicalLexiconMatch,
@@ -33,6 +37,29 @@ DEVELOPMENT_CORPUS_HELPER_PATH = REPO_ROOT / "scripts" / "development-corpus.py"
 DEVELOPMENT_CORPUS_MANIFEST_PATH = (
     REPO_ROOT / "tests" / "fixtures" / "audio" / "development-corpus-0.5.0.json"
 )
+RUN_PROVISIONED_QUALITY_TESTS = (
+    os.environ.get("AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS") == "1"
+)
+CONSULT12_VARIANT_WORDS = ("luratidine", "pyritin", "fexaphenidine", "emolons")
+CONSULT12_CANONICAL_WORDS = (
+    "loratadine",
+    "piriton",
+    "fexofenadine",
+    "emollients",
+)
+
+
+def textgrid_words(textgrid_paths: tuple[Path, ...]) -> set[str]:
+    """Collect whole words from explicitly supplied TextGrids without discovery."""
+    collected_words: set[str] = set()
+    for textgrid_path in textgrid_paths:
+        textgrid_content = textgrid_path.read_text(encoding="utf-8", errors="replace")
+        for spoken_text in re.findall(r'text = "([^"]*)"', textgrid_content):
+            collected_words.update(
+                spoken_word.casefold()
+                for spoken_word in re.findall(r"[A-Za-z']+", spoken_text)
+            )
+    return collected_words
 
 
 def load_medical_boost_evaluator() -> ModuleType:
@@ -407,41 +434,51 @@ def test_consult12_hard_negatives_stay_byte_identical():
         assert correct_medical_terms(hard_negative_text, phrases) == hard_negative_text
 
 
-def test_consult12_variant_sweep_finds_no_collision_in_official_corpus():
-    """Keep approved variants from rewriting words spoken in development cases.
-    Use before activation; each canonical target must also remain in official truth.
-    """
-    import re as sweep_re
+def test_consult12_variant_sweep_uses_explicit_temporary_textgrids(
+    tmp_path: Path,
+) -> None:
+    """Core collision assertions run from tracked test logic and temporary truth."""
+    doctor_textgrid_path = tmp_path / "consult-1.2.doctor.TextGrid"
+    patient_textgrid_path = tmp_path / "consult-1.2.patient.TextGrid"
+    doctor_textgrid_path.write_text(
+        'text = "Loratadine Piriton Fexofenadine and emollients."\n',
+        encoding="utf-8",
+    )
+    patient_textgrid_path.write_text(
+        'text = "No variant collision occurs in this safe mock truth."\n',
+        encoding="utf-8",
+    )
 
+    development_corpus_words = textgrid_words(
+        (doctor_textgrid_path, patient_textgrid_path)
+    )
+
+    assert development_corpus_words
+    assert set(CONSULT12_VARIANT_WORDS).isdisjoint(development_corpus_words)
+    assert set(CONSULT12_CANONICAL_WORDS).issubset(development_corpus_words)
+
+
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored development TextGrids"
+    ),
+)
+def test_provisioned_consult12_variant_sweep_finds_no_official_collision() -> None:
+    """An explicit provisioned run scans all twenty frozen development truths."""
     development_corpus_helper = load_development_corpus_helper()
     development_audio_fixture_directory = REPO_ROOT / "tests" / "fixtures" / "audio"
-    development_corpus_words: set[str] = set()
-
-    # Only approved consultations contribute words that could block an unsafe visible rewrite.
-    for (
-        development_textgrid_path
-    ) in development_corpus_helper.development_textgrid_paths(
+    development_textgrid_paths = development_corpus_helper.development_textgrid_paths(
         DEVELOPMENT_CORPUS_MANIFEST_PATH,
         REPO_ROOT,
-    ):
-        development_truth_content = development_textgrid_path.read_text(
-            encoding="utf-8", errors="replace"
-        )
-        # Every official speech interval protects real user wording from a correction collision.
-        for official_spoken_text in sweep_re.findall(
-            r'text = "([^"]*)"', development_truth_content
-        ):
-            # Compare whole words so punctuation does not hide a spoken collision.
-            development_corpus_words.update(
-                spoken_word.casefold()
-                for spoken_word in sweep_re.findall(r"[A-Za-z']+", official_spoken_text)
-            )
+    )
+    development_corpus_words = textgrid_words(development_textgrid_paths)
 
     assert development_corpus_words, "the official corpus must be present for the sweep"
 
-    new_variant_words = ["luratidine", "pyritin", "fexaphenidine", "emolons"]
     # Each proposed variant must stay absent from real speech before users see rewrites.
-    for variant_word in new_variant_words:
+    for variant_word in CONSULT12_VARIANT_WORDS:
         assert variant_word not in development_corpus_words, (
             f"variant '{variant_word}' collides with real corpus speech"
         )
@@ -455,5 +492,5 @@ def test_consult12_variant_sweep_finds_no_collision_in_official_corpus():
         .casefold()
     )
     # Every canonical target stays grounded in what the clinician officially said.
-    for canonical_word in ["loratadine", "piriton", "fexofenadine", "emollients"]:
+    for canonical_word in CONSULT12_CANONICAL_WORDS:
         assert canonical_word in consult12_doctor_truth

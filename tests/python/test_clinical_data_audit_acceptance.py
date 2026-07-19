@@ -48,6 +48,11 @@ def write_mock_development_manifest(
     Returns:
         Manifest path containing exact hashes; it is never null or empty.
     """
+    scorer_content = b'"""Synthetic transcript scorer for audit tests."""\n'
+    scorer_path = workspace_root / "scripts" / "transcript-quality.py"
+    scorer_path.parent.mkdir(parents=True)
+    scorer_path.write_bytes(scorer_content)
+
     fixture_root = workspace_root / "tests" / "fixtures" / "audio"
     fixture_root.mkdir(parents=True)
     manifest_fixtures: list[dict[str, Any]] = []
@@ -90,6 +95,12 @@ def write_mock_development_manifest(
         json.dumps(
             {
                 "schema_version": "ambient-scribe-development-corpus/v1",
+                "scorer": {
+                    "version": "synthetic-test-scorer/v1",
+                    "path": "scripts/transcript-quality.py",
+                    "bytes": len(scorer_content),
+                    "sha256": hashlib.sha256(scorer_content).hexdigest(),
+                },
                 "fixtures": manifest_fixtures,
             },
             sort_keys=True,
@@ -279,7 +290,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.split('.')[0] in fo
 """
     import_result = subprocess.run(
         [
-            str(REPO_ROOT / "strands_agents" / ".venv" / "bin" / "python"),
+            sys.executable,
             "-c",
             import_probe,
         ],

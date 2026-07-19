@@ -35,7 +35,7 @@ __all__ = [
     "validate_production_corpus_selection",
 ]
 
-DEFAULT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
+DEFAULT_MODEL = "nvidia/parakeet-unified-en-0.6b"
 DEFAULT_MAX_WORDS_PER_SEGMENT = 18
 M02_UNIFIED_MODEL = "nvidia/parakeet-unified-en-0.6b"
 M02_APPROVED_CORRECTION_PHRASE = "brand new sector"
@@ -356,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     """Read the model, consultation interval, sources, and evidence destinations.
 
     Returns:
-        Parsed options; absent values keep full audio, TDT, and legacy mode defaults.
+        Parsed options; absent values keep full audio, the Unified default, and legacy mode.
     """
     argument_parser = argparse.ArgumentParser(description=__doc__)
     argument_parser.add_argument(

@@ -100,15 +100,6 @@ class _PinnedPostVisitCheckpoint:
 
 
 _PINNED_POST_VISIT_CHECKPOINTS = {
-    "nvidia/parakeet-tdt-0.6b-v3": _PinnedPostVisitCheckpoint(
-        repository_id="nvidia/parakeet-tdt-0.6b-v3",
-        revision="7c35754d166cca382ad1e53e68b01e7c575f3a1d",
-        filename="parakeet-tdt-0.6b-v3.nemo",
-        expected_bytes=2_509_332_480,
-        expected_sha256=(
-            "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d"
-        ),
-    ),
     "nvidia/parakeet-unified-en-0.6b": _PinnedPostVisitCheckpoint(
         repository_id="nvidia/parakeet-unified-en-0.6b",
         revision="fe53cd885760c96b6a5f51a0bfd362cb4584a98b",

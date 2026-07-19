@@ -34,12 +34,18 @@ tests/fixtures/audio/generated-manifest.json
 
 ## Download PriMock57 Fixtures
 
-Use this to generate the synthetic fixtures and download the default three
-PriMock57 mock consultations. Cases 01, 09, and 10 are intentionally skipped.
+Use this to generate the synthetic fixtures and download PriMock57 mock
+consultations (default: the first three discovered cases):
 
 ```bash
 python3 scripts/generate-demo-consultation-audio.py --force --include-primock57
 ```
+
+Discovery is limited to the ten development-corpus consultations (day1:
+02, 03, 06, 07, 08; day2: 03, 09; day3: 01; day5: 03, 09); sealed holdout
+cases are never listed or downloaded. See
+[docs/demo-consultation-corpus.md](docs/demo-consultation-corpus.md) for the
+corpus rationale and the exact generation commands used for evaluation.
 
 PriMock57 stores doctor and patient channels separately. The generator downloads
 both channels, mixes the full consultation into one mono WAV per consultation,
@@ -60,7 +66,8 @@ The output file for that example is:
 tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav
 ```
 
-Download every discovered PriMock57 consultation:
+Download every development-corpus consultation (`--primock57-limit 0` removes
+the cap):
 
 ```bash
 python3 scripts/generate-demo-consultation-audio.py \
@@ -69,15 +76,17 @@ python3 scripts/generate-demo-consultation-audio.py \
   --primock57-limit 0
 ```
 
-The full PriMock57 download is much larger than the default sample. Do not commit
-the generated WAV files. PriMock57 clips are generated at full consultation
-length; `NEMO_BUFFER_MAX_DURATION` (default 900 seconds) bounds replay GPU
-memory.
+The full development-corpus download is larger than the default sample. Do not
+commit the generated WAV files. PriMock57 clips are generated at full
+consultation length; `NEMO_BUFFER_MAX_DURATION` (default 900 seconds) bounds
+replay GPU memory.
 
 ## Verify A Fixture
 
-Replay uploads are not resampled by the API. Each generated WAV must be 16 kHz
-mono 16-bit PCM:
+Generated WAVs must be 16 kHz mono 16-bit PCM. The browser Demo Audio replay
+resamples and downmixes during decode, but the batch endpoint
+(`POST /transcribe/file`, used by `scripts/m2-verify.sh`) expects 16 kHz mono
+input as-is:
 
 ```bash
 ffprobe -v error \
@@ -101,9 +110,17 @@ After generating fixtures, start the app in dev mode and open the Scribe page.
 The Demo Audio picker reads `tests/fixtures/audio/generated-manifest.json` and
 only shows rows for WAV files that exist locally.
 
+## Reference Transcripts
+
+`scripts/download-primock57-transcripts.sh` fetches the matching PriMock57
+ground-truth transcripts (Praat TextGrid) for WAVs that already exist locally,
+naming them `<wav-stem>.doctor.TextGrid` and `<wav-stem>.patient.TextGrid`.
+Quality scripts score transcription accuracy against them. Like the WAVs,
+TextGrids are gitignored.
+
 ## Licensing
 
 Synthetic fixtures are project-authored and contain no real patient data.
-PriMock57 fixtures are CC BY 4.0 mock primary care consultations. Never commit
-PHI, real-patient audio, scraped media, NonCommercial, ShareAlike, or
-NoDerivatives recordings to this repository.
+PriMock57 fixtures (audio and TextGrid transcripts) are CC BY 4.0 mock primary
+care consultations. Never commit PHI, real-patient audio, scraped media,
+NonCommercial, ShareAlike, or NoDerivatives recordings to this repository.

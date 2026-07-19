@@ -11,9 +11,7 @@ import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-QUALITY_CONTRACT_PATH = (
-    REPOSITORY_ROOT / ".goat-flow/plans/1.0.0/reference/QUALITY-CONTRACT.md"
-)
+QUALITY_CONTRACT_PATH = REPOSITORY_ROOT / "docs/quality-contract-0.5.0.md"
 QUALITY_CONTRACT_TEXT = QUALITY_CONTRACT_PATH.read_text(encoding="utf-8")
 
 TRANSCRIPT_METRIC_FORMULAS = (
@@ -22,8 +20,8 @@ TRANSCRIPT_METRIC_FORMULAS = (
     ("TX-03", "strict_attribution=correct/eligible"),
     ("TX-04", "critical_term_recall=passed_spans/required_spans"),
     ("TX-05", "critical_turn_recall=passed_turns/required_turns"),
-    ("TX-06", "false_insertion_rate=I/N_ref"),
-    ("TX-07", "omission_rate=D/N_ref"),
+    ("TX-06", "false_insertion_rate=classified_false_insertions/N_ref"),
+    ("TX-07", "omission_rate=classified_missing_words/N_ref"),
     ("TX-08", "duplicate_word_rate=surplus_words/N_hyp"),
     ("TX-09", "turn_coherence=coherent/eligible"),
     ("TX-10", "All timed words/rows requiring those checks"),
@@ -111,6 +109,16 @@ def test_transcript_metrics_pin_arithmetic(
 
     assert f"`{metric_id}`" in transcript_arithmetic
     assert required_formula in transcript_arithmetic
+
+
+def test_classified_lane_rates_do_not_reuse_raw_wer_edit_counts() -> None:
+    """Keep classified evidence arrays aligned with their threshold-rate numerators."""
+    transcript_arithmetic = quality_contract_section(
+        "Transcript metric arithmetic", "SOAP-note scorecard decisions"
+    )
+
+    assert "false_insertion_rate=I/N_ref" not in transcript_arithmetic
+    assert "omission_rate=D/N_ref" not in transcript_arithmetic
 
 
 @pytest.mark.parametrize(

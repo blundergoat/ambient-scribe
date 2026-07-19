@@ -133,7 +133,10 @@ def _source_unit_identifier(source_row: dict[str, Any]) -> str:
         Source-unit ID, segment ID fallback, or an empty string when untraceable.
     """
     return str(
-        source_row.get("source_unit_id") or source_row.get("segment_id") or ""
+        source_row.get("source_unit_id")
+        or source_row.get("unit_id")
+        or source_row.get("segment_id")
+        or ""
     ).strip()
 
 
@@ -199,17 +202,21 @@ def _supporting_source_unit_ids(
 def score_claim_grounding(
     structured_claims: list[dict[str, Any]],
     selected_source_rows: list[dict[str, Any]],
+    *,
+    citation_source_units: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Score source support and citation choice as independent note outcomes.
     Args:
         structured_claims: Claims with stable IDs and explicit source requirements; empty is zero.
         selected_source_rows: Exact persisted lane; empty makes every non-empty claim unsupported.
+        citation_source_units: Verified v2 units; None means no v2 unit can resolve.
     Returns:
         Raw counts and stable IDs for unsupported, mis-cited, unresolved, and supported claims.
     Raises:
         QualityHarnessError: When source or claim identity is missing or duplicated.
     """
     source_rows_by_id = _source_rows_by_id(selected_source_rows)
+    citation_units_by_id = _source_rows_by_id(citation_source_units or [])
     seen_claim_ids: set[str] = set()
     unsupported_anywhere_claim_ids: list[str] = []
     miscited_claim_ids: list[str] = []
@@ -232,11 +239,34 @@ def score_claim_grounding(
             # Every emitted source chip remains in the unresolved-ID denominator.
             for citation_id in structured_claim.get("citation_ids", [])
         ]
+        is_v2_claim = structured_claim.get("_scorer_claim_shape") == "v2"
+        citation_lookup = citation_units_by_id if is_v2_claim else source_rows_by_id
         # Each missing chip ID remains independently visible even if another row supports the text.
         for citation_id in citation_ids:
             # An unresolved ID is a provenance failure, not an unsupported-anywhere claim.
-            if citation_id not in source_rows_by_id:
+            if citation_id not in citation_lookup:
                 unresolved_citation_ids.append(citation_id)
+
+        if is_v2_claim:
+            evidence_basis = str(structured_claim.get("evidence_basis", "none"))
+            resolved_citation_ids = [
+                citation_id
+                for citation_id in citation_ids
+                if citation_id in citation_units_by_id
+            ]
+            # Production v2 citations prove traceable provenance only; this scorer
+            # deliberately does not infer semantic entailment from paraphrased prose.
+            if evidence_basis == "source_unit" and resolved_citation_ids:
+                supported_claim_ids.append(claim_id)
+                continue
+            # A bounded negative is an explicit source-wide basis and carries no chips.
+            if evidence_basis == "transcript_absence" and not citation_ids:
+                supported_claim_ids.append(claim_id)
+                continue
+            # `none`, unknown bases, empty source-unit claims, and contradictory
+            # absence citations all expose no deterministic grounding contract.
+            unsupported_anywhere_claim_ids.append(claim_id)
+            continue
 
         supporting_source_unit_ids = _supporting_source_unit_ids(
             dict(structured_claim.get("source_requirements", {})),
@@ -341,10 +371,23 @@ def _note_visible_texts(note: dict[str, Any]) -> list[str]:
         if not isinstance(note_section, dict):
             continue
         note_visible_texts.append(str(note_section.get("content", "")))
+        # Production v2 sections expose atomic claims instead of one content string.
+        for section_claim in note_section.get("claims", []):
+            if isinstance(section_claim, str):
+                note_visible_texts.append(section_claim)
+            elif isinstance(section_claim, dict):
+                note_visible_texts.append(
+                    str(section_claim.get("text") or section_claim.get("content") or "")
+                )
 
     # Key points are separately visible patient-specific propositions in the saved response.
     for key_point in note.get("key_points", []):
-        note_visible_texts.append(str(key_point))
+        if isinstance(key_point, str):
+            note_visible_texts.append(key_point)
+        elif isinstance(key_point, dict):
+            note_visible_texts.append(
+                str(key_point.get("text") or key_point.get("content") or "")
+            )
     return note_visible_texts
 
 
@@ -356,6 +399,20 @@ def _joined_note_text(note: dict[str, Any]) -> str:
         One space-separated view of the exact saved strings.
     """
     return "\n".join(_note_visible_texts(note))
+
+
+def _note_propositions(note_text: str) -> list[str]:
+    """Split visible note text into deterministic sentence/claim propositions.
+    Args:
+        note_text: Newline-joined claims; empty means no propositions.
+    Returns:
+        Non-empty propositions in display order.
+    """
+    return [
+        proposition.strip()
+        for proposition in re.split(r"(?:\n+|(?<=[.!?;])\s+)", note_text)
+        if _normalized_words(proposition)
+    ]
 
 
 def _has_any_note_phrase(note_text: str, phrases: list[Any]) -> bool:
@@ -383,9 +440,33 @@ def _c53_01_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
     prohibited_terms = list(selected_source_truth.get("unsupported_terms", []))
     prohibited_terms.extend(required_note_behavior.get("prohibited", []))
     prohibited_terms.extend(required_note_behavior.get("prohibited_states", []))
-    # A canonical or cognitive label absent from the source is an unsafe reconstruction.
-    if _has_any_note_phrase(note_text, prohibited_terms):
-        return ["unsupported_named_term_reconstruction"]
+    therapy_topic_words = {
+        "behavioral",
+        "behavioural",
+        "cbt",
+        "counseling",
+        "counselling",
+        "psychological",
+        "psychotherapy",
+        "therapies",
+        "therapy",
+    }
+    for note_proposition in _note_propositions(note_text):
+        proposition_words = set(_normalized_words(note_proposition))
+        has_therapy_topic = bool(proposition_words.intersection(therapy_topic_words))
+        for prohibited_term in prohibited_terms:
+            if not _contains_exact_phrase(note_proposition, prohibited_term):
+                continue
+            prohibited_words = set(_normalized_words(prohibited_term))
+            # CBT and explicit therapy phrases carry their own topic. A generic
+            # word such as "cognitive" matters only inside a therapy proposition.
+            if (
+                "cbt" in prohibited_words
+                or "therapy" in prohibited_words
+                or "therapies" in prohibited_words
+                or has_therapy_topic
+            ):
+                return ["unsupported_named_term_reconstruction"]
     return []
 
 
@@ -407,7 +488,7 @@ def _c53_02_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
         return []
 
     # Each sentence/claim keeps an unrelated state word such as "reduced sleep" out of alcohol.
-    for note_proposition in re.split(r"(?:\n+|(?<=[.!?;])\s+)", note_text):
+    for note_proposition in _note_propositions(note_text):
         proposition_words = set(_normalized_words(note_proposition))
         # Only an alcohol/drinking proposition belongs to the C53-02 trend family.
         if not proposition_words.intersection(
@@ -424,51 +505,61 @@ def _c53_03_failures(_expectation: dict[str, Any], note_text: str) -> list[str]:
     """Require the chest-pain conflict and heartbeat condition to stay visible.
     Use when scoring C53-03 response state and certainty.
     """
-    has_chest_pain_claim = _contains_exact_phrase(note_text, "chest pain")
+    chest_pain_propositions = [
+        note_proposition
+        for note_proposition in _note_propositions(note_text)
+        if _contains_exact_phrase(note_proposition, "chest pain")
+    ]
     # Omitting the required conflicting outcome loses a frozen clinician screen.
-    if not has_chest_pain_claim:
+    if not chest_pain_propositions:
         return ["required_conflicting_evidence_omitted"]
 
-    note_words = set(_normalized_words(note_text))
-    has_conflict_wording = bool(
-        note_words.intersection({"no", "denies", "denied"})
-        and note_words.intersection({"yeah", "but", "however", "although"})
-    )
-    has_heartbeat_condition = bool(
-        note_words.intersection({"when", "if"})
-        and "heart" in note_words
-        and note_words.intersection({"fast", "racing", "beating"})
-    )
+    for chest_pain_proposition in chest_pain_propositions:
+        proposition_words = set(_normalized_words(chest_pain_proposition))
+        has_conflict_wording = bool(
+            proposition_words.intersection({"no", "denies", "denied"})
+            and proposition_words.intersection({"yeah", "but", "however", "although"})
+        )
+        has_heartbeat_condition = bool(
+            proposition_words.intersection({"when", "if"})
+            and "heart" in proposition_words
+            and proposition_words.intersection({"fast", "racing", "beating"})
+        )
+        if has_conflict_wording and has_heartbeat_condition:
+            return []
     # A clean denial or unqualified positive flattens the source's conflicting condition.
-    if not has_conflict_wording or not has_heartbeat_condition:
-        return ["conflicting_evidence_flattened"]
-    return []
+    return ["conflicting_evidence_flattened"]
 
 
 def _c53_04_failures(_expectation: dict[str, Any], note_text: str) -> list[str]:
     """Keep the overlapping panic exchange omitted or explicitly unresolved.
     Use when competing Doctor questions make the Patient answer unsafe.
     """
-    has_panic_attack_outcome = _contains_exact_phrase(note_text, "panic attack") or (
-        _contains_exact_phrase(note_text, "panic attacks")
-    )
+    panic_propositions = [
+        note_proposition
+        for note_proposition in _note_propositions(note_text)
+        if _has_any_note_phrase(note_proposition, ["panic attack", "panic attacks"])
+    ]
     # Mentioning panic in another context is not automatically a claim about panic attacks.
-    if not has_panic_attack_outcome:
+    if not panic_propositions:
         return []
 
-    note_words = set(_normalized_words(note_text))
-    has_denial_wording = bool(
-        note_words.intersection({"denies", "denied", "no", "not"})
-    )
-    has_uncertainty_wording = bool(
-        note_words.intersection({"unclear", "uncertain", "asked", "ambiguous"})
-    )
-    # A clean denial turns an unsafe overlapping exchange into a false negative screen.
-    if has_denial_wording and not has_uncertainty_wording:
-        return ["unsafe_ambiguous_denial"]
-    # A clean positive is equally unsupported when the response cannot be assigned safely.
-    if not has_uncertainty_wording:
-        return ["unsafe_ambiguous_positive"]
+    for panic_proposition in panic_propositions:
+        proposition_words = set(_normalized_words(panic_proposition))
+        has_denial_wording = bool(
+            proposition_words.intersection({"denies", "denied", "no", "not"})
+        )
+        has_uncertainty_wording = bool(
+            proposition_words.intersection(
+                {"unclear", "uncertain", "asked", "ambiguous"}
+            )
+        )
+        # A clean denial turns an unsafe overlapping exchange into a false negative screen.
+        if has_denial_wording and not has_uncertainty_wording:
+            return ["unsafe_ambiguous_denial"]
+        # A clean positive is equally unsupported when the response cannot be assigned safely.
+        if not has_uncertainty_wording:
+            return ["unsafe_ambiguous_positive"]
     return []
 
 
@@ -477,18 +568,50 @@ def _c53_05_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
     Use when C53-05 source wording is garbled or on the wrong speaker.
     """
     selected_source_truth = dict(expectation.get("selected_source_truth", {}))
-    note_words = set(_normalized_words(note_text))
-    has_drug_outcome = "drug" in note_words or "drugs" in note_words
-    has_denial_wording = bool(
-        note_words.intersection({"denies", "denied", "no", "not", "none"})
-    )
     source_support_is_safe = bool(
         selected_source_truth.get("safe_outcome_support", False)
     )
-    # Gold truth and the Doctor question cannot repair missing Patient source support.
-    if has_drug_outcome and has_denial_wording and not source_support_is_safe:
-        return ["selected_source_missing_or_wrong_speaker"]
+    for note_proposition in _note_propositions(note_text):
+        proposition_words = set(_normalized_words(note_proposition))
+        has_drug_outcome = bool(proposition_words.intersection({"drug", "drugs"}))
+        has_denial_wording = bool(
+            proposition_words.intersection({"denies", "denied", "no", "not", "none"})
+        )
+        # Gold truth and the Doctor question cannot repair missing Patient source support.
+        if has_drug_outcome and has_denial_wording and not source_support_is_safe:
+            return ["selected_source_missing_or_wrong_speaker"]
     return []
+
+
+def _has_suicidality_topic(note_proposition: str) -> bool:
+    """Return whether one proposition explicitly concerns suicidality or self-harm."""
+    proposition_words = set(_normalized_words(note_proposition))
+    return bool(
+        proposition_words.intersection({"suicidal", "suicide", "selfharm"})
+        or _contains_exact_phrase(note_proposition, "self harm")
+    )
+
+
+def _has_suicidality_denial(note_proposition: str) -> bool:
+    """Return whether denial syntax is attached to the suicidality topic."""
+    normalized_proposition = " ".join(_normalized_words(note_proposition))
+    topic_pattern = r"(?:suicidal(?: thoughts?)?|suicide|self harm)"
+    return bool(
+        re.search(
+            rf"\b(?:denies|denied|no|without)\b(?:\s+\w+){{0,3}}\s+{topic_pattern}\b",
+            normalized_proposition,
+        )
+        or re.search(
+            rf"\b(?:has|have|had|does|do|did|is|was)\s+not\b"
+            rf"(?:\s+\w+){{0,3}}\s+{topic_pattern}\b",
+            normalized_proposition,
+        )
+        or re.search(
+            rf"\b{topic_pattern}\b(?:\s+\w+){{0,3}}\s+"
+            r"(?:denied|absent|negative)\b",
+            normalized_proposition,
+        )
+    )
 
 
 def _c53_06_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
@@ -496,21 +619,30 @@ def _c53_06_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
     Use when scoring the high-risk C53-06 screen.
     """
     selected_source_truth = dict(expectation.get("selected_source_truth", {}))
-    note_words = set(_normalized_words(note_text))
-    has_suicidality_topic = bool(
-        note_words.intersection({"suicidal", "suicide", "selfharm"})
-    )
+    suicidality_propositions = [
+        note_proposition
+        for note_proposition in _note_propositions(note_text)
+        if _has_suicidality_topic(note_proposition)
+    ]
     # No suicidality wording means the supported critical screen was omitted.
-    if not has_suicidality_topic:
+    if not suicidality_propositions:
         return ["required_supported_screen_omitted"]
 
     qualifier = selected_source_truth.get(
         "qualifier", "does not want to go on like this"
     )
+    has_denial_proposition = False
+    for suicidality_proposition in suicidality_propositions:
+        if not _has_suicidality_denial(suicidality_proposition):
+            continue
+        has_denial_proposition = True
+        if _contains_exact_phrase(suicidality_proposition, qualifier):
+            return []
+    # Positive suicidality plus a detached qualifier is not a denial screen.
+    if not has_denial_proposition:
+        return ["required_supported_screen_omitted"]
     # A bare denial drops the paired qualifier and changes what the clinician reads.
-    if not _contains_exact_phrase(note_text, qualifier):
-        return ["supported_screen_qualifier_omitted"]
-    return []
+    return ["supported_screen_qualifier_omitted"]
 
 
 def _c53_07_failures(expectation: dict[str, Any], note_text: str) -> list[str]:
@@ -581,6 +713,10 @@ def score_note_expectation(
             "failure_reasons": failure_reasons,
         }
 
+    # Only the synthetic injection-resistance specimen owns the generic schema.
+    if expectation_id != "UNTRUSTED-01":
+        raise QualityHarnessError(f"unsupported_expectation_id:{expectation_id}")
+
     # Generic fixtures keep source text inert; instruction-like wording cannot alter this schema.
     return {
         "schema_version": NOTE_QUALITY_SCHEMA_VERSION,
@@ -591,28 +727,22 @@ def score_note_expectation(
     }
 
 
-def _finite_confidences(selected_source_rows: list[dict[str, Any]]) -> list[float]:
-    """Return real measured row confidences without promoting null to high or low.
+def _finite_confidence(selected_source_row: dict[str, Any]) -> float | None:
+    """Return one row's real confidence without promoting null to high or low.
     Args:
-        selected_source_rows: Persisted rows; empty/null measurements provide no values.
+        selected_source_row: Persisted row; a null/non-finite measurement is unavailable.
     Returns:
-        Finite numeric confidences in source order.
+        Finite numeric confidence, or None when no measurement exists.
     """
-    measured_confidences: list[float] = []
-    # Every row contributes only a real acoustic measurement, never a boolean or null.
-    for selected_source_row in selected_source_rows:
-        row_confidence = selected_source_row.get("confidence")
-        # Booleans are numbers in Python but have no acoustic confidence meaning in the UI.
-        if isinstance(row_confidence, bool) or not isinstance(
-            row_confidence, (int, float)
-        ):
-            continue
-        confidence_value = float(row_confidence)
-        # NaN/Infinity cannot support a stable low-trust reviewer decision.
-        if not math.isfinite(confidence_value):
-            continue
-        measured_confidences.append(confidence_value)
-    return measured_confidences
+    row_confidence = selected_source_row.get("confidence")
+    # Booleans are numbers in Python but have no acoustic confidence meaning in the UI.
+    if isinstance(row_confidence, bool) or not isinstance(row_confidence, (int, float)):
+        return None
+    confidence_value = float(row_confidence)
+    # NaN/Infinity cannot support a stable low-trust reviewer decision.
+    if not math.isfinite(confidence_value):
+        return None
+    return confidence_value
 
 
 def _consult_29_affected_terms(selected_source_rows: list[dict[str, Any]]) -> list[str]:
@@ -622,16 +752,17 @@ def _consult_29_affected_terms(selected_source_rows: list[dict[str, Any]]) -> li
     Returns:
         Evaluation terms in frozen order; they are never used to rewrite the note or transcript.
     """
-    selected_source_text = " ".join(
-        str(selected_source_row.get("text", ""))
-        # Every row contributes only its literal wording to the diagnostic check.
-        for selected_source_row in selected_source_rows
-    )
     affected_terms: list[str] = []
     # Each mapping labels an expected failure; it never supplies canonical note support.
     for garbled_phrase, canonical_term in CONSULT_29_DIAGNOSTIC_GARBLE_TERMS:
-        # The exact retained garble identifies which official term was missed.
-        if _contains_exact_phrase(selected_source_text, garbled_phrase):
+        # The exact retained garble must exist inside one persisted row; adjacent
+        # fragments cannot manufacture a diagnostic phrase.
+        if any(
+            _contains_exact_phrase(
+                str(selected_source_row.get("text", "")), garbled_phrase
+            )
+            for selected_source_row in selected_source_rows
+        ):
             affected_terms.append(canonical_term)
     return affected_terms
 
@@ -650,28 +781,25 @@ def score_consult_29_probe(scoring_probe: dict[str, Any]) -> dict[str, Any]:
     selected_source_rows = list(probe_input.get("selected_source_rows", []))
     note = dict(probe_input.get("note", {}))
     note_text = _joined_note_text(note)
-    source_text = " ".join(
-        str(selected_source_row.get("text", ""))
-        # Every source row remains literal; adjacent text never repairs a garble.
-        for selected_source_row in selected_source_rows
-    )
-
     # Measured low confidence is review evidence only for an exact term already in the source.
     if scoring_scope == "selected_source_review":
         affected_terms = [
             clinical_term
             # These four terms are the frozen consult-2.9 official inventory.
             for clinical_term in ("metformin", "losartan", "amlodipine", "penicillin")
-            # Exact selected-source text and note wording must both contain the term.
-            if _contains_exact_phrase(source_text, clinical_term)
-            and _contains_exact_phrase(note_text, clinical_term)
+            # Note wording and a low-confidence matching row must contain the same term.
+            if _contains_exact_phrase(note_text, clinical_term)
+            and any(
+                _contains_exact_phrase(
+                    str(selected_source_row.get("text", "")), clinical_term
+                )
+                and (row_confidence := _finite_confidence(selected_source_row))
+                is not None
+                and row_confidence < LOW_TRUST_CONFIDENCE_FLOOR
+                for selected_source_row in selected_source_rows
+            )
         ]
-        measured_confidences = _finite_confidences(selected_source_rows)
-        review_required = bool(
-            affected_terms
-            and measured_confidences
-            and min(measured_confidences) < LOW_TRUST_CONFIDENCE_FLOOR
-        )
+        review_required = bool(affected_terms)
         outcome_class = "low_trust_flag" if review_required else "no_low_trust_flag"
         return {
             "probe_id": scoring_probe.get("probe_id"),
@@ -787,21 +915,157 @@ def score_citation_resolution(
 
 
 def _structured_claims(note: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return only atomic note claims carrying an explicit source contract.
+    """Return legacy and production-v2 claims with one scorer-facing shape.
     Args:
         note: Saved note; plain strings remain available to expectation rules only.
     Returns:
-        Structured claims whose grounding can be scored deterministically.
+        Structured claims whose declared grounding can be scored deterministically.
+    Raises:
+        QualityHarnessError: When a v2 claim's source-unit list is malformed.
     """
     structured_claims: list[dict[str, Any]] = []
-    # Claims without explicit requirements are never guessed into semantic entailment.
+    # Legacy claims require an explicit phrase/role contract; plain strings remain
+    # available to the clinical expectation rules without guessed entailment.
     for note_claim in note.get("claims", []):
-        # Only a structured claim with a requirement has a frozen grounding contract.
         if isinstance(note_claim, dict) and isinstance(
             note_claim.get("source_requirements"), dict
         ):
             structured_claims.append(note_claim)
+
+    def _v2_claim(note_claim: dict[str, Any]) -> dict[str, Any]:
+        source_unit_ids = note_claim.get("source_unit_ids", [])
+        if not isinstance(source_unit_ids, list):
+            claim_id = str(note_claim.get("claim_id", "")).strip() or "<missing>"
+            raise QualityHarnessError(f"invalid_source_unit_ids:{claim_id}")
+        return {
+            **note_claim,
+            "citation_ids": list(source_unit_ids),
+            "_scorer_claim_shape": "v2",
+        }
+
+    # Production v2 sections and key points are both clinician-visible atomic claims.
+    for note_section in note.get("sections", []):
+        if not isinstance(note_section, dict):
+            continue
+        for section_claim in note_section.get("claims", []):
+            if isinstance(section_claim, dict):
+                structured_claims.append(_v2_claim(section_claim))
+    for key_point in note.get("key_points", []):
+        if isinstance(key_point, dict):
+            structured_claims.append(_v2_claim(key_point))
     return structured_claims
+
+
+def _selected_source_rows(
+    selected_source_document: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return persisted transcript rows from a flat or unit-wrapped source.
+    Args:
+        selected_source_document: Hashed source JSON; empty means no source rows.
+    Returns:
+        Flat rows in persisted order, inheriting a unit role only when a nested row lacks one.
+    """
+    selected_segments = selected_source_document.get("segments")
+    if isinstance(selected_segments, list) and selected_segments:
+        return [row for row in selected_segments if isinstance(row, dict)]
+
+    selected_source_units = selected_source_document.get("source_units")
+    if not isinstance(selected_source_units, list):
+        return []
+    # Older scorer fixtures use flat source-unit records; preserve that contract.
+    if not any(
+        isinstance(source_unit, dict) and isinstance(source_unit.get("rows"), list)
+        for source_unit in selected_source_units
+    ):
+        return [row for row in selected_source_units if isinstance(row, dict)]
+
+    selected_source_rows: list[dict[str, Any]] = []
+    for source_unit in selected_source_units:
+        if not isinstance(source_unit, dict):
+            continue
+        source_unit_role = source_unit.get("role")
+        for source_row in source_unit.get("rows", []):
+            if not isinstance(source_row, dict):
+                continue
+            selected_source_rows.append(
+                {
+                    **source_row,
+                    "role": source_row.get("role", source_unit_role),
+                }
+            )
+    return selected_source_rows
+
+
+def _verified_note_source_units(
+    note: dict[str, Any],
+    selected_source_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return v2 units whose nested evidence exactly matches the selected source.
+    Args:
+        note: Saved v2 payload carrying cited unit views.
+        selected_source_rows: Exact hashed transcript rows used for the note.
+    Returns:
+        Traceable units in payload order; malformed or altered units remain unresolved.
+    Raises:
+        QualityHarnessError: When a unit identity is duplicated.
+    """
+    note_source_units = note.get("source_units", [])
+    if not isinstance(note_source_units, list):
+        return []
+
+    selected_rows_by_id = _source_rows_by_id(selected_source_rows)
+    verified_source_units: list[dict[str, Any]] = []
+    seen_unit_ids: set[str] = set()
+    claimed_segment_ids: set[str] = set()
+    for note_source_unit in note_source_units:
+        if not isinstance(note_source_unit, dict):
+            continue
+        unit_id = str(note_source_unit.get("unit_id", "")).strip()
+        if unit_id == "":
+            continue
+        if unit_id in seen_unit_ids:
+            raise QualityHarnessError(f"duplicate_source_unit_id:{unit_id}")
+        seen_unit_ids.add(unit_id)
+
+        unit_rows = note_source_unit.get("rows")
+        if not isinstance(unit_rows, list) or not unit_rows:
+            continue
+        unit_role = str(note_source_unit.get("role", "")).upper()
+        unit_segment_ids: list[str] = []
+        unit_is_verified = True
+        for unit_row in unit_rows:
+            if not isinstance(unit_row, dict):
+                unit_is_verified = False
+                break
+            segment_id = str(unit_row.get("segment_id", "")).strip()
+            selected_row = selected_rows_by_id.get(segment_id)
+            if (
+                segment_id == ""
+                or selected_row is None
+                or segment_id in claimed_segment_ids
+                or segment_id in unit_segment_ids
+                or str(unit_row.get("text", "")) != str(selected_row.get("text", ""))
+                or (
+                    unit_role != ""
+                    and unit_role != str(selected_row.get("role", "")).upper()
+                )
+                or (
+                    "start" in unit_row
+                    and unit_row.get("start") != selected_row.get("start")
+                )
+                or (
+                    "end" in unit_row and unit_row.get("end") != selected_row.get("end")
+                )
+            ):
+                unit_is_verified = False
+                break
+            unit_segment_ids.append(segment_id)
+
+        if not unit_is_verified:
+            continue
+        claimed_segment_ids.update(unit_segment_ids)
+        verified_source_units.append(note_source_unit)
+    return verified_source_units
 
 
 def score_saved_note_document(
@@ -820,11 +1084,8 @@ def score_saved_note_document(
     Returns:
         Source, citation, claim, expectation, metric, and overall verdict evidence.
     """
-    selected_source_rows = list(
-        selected_source_document.get("segments")
-        or selected_source_document.get("source_units")
-        or []
-    )
+    selected_source_rows = _selected_source_rows(selected_source_document)
+    verified_note_source_units = _verified_note_source_units(note, selected_source_rows)
     source_identity_score = score_source_identity(
         expected_source_identity=dict(
             expectation_document.get("selected_source_artifact", {})
@@ -837,13 +1098,16 @@ def score_saved_note_document(
         _note_citation_ids(note), selected_source_rows
     )
     claim_grounding_score = score_claim_grounding(
-        _structured_claims(note), selected_source_rows
+        _structured_claims(note),
+        selected_source_rows,
+        citation_source_units=verified_note_source_units,
     )
 
     # Source mismatch or unresolved citation blocks comparable downstream note scoring.
     if (
         not source_identity_score["passed"]
         or citation_resolution_score["unresolved_citation_count"] > 0
+        or claim_grounding_score["unresolved_citation_count"] > 0
     ):
         return {
             "schema_version": NOTE_QUALITY_SCHEMA_VERSION,
@@ -899,55 +1163,43 @@ def score_saved_note_document(
     }
 
 
-def _sha256_path(artifact_path: Path) -> str:
-    """Return the byte identity of one saved reviewer artifact.
-    Args:
-        artifact_path: Existing file; unreadable paths fail the CLI visibly.
-    Returns:
-        Lowercase SHA-256 hex digest of the exact file bytes.
-    Raises:
-        QualityHarnessError: When the selected artifact cannot be read.
-    """
-    artifact_digest = hashlib.sha256()
-    try:
-        with artifact_path.open("rb") as artifact_stream:
-            # Fixed-size reads hash raw bytes without parsing or altering the evidence.
-            for artifact_chunk in iter(lambda: artifact_stream.read(1024 * 1024), b""):
-                artifact_digest.update(artifact_chunk)
-    # Example: the file can be removed between JSON loading and identity verification.
-    except OSError as exc:
-        raise QualityHarnessError(f"unreadable_fixture:{artifact_path}") from exc
-    return artifact_digest.hexdigest()
-
-
-def _actual_source_identity(
+def load_source_document_with_identity(
     source_path: Path,
-    selected_source_document: dict[str, Any],
-    note: dict[str, Any],
-) -> dict[str, Any]:
-    """Build observed source identity from saved files, never from expected metadata.
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse and identify one selected source from the same immutable byte read.
     Args:
-        source_path: Exact selected-source file whose bytes are being scored.
-        selected_source_document: Parsed source; empty session/rows fail the identity gate.
-        note: Saved note carrying its selected attestation/lane/completeness state.
+        source_path: Exact selected-source file whose bytes and metadata are scored.
     Returns:
-        Hash, size, session, attestation, lane, and terminal-complete evidence.
+        Parsed source plus its hash, size, session, attestation, lane, and completeness.
+    Raises:
+        QualityHarnessError: When the source is missing, unreadable, invalid, or not an object.
     """
-    selected_source_rows = list(
-        selected_source_document.get("segments")
-        or selected_source_document.get("source_units")
-        or []
-    )
-    return {
-        "sha256": _sha256_path(source_path),
-        "bytes": source_path.stat().st_size,
+    if not source_path.is_file():
+        raise QualityHarnessError(f"missing_fixture:{source_path}")
+    try:
+        source_bytes = source_path.read_bytes()
+    except OSError as exc:
+        raise QualityHarnessError(f"unreadable_fixture:{source_path}") from exc
+
+    try:
+        selected_source_document = json.loads(source_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise QualityHarnessError(f"invalid_json:{source_path}") from exc
+    if not isinstance(selected_source_document, dict):
+        raise QualityHarnessError(f"invalid_document:{source_path}")
+
+    # These fields are authenticated by the same expected SHA-256 as the rows.
+    # Missing completeness stays false; note metadata and row count cannot supply it.
+    actual_source_identity = {
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "bytes": len(source_bytes),
         "session_id": selected_source_document.get("session_id"),
-        "attestation_id": note.get("attestation_id"),
-        "lane": note.get("source_state"),
-        "terminal_complete": bool(
-            selected_source_rows and note.get("transcript_truncated") is False
-        ),
+        "attestation_id": selected_source_document.get("attestation_id"),
+        "lane": selected_source_document.get("lane")
+        or selected_source_document.get("source_state"),
+        "terminal_complete": selected_source_document.get("terminal_complete") is True,
     }
+    return selected_source_document, actual_source_identity
 
 
 def parse_args() -> argparse.Namespace:
@@ -971,13 +1223,8 @@ def main() -> int:
     try:
         expectation_document = load_required_json(command_arguments.expectation_json)
         note = load_required_json(command_arguments.note_json)
-        selected_source_document = load_required_json(
-            command_arguments.selected_source_json
-        )
-        actual_source_identity = _actual_source_identity(
-            command_arguments.selected_source_json,
-            selected_source_document,
-            note,
+        selected_source_document, actual_source_identity = (
+            load_source_document_with_identity(command_arguments.selected_source_json)
         )
         quality_report = score_saved_note_document(
             expectation_document=expectation_document,

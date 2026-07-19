@@ -551,12 +551,16 @@ def _classify_surplus_words(
 
 def _lane_error_rates(
     lane_word_errors: WordErrorScore,
+    false_insertions: list[str],
+    missing_words: list[str],
     duplicate_words: list[str],
 ) -> tuple[float | None, float | None, float | None]:
     """Return insertion, omission, and duplicate rates with honest empty denominators.
 
     Args:
         lane_word_errors: Alignment counts for one clinician-visible lane.
+        false_insertions: Classified unlicensed words, excluding repeats.
+        missing_words: Classified official words absent from the clinician view.
         duplicate_words: Proven surplus repeats; empty means the duplicate numerator is zero.
 
     Returns:
@@ -567,10 +571,8 @@ def _lane_error_rates(
     duplicate_word_rate: float | None = None
     # No official words means insertion and omission rates have no fair denominator.
     if lane_word_errors.reference_words > 0:
-        false_insertion_rate = (
-            lane_word_errors.insertions / lane_word_errors.reference_words
-        )
-        omission_rate = lane_word_errors.deletions / lane_word_errors.reference_words
+        false_insertion_rate = len(false_insertions) / lane_word_errors.reference_words
+        omission_rate = len(missing_words) / lane_word_errors.reference_words
     # No visible words means the clinician saw no duplicate denominator.
     if lane_word_errors.hypothesis_words > 0:
         duplicate_word_rate = len(duplicate_words) / lane_word_errors.hypothesis_words
@@ -604,7 +606,7 @@ def _score_transcript_lane_words(
     )
     lane_word_errors = word_error_score(reference_words, hypothesis_words)
     false_insertion_rate, omission_rate, duplicate_word_rate = _lane_error_rates(
-        lane_word_errors, duplicate_words
+        lane_word_errors, false_insertions, missing_words, duplicate_words
     )
     return {
         "artifact_sha256": lane_record.get("artifact_sha256"),
@@ -1675,6 +1677,13 @@ def score_turn_coherence(
         defect_reasons = _transition_defect_reasons(
             previous_source_unit, current_source_unit, seen_source_unit_ids
         )
+        # The opening unit has no earlier pair, so attach its preservation
+        # evidence to the first clinician-visible transition.
+        if transition_index == 0:
+            defect_reasons = [
+                *_source_preservation_defects(previous_source_unit),
+                *defect_reasons,
+            ]
 
         # Every defective transition keeps all reasons instead of collapsing to one favorable label.
         if defect_reasons:

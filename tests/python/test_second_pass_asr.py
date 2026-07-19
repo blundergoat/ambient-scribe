@@ -24,7 +24,6 @@ import post_visit_correction as correction_module
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECOND_PASS_SCRIPT = REPO_ROOT / "scripts" / "second_pass_asr.py"
-TDT_MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
 UNIFIED_MODEL_NAME = "nvidia/parakeet-unified-en-0.6b"
 
 
@@ -399,13 +398,13 @@ def test_unified_keeps_existing_validation_loader_config() -> None:
     assert restored_model.cfg.validation_ds.use_start_end_token is True
 
 
-def test_tdt_keeps_missing_validation_loader_config() -> None:
-    """TDT keeps its checkpoint config when a clinician uses the prior model."""
+def test_other_model_keeps_missing_validation_loader_config() -> None:
+    """A non-Unified override keeps the loader config its checkpoint author chose."""
     restored_model = SimpleNamespace(cfg=SimpleNamespace(validation_ds=None))
 
     returned_model = correction_module._prepare_loaded_post_visit_asr_model(
         restored_model,
-        TDT_MODEL_NAME,
+        "operator/private-post-visit-model",
     )
 
     assert returned_model is restored_model

@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -42,6 +44,18 @@ EXPECTED_OUTCOME_STATES = (
     ("C53-05", "omit_or_explicitly_qualify", "gold_reconstruction"),
     ("C53-06", "denial_with_contextual_qualifier", "omitted"),
     ("C53-07", "clinician_recommended", "ordered"),
+)
+RAW_EXPECTATION_IDS = tuple(
+    clinical_expectation["expectation_id"]
+    for clinical_expectation in EXPECTATION_DOCUMENT["expectations"]
+)
+TRUTH_ARTIFACT_RECORDS = (
+    EXPECTATION_DOCUMENT["speech_truth_artifacts"]["doctor"],
+    EXPECTATION_DOCUMENT["speech_truth_artifacts"]["patient"],
+    EXPECTATION_DOCUMENT["selected_source_artifact"],
+)
+RUN_PROVISIONED_QUALITY_TESTS = (
+    os.environ.get("AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS") == "1"
 )
 
 # Each clinical rule is addressable by its stable reviewer-facing expectation ID.
@@ -88,22 +102,43 @@ def test_expectation_fixture_has_frozen_identity_and_order() -> None:
         "primock57-day5-consultation03-im-feeling-very-anxious"
     )
     assert len(EXPECTATION_DOCUMENT["description"]) == 4
+    assert RAW_EXPECTATION_IDS == EXPECTED_EXPECTATION_IDS
+    assert len(RAW_EXPECTATION_IDS) == len(set(RAW_EXPECTATION_IDS)) == 7
     assert tuple(EXPECTATIONS_BY_ID) == EXPECTED_EXPECTATION_IDS
-    assert len(EXPECTATIONS_BY_ID) == len(set(EXPECTATIONS_BY_ID)) == 7
+    assert len(EXPECTATIONS_BY_ID) == 7
     assert EXPECTATION_DOCUMENT["source_transition_rule"] == (
         "selected_source_truth changes only with a newly accepted persisted artifact and SHA-256"
     )
 
 
-@pytest.mark.parametrize(
-    "artifact_record",
-    (
-        EXPECTATION_DOCUMENT["speech_truth_artifacts"]["doctor"],
-        EXPECTATION_DOCUMENT["speech_truth_artifacts"]["patient"],
-        EXPECTATION_DOCUMENT["selected_source_artifact"],
+def test_truth_artifact_records_have_frozen_identities() -> None:
+    """Tracked metadata keeps every ignored truth/source artifact reproducible."""
+    artifact_paths = tuple(str(record["path"]) for record in TRUTH_ARTIFACT_RECORDS)
+
+    assert len(artifact_paths) == len(set(artifact_paths)) == 3
+    assert all(
+        not Path(artifact_path).is_absolute() for artifact_path in artifact_paths
+    )
+    for artifact_record in TRUTH_ARTIFACT_RECORDS:
+        assert isinstance(artifact_record["bytes"], int)
+        assert artifact_record["bytes"] > 0
+        assert re.fullmatch(r"[0-9a-f]{64}", str(artifact_record["sha256"]))
+
+
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored consult-5.3 truth and retained source artifacts"
     ),
 )
-def test_truth_artifact_identity_is_current(artifact_record: dict[str, object]) -> None:
+@pytest.mark.parametrize(
+    "artifact_record",
+    TRUTH_ARTIFACT_RECORDS,
+)
+def test_provisioned_truth_artifact_identity_is_current(
+    artifact_record: dict[str, object],
+) -> None:
     """The reviewer scores the exact frozen truth/source bytes, never a nearby artifact."""
     truth_artifact_path = REPOSITORY_ROOT / str(artifact_record["path"])
 
@@ -135,7 +170,32 @@ def test_each_outcome_has_an_independent_required_and_prohibited_state(
     assert clinical_expectation["criticality"] == "L1-CLINICAL"
 
 
-def test_selected_source_units_resolve_in_the_frozen_artifact() -> None:
+def test_selected_source_references_are_nonempty_unique_unit_ids() -> None:
+    """Tracked expectations retain distinct, well-formed selected-source references."""
+    all_source_unit_ids = tuple(
+        source_unit_id
+        for clinical_expectation in EXPECTATION_DOCUMENT["expectations"]
+        for source_unit_id in clinical_expectation["selected_source_truth"][
+            "source_unit_ids"
+        ]
+    )
+
+    assert all_source_unit_ids
+    assert len(all_source_unit_ids) == len(set(all_source_unit_ids))
+    assert all(
+        re.fullmatch(r"corrected-[0-9]{4}", source_unit_id)
+        for source_unit_id in all_source_unit_ids
+    )
+
+
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored consult-5.3 selected-source artifact"
+    ),
+)
+def test_provisioned_selected_source_units_resolve_in_frozen_artifact() -> None:
     """Every cited source row exists before its behavior can constrain the SOAP draft."""
     selected_source_path = (
         REPOSITORY_ROOT / EXPECTATION_DOCUMENT["selected_source_artifact"]["path"]

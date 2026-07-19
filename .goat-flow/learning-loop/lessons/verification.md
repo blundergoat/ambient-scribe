@@ -1,9 +1,23 @@
 ---
 category: verification
-last_reviewed: 2026-07-19
+last_reviewed: 2026-07-20
 ---
 
 # READ / SCOPE / VERIFY Lessons
+
+## Lesson: Existence-check every path a doc cites; combined shell output misattributes easily
+
+**Created:** 2026-07-20
+**What happened:** While refreshing the six README files against the current code, one Bash
+call combined `ls .goat-flow/plans/_done/0.3.0/ | head` with
+`ls .goat-flow/plans/_done/0.3.0/done/ | rg "M11|M12"`; the interleaved output made the
+M11/M12 plan files look like direct children of `_done/0.3.0/`, and that wrong path was
+written into `README_CLINICAL_INTELLIGENCE.md`. The final VERIFY sweep (`[ -e "$p" ]` over
+every path the edited READMEs reference) caught both dead links before completion.
+**Prevention:** When several listing commands share one shell call, print a delimiter naming
+each directory before its output, and never transcribe a path from memory of combined output.
+Before presenting doc changes, run a per-path existence check over every file, script, and
+directory the docs newly cite - it is cheap and it caught the session's only error.
 
 ## Lesson: A truncated sweep grep ships an incomplete removal
 
@@ -100,9 +114,10 @@ but the final Ruff format gate still found one test file requiring mechanical fo
 first recorded `Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
 **Prevention:** Treat formatting as a final-code gate: rerun it after the last test edit, then
 rerun affected tests so the formatted file—not the pre-format version—is the verified artifact.
-**Follow-up (M03):** A final exception-comment audit again left three otherwise green Python files
-needing Ruff formatting. The formatter and all 130 affected summary/fidelity tests were rerun
-before the broad suite, confirming the final edited bytes rather than the earlier focused pass.
+**Follow-ups:** M03's final audit and M04B's 83-test scorer checkpoint each left three green Python
+files needing Ruff formatting. In both cases, format/check and affected tests were rerun before the
+broad suite, verifying final bytes. Run the formatter after the last regression patch, not merely
+after the first behavioral green.
 
 ## Lesson: Verification wrappers must preserve the producer's exit status
 

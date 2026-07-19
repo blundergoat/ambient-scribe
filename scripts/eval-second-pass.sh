@@ -3,7 +3,7 @@
 # Operators use it before changing the model that corrects a transcript after
 # Stop. Production shape preserves the same row assembly the clinician receives,
 # while dry runs validate sources and evidence paths without loading NeMo.
-# TDT v3 stays the default until Unified passes the complete frozen comparison.
+# Unified is the accepted default; pass --model to compare another checkpoint.
 set -euo pipefail
 
 # Default paths keep fixture evidence local and never alter the consultation app.
@@ -11,7 +11,7 @@ FIXTURE_DIR="${FIXTURE_DIR:-tests/fixtures/audio}"
 PYTHON_BIN="${PYTHON_BIN:-strands_agents/.venv/bin/python}"
 RUN_ID="${SECOND_PASS_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="${SECOND_PASS_RUN_DIR:-var/quality/second-pass/$RUN_ID}"
-MODEL="nvidia/parakeet-tdt-0.6b-v3"
+MODEL="nvidia/parakeet-unified-en-0.6b"
 DRY_RUN=0
 SECONDS_LIMIT=""
 PRODUCTION_SHAPE=0
@@ -63,7 +63,7 @@ PRODUCTION_AUDIO_SHA256=()
 MANIFEST_BYTES=""
 MANIFEST_SHA256=""
 
-# Explain the validated default and the explicit experiment available to the operator.
+# Explain the accepted default and the explicit override available to the operator.
 usage() {
     cat <<'USAGE'
 Usage:
@@ -74,12 +74,10 @@ Usage:
 Examples:
   scripts/eval-second-pass.sh --dry-run day1-consultation02
   scripts/eval-second-pass.sh --seconds 60 day1-consultation02
-  scripts/eval-second-pass.sh --model nvidia/parakeet-unified-en-0.6b day1-consultation02
 
-The validated default is nvidia/parakeet-tdt-0.6b-v3 in the pinned NeMo 26.02 /
-Toolkit 2.7.3 runtime. Unified remains an explicit --model experiment because
-the recorded pinned-runtime attempt failed during model construction; revisit it
-only after the checkpoint revision or pinned runtime changes.
+The default model is nvidia/parakeet-unified-en-0.6b in the pinned NeMo 26.02 /
+Toolkit 2.7.3 runtime - the same checkpoint a stopped visit uses. Pass --model
+to evaluate a different checkpoint.
 
 Artifacts are written under var/quality/second-pass/<run-id>/. Real inference
 executes inside the running nemo-agent container without changing the live app.
@@ -157,7 +155,7 @@ while [[ $# -gt 0 ]]; do
             echo "error: --all is forbidden; pass the ten development stems explicitly" >&2
             exit 2
             ;;
-        # An explicit model keeps Unified selectable for a future compatibility probe.
+        # An explicit model lets the operator evaluate a different checkpoint.
         --model)
             # Missing model text cannot identify the candidate the operator wants to compare.
             if [[ $# -lt 2 ]]; then
@@ -637,7 +635,7 @@ score_fixture() {
     local effective_decoder_path="$fixture_run_dir/effective-decoder.json"
 
     printf 'second-pass fixture=%s model=%s dry_run=%s\n' "$fixture_name" "$MODEL" "$DRY_RUN" >&2
-    # Dry mode stops after proving the selected TDT default and evidence destinations.
+    # Dry mode stops after proving the selected model and evidence destinations.
     if [[ "$DRY_RUN" -eq 1 ]]; then
         run_host_dry_run \
             "$wav_path" \

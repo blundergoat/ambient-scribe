@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -40,6 +42,79 @@ EXPECTED_DEVELOPMENT_CASE_IDS = (
     "day5_consultation03",
     "day5_consultation09",
 )
+RUN_PROVISIONED_QUALITY_TESTS = (
+    os.environ.get("AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS") == "1"
+)
+
+
+def write_synthetic_development_manifest(
+    workspace_root: Path, development_corpus_helper: ModuleType
+) -> Path:
+    """Write hashed mock scorer and triplets for default corpus unit coverage."""
+    scorer_content = b'"""Synthetic transcript scorer for corpus tests."""\n'
+    scorer_path = workspace_root / "scripts" / "transcript-quality.py"
+    scorer_path.parent.mkdir(parents=True)
+    scorer_path.write_bytes(scorer_content)
+
+    fixture_root = workspace_root / "tests" / "fixtures" / "audio"
+    fixture_root.mkdir(parents=True)
+    manifest_fixtures = []
+    for fixture_ordinal, development_stem in enumerate(
+        development_corpus_helper.EXPECTED_STEMS, start=1
+    ):
+        fixture_file_records = {}
+        fixture_content_by_kind = {
+            "wav": f"mock audio {fixture_ordinal}\n".encode(),
+            "doctor_textgrid": (
+                f'text = "Safe doctor words {fixture_ordinal}."\n'.encode()
+            ),
+            "patient_textgrid": (
+                f'text = "Safe patient words {fixture_ordinal}."\n'.encode()
+            ),
+        }
+        fixture_suffix_by_kind = {
+            "wav": ".wav",
+            "doctor_textgrid": ".doctor.TextGrid",
+            "patient_textgrid": ".patient.TextGrid",
+        }
+        for fixture_file_kind, fixture_content in fixture_content_by_kind.items():
+            relative_fixture_path = Path(
+                f"tests/fixtures/audio/{development_stem}"
+                f"{fixture_suffix_by_kind[fixture_file_kind]}"
+            )
+            (workspace_root / relative_fixture_path).write_bytes(fixture_content)
+            fixture_file_records[fixture_file_kind] = {
+                "path": relative_fixture_path.as_posix(),
+                "bytes": len(fixture_content),
+                "sha256": hashlib.sha256(fixture_content).hexdigest(),
+            }
+        manifest_fixtures.append(
+            {
+                "ordinal": fixture_ordinal,
+                "fixture_id": development_stem,
+                "stem": development_stem,
+                "files": fixture_file_records,
+            }
+        )
+
+    manifest_path = fixture_root / "synthetic-development-corpus.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": development_corpus_helper.SCHEMA_VERSION,
+                "scorer": {
+                    "version": "synthetic-test-scorer/v1",
+                    "path": "scripts/transcript-quality.py",
+                    "bytes": len(scorer_content),
+                    "sha256": hashlib.sha256(scorer_content).hexdigest(),
+                },
+                "fixtures": manifest_fixtures,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 def load_development_corpus_helper() -> ModuleType:
@@ -82,12 +157,12 @@ def load_demo_audio_generator() -> ModuleType:
     return demo_audio_generator
 
 
-def test_manifest_resolves_exactly_ten_development_triplets() -> None:
-    """The developer gets ten ordered cases before starting a quality run."""
+def test_tracked_manifest_resolves_ten_paths_without_opening_local_corpus() -> None:
+    """The tracked contract keeps ten ordered cases without requiring ignored bytes."""
     development_corpus_helper = load_development_corpus_helper()
 
     development_fixtures = development_corpus_helper.load_development_fixtures(
-        MANIFEST_PATH, REPO_ROOT
+        MANIFEST_PATH, REPO_ROOT, verify_development_files=False
     )
 
     assert len(development_fixtures) == 10
@@ -96,14 +171,63 @@ def test_manifest_resolves_exactly_ten_development_triplets() -> None:
         tuple(development_fixture.stem for development_fixture in development_fixtures)
         == development_corpus_helper.EXPECTED_STEMS
     )
-    assert (
-        len(
-            development_corpus_helper.development_textgrid_paths(
-                MANIFEST_PATH, REPO_ROOT
-            )
+    declared_textgrid_paths = tuple(
+        textgrid_path
+        for development_fixture in development_fixtures
+        for textgrid_path in (
+            development_fixture.doctor_textgrid_path,
+            development_fixture.patient_textgrid_path,
         )
-        == 20
     )
+    assert len(declared_textgrid_paths) == 20
+
+
+def test_synthetic_manifest_verifies_ten_triplets_and_twenty_truth_files(
+    tmp_path: Path,
+) -> None:
+    """Default pytest exercises file hashes and truth selection with temporary bytes."""
+    development_corpus_helper = load_development_corpus_helper()
+    manifest_path = write_synthetic_development_manifest(
+        tmp_path, development_corpus_helper
+    )
+
+    development_fixtures = development_corpus_helper.load_development_fixtures(
+        manifest_path, tmp_path
+    )
+    textgrid_paths = development_corpus_helper.development_textgrid_paths(
+        manifest_path, tmp_path
+    )
+
+    assert len(development_fixtures) == 10
+    assert (
+        tuple(development_fixture.stem for development_fixture in development_fixtures)
+        == development_corpus_helper.EXPECTED_STEMS
+    )
+    assert len(textgrid_paths) == 20
+    assert len(set(textgrid_paths)) == 20
+    assert all(textgrid_path.is_file() for textgrid_path in textgrid_paths)
+
+
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored development corpus"
+    ),
+)
+def test_provisioned_manifest_verifies_real_development_triplets() -> None:
+    """An explicit provisioned run verifies every frozen local corpus byte."""
+    development_corpus_helper = load_development_corpus_helper()
+
+    development_fixtures = development_corpus_helper.load_development_fixtures(
+        MANIFEST_PATH, REPO_ROOT
+    )
+    textgrid_paths = development_corpus_helper.development_textgrid_paths(
+        MANIFEST_PATH, REPO_ROOT
+    )
+
+    assert len(development_fixtures) == 10
+    assert len(textgrid_paths) == 20
 
 
 def test_sealed_stem_request_fails_before_fixture_selection() -> None:
@@ -164,8 +288,8 @@ def test_manifest_registers_consult_29_cross_lane_evidence() -> None:
     assert development_manifest["scorer"] == {
         "version": "ambient-scribe-transcript-quality/0.5.0",
         "path": "scripts/transcript-quality.py",
-        "bytes": 99534,
-        "sha256": "bb91823432e1103c4bf3f3c5f12f2f7c3cacff7afef3ddaf20148a528685ee1e",
+        "bytes": 100065,
+        "sha256": "9cf8c3a18a8089a1f5525fdb993efc74bc3910d6f05b7d3439f04226273a0426",
     }
     assert development_manifest["picker_catalog"] == {
         "path": "tests/fixtures/audio/generated-manifest.json",
@@ -203,13 +327,50 @@ def test_manifest_registers_consult_29_cross_lane_evidence() -> None:
     ] == ["live", "corrected", "live", "corrected", "live", "corrected"]
 
 
-def test_registered_persisted_artifacts_keep_their_hashes() -> None:
-    """The reviewer gets the same saved rows whenever a cross-lane result is reproduced."""
+def registered_persisted_artifacts() -> list[dict[str, Any]]:
+    """Return the tracked evidence identities without opening ignored campaign output."""
     development_manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    registered_artifacts = (
+    return (
         development_manifest["fixtures"][6]["persisted_artifacts"]
         + development_manifest["fixtures"][8]["persisted_artifacts"]
     )
+
+
+def test_registered_persisted_artifacts_have_reproducible_identities() -> None:
+    """Tracked evidence records retain unique paths, sizes, lanes, and hashes."""
+    registered_artifacts = registered_persisted_artifacts()
+
+    assert registered_artifacts
+    assert len({artifact["path"] for artifact in registered_artifacts}) == len(
+        registered_artifacts
+    )
+    assert tuple(artifact["lane"] for artifact in registered_artifacts) == (
+        "live",
+        "corrected",
+        "live",
+        "corrected",
+        "live",
+        "corrected",
+        "selected_source",
+        "saved_note",
+    )
+    for registered_artifact in registered_artifacts:
+        assert isinstance(registered_artifact["bytes"], int)
+        assert registered_artifact["bytes"] > 0
+        assert re.fullmatch(r"[0-9a-f]{64}", str(registered_artifact["sha256"]))
+        assert str(registered_artifact["path"]).startswith("var/quality/")
+
+
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored retained quality evidence"
+    ),
+)
+def test_provisioned_persisted_artifacts_keep_their_hashes() -> None:
+    """An explicit provisioned run verifies retained cross-lane evidence bytes."""
+    registered_artifacts = registered_persisted_artifacts()
 
     # Each registered source must still match before a clinician-facing score can cite it.
     for registered_artifact in registered_artifacts:
