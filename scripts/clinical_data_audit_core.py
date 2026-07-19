@@ -560,7 +560,7 @@ def _audit_pair_parity(
             "active review pair is absent from runtime",
         )
     # Disabled/rejected rows must never remain executable.
-    for pair in sorted(runtime_pair_keys & inactive_pairs):
+    for pair in sorted((runtime_pair_keys & inactive_pairs) - active_pairs):
         add_finding(
             findings,
             "review.inactive_pair_executable",

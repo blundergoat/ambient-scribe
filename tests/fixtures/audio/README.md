@@ -37,10 +37,10 @@ Praat transcripts (CC BY 4.0). They pair with each WAV by name:
 scripts/download-primock57-transcripts.sh
 ```
 
-The downloader discovers every local PriMock57 WAV. Before running it, validate
-that the discoverable WAV stem set is exactly the ten ordered development stems
-in `development-corpus-0.5.0.json`. If any additional WAV exists, stop: do not
-open or delete it, and do not run this all-local-WAV downloader. This writes
+The downloader compares every discovered PriMock57 WAV stem with the ten ordered
+development stems in `development-corpus-0.5.0.json` before opening a WAV or URL.
+It exits `2` on any missing or extra stem without downloading or deleting data.
+After that automatic preflight, it writes
 `<wav-stem>.doctor.TextGrid` and `<wav-stem>.patient.TextGrid` for every approved
 development consultation whose `.wav` exists locally, e.g.:
 

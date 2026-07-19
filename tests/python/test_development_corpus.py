@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -23,6 +24,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_PATH = REPO_ROOT / "scripts" / "development-corpus.py"
 DEMO_AUDIO_GENERATOR_PATH = REPO_ROOT / "scripts/generate-demo-consultation-audio.py"
+PRIMOCK57_TRANSCRIPT_DOWNLOADER_PATH = (
+    REPO_ROOT / "scripts/download-primock57-transcripts.sh"
+)
 MANIFEST_PATH = (
     REPO_ROOT / "tests" / "fixtures" / "audio" / "development-corpus-0.5.0.json"
 )
@@ -387,9 +391,16 @@ def test_generator_and_picker_catalog_expose_only_development_cases() -> None:
     demo_audio_generator = load_demo_audio_generator()
     development_corpus_helper = load_development_corpus_helper()
     picker_catalog = json.loads(PICKER_CATALOG_PATH.read_text(encoding="utf-8"))
+    approved_catalog = demo_audio_generator.load_development_primock57_catalog()
 
     assert demo_audio_generator.PRIMOCK57_DEVELOPMENT_CASE_IDS == frozenset(
         EXPECTED_DEVELOPMENT_CASE_IDS
+    )
+    assert tuple(case_id for case_id, _stem in approved_catalog) == (
+        EXPECTED_DEVELOPMENT_CASE_IDS
+    )
+    assert tuple(stem for _case_id, stem in approved_catalog) == (
+        development_corpus_helper.EXPECTED_STEMS
     )
     # A sealed filename cannot appear in the user-visible development catalog.
     assert set(
@@ -444,6 +455,218 @@ def test_generator_filters_sealed_case_before_note_selection() -> None:
         )
     ]
     development_note_reader.assert_called_once_with("day1_consultation02")
+
+
+def test_generator_validates_manifest_before_remote_inventory() -> None:
+    """A broken development allowlist stops before the GitHub file API is opened."""
+    demo_audio_generator = load_demo_audio_generator()
+
+    with mock.patch.object(
+        demo_audio_generator,
+        "load_development_primock57_catalog",
+        side_effect=RuntimeError("manifest rejected"),
+    ):
+        with mock.patch.object(
+            demo_audio_generator, "read_json_url"
+        ) as remote_inventory_reader:
+            with pytest.raises(RuntimeError, match="manifest rejected"):
+                demo_audio_generator.discover_primock57_consultations(10, set())
+
+    remote_inventory_reader.assert_not_called()
+
+
+def test_partial_picker_refresh_preserves_complete_development_order() -> None:
+    """Refreshing one approved WAV keeps all ten picker rows in frozen order."""
+    demo_audio_generator = load_demo_audio_generator()
+    picker_catalog = json.loads(PICKER_CATALOG_PATH.read_text(encoding="utf-8"))
+    refreshed_entry = dict(picker_catalog[3])
+    refreshed_entry["duration_seconds"] = 321.0
+
+    merged_catalog = demo_audio_generator.merge_picker_catalog(
+        picker_catalog,
+        [refreshed_entry],
+        require_complete_primock57=True,
+    )
+
+    assert len(merged_catalog) == 10
+    assert tuple(entry["case_id"] for entry in merged_catalog) == (
+        EXPECTED_DEVELOPMENT_CASE_IDS
+    )
+    assert merged_catalog[3]["duration_seconds"] == 321.0
+    assert merged_catalog[:3] == picker_catalog[:3]
+    assert merged_catalog[4:] == picker_catalog[4:]
+
+
+def test_partial_picker_refresh_rejects_an_incomplete_existing_catalog() -> None:
+    """A nine-row catalog cannot be published as a successful one-case refresh."""
+    demo_audio_generator = load_demo_audio_generator()
+    picker_catalog = json.loads(PICKER_CATALOG_PATH.read_text(encoding="utf-8"))
+
+    with pytest.raises(RuntimeError, match="complete development catalog"):
+        demo_audio_generator.merge_picker_catalog(
+            picker_catalog[:-1],
+            [picker_catalog[0]],
+            require_complete_primock57=True,
+        )
+
+
+def test_mixed_valid_and_mistyped_selectors_stop_before_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One unknown selector rejects the whole refresh before WAV or catalog writes."""
+    demo_audio_generator = load_demo_audio_generator()
+    picker_catalog = json.loads(PICKER_CATALOG_PATH.read_text(encoding="utf-8"))
+    (tmp_path / "generated-manifest.json").write_text(
+        json.dumps(picker_catalog), encoding="utf-8"
+    )
+    selected_case_id = EXPECTED_DEVELOPMENT_CASE_IDS[0]
+    selected_row = picker_catalog[0]
+    selected_consultation = demo_audio_generator.Primock57Consultation(
+        case_id=selected_case_id,
+        filename=selected_row["filename"],
+        complaint=selected_row["complaint"],
+        doctor_url="https://example.invalid/doctor.wav",
+        patient_url="https://example.invalid/patient.wav",
+        source_paths=("audio/doctor.wav", "audio/patient.wav"),
+        note_path=f"notes/{selected_case_id}.json",
+    )
+    command_arguments = mock.Mock(
+        output_dir=str(tmp_path),
+        case=[selected_case_id, "mistyped-case"],
+        force=True,
+        include_primock57=True,
+        primock57_limit=10,
+    )
+    monkeypatch.setattr(demo_audio_generator, "parse_args", lambda: command_arguments)
+    monkeypatch.setattr(demo_audio_generator.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(
+        demo_audio_generator,
+        "discover_primock57_consultations",
+        lambda _limit, _selected_cases: [selected_consultation],
+    )
+    audio_generator = mock.Mock()
+    catalog_writer = mock.Mock()
+    monkeypatch.setattr(demo_audio_generator, "generate_primock57_wav", audio_generator)
+    monkeypatch.setattr(demo_audio_generator, "write_picker_catalog", catalog_writer)
+
+    with pytest.raises(SystemExit, match="unmatched --case selectors"):
+        demo_audio_generator.main()
+
+    audio_generator.assert_not_called()
+    catalog_writer.assert_not_called()
+
+
+def test_failed_catalog_replace_preserves_prior_bytes_and_cleans_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed final rename leaves the browser's prior picker catalog untouched."""
+    demo_audio_generator = load_demo_audio_generator()
+    manifest_path = tmp_path / "generated-manifest.json"
+    prior_bytes = b'[{"filename":"prior.wav"}]\n'
+    manifest_path.write_bytes(prior_bytes)
+
+    def reject_catalog_replace(_staged_path: Path, _manifest_path: Path) -> None:
+        """Model a filesystem failure after the complete catalog was staged."""
+        raise OSError("catalog replace failed")
+
+    monkeypatch.setattr(demo_audio_generator.os, "replace", reject_catalog_replace)
+
+    with pytest.raises(OSError, match="catalog replace failed"):
+        demo_audio_generator.write_picker_catalog(
+            manifest_path,
+            [{"filename": "replacement.wav"}],
+        )
+
+    assert manifest_path.read_bytes() == prior_bytes
+    assert list(tmp_path.glob(".generated-manifest.json.*.tmp")) == []
+
+
+def test_interrupted_download_preserves_existing_audio_and_cleans_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dropped remote response leaves the prior replay WAV byte-identical."""
+    demo_audio_generator = load_demo_audio_generator()
+    output_path = tmp_path / "approved.wav"
+    output_path.write_bytes(b"prior approved audio")
+
+    class InterruptedResponse:
+        """Yield one partial chunk, then model a network failure."""
+
+        def __enter__(self) -> InterruptedResponse:
+            """Return the response object used by the downloader context."""
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            """Close the fake response without suppressing the failure."""
+
+        def read(self, _size: int = -1) -> bytes:
+            """Return partial bytes once, then fail before a complete WAV exists."""
+            # The first chunk reaches only the staging file, never the approved destination.
+            if not hasattr(self, "chunk_returned"):
+                self.chunk_returned = True
+                return b"partial audio"
+            raise OSError("connection dropped")
+
+    monkeypatch.setattr(
+        demo_audio_generator,
+        "urlopen",
+        lambda *_args, **_kwargs: InterruptedResponse(),
+    )
+
+    with pytest.raises(RuntimeError, match="could not download"):
+        demo_audio_generator.download_file(
+            "https://example.invalid/audio.wav", output_path
+        )
+
+    assert output_path.read_bytes() == b"prior approved audio"
+    assert list(tmp_path.glob(".approved.*.tmp")) == []
+
+
+@pytest.mark.parametrize("fixture_set", ["missing", "extra"])
+def test_transcript_downloader_rejects_manifest_mismatch_before_curl(
+    fixture_set: str, tmp_path: Path
+) -> None:
+    """Missing or extra local WAV names stop before any transcript URL is opened."""
+    development_corpus_helper = load_development_corpus_helper()
+    fixture_dir = tmp_path / "audio"
+    fixture_dir.mkdir()
+    approved_stems = list(development_corpus_helper.EXPECTED_STEMS)
+    stems_to_create = (
+        approved_stems[:-1] if fixture_set == "missing" else approved_stems
+    )
+    # Filename discovery is allowed, but no WAV body may be opened by a rejected run.
+    for fixture_stem in stems_to_create:
+        (fixture_dir / f"{fixture_stem}.wav").write_bytes(b"do not open")
+    # An extra sealed-looking name proves over-broad discovery also stops before download.
+    if fixture_set == "extra":
+        (fixture_dir / f"{SEALED_SPECIMEN}.wav").write_bytes(b"sealed sentinel")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl_marker = tmp_path / "curl-was-called"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        f"#!/usr/bin/env bash\ntouch {curl_marker}\nexit 99\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    command_environment = os.environ.copy()
+    command_environment["PATH"] = f"{fake_bin}:{command_environment['PATH']}"
+    command_environment["AMBIENT_SCRIBE_PRIMOCK57_FIXTURE_DIR"] = str(fixture_dir)
+
+    completed = subprocess.run(
+        [str(PRIMOCK57_TRANSCRIPT_DOWNLOADER_PATH)],
+        cwd=REPO_ROOT,
+        env=command_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "development manifest mismatch" in completed.stderr
+    assert not curl_marker.exists()
+    assert list(fixture_dir.glob("*.TextGrid")) == []
 
 
 def test_manifest_registers_sealed_hashes_without_clinical_content() -> None:

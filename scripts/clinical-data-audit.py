@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -176,24 +178,108 @@ def _load_json_object(artifact_path: Path, label: str) -> dict[str, Any]:
     return parsed_document
 
 
-def _write_new_output(output_path: Path, output_bytes: bytes) -> None:
-    """Write one evidence artifact without overwriting a prior audit.
+def _stage_new_output(output_path: Path, output_bytes: bytes) -> Path:
+    """Stage one complete audit artifact beside its final reviewer path.
 
     Args:
-        output_path: Unique result path; existing means this run ID was reused.
+        output_path: Final result path; its parent owns the temporary stage.
         output_bytes: Stable JSON/table bytes; empty cannot prove reviewer output.
 
+    Returns:
+        Unique staged file; it is complete and flushed but not reviewer-visible.
+
     Raises:
-        ClinicalDataAuditInputError: Output exists or contains no evidence.
+        ClinicalDataAuditInputError: The proposed evidence contains no bytes.
     """
-    # Reusing a path would erase an earlier failed or successful run.
-    if output_path.exists():
-        raise ClinicalDataAuditInputError(f"output_exists: {output_path}")
     # Empty bytes cannot show what stopped or passed activation.
     if output_bytes == b"":
         raise ClinicalDataAuditInputError(f"empty_output: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(output_bytes)
+    staged_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        ) as staged_output:
+            staged_path = Path(staged_output.name)
+            staged_output.write(output_bytes)
+            staged_output.flush()
+            os.fsync(staged_output.fileno())
+    # A failed stage is not evidence and must not survive beside reviewer output.
+    except BaseException:
+        # A file may exist even when the staging write or flush failed midway.
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
+        raise
+    return staged_path
+
+
+def _write_new_output_pair(
+    json_output_path: Path,
+    json_output_bytes: bytes,
+    table_output_path: Path,
+    table_output_bytes: bytes,
+) -> None:
+    """Publish JSON and table evidence together without overwriting another run.
+
+    Args:
+        json_output_path: Machine report target; existing means the run ID was reused.
+        json_output_bytes: Complete JSON evidence; empty blocks both artifacts.
+        table_output_path: Reviewer table target; existing blocks both artifacts.
+        table_output_bytes: Complete table evidence; empty blocks both artifacts.
+
+    Raises:
+        ClinicalDataAuditInputError: Paths collide, exist, or lose a publication race.
+    """
+    output_pairs = (
+        (json_output_path, json_output_bytes),
+        (table_output_path, table_output_bytes),
+    )
+    # One path cannot represent two independently consumable evidence formats.
+    if json_output_path.resolve() == table_output_path.resolve():
+        raise ClinicalDataAuditInputError(
+            f"output_paths_not_distinct: {json_output_path}"
+        )
+    # Either reused destination blocks the run before a stage or final is created.
+    for output_path, _output_bytes in output_pairs:
+        # Prior pass or failure evidence remains immutable for the reviewer.
+        if output_path.exists():
+            raise ClinicalDataAuditInputError(f"output_exists: {output_path}")
+
+    staged_pairs: list[tuple[Path, Path]] = []
+    try:
+        # Both complete byte streams exist privately before either final appears.
+        for output_path, output_bytes in output_pairs:
+            staged_pairs.append(
+                (_stage_new_output(output_path, output_bytes), output_path)
+            )
+        # Hard links provide exclusive final creation without replacing a concurrent run.
+        for staged_path, output_path in staged_pairs:
+            try:
+                os.link(staged_path, output_path)
+            # A concurrent publisher owns this destination, so this pair is rolled back.
+            except FileExistsError as error:
+                raise ClinicalDataAuditInputError(
+                    f"output_exists: {output_path}"
+                ) from error
+    # Any failed publication removes every final linked to this run's staged inodes.
+    except BaseException:
+        for staged_path, output_path in reversed(staged_pairs):
+            try:
+                # A concurrent winner has a different inode and must remain untouched.
+                if output_path.exists() and staged_path.samefile(output_path):
+                    output_path.unlink()
+            # A concurrent cleanup or inaccessible peer must not mask the root failure.
+            except OSError:
+                continue
+        raise
+    finally:
+        # Stages are private scaffolding whether publication passed or failed.
+        for staged_path, _output_path in staged_pairs:
+            staged_path.unlink(missing_ok=True)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -264,10 +350,9 @@ def main() -> int:
             sealed_stems=frozenset(development_corpus_helper.SEALED_STEMS),
             development_truth_utterances=official_utterances,
         )
-        _write_new_output(
-            command_arguments.json_output, stable_json_bytes(audit_report)
-        )
-        _write_new_output(
+        _write_new_output_pair(
+            command_arguments.json_output,
+            stable_json_bytes(audit_report),
             command_arguments.table_output,
             format_audit_table(audit_report).encode("utf-8"),
         )

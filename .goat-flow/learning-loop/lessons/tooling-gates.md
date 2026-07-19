@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-18
+last_reviewed: 2026-07-20
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -489,6 +489,13 @@ parsing, and compilation passed after an allowlist was added, while direct Gruff
 grown from an inherited 1,004 lines to 1,029. Compacting the new allowlist and redundant vertical
 space brought it to 998 lines with `Composite: A (100.00 / 100)`. Run direct Gruff before expanding
 a near-limit file even when the change is metadata-only and behavior tests are already green.
+
+M04C repeated the same boundary when catalog transaction helpers were first placed inline: the generator
+started at 998 lines and reached 1,218 before the explicit line-count check. Moving manifest-owned naming,
+allowlist, merge, and publication rules into `scripts/demo_audio_catalog.py` (search:
+`def merge_picker_catalog`) returned `scripts/generate-demo-consultation-audio.py` to 983 lines. For a file
+already within one small edit of its threshold, allocate the focused sibling before adding the first helper,
+then run the direct line-count/Gruff probe after each substantive slice.
 
 ## Lesson: Repeated JSON blocks need identity-scoped patch anchors
 

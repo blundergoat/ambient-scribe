@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 AUDIT_SCHEMA_VERSION = "ambient-scribe-clinical-data-audit/v1"
@@ -60,6 +61,27 @@ def normalize_contract_text(value: str) -> str:
         Case-folded single-space text; never null.
     """
     return " ".join(value.split()).casefold()
+
+
+def is_valid_contract_date(value: Any) -> bool:
+    """Return whether reviewer provenance names one real ISO calendar day.
+
+    Args:
+        value: Candidate date; null, non-text, or impossible dates fail closed.
+
+    Returns:
+        True only for an exact `YYYY-MM-DD` date accepted by the calendar.
+    """
+    candidate_date = str(value)
+    # Exact shape keeps reviewer evidence stable before calendar parsing.
+    if DATE_PATTERN.fullmatch(candidate_date) is None:
+        return False
+    try:
+        date.fromisoformat(candidate_date)
+    # Calendar-impossible provenance cannot authorize clinician-visible behavior.
+    except ValueError:
+        return False
+    return True
 
 
 def stable_json_bytes(value: Any) -> bytes:
@@ -255,7 +277,7 @@ def validate_human_review(
             "reviewer ID and role must be non-empty",
         )
     # A malformed date cannot bind approval to the reviewed asset version.
-    if DATE_PATTERN.fullmatch(str(review.get("reviewed_at", ""))) is None:
+    if not is_valid_contract_date(review.get("reviewed_at")):
         add_finding(
             findings,
             "review.invalid_date",

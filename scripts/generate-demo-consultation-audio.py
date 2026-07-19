@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -103,14 +105,8 @@ PRIMOCK57_NOTES_RAW_BASE_URL = (
     "https://raw.githubusercontent.com/babylonhealth/primock57/main/notes"
 )
 PRIMOCK57_CASE_FILE = re.compile(r"^(day\d+_consultation\d+)_(doctor|patient)\.wav$")
-PRIMOCK57_DEVELOPMENT_CASE_IDS = frozenset(
-    (
-        "day1_consultation02 day1_consultation03 day1_consultation06 "
-        "day1_consultation07 day1_consultation08 day2_consultation03 "
-        "day2_consultation09 day3_consultation01 day5_consultation03 "
-        "day5_consultation09"
-    ).split()
-)
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+CATALOG_RULES_PATH = SCRIPT_DIRECTORY / "demo_audio_catalog.py"
 DEMO_CONSULTATIONS = (
     DemoConsultation(
         filename="osce-chest-pain-short.wav",
@@ -235,6 +231,23 @@ DEMO_CONSULTATIONS = (
 )
 
 
+_CATALOG_RULES = runpy.run_path(str(CATALOG_RULES_PATH))
+PRIMOCK57_DEVELOPMENT_CASE_IDS = _CATALOG_RULES["PRIMOCK57_DEVELOPMENT_CASE_IDS"]
+load_development_primock57_catalog = _CATALOG_RULES[
+    "load_development_primock57_catalog"
+]
+merge_picker_catalog = _CATALOG_RULES["merge_picker_catalog"]
+load_picker_catalog = _CATALOG_RULES["load_picker_catalog"]
+validate_complete_primock57_catalog = _CATALOG_RULES[
+    "validate_complete_primock57_catalog"
+]
+write_picker_catalog = _CATALOG_RULES["write_picker_catalog"]
+legacy_primock57_filename = _CATALOG_RULES["legacy_primock57_filename"]
+primock57_filename = _CATALOG_RULES["primock57_filename"]
+primock57_case_label = _CATALOG_RULES["primock57_case_label"]
+is_playable_primock57_case = _CATALOG_RULES["is_playable_primock57_case"]
+
+
 def parse_args() -> argparse.Namespace:
     """Read generator options from the command line.
 
@@ -297,12 +310,55 @@ def main() -> int:
     if args.primock57_limit < 0:
         raise SystemExit("--primock57-limit must be 0 or greater")
     output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "generated-manifest.json"
+    existing_manifest: list[dict[str, object]] | None = None
+    # A selected refresh starts from the complete catalog before audio work begins.
+    if selected_cases and manifest_path.exists():
+        existing_manifest = load_picker_catalog(manifest_path)
+        # PriMock refreshes cannot start from a partial or reordered development picker.
+        if args.include_primock57:
+            validate_complete_primock57_catalog(existing_manifest)
+    # A new PriMock catalog requires all ten explicit case IDs, never a partial first write.
+    if (
+        selected_cases
+        and args.include_primock57
+        and existing_manifest is None
+        and selected_cases != set(PRIMOCK57_DEVELOPMENT_CASE_IDS)
+    ):
+        raise SystemExit(
+            "a partial PriMock57 refresh requires an existing complete development catalog"
+        )
+    selected_demo_consultations = [
+        consultation
+        for consultation in DEMO_CONSULTATIONS
+        if not selected_cases or consultation.filename in selected_cases
+    ]
+    primock57_consultations = (
+        discover_primock57_consultations(args.primock57_limit, selected_cases)
+        if args.include_primock57
+        else []
+    )
+    if selected_cases:
+        matched_selectors = {
+            consultation.filename for consultation in selected_demo_consultations
+        }
+        for consultation in primock57_consultations:
+            matched_selectors.update(
+                selected_cases
+                & {
+                    consultation.case_id,
+                    consultation.filename,
+                    legacy_primock57_filename(consultation.case_id),
+                    primock57_filename(consultation.case_id, consultation.complaint),
+                }
+            )
+        unmatched_selectors = sorted(selected_cases - matched_selectors)
+        # One typo must stop the whole refresh before any WAV or catalog is changed.
+        if unmatched_selectors:
+            raise SystemExit(f"unmatched --case selectors: {unmatched_selectors}")
     generated_manifest: list[dict[str, object]] = []
     # Each consultation becomes one canonical replay WAV plus manifest metadata.
-    for consultation in DEMO_CONSULTATIONS:
-        # Case filters let a user refresh one audio file without rebuilding all demos.
-        if selected_cases and consultation.filename not in selected_cases:
-            continue
+    for consultation in selected_demo_consultations:
         output_path = output_dir / consultation.filename
         # Existing WAVs are preserved unless the user explicitly asks to refresh them.
         if output_path.exists() and not args.force:
@@ -313,10 +369,7 @@ def main() -> int:
     # PriMock57 rows are added only when the developer explicitly requests that source.
     if args.include_primock57:
         # Each allowed corpus case becomes one picker row in deterministic case order.
-        for consultation in discover_primock57_consultations(
-            args.primock57_limit,
-            selected_cases,
-        ):
+        for consultation in primock57_consultations:
             output_path = output_dir / consultation.filename
             # Downloaded fixtures are also preserved unless a refresh is requested.
             if output_path.exists() and not args.force:
@@ -328,18 +381,17 @@ def main() -> int:
             generated_manifest.append(
                 primock57_manifest_entry(consultation, output_path)
             )
-    # A mistyped --case would otherwise overwrite the manifest with an empty
-    # list and exit 0, making demo generation look successful.
-    if selected_cases and not generated_manifest:
-        raise SystemExit(
-            f"no demo cases matched --case {sorted(selected_cases)}; "
-            "check the filename or case id against DEMO_CONSULTATIONS"
+    # A selected refresh replaces only named rows and retains every other picker entry.
+    if existing_manifest is not None:
+        generated_manifest = merge_picker_catalog(
+            existing_manifest,
+            generated_manifest,
+            require_complete_primock57=args.include_primock57,
         )
-    manifest_path = output_dir / "generated-manifest.json"
-    manifest_path.write_text(
-        json.dumps(generated_manifest, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    # A first full PriMock generation must produce the exact manifest-derived catalog.
+    if selected_cases and args.include_primock57 and existing_manifest is None:
+        validate_complete_primock57_catalog(generated_manifest)
+    write_picker_catalog(manifest_path, generated_manifest)
     print(f"generated {len(generated_manifest)} consultation manifest entries")
     print(f"manifest: {manifest_path}")
     return 0
@@ -391,6 +443,8 @@ def discover_primock57_consultations(
     Raises:
         RuntimeError: When the remote metadata does not look like a file list.
     """
+    # The tracked allowlist must be valid before even the remote file inventory is opened.
+    load_development_primock57_catalog()
     entries = read_json_url(PRIMOCK57_AUDIO_API_URL)
     # An unexpected remote response gives the developer no safe audio-file inventory.
     if not isinstance(entries, list):
@@ -454,11 +508,13 @@ def select_primock57_case_files(
     """
     selected_case_files: list[tuple[str, dict[str, str]]] = []
     selected_case_complaints: dict[str, str] = {}
+    approved_stem_by_case = dict(load_development_primock57_catalog())
+    approved_case_ids = frozenset(approved_stem_by_case)
     # Each discovered case is filtered before note metadata or audio can be selected.
     for case_id in sorted(case_files):
         files = case_files[case_id]
         # Excluded or incomplete cases cannot produce the intended replay row.
-        if not is_playable_primock57_case(case_id, files):
+        if not is_playable_primock57_case(case_id, files, approved_case_ids):
             continue
 
         filename = legacy_primock57_filename(case_id)
@@ -467,6 +523,7 @@ def select_primock57_case_files(
             complaint = read_primock57_complaint(case_id)
             selected_case_complaints[case_id] = complaint
             filename = primock57_filename(case_id, complaint)
+        approved_filename = f"{approved_stem_by_case[case_id]}.wav"
 
         # User-selected cases let maintainers refresh one fixture without all audio.
         if (
@@ -474,6 +531,7 @@ def select_primock57_case_files(
             and case_id not in selected_cases
             and legacy_primock57_filename(case_id) not in selected_cases
             and filename not in selected_cases
+            and approved_filename not in selected_cases
         ):
             continue
 
@@ -484,23 +542,6 @@ def select_primock57_case_files(
         selected_case_files = selected_case_files[:limit]
 
     return selected_case_files, selected_case_complaints
-
-
-def is_playable_primock57_case(case_id: str, files: dict[str, str]) -> bool:
-    """Return whether a PriMock57 case can be exposed in the picker.
-
-    Args:
-        case_id: PriMock57 case id; non-development and sealed ids stay hidden.
-        files: Role filename map; missing channels cannot be mixed into replay audio.
-
-    Returns:
-        True when both channels exist and the case is in the frozen development set.
-    """
-    # Only the ten development visits may appear in the developer's Demo Audio picker.
-    if case_id not in PRIMOCK57_DEVELOPMENT_CASE_IDS:
-        return False
-
-    return "doctor" in files and "patient" in files
 
 
 def build_primock57_consultations(
@@ -517,13 +558,19 @@ def build_primock57_consultations(
         Consultation metadata consumed by the audio generator and manifest writer.
     """
     consultations: list[Primock57Consultation] = []
+    approved_stem_by_case = dict(load_development_primock57_catalog())
     # Each approved pair becomes one self-contained record for the picker generator.
     for case_id, files in selected_case_files:
+        # Selection already filtered this ID; a manifest change still fails before download.
+        if case_id not in approved_stem_by_case:
+            raise RuntimeError(
+                f"PriMock57 case is outside development manifest: {case_id}"
+            )
         note_path = f"notes/{case_id}.json"
         complaint = selected_case_complaints.get(case_id) or read_primock57_complaint(
             case_id
         )
-        filename = primock57_filename(case_id, complaint)
+        filename = f"{approved_stem_by_case[case_id]}.wav"
         consultations.append(
             Primock57Consultation(
                 case_id=case_id,
@@ -540,67 +587,6 @@ def build_primock57_consultations(
         )
 
     return consultations
-
-
-def legacy_primock57_filename(case_id: str) -> str:
-    """Return the old case-only PriMock57 filename accepted by --case.
-
-    Args:
-        case_id: PriMock57 case id; empty would create an unusable legacy name.
-
-    Returns:
-        Back-compatible WAV filename a user may still pass to `--case`.
-    """
-    return f"primock57-{case_id.replace('_', '-')}.wav"
-
-
-def primock57_filename(case_id: str, complaint: str) -> str:
-    """Build a self-documenting local WAV filename for one PriMock57 case.
-
-    Args:
-        case_id: PriMock57 case id used to keep filenames unique in the picker.
-        complaint: Presenting complaint; empty falls back to the case-only name.
-
-    Returns:
-        WAV filename matching the generated fixture names shown in the picker.
-    """
-    complaint_slug = slug_for_filename(complaint)
-    # Empty complaint text keeps the old case-only filename usable.
-    if not complaint_slug:
-        return legacy_primock57_filename(case_id)
-
-    return f"{legacy_primock57_filename(case_id).removesuffix('.wav')}-{complaint_slug}.wav"
-
-
-def slug_for_filename(value: str) -> str:
-    """Convert user-visible complaint text into a safe filename fragment.
-
-    Args:
-        value: Complaint text; empty or punctuation-only values produce an empty slug.
-
-    Returns:
-        Lowercase filename slug; empty means callers should use a fallback.
-    """
-    normalized_value = value.lower().replace("'", "")
-    return re.sub(r"[^a-z0-9]+", "-", normalized_value).strip("-")
-
-
-def primock57_case_label(case_id: str) -> str:
-    """Convert a PriMock57 case id into a human-readable label.
-
-    Args:
-        case_id: PriMock57 case id; empty or unknown shapes fall back to spaced text.
-
-    Returns:
-        Label used in the manifest display name for the Demo Audio picker.
-    """
-    match = re.fullmatch(r"day(\d+)_consultation(\d+)", case_id)
-    # Unknown case-id shapes still need readable text in the picker.
-    if not match:
-        return case_id.replace("_", " ")
-
-    day, consultation = match.groups()
-    return f"day {int(day)} consultation {int(consultation)}"
 
 
 def read_primock57_complaint(case_id: str) -> str:
@@ -697,17 +683,31 @@ def download_file(url: str, output_path: Path) -> None:
         RuntimeError: When the download fails or returns a Git LFS pointer.
     """
     request = Request(url, headers={"User-Agent": "ambient-scribe-demo-audio"})
+    staged_path: Path | None = None
     try:
-        with urlopen(request, timeout=120) as response:
-            with output_path.open("wb") as output_file:
-                shutil.copyfileobj(response, output_file)
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{output_path.stem}.",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        ) as staged_download:
+            staged_path = Path(staged_download.name)
+            with urlopen(request, timeout=120) as response:
+                shutil.copyfileobj(response, staged_download)
+            staged_download.flush()
+            os.fsync(staged_download.fileno())
+        # A pointer file would make the selected demo fail as audio at replay time.
+        if is_git_lfs_pointer(staged_path):
+            raise RuntimeError(f"{url} returned a Git LFS pointer instead of audio")
+        os.replace(staged_path, output_path)
     # A network drop can interrupt a developer's explicit demo-audio download.
-    except URLError as exc:
+    except OSError as exc:
         raise RuntimeError(f"could not download {url}: {exc}") from exc
-
-    # A pointer file would make the user's selected demo fail as audio at replay time.
-    if is_git_lfs_pointer(output_path):
-        raise RuntimeError(f"{url} returned a Git LFS pointer instead of audio")
+    finally:
+        # Partial bytes are private and the prior destination survives every failure.
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
 
 
 def is_git_lfs_pointer(path: Path) -> bool:

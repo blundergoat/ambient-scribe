@@ -170,6 +170,28 @@ def load_clinical_data_auditor() -> ModuleType:
     return clinical_data_auditor
 
 
+def audit_mock_assets(
+    clinical_data_auditor: ModuleType,
+    clinical_data_assets: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one in-memory mock through the same report a reviewer receives.
+
+    Args:
+        clinical_data_auditor: Loaded CPU audit module; absent cannot evaluate the mock.
+        clinical_data_assets: Knowledge, lexicon, and ledger inputs; empty fails closed.
+
+    Returns:
+        Stable audit report; findings is empty only when every supplied control passes.
+    """
+    return clinical_data_auditor.audit_clinical_data_documents(
+        clinical_knowledge_document=clinical_data_assets["clinical_knowledge"],
+        medical_lexicon_text=clinical_data_assets["medical_lexicon_text"],
+        medical_lexicon_review_document=clinical_data_assets["medical_lexicon_review"],
+        context_visibility_probe=None,
+        sealed_stems=frozenset(RED_SPECIMEN_DOCUMENT["sealed_stems"]),
+    )
+
+
 def test_red_fixture_freezes_every_named_clinical_data_failure() -> None:
     """The developer sees all eight contract failures before implementing the gate.
     Use this to catch a dropped or silently renamed safety case in the mock fixture.
@@ -269,6 +291,94 @@ def test_valid_clinical_data_outputs_are_byte_stable() -> None:
     assert first_json_bytes == second_json_bytes
     assert first_reviewer_table == second_reviewer_table
     assert first_reviewer_table.endswith("\n")
+
+
+def test_same_card_keyword_substrings_remain_one_eligible_card() -> None:
+    """Related phrases on one card do not block the reminder they both retrieve."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    mock_assets = copy.deepcopy(RED_SPECIMEN_DOCUMENT["base_assets"])
+    knowledge_entry = mock_assets["clinical_knowledge"]["entries"][0]
+    knowledge_entry["keywords"] = ["renal", "renal function"]
+    knowledge_entry["hard_negatives"] = [
+        "The rental inspection is unrelated.",
+        "The weather report contains no medicine discussion.",
+    ]
+
+    safety_report = audit_mock_assets(clinical_data_auditor, mock_assets)
+
+    assert safety_report["status"] == "pass"
+    assert safety_report["findings"] == []
+    assert safety_report["summary"]["eligible_knowledge_entry_count"] == 1
+
+
+def test_cross_card_duplicate_keyword_is_not_certified() -> None:
+    """One retrieval phrase cannot silently select two different prompt cards."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    mock_assets = copy.deepcopy(RED_SPECIMEN_DOCUMENT["base_assets"])
+    duplicate_entry = copy.deepcopy(mock_assets["clinical_knowledge"]["entries"][0])
+    duplicate_entry["id"] = "renal-support"
+    duplicate_entry["title"] = "Renal support"
+    mock_assets["clinical_knowledge"]["entries"].append(duplicate_entry)
+
+    safety_report = audit_mock_assets(clinical_data_auditor, mock_assets)
+
+    assert safety_report["status"] == "fail"
+    assert safety_report["summary"]["eligible_knowledge_entry_count"] == 0
+    assert [finding["finding_id"] for finding in safety_report["findings"]] == [
+        "knowledge.keyword_duplicate_collision"
+    ]
+
+
+def test_unsorted_keywords_match_runtime_ineligibility() -> None:
+    """The audit rejects the same unsorted card that runtime keeps out of prompts."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    mock_assets = copy.deepcopy(RED_SPECIMEN_DOCUMENT["base_assets"])
+    knowledge_entry = mock_assets["clinical_knowledge"]["entries"][0]
+    knowledge_entry["keywords"] = ["naproxen", "lisinopril"]
+
+    safety_report = audit_mock_assets(clinical_data_auditor, mock_assets)
+
+    assert safety_report["status"] == "fail"
+    assert safety_report["summary"]["eligible_knowledge_entry_count"] == 0
+    assert [finding["finding_id"] for finding in safety_report["findings"]] == [
+        "knowledge.invalid_keywords"
+    ]
+
+
+def test_impossible_review_and_source_dates_fail_closed() -> None:
+    """Calendar-impossible provenance never certifies a card as prompt eligible."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    mock_assets = copy.deepcopy(RED_SPECIMEN_DOCUMENT["base_assets"])
+    knowledge_entry = mock_assets["clinical_knowledge"]["entries"][0]
+    knowledge_entry["source"]["published_at"] = "2026-99-99"
+    knowledge_entry["review"]["reviewed_at"] = "2026-02-30"
+
+    safety_report = audit_mock_assets(clinical_data_auditor, mock_assets)
+
+    assert safety_report["status"] == "fail"
+    assert safety_report["summary"]["eligible_knowledge_entry_count"] == 0
+    assert {finding["finding_id"] for finding in safety_report["findings"]} == {
+        "knowledge.invalid_source",
+        "review.invalid_date",
+    }
+
+
+def test_active_pair_is_not_mislabeled_inactive_when_history_exists() -> None:
+    """An active approval prevents a historical disabled row from blaming runtime."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    mock_assets = copy.deepcopy(RED_SPECIMEN_DOCUMENT["base_assets"])
+    active_entry = mock_assets["medical_lexicon_review"]["entries"][0]
+    historical_entry = copy.deepcopy(active_entry)
+    historical_entry["id"] = "metformin-met-formin-history"
+    historical_entry["status"] = "disabled"
+    historical_entry["review"]["status"] = "rejected"
+    mock_assets["medical_lexicon_review"]["entries"].append(historical_entry)
+
+    safety_report = audit_mock_assets(clinical_data_auditor, mock_assets)
+    finding_ids = [finding["finding_id"] for finding in safety_report["findings"]]
+
+    assert "review.duplicate_pair" in finding_ids
+    assert "review.inactive_pair_executable" not in finding_ids
 
 
 def test_import_stays_outside_application_and_gpu_services() -> None:
@@ -496,6 +606,107 @@ def test_cli_writes_repeatable_outputs_and_refuses_overwrite(
 
     assert overwrite_exit_code == 2
     assert "output_exists" in overwrite_status_output.err
+
+
+def test_output_pair_preflight_preserves_an_existing_peer(tmp_path: Path) -> None:
+    """A reused table path leaves the fresh JSON path absent and prior bytes intact."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    json_path = tmp_path / "audit.json"
+    table_path = tmp_path / "audit.txt"
+    table_path.write_bytes(b"prior reviewer table\n")
+
+    with pytest.raises(
+        clinical_data_auditor.ClinicalDataAuditInputError, match="output_exists"
+    ):
+        clinical_data_auditor._write_new_output_pair(
+            json_path,
+            b'{"status":"pass"}\n',
+            table_path,
+            b"status: pass\n",
+        )
+
+    assert not json_path.exists()
+    assert table_path.read_bytes() == b"prior reviewer table\n"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+    shared_path = tmp_path / "same-output"
+    with pytest.raises(
+        clinical_data_auditor.ClinicalDataAuditInputError,
+        match="output_paths_not_distinct",
+    ):
+        clinical_data_auditor._write_new_output_pair(
+            shared_path,
+            b'{"status":"pass"}\n',
+            shared_path,
+            b"status: pass\n",
+        )
+
+    assert not shared_path.exists()
+
+
+def test_output_pair_rolls_back_when_concurrent_peer_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A concurrent table publisher wins without leaving this run's JSON behind."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    json_path = tmp_path / "audit.json"
+    table_path = tmp_path / "audit.txt"
+    original_link = clinical_data_auditor.os.link
+
+    def link_with_competing_table(staged_path: Path, output_path: Path) -> None:
+        """Publish JSON normally, then simulate another process taking the table path."""
+        # The competing process owns the table destination before this run can link it.
+        if Path(output_path) == table_path:
+            table_path.write_bytes(b"concurrent reviewer table\n")
+            raise FileExistsError(table_path)
+        original_link(staged_path, output_path)
+
+    monkeypatch.setattr(clinical_data_auditor.os, "link", link_with_competing_table)
+
+    with pytest.raises(
+        clinical_data_auditor.ClinicalDataAuditInputError, match="output_exists"
+    ):
+        clinical_data_auditor._write_new_output_pair(
+            json_path,
+            b'{"status":"pass"}\n',
+            table_path,
+            b"status: pass\n",
+        )
+
+    assert not json_path.exists()
+    assert table_path.read_bytes() == b"concurrent reviewer table\n"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_output_pair_rolls_back_an_interrupted_post_link_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An interrupt after final creation leaves neither half of the evidence pair."""
+    clinical_data_auditor = load_clinical_data_auditor()
+    json_path = tmp_path / "audit.json"
+    table_path = tmp_path / "audit.txt"
+    original_link = clinical_data_auditor.os.link
+
+    def link_then_interrupt(staged_path: Path, output_path: Path) -> None:
+        """Model a signal after the filesystem created the second final link."""
+        original_link(staged_path, output_path)
+        # The publisher has not yet returned from os.link to record this path.
+        if Path(output_path) == table_path:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(clinical_data_auditor.os, "link", link_then_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        clinical_data_auditor._write_new_output_pair(
+            json_path,
+            b'{"status":"pass"}\n',
+            table_path,
+            b"status: pass\n",
+        )
+
+    assert not json_path.exists()
+    assert not table_path.exists()
+    assert list(tmp_path.glob(".*.tmp")) == []
 
 
 @pytest.mark.parametrize(

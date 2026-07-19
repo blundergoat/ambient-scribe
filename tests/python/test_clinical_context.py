@@ -6,9 +6,12 @@ or GPU models. The user-facing contract is that context stays off unless an
 internal experiment enables a reviewed schema-valid asset.
 """
 
+import copy
 import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 import clinical_context as clinical_context_module
 from clinical_context import load_clinical_knowledge, retrieve_clinical_context
@@ -119,6 +122,69 @@ def test_schema_eligible_knowledge_can_be_loaded_for_an_internal_probe(
     loaded_entries = load_clinical_knowledge(knowledge_path)
 
     assert [entry["id"] for entry in loaded_entries] == ["renal-review"]
+
+
+def test_same_card_keyword_substrings_remain_runtime_eligible(tmp_path: Path) -> None:
+    """Two related phrases on one card still retrieve that one reviewed reminder."""
+    knowledge_document = _schema_eligible_knowledge_document()
+    knowledge_entry = knowledge_document["entries"][0]
+    knowledge_entry["keywords"] = ["renal", "renal function"]
+    knowledge_entry["hard_negatives"] = [
+        "The rental inspection is unrelated.",
+        "The weather report contains no medicine discussion.",
+    ]
+    knowledge_path = tmp_path / "clinical_knowledge.json"
+    knowledge_path.write_text(json.dumps(knowledge_document), encoding="utf-8")
+
+    loaded_entries = load_clinical_knowledge(knowledge_path)
+
+    assert [entry["id"] for entry in loaded_entries] == ["renal-review"]
+
+
+def test_cross_card_duplicate_keyword_invalidates_runtime_asset(tmp_path: Path) -> None:
+    """One phrase owned by two cards keeps both reminders out of the prompt."""
+    knowledge_document = _schema_eligible_knowledge_document()
+    duplicate_entry = copy.deepcopy(knowledge_document["entries"][0])
+    duplicate_entry["id"] = "renal-support"
+    duplicate_entry["title"] = "Renal support"
+    knowledge_document["entries"].append(duplicate_entry)
+    knowledge_path = tmp_path / "clinical_knowledge.json"
+    knowledge_path.write_text(json.dumps(knowledge_document), encoding="utf-8")
+
+    assert load_clinical_knowledge(knowledge_path) == []
+
+
+def test_unsorted_keywords_keep_runtime_card_out_of_prompt(tmp_path: Path) -> None:
+    """Runtime rejects the same unsorted retrieval phrases the audit must reject."""
+    knowledge_document = _schema_eligible_knowledge_document()
+    knowledge_document["entries"][0]["keywords"] = ["naproxen", "lisinopril"]
+    knowledge_path = tmp_path / "clinical_knowledge.json"
+    knowledge_path.write_text(json.dumps(knowledge_document), encoding="utf-8")
+
+    assert load_clinical_knowledge(knowledge_path) == []
+
+
+@pytest.mark.parametrize(
+    ("date_owner", "date_field", "impossible_date"),
+    [
+        ("source", "published_at", "2026-99-99"),
+        ("source", "updated_at", "2026-02-30"),
+        ("review", "reviewed_at", "2026-13-01"),
+    ],
+)
+def test_impossible_calendar_dates_keep_runtime_card_out_of_prompt(
+    tmp_path: Path,
+    date_owner: str,
+    date_field: str,
+    impossible_date: str,
+) -> None:
+    """Calendar-impossible provenance cannot authorize a runtime reminder."""
+    knowledge_document = _schema_eligible_knowledge_document()
+    knowledge_document["entries"][0][date_owner][date_field] = impossible_date
+    knowledge_path = tmp_path / "clinical_knowledge.json"
+    knowledge_path.write_text(json.dumps(knowledge_document), encoding="utf-8")
+
+    assert load_clinical_knowledge(knowledge_path) == []
 
 
 def test_summary_generation_keeps_context_disabled_by_default(monkeypatch) -> None:

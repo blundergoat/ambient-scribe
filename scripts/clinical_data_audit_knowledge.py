@@ -10,13 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 from clinical_data_audit_shared import (
-    DATE_PATTERN,
     KNOWLEDGE_SCHEMA_VERSION,
     NORMALIZED_ID_PATTERN,
     SHA256_PATTERN,
     add_finding,
     contains_complete_phrase,
     has_text,
+    is_valid_contract_date,
     normalize_contract_text,
     validate_exact_fields,
     validate_human_review,
@@ -109,7 +109,7 @@ def _validate_source(
     # Both dates identify the exact guidance version a reviewer approved.
     for date_field in ("published_at", "updated_at"):
         # Missing or malformed date leaves source version ambiguous.
-        if DATE_PATTERN.fullmatch(str(source.get(date_field, ""))) is None:
+        if not is_valid_contract_date(source.get(date_field)):
             add_finding(
                 findings,
                 "knowledge.invalid_source",
@@ -155,13 +155,14 @@ def _audit_keywords(
         len(normalized_keywords) > 12
         or "" in normalized_keywords
         or len(normalized_keywords) != len(set(normalized_keywords))
+        or normalized_keywords != sorted(normalized_keywords)
     ):
         add_finding(
             findings,
             "knowledge.invalid_keywords",
             "clinical_knowledge",
             entry_id,
-            "keywords must be non-empty, unique, and limited to twelve",
+            "keywords must be non-empty, unique, sorted, and limited to twelve",
         )
     hard_negatives = entry.get("hard_negatives")
     # No unrelated sentence means over-retrieval has not been checked.
@@ -288,11 +289,26 @@ def _audit_collisions(
     """
     seen_collisions: set[tuple[str, str]] = set()
     # Each keyword is compared only with later rows to avoid duplicates.
-    for left_index, (left_keyword, _left_owner) in enumerate(keyword_owners):
+    for left_index, (left_keyword, left_owner) in enumerate(keyword_owners):
         # Later rows exclude self-comparison but retain cross-card checks.
-        for right_keyword, _right_owner in keyword_owners[left_index + 1 :]:
-            # Equal terms are duplicates, not strict substrings.
+        for right_keyword, right_owner in keyword_owners[left_index + 1 :]:
+            # Related phrases on one card retrieve the same reviewed reminder.
+            if left_owner == right_owner:
+                continue
+            # Equal terms on different cards make retrieval ownership ambiguous.
             if left_keyword == right_keyword:
+                duplicate_collision = (left_keyword, right_keyword)
+                # Three cards sharing one phrase still produce one reviewer stop.
+                if duplicate_collision in seen_collisions:
+                    continue
+                seen_collisions.add(duplicate_collision)
+                add_finding(
+                    findings,
+                    "knowledge.keyword_duplicate_collision",
+                    "clinical_knowledge",
+                    f"{left_keyword}::{right_keyword}",
+                    "one normalized keyword belongs to multiple cards",
+                )
                 continue
             shorter, longer = sorted(
                 (left_keyword, right_keyword), key=lambda item: (len(item), item)
@@ -360,7 +376,7 @@ def audit_clinical_knowledge(
     entries: list[dict[str, Any]] = []
     entry_ids: list[str] = []
     keyword_owners: list[tuple[str, str]] = []
-    eligible_count = 0
+    candidate_eligible_count = 0
     # Every card is checked independently so a bad row cannot hide another.
     for raw_entry in raw_entries:
         # Non-object rows cannot describe what a clinician would see.
@@ -387,7 +403,9 @@ def audit_clinical_knowledge(
                 "knowledge IDs must be unique lower-case hyphenated words",
             )
         entry_ids.append(entry_id)
-        eligible_count += int(entry_status == "active" and review_status == "approved")
+        candidate_eligible_count += int(
+            entry_status == "active" and review_status == "approved"
+        )
         # Each normalized term keeps its owner for cross-card checks.
         for keyword in keywords:
             keyword_owners.append((keyword, entry_id))
@@ -401,4 +419,9 @@ def audit_clinical_knowledge(
             "entries must sort by normalized ID",
         )
     _audit_collisions(keyword_owners, findings)
+    knowledge_has_findings = any(
+        finding["asset"] == "clinical_knowledge" for finding in findings
+    )
+    # Runtime rejects a malformed knowledge asset as a unit, so the audit count matches.
+    eligible_count = 0 if knowledge_has_findings else candidate_eligible_count
     return entries, eligible_count

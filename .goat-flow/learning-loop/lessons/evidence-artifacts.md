@@ -1,6 +1,6 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-19
+last_reviewed: 2026-07-20
 ---
 
 # Evidence Artifact Lessons
@@ -64,3 +64,18 @@ the formatted message; `strands_agents/api/summary_generation.py` (search:
 **Prevention:** For console-log evidence, filter a bounded session time window by required event names rather
 than UUID alone, then assert that source selection, completion, and any failure/citation events are present or
 explicitly absent before sealing. Prefer structured JSON logs for named QA captures when available.
+
+## Lesson: Test the mutation-to-bookkeeping gap in artifact transactions
+
+**Created:** 2026-07-20
+**What happened:** M04C's first fail-closed pass handled ordinary output conflicts and one-case catalog
+merges, but review found two negative-space gaps. A valid selector plus a typo still ignored the typo, and an
+interrupt after `os.link` created a final but before the path was appended could evade rollback. Both were
+caught before the milestone gate and frozen in `tests/python/test_development_corpus.py` (search:
+`test_mixed_valid_and_mistyped_selectors_stop_before_generation`) and
+`tests/python/test_clinical_data_audit_acceptance.py` (search:
+`test_output_pair_rolls_back_an_interrupted_post_link_window`).
+**Prevention:** For multi-artifact or selected-refresh transactions, prove that every requested identity
+matched before the first mutation. Inject failure immediately after the kernel mutation and before local
+bookkeeping, then recover ownership from durable identity such as the staged inode rather than only an
+in-memory success list.

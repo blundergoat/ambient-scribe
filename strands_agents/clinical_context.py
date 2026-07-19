@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,23 @@ def _has_text(value: Any) -> bool:
     return isinstance(value, str) and value.strip() != ""
 
 
+def _is_contract_date(value: Any) -> bool:
+    """Accept only a real ISO calendar day for reviewed prompt context.
+
+    Null, malformed, or impossible dates keep the reminder invisible to the user.
+    """
+    candidate_date = str(value)
+    # Exact shape keeps runtime eligibility aligned with the reviewer audit.
+    if _DATE_PATTERN.fullmatch(candidate_date) is None:
+        return False
+    try:
+        date.fromisoformat(candidate_date)
+    # Calendar-impossible provenance cannot authorize a prompt reminder.
+    except ValueError:
+        return False
+    return True
+
+
 def _review_is_schema_valid(review: Any) -> bool:
     """Accept an accountable review block before a card can reach a note.
 
@@ -90,7 +108,7 @@ def _review_is_schema_valid(review: Any) -> bool:
         review.get("status") in {"approved", "pending", "rejected"}
         and _has_text(review.get("reviewer_id"))
         and _has_text(review.get("reviewer_role"))
-        and _DATE_PATTERN.fullmatch(str(review.get("reviewed_at", ""))) is not None
+        and _is_contract_date(review.get("reviewed_at"))
     )
 
 
@@ -107,8 +125,8 @@ def _source_is_schema_valid(source: Any) -> bool:
         _has_text(source.get("artifact_id"))
         and _has_text(source.get("locator"))
         and _SHA256_PATTERN.fullmatch(str(source.get("sha256", ""))) is not None
-        and _DATE_PATTERN.fullmatch(str(source.get("published_at", ""))) is not None
-        and _DATE_PATTERN.fullmatch(str(source.get("updated_at", ""))) is not None
+        and _is_contract_date(source.get("published_at"))
+        and _is_contract_date(source.get("updated_at"))
     )
 
 
