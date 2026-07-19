@@ -275,7 +275,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
         ...extraFinalizedFields,
       });
     }, finalizedEvent);
-    // Finalizing unlocks the on-demand note (M11); press it like the user.
+    // Finalizing settles correction and unlocks the on-demand note (M11).
     await page.click("#generateSummaryBtn");
     await page.waitForSelector("#summaryContent .summary-section");
   }
@@ -1223,8 +1223,8 @@ test.describe("Summary input provenance (M08)", () => {
     await injectFakeSegments(page, 2);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // finalizing unlocks the Generate summary button (M11), which the test
-    // presses exactly like the clinician would.
+    // Finalizing starts correction; its settled outcome unlocks Generate
+    // summary (M11), which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1289,6 +1289,77 @@ test.describe("Summary input provenance (M08)", () => {
 });
 
 test.describe("Post-visit correction before summary", () => {
+  test("improves the transcript at finalization before enabling summary generation", async ({
+    page,
+  }) => {
+    const correctionCalls = [];
+    const summaryCalls = [];
+    const requestOrder = [];
+    let releaseCorrection;
+    let releaseSummary;
+    const correctionResponseGate = new Promise((resolve) => {
+      releaseCorrection = resolve;
+    });
+    const summaryResponseGate = new Promise((resolve) => {
+      releaseSummary = resolve;
+    });
+
+    await loadScribePage(page);
+    await page.route("**/session/*/correction", async (route) => {
+      correctionCalls.push(route.request().postDataJSON());
+      requestOrder.push("correction");
+      await correctionResponseGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "ready", segments: 2 }),
+      });
+    });
+    await page.route("**/session/*/summary", async (route) => {
+      summaryCalls.push(route.request().postDataJSON());
+      requestOrder.push("summary");
+      await summaryResponseGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "Stub Summary",
+          sections: [{ heading: "Subjective", content: "Patient reports symptoms." }],
+          key_points: [],
+        }),
+      });
+    });
+    await injectFakeSegments(page, 2);
+
+    await page.evaluate(() => {
+      handleRawSegment({
+        type: "finalized",
+        session_id: CONFIG.sessionId,
+        attestation_id: "att-correction-lifecycle",
+      });
+    });
+
+    await expect.poll(() => correctionCalls.length, { timeout: 5000 }).toBe(1);
+    await expect(page.locator("#summaryPendingText")).toHaveText("Improving transcript...");
+    await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
+    await expect(page.locator("#summaryPending")).not.toHaveClass(/summary-pending--ready/);
+    expect(summaryCalls).toHaveLength(0);
+
+    releaseCorrection();
+    await expect(page.locator("#generateSummaryBtn")).toBeEnabled();
+    await expect(page.locator("#summaryPendingText")).toContainText("Final transcript ready");
+    await expect(page.locator("#summaryPending")).toHaveClass(/summary-pending--ready/);
+
+    await page.click("#generateSummaryBtn");
+    await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
+    await expect(page.locator("#summaryLoading")).toBeVisible();
+    await expect(page.locator("#summaryLoadingText")).toHaveText("Generating summary...");
+    expect(requestOrder).toEqual(["correction", "summary"]);
+
+    releaseSummary();
+    await expect(page.locator("#summaryLoading")).toBeHidden();
+  });
+
   test("runs correction before sending the summary request", async ({ page }) => {
     const correctionCalls = [];
     const summaryCalls = [];
@@ -1299,8 +1370,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 2);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // finalizing unlocks the Generate summary button (M11), which the test
-    // presses exactly like the clinician would.
+    // Finalizing starts correction; its settled outcome unlocks Generate
+    // summary (M11), which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1332,8 +1403,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 1);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // finalizing unlocks the Generate summary button (M11), which the test
-    // presses exactly like the clinician would.
+    // Finalizing starts correction; its settled outcome unlocks Generate
+    // summary (M11), which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1344,10 +1415,10 @@ test.describe("Post-visit correction before summary", () => {
     await page.click("#generateSummaryBtn");
 
     await expect.poll(() => summaryCalls.length, { timeout: 5000 }).toBe(1);
-    // The finalize warm-up saw unavailable, and the click retried once (M12) -
-    // a transient failure at finalize must never lock the note into fallback.
-    expect(correctionCalls).toHaveLength(2);
-    expect(requestOrder).toEqual(["correction", "correction", "summary"]);
+    // Finalization owns correction. Once its safe fallback settles, Generate
+    // starts only the summary and does not reopen transcript improvement.
+    expect(correctionCalls).toHaveLength(1);
+    expect(requestOrder).toEqual(["correction", "summary"]);
     expect(summaryCalls[0].segments[0].segment_id).toBe("seg-0001");
   });
 
@@ -1383,8 +1454,8 @@ test.describe("Post-visit correction before summary", () => {
     await injectFakeSegments(page, 1);
 
     // The M02 gate requires an attested terminal transcript before any note;
-    // finalizing unlocks the Generate summary button (M11), which the test
-    // presses exactly like the clinician would.
+    // Finalizing starts correction; its settled outcome unlocks Generate
+    // summary (M11), which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1581,7 +1652,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
 
     await expect(page.locator("#status")).toContainText("Session ended");
     await expect(page.locator("#startBtn")).toBeVisible();
-    // The drained rows unlock the on-demand note (M11).
+    // The drained rows feed correction; its settled outcome unlocks the note.
     await page.click("#generateSummaryBtn");
     await expect
       .poll(() => summaryCalls.length, { timeout: 5000 })
@@ -1694,7 +1765,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
 });
 
 test.describe("Replay on-demand summary (M11)", () => {
-  test("replay stop unlocks the button; clicking runs correction before the summary", async ({
+  test("replay stop settles correction before the button unlocks; clicking starts summary", async ({
     page,
   }) => {
     const correctionCalls = [];
@@ -2341,7 +2412,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     await expect(page.locator(".segment").first()).not.toHaveClass(/segment--overlap/);
   });
 
-  test("finalizing unlocks the button and warms correction, but never fires a summary by itself", async ({
+  test("finalizing settles correction before unlocking, but never fires a summary by itself", async ({
     page,
   }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -2366,7 +2437,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
       });
     });
     await expect(page.locator("#generateSummaryBtn")).toBeEnabled();
-    // A finalized transcript parks the bars: motion never claims fake work.
+    // The immediate correction response parks the bars: motion tracks real work.
     await expect(page.locator("#summaryPending")).toHaveClass(/summary-pending--ready/);
 
     // No click, no note - ever. The free correction DOES warm up on finalize

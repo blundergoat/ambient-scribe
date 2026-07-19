@@ -404,8 +404,8 @@ function endReplay() {
     replayDrainReason = null;
     revealPostVisitActions();
 
-    // The note is generated on demand (M11): finalizing only unlocks the
-    // Generate summary button; the clinician decides when to run it.
+    // The note is generated on demand (M11): finalization starts correction,
+    // whose settled outcome unlocks Generate for the clinician's later click.
     updateGenerateSummaryAvailability();
 }
 
@@ -420,7 +420,7 @@ function clearReplayTimer() {
 
 /**
  * Requests a generated summary for the current session.
- * Runs correction first, then creates the note for Stop, replay, and retry.
+ * Creates the note after post-visit correction has settled for Stop or replay.
  * Reports request errors in the panel and leaves a plain failure message for the clinician.
  */
 async function requestSummary() {
@@ -455,7 +455,9 @@ async function requestSummary() {
     clearElement(summaryContent);
 
     try {
-        setSummaryLoadingText('Improving transcript...');
+        // Correction starts at finalization and gates this button. Keep the
+        // summary panel scoped to the work this click actually requested.
+        setSummaryLoadingText('Generating summary...');
         await ensureCorrectedTranscriptReady();
 
         // A blocked source means no honest note can exist yet (still
@@ -476,7 +478,6 @@ async function requestSummary() {
             return;
         }
 
-        setSummaryLoadingText('Generating summary...');
         const response = await fetch(`/session/${requestedSessionId}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -512,7 +513,8 @@ async function requestSummary() {
 /**
  * Shows that the note is waiting for the backend to finish the transcript.
  * Use when the user's Stop wait ended before the `finalized` event arrived;
- * the note starts automatically once the terminal source exists.
+ * correction starts once the terminal source exists, while the note remains
+ * on demand.
  */
 function showSummaryWaitingForSource() {
     const summaryPanel = document.getElementById('summaryPanel');
@@ -538,22 +540,38 @@ function showSummaryWaitingForSource() {
 }
 
 /**
- * Unlocks the note after a late `finalized` event ends the source wait.
+ * Refreshes the note wait after a late `finalized` event ends the source wait.
  * Use from the transcript stream handler when the visit UI already ended on
- * the bounded timeout but the backend has now attested the full transcript.
- * The note itself stays on demand (M11): only the button state changes.
+ * the bounded timeout but the backend has now started transcript correction.
+ * The note stays on demand and unlocks only after correction settles.
  */
 function resumeSummaryAfterLateFinalize() {
     updateGenerateSummaryAvailability();
-    // The waiting copy promised the button would unlock; say that it has.
+    // Replace the terminal-source wait with correction progress or readiness.
     refreshSummaryPendingCopy();
 }
 
 /**
+ * Reports whether post-visit correction reached a terminal outcome for the
+ * consultation currently on screen. Ready, unavailable, and blocked are all
+ * settled: none should reopen correction from the Generate summary action.
+ *
+ * @returns {boolean} True once correction no longer has work in flight.
+ */
+function correctionHasSettledForVisibleSession() {
+    if (correctionOutcomeForVisibleSession?.sessionId !== CONFIG.sessionId) {
+        return false;
+    }
+
+    return correctionOutcomeForVisibleSession.status === 'ready'
+        || correctionOutcomeForVisibleSession.status === 'unavailable'
+        || correctionOutcomeForVisibleSession.status === 'blocked';
+}
+
+/**
  * Points the pending copy at the truthful next step for the note (M11).
- * Use on every finalize/stop transition: with an attested transcript the
- * user is invited to generate; without one the copy explains the wait and
- * never claims generation has begun.
+ * Use on every finalize/correction transition: finalization starts transcript
+ * improvement, and only its settled outcome invites the user to generate.
  */
 function refreshSummaryPendingCopy() {
     const summaryPendingText = document.getElementById('summaryPendingText');
@@ -563,20 +581,27 @@ function refreshSummaryPendingCopy() {
         return;
     }
 
-    const noteIsPossible = typeof terminalAttestation !== 'undefined'
-        && !!terminalAttestation
-        && segmentIndex > 0;
-    summaryPendingText.textContent = noteIsPossible
-        ? 'Final transcript ready - press Generate summary when you are.'
-        : 'Waiting for the final transcript - Generate summary will unlock when it is ready.';
+    const transcriptIsFinal = typeof terminalAttestation !== 'undefined'
+        && !!terminalAttestation;
+    const hasTranscriptRows = segmentIndex > 0;
+    const correctionIsSettled = correctionHasSettledForVisibleSession();
+
+    if (transcriptIsFinal && hasTranscriptRows && !correctionIsSettled) {
+        summaryPendingText.textContent = 'Improving transcript...';
+    } else if (transcriptIsFinal && hasTranscriptRows) {
+        summaryPendingText.textContent =
+            'Final transcript ready - press Generate summary when you are.';
+    } else {
+        summaryPendingText.textContent =
+            'Waiting for the final transcript - Generate summary will unlock when it is ready.';
+    }
     refreshSummaryPendingMotion();
 }
 
 /**
- * Matches the pending-row bars' motion to whether the transcript is done.
- * Use with every pending-copy change: the bars pulse while the visit is
- * still producing transcript and park once the backend attests the final
- * transcript, so motion never claims work that is not happening.
+ * Matches the pending-row bars' motion to transcript and correction work.
+ * Use with every pending-copy change: the bars pulse until post-visit
+ * correction settles, then park while the note waits for the user's click.
  *
  * @returns {void} Toggles one modifier class on the pending row.
  */
@@ -589,14 +614,16 @@ function refreshSummaryPendingMotion() {
     }
 
     const transcriptIsFinal = typeof terminalAttestation !== 'undefined' && !!terminalAttestation;
-    pendingRow.classList.toggle('summary-pending--ready', transcriptIsFinal);
+    pendingRow.classList.toggle(
+        'summary-pending--ready',
+        transcriptIsFinal && correctionHasSettledForVisibleSession()
+    );
 }
 
 /**
  * Matches the Generate summary button to whether an honest note is possible.
- * Use on every finalize/reset transition: the button unlocks only once the
- * backend has attested the terminal transcript, so a pre-terminal snapshot
- * can never feed a note - the same gate `requestSummary` enforces itself.
+ * Use on every finalize/correction/reset transition: the button unlocks only
+ * after terminal attestation and post-visit correction have both settled.
  */
 function updateGenerateSummaryAvailability() {
     const generateButton = document.getElementById('generateSummaryBtn');
@@ -606,15 +633,21 @@ function updateGenerateSummaryAvailability() {
         return;
     }
 
-    const noteIsPossible = typeof terminalAttestation !== 'undefined'
-        && !!terminalAttestation
-        && segmentIndex > 0;
+    const transcriptIsFinal = typeof terminalAttestation !== 'undefined'
+        && !!terminalAttestation;
+    const hasTranscriptRows = segmentIndex > 0;
+    const correctionIsSettled = correctionHasSettledForVisibleSession();
+    const noteIsPossible = transcriptIsFinal
+        && hasTranscriptRows
+        && correctionIsSettled;
     generateButton.disabled = !noteIsPossible;
     generateButton.setAttribute(
         'aria-label',
         noteIsPossible
             ? 'Generate the draft note from the finalized transcript'
-            : 'Generate summary - available once the transcript is finalized'
+            : transcriptIsFinal && hasTranscriptRows
+                ? 'Generate summary - available once transcript improvement completes'
+                : 'Generate summary - available once the transcript is finalized'
     );
 }
 
@@ -792,16 +825,13 @@ function resetPostVisitCorrectionState() {
 }
 
 /**
- * Runs post-stop correction once before generating the summary.
- * Use inside `requestSummary()` so live stop, replay, and panel retry all
- * share the same corrected-transcript-first behavior.
+ * Runs post-visit correction once when Stop or replay finalization arrives.
+ * Summary generation may await an in-flight request defensively, but a
+ * settled unavailable or blocked outcome is never retried by that click.
  */
 async function ensureCorrectedTranscriptReady() {
-    // A corrected artifact already exists for this browser session.
-    if (
-        correctionOutcomeForVisibleSession?.sessionId === CONFIG.sessionId
-        && correctionOutcomeForVisibleSession.status === 'ready'
-    ) {
+    // A terminal correction outcome already exists for this browser session.
+    if (correctionHasSettledForVisibleSession()) {
         return;
     }
 
@@ -817,6 +847,8 @@ async function ensureCorrectedTranscriptReady() {
         correctionRequestedSessionId,
     );
     correctionRequestPromise = correctionRequestForThisSession;
+    refreshSummaryPendingCopy();
+    updateGenerateSummaryAvailability();
 
     try {
         const correctionPayload = await correctionRequestForThisSession;
@@ -846,13 +878,17 @@ async function ensureCorrectedTranscriptReady() {
         if (correctionRequestPromise === correctionRequestForThisSession) {
             correctionRequestPromise = null;
         }
+        if (CONFIG.sessionId === correctionRequestedSessionId) {
+            refreshSummaryPendingCopy();
+            updateGenerateSummaryAvailability();
+        }
     }
 }
 
 /**
  * Calls the same-origin correction proxy with the current visible transcript.
- * Use before summary generation; failures are logged and converted into a live
- * transcript fallback so the user still receives a note.
+ * Use after finalization; failures are logged and converted into a live
+ * transcript fallback so later summary generation can still produce a note.
  *
  * @param {string} requestedSessionId - Visible visit UUID; empty cannot map to retained audio.
  * @returns {Promise<object>} Safe correction outcome; unavailable means use visible live rows.
@@ -893,7 +929,7 @@ async function requestTranscriptCorrection(requestedSessionId = CONFIG.sessionId
 
 /**
  * Updates the summary loading copy without changing the panel layout.
- * Use while the post-stop flow moves from correction to summary generation.
+ * Use while the on-demand note request is generating a summary.
  */
 function setSummaryLoadingText(message) {
     const summaryLoadingText = document.getElementById('summaryLoadingText');

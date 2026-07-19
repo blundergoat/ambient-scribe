@@ -49,3 +49,18 @@ that dictionary directly to `json.dumps`.
 runtime's enum/object value shapes and prove the exact final serializer, then run a pinned-runtime
 serialization-only probe before spending the first write-once audio slot. A mapping type check alone does not
 prove that every nested value is JSON-safe.
+
+## Lesson: Console log session filters can erase source-selection evidence
+
+**Created:** 2026-07-19
+**What happened:** A manual-test capture first filtered NeMo logs by the consultation UUID. That retained
+fidelity events whose formatted message includes `session_id`, but silently removed `summary.requested` and
+`summary.completed`: their UUID exists only in structured `extra`, which the local console formatter drops.
+The incomplete capture was caught during artifact reread and replaced before its manifest was sealed.
+**Evidence:** `strands_agents/api/server.py` (search: `"summary.requested source=%s`) and
+`strands_agents/api/server.py` (search: `"summary.completed source=%s`) put `session_id` in `extra` but not in
+the formatted message; `strands_agents/api/summary_generation.py` (search:
+`"summary.fidelity_draft_selected session_id=%s`) includes it in both.
+**Prevention:** For console-log evidence, filter a bounded session time window by required event names rather
+than UUID alone, then assert that source selection, completion, and any failure/citation events are present or
+explicitly absent before sealing. Prefer structured JSON logs for named QA captures when available.
