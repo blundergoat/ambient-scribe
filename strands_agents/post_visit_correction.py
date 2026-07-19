@@ -54,6 +54,14 @@ DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "POST_VISIT_ASR_MODEL",
     "nvidia/parakeet-unified-en-0.6b",
 )
+# Baseline stays inactive until the reviewed phrase proves safer transcript wording.
+DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | None = None
+APPROVED_POST_VISIT_CORRECTION_PHRASE = "brand new sector"
+_POST_VISIT_CORRECTION_PHRASE_ALPHA = 1.0
+# The single-flight evaluator reads this after one decode; null means no auditable run completed.
+LAST_POST_VISIT_DECODING_CONFIG: dict[str, Any] | None = None
+# Normal clinician requests do not retain decoder internals; the isolated evaluator opts in.
+CAPTURE_POST_VISIT_DECODING_CONFIG = False
 # Keep the selected model available after the service is recreated for a later visit.
 POST_VISIT_MODEL_CACHE_DIR = Path(
     os.environ.get(
@@ -217,6 +225,7 @@ class _NemoTranscriptionResult:
     attempts: int
     retried: bool
     chunk_count: int
+    effective_decoding_config: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,7 +335,71 @@ def run_post_visit_correction(
     )
 
 
-def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscriptionResult:
+def _apply_post_visit_correction_phrase(
+    asr_model: Any,
+    correction_phrase: str | None,
+) -> None:
+    """Apply one reviewed phrase after confidence setup for a stopped visit.
+
+    Use only in the corrected transcript lane; null keeps the current words unchanged.
+    """
+    # No reviewed phrase means the clinician receives the unchanged baseline decode.
+    if correction_phrase is None:
+        return
+    # Any other text could normalize a raw garble or activate multiple unreviewed hints.
+    if correction_phrase != APPROVED_POST_VISIT_CORRECTION_PHRASE:
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase is not the reviewed canonical phrase.",
+            reason_category="invalid_phrase_config",
+        )
+
+    from omegaconf import OmegaConf, open_dict
+
+    phrase_decoding_config = OmegaConf.create(
+        OmegaConf.to_container(asr_model.cfg.decoding, resolve=True)
+    )
+    # Native phrase fusion is proven only for the checkpoint's batched greedy decoder.
+    if phrase_decoding_config.strategy != "greedy_batch":
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase requires greedy_batch decoding.",
+            reason_category="unsupported_phrase_config",
+        )
+
+    with open_dict(phrase_decoding_config.greedy):
+        phrase_decoding_config.greedy.boosting_tree = {
+            "key_phrases_list": [correction_phrase]
+        }
+        phrase_decoding_config.greedy.boosting_tree_alpha = (
+            _POST_VISIT_CORRECTION_PHRASE_ALPHA
+        )
+    asr_model.change_decoding_strategy(phrase_decoding_config)
+
+
+def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
+    """Capture the decoder settings that produced the corrected transcript.
+
+    Use after decoding so reviewers can verify phrase, confidence, and timestamps together.
+    """
+    from omegaconf import OmegaConf
+
+    effective_decoding_config = OmegaConf.to_container(
+        asr_model.cfg.decoding,
+        resolve=True,
+    )
+    # A non-object config cannot prove which decoder settings produced the visible words.
+    if not isinstance(effective_decoding_config, dict):
+        raise PostVisitCorrectionError(
+            "Post-visit decoding configuration is not auditable.",
+            reason_category="invalid_decoding_evidence",
+        )
+    return effective_decoding_config
+
+
+def transcribe_audio_with_nemo(
+    model_name: str,
+    audio_path: str,
+    correction_phrase: str | None = None,
+) -> _NemoTranscriptionResult:
     """Transcribe retained visit audio on one restored NeMo model.
 
     Short visits keep the original one-shot call. Capacity-risk visits use
@@ -336,6 +409,8 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
         audio_path: WAV path written from the stopped browser audio buffer.
+        correction_phrase: Reviewed phrase for this offline pass; null uses the
+            inactive production default and preserves baseline wording.
 
     Returns:
         Recombined transcript evidence plus attempts/chunk metadata; empty text
@@ -355,6 +430,12 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
             "post_visit_correction.confidence_enable_failed %s",
             type(confidence_error).__name__,
         )
+
+    selected_correction_phrase = correction_phrase
+    # The normal app path uses the internal default; evaluators can pass the reviewed arm explicitly.
+    if selected_correction_phrase is None:
+        selected_correction_phrase = DEFAULT_POST_VISIT_CORRECTION_PHRASE
+    _apply_post_visit_correction_phrase(asr_model, selected_correction_phrase)
 
     audio_chunks = _build_audio_chunks(Path(audio_path))
     combined_text_parts: list[str] = []
@@ -424,6 +505,12 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
     finally:
         _remove_scratch_audio_chunks(audio_chunks)
 
+    effective_decoding_config: dict[str, Any] | None = None
+    # The isolated A/B process captures internals; normal user requests retain no new state.
+    if CAPTURE_POST_VISIT_DECODING_CONFIG:
+        effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
+        global LAST_POST_VISIT_DECODING_CONFIG
+        LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
     return _NemoTranscriptionResult(
         text=" ".join(combined_text_parts),
         word_timings=combined_word_timings if all_chunks_have_timings else None,
@@ -433,6 +520,7 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
         attempts=attempts,
         retried=retried,
         chunk_count=len(audio_chunks),
+        effective_decoding_config=effective_decoding_config,
     )
 
 
@@ -445,7 +533,9 @@ def _release_cached_cuda_memory_before_model_restore() -> None:
     gc.collect()
     try:
         import torch
-    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+    except (
+        Exception
+    ) as torch_import_error:  # pragma: no cover - NeMo image always has torch.
         # Example: an unusual agent image reaches Summarise without its GPU runtime import.
         logger.warning(
             "post_visit_correction.preload_cache_release_import_failed %s",
@@ -531,7 +621,9 @@ def _load_post_visit_asr_model(model_name: str) -> Any:
             restored_post_visit_model = nemo_asr.models.ASRModel.restore_from(
                 restore_path=str(verified_checkpoint_path)
             )
-            return _prepare_loaded_post_visit_asr_model(restored_post_visit_model, model_name)
+            return _prepare_loaded_post_visit_asr_model(
+                restored_post_visit_model, model_name
+            )
 
         return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
     except PostVisitCorrectionError:
@@ -673,7 +765,9 @@ def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
                 delete=False,
             ) as scratch_file:
                 chunk_path = Path(scratch_file.name)
-            soundfile.write(chunk_path, audio_samples[start_sample:end_sample], sample_rate)
+            soundfile.write(
+                chunk_path, audio_samples[start_sample:end_sample], sample_rate
+            )
             scratch_chunks.append(
                 _AudioChunk(
                     path=chunk_path,
@@ -709,7 +803,9 @@ def _remove_scratch_audio_chunks(audio_chunks: list[_AudioChunk]) -> None:
         audio_chunk.path.unlink(missing_ok=True)
 
 
-def _transcribe_with_loaded_model(asr_model: Any, audio_path: str) -> _TranscribeCallResult:
+def _transcribe_with_loaded_model(
+    asr_model: Any, audio_path: str
+) -> _TranscribeCallResult:
     """Run one audio path with at most one allowlisted same-model retry.
 
     Use for the original short WAV or each long-visit chunk. Fatal failures
@@ -773,7 +869,10 @@ def _is_device_not_ready_error(transcribe_error: Exception) -> bool:
 
     Use before making the user wait for a retry; all other CUDA text is fatal.
     """
-    return _DEVICE_NOT_READY_PATTERN.search(_exception_chain_text(transcribe_error)) is not None
+    return (
+        _DEVICE_NOT_READY_PATTERN.search(_exception_chain_text(transcribe_error))
+        is not None
+    )
 
 
 def _exception_chain_text(error: BaseException) -> str:
@@ -821,7 +920,9 @@ def _reclaim_cuda_memory() -> None:
     """
     try:
         import torch
-    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+    except (
+        Exception
+    ) as torch_import_error:  # pragma: no cover - NeMo image always has torch.
         # Example: an unusual agent image cannot prepare the GPU before the user's retry.
         logger.warning(
             "post_visit_correction.cuda_reclaim_import_failed %s",
@@ -1100,7 +1201,9 @@ def stamp_corrected_row_confidence(
     return segments
 
 
-def normalise_scaffold_rows(live_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalise_scaffold_rows(
+    live_segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Return live rows usable as timing and role scaffolding.
 
     Args:
@@ -1159,7 +1262,9 @@ def allocate_words_to_scaffold(
     if anchored_chunks is not None:
         return anchored_chunks
 
-    live_word_counts = [max(1, len(split_words(str(row["text"])))) for row in scaffold_rows]
+    live_word_counts = [
+        max(1, len(split_words(str(row["text"])))) for row in scaffold_rows
+    ]
     total_live_words = max(1, sum(live_word_counts))
     chunks: list[list[str]] = []
     word_cursor = 0
@@ -1196,14 +1301,19 @@ def allocate_words_by_text_anchors(
     if corrected_words == [] or scaffold_rows == []:
         return None
 
-    normalized_corrected_words = [_normalize_alignment_word(word) for word in corrected_words]
+    normalized_corrected_words = [
+        _normalize_alignment_word(word) for word in corrected_words
+    ]
     anchor_matches: list[AnchorMatch] = []
     word_cursor = 0
     confident_anchor_count = 0
 
     # Each preview row looks forward from the last match so row order stays chronological.
     for row_index, scaffold_row in enumerate(scaffold_rows):
-        row_words = [_normalize_alignment_word(word) for word in split_words(scaffold_row["text"])]
+        row_words = [
+            _normalize_alignment_word(word)
+            for word in split_words(scaffold_row["text"])
+        ]
         row_words = [word for word in row_words if word]
         anchor_match = find_best_anchor_match(
             normalized_corrected_words,
@@ -1229,7 +1339,10 @@ def allocate_words_by_text_anchors(
                 confident_anchor_count += 1
 
         # A malformed positive anchor would risk hiding later evidence behind row-share fallback.
-        if anchor_match.score > 0.0 and anchor_match.end_index <= anchor_match.start_index:
+        if (
+            anchor_match.score > 0.0
+            and anchor_match.end_index <= anchor_match.start_index
+        ):
             anchor_match = AnchorMatch(
                 word_cursor,
                 word_cursor,
@@ -1297,7 +1410,9 @@ def find_best_anchor_match(
     if best_match is None:
         return None
 
-    required_score = _MIN_SHORT_ANCHOR_SCORE if len(row_words) <= 2 else _MIN_ANCHOR_SCORE
+    required_score = (
+        _MIN_SHORT_ANCHOR_SCORE if len(row_words) <= 2 else _MIN_ANCHOR_SCORE
+    )
     # Weak anchors would move words to rows the user did not actually hear there.
     if best_match.score < required_score:
         return None
@@ -1420,7 +1535,9 @@ def is_anchor_match_missing(anchor_match: AnchorMatch) -> bool:
     Returns:
         True when the user-visible row should keep live preview text.
     """
-    return anchor_match.score == 0.0 and anchor_match.start_index == anchor_match.end_index
+    return (
+        anchor_match.score == 0.0 and anchor_match.start_index == anchor_match.end_index
+    )
 
 
 def append_gap_after_missing_anchor(
@@ -1516,7 +1633,9 @@ def _normalize_alignment_phrase(text: str) -> str:
     """
     return " ".join(
         word
-        for word in (_normalize_alignment_word(raw_word) for raw_word in split_words(text))
+        for word in (
+            _normalize_alignment_word(raw_word) for raw_word in split_words(text)
+        )
         if word
     )
 

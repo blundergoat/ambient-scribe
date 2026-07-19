@@ -17,6 +17,10 @@ SECONDS_LIMIT=""
 PRODUCTION_SHAPE=0
 DEVELOPMENT_MANIFEST=""
 LIVE_HISTORY_PATHS=()
+APPLICATION_POST_VISIT=0
+CORRECTION_PHRASE=""
+M02_ONLY_STEM=""
+M02_APPROVED_CORRECTION_PHRASE="brand new sector"
 EXPECTED_DEVELOPMENT_STEMS=(
     "primock57-day1-consultation02-i-have-sore-red-skin"
     "primock57-day1-consultation03-i-have-terrible-headache"
@@ -103,6 +107,31 @@ while [[ $# -gt 0 ]]; do
             PRODUCTION_SHAPE=1
             shift
             ;;
+        # M02 uses the exact stopped-visit decoder instead of the legacy model probe.
+        --application-post-visit)
+            APPLICATION_POST_VISIT=1
+            shift
+            ;;
+        # One named target or guard is decoded while all ten development stems stay explicit.
+        --m02-only-stem)
+            # Missing selection cannot bind this decode to the frozen eight-run ledger.
+            if [[ $# -lt 2 ]]; then
+                echo "error: --m02-only-stem requires a value" >&2
+                exit 2
+            fi
+            M02_ONLY_STEM="$2"
+            shift 2
+            ;;
+        # Candidate arms pass the one independently reviewed official phrase.
+        --correction-phrase)
+            # Missing phrase text cannot identify the approved candidate variable.
+            if [[ $# -lt 2 ]]; then
+                echo "error: --correction-phrase requires a value" >&2
+                exit 2
+            fi
+            CORRECTION_PHRASE="$2"
+            shift 2
+            ;;
         # The versioned manifest authorizes only the frozen development consultations.
         --development-manifest)
             # Missing manifest text cannot identify the corpus contract for this run.
@@ -165,6 +194,51 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# M02 selection validates the complete development order before one approved decode.
+if [[ -n "$M02_ONLY_STEM" ]]; then
+    # A different decoder path would not match the stopped-visit baseline.
+    if [[ "$APPLICATION_POST_VISIT" -ne 1 ]]; then
+        echo "error: --m02-only-stem requires --application-post-visit" >&2
+        exit 2
+    fi
+    # Every M02 command names all ten development stems; no favorable subset is a corpus.
+    if [[ $# -ne "${#EXPECTED_DEVELOPMENT_STEMS[@]}" ]]; then
+        echo "error: M02 requires the ten development stems explicitly" >&2
+        exit 2
+    fi
+    m02_stem_is_allowed=0
+    # Each visible position must retain the frozen manifest order before source access.
+    for fixture_index in "${!EXPECTED_DEVELOPMENT_STEMS[@]}"; do
+        fixture_position=$((fixture_index + 1))
+        # A changed position would compare a different consultation under this run identity.
+        if [[ "${!fixture_position}" != "${EXPECTED_DEVELOPMENT_STEMS[$fixture_index]}" ]]; then
+            echo "error: M02 development order differs at position $fixture_position" >&2
+            exit 2
+        fi
+        # Only the frozen target and two guards may consume one decode slot.
+        if [[ "$M02_ONLY_STEM" == "${EXPECTED_DEVELOPMENT_STEMS[$fixture_index]}" \
+            && "$fixture_index" =~ ^(4|6|8)$ ]]; then
+            m02_stem_is_allowed=1
+        fi
+    done
+    # An unregistered consultation could overfit the phrase or touch a sealed fixture.
+    if [[ "$m02_stem_is_allowed" -ne 1 ]]; then
+        echo "error: --m02-only-stem is not the frozen target or guard" >&2
+        exit 2
+    fi
+    # A different phrase, raw garble, or list has no independent approval.
+    if [[ -n "$CORRECTION_PHRASE" \
+        && "$CORRECTION_PHRASE" != "$M02_APPROVED_CORRECTION_PHRASE" ]]; then
+        echo "error: --correction-phrase is not the approved M02 phrase" >&2
+        exit 2
+    fi
+    # A completed run directory cannot be overwritten for a more favorable result.
+    if [[ -e "$RUN_DIR" ]]; then
+        echo "error: M02 evidence directory already exists: $RUN_DIR" >&2
+        exit 2
+    fi
+fi
 
 # No fixture means there is no consultation for the operator to compare.
 if [[ $# -eq 0 ]]; then
@@ -360,8 +434,10 @@ run_host_dry_run() {
     local metadata_path="$3"
     local live_history_path="$4"
     local fixture_index="$5"
+    local effective_decoder_path="$6"
     local seconds_arguments=()
     local production_arguments=()
+    local application_arguments=()
     # A selected cutoff keeps the dry artifact aligned with the operator's intended interval.
     if [[ -n "$SECONDS_LIMIT" ]]; then
         seconds_arguments=(--seconds "$SECONDS_LIMIT")
@@ -381,6 +457,17 @@ run_host_dry_run() {
             --expected-manifest-sha256 "$MANIFEST_SHA256"
         )
     fi
+    # Application-shaped dry runs validate the explicit phrase/config destinations without NeMo.
+    if [[ "$APPLICATION_POST_VISIT" -eq 1 ]]; then
+        application_arguments=(
+            --application-post-visit
+            --effective-decoder-output "$effective_decoder_path"
+        )
+        # Only candidate arms add the reviewed phrase; an empty value remains baseline.
+        if [[ -n "$CORRECTION_PHRASE" ]]; then
+            application_arguments+=(--correction-phrase "$CORRECTION_PHRASE")
+        fi
+    fi
 
     "$PYTHON_BIN" scripts/second_pass_asr.py \
         --dry-run \
@@ -388,6 +475,7 @@ run_host_dry_run() {
         --audio "$wav_path" \
         --history-output "$history_path" \
         --metadata-output "$metadata_path" \
+        "${application_arguments[@]}" \
         "${production_arguments[@]}" \
         "${seconds_arguments[@]}"
 }
@@ -400,6 +488,7 @@ run_container_asr() {
     local fixture_name="$4"
     local live_history_path="$5"
     local fixture_index="$6"
+    local effective_decoder_path="$7"
 
     # A stopped NeMo container cannot produce a pinned-runtime comparison for the operator.
     if ! docker compose ps --format json nemo-agent >/dev/null 2>&1; then
@@ -415,14 +504,27 @@ run_container_asr() {
     local container_audio="/tmp/ambient-second-pass-${RUN_ID}-${safe_fixture_name}.wav"
     local container_history="/tmp/ambient-second-pass-${RUN_ID}-${safe_fixture_name}-history.json"
     local container_metadata="/tmp/ambient-second-pass-${RUN_ID}-${safe_fixture_name}-metadata.json"
+    local container_effective_decoder="/tmp/ambient-second-pass-${RUN_ID}-${safe_fixture_name}-effective-decoder.json"
     local container_source_dir="/tmp/ambient-second-pass-${RUN_ID}/${safe_fixture_name}"
     local container_live_history="${container_source_dir}/live-history.json"
     local container_manifest="${container_source_dir}/development-corpus-0.5.0.json"
     local seconds_arguments=()
     local production_arguments=()
+    local application_arguments=()
     # A selected cutoff keeps container inference on the operator's intended interval.
     if [[ -n "$SECONDS_LIMIT" ]]; then
         seconds_arguments=(--seconds "$SECONDS_LIMIT")
+    fi
+    # Both M02 arms use the application decoder and preserve its merged config.
+    if [[ "$APPLICATION_POST_VISIT" -eq 1 ]]; then
+        application_arguments=(
+            --application-post-visit
+            --effective-decoder-output "$container_effective_decoder"
+        )
+        # Candidate text is passed once; baseline leaves the phrase absent.
+        if [[ -n "$CORRECTION_PHRASE" ]]; then
+            application_arguments+=(--correction-phrase "$CORRECTION_PHRASE")
+        fi
     fi
 
     docker compose exec -T nemo-agent mkdir -p "$container_runner_dir"
@@ -459,23 +561,36 @@ run_container_asr() {
         --audio "$container_audio" \
         --history-output "$container_history" \
         --metadata-output "$container_metadata" \
+        "${application_arguments[@]}" \
         "${production_arguments[@]}" \
         "${seconds_arguments[@]}" || candidate_exit_status=$?
 
     local candidate_artifacts_exist=0
+    local effective_decoder_artifact_exists=1
+    # An application-shaped result is incomplete without its actual merged decoder config.
+    if [[ "$APPLICATION_POST_VISIT" -eq 1 ]] \
+        && ! docker compose exec -T nemo-agent test -f "$container_effective_decoder"; then
+        effective_decoder_artifact_exists=0
+    fi
     # Every production exit, including import/model failure, must retain its evidence pair.
     if docker compose exec -T nemo-agent test -f "$container_history" \
-        && docker compose exec -T nemo-agent test -f "$container_metadata"; then
+        && docker compose exec -T nemo-agent test -f "$container_metadata" \
+        && [[ "$effective_decoder_artifact_exists" -eq 1 ]]; then
         candidate_artifacts_exist=1
         # Production retains failures; legacy retains only its existing successful result behavior.
         if [[ "$PRODUCTION_SHAPE" -eq 1 || "$candidate_exit_status" -eq 0 ]]; then
             docker compose cp "nemo-agent:${container_history}" "$history_path" >/dev/null
             docker compose cp "nemo-agent:${container_metadata}" "$metadata_path" >/dev/null
+            # A real application-shaped decode must retain the merged NeMo config.
+            if [[ "$APPLICATION_POST_VISIT" -eq 1 ]]; then
+                docker compose cp "nemo-agent:${container_effective_decoder}" \
+                    "$effective_decoder_path" >/dev/null
+            fi
         fi
     fi
 
     docker compose exec -T nemo-agent sh -c \
-        "rm -f '$container_script' '$container_production_helper' '$container_audio' '$container_history' '$container_metadata'" \
+        "rm -f '$container_script' '$container_production_helper' '$container_audio' '$container_history' '$container_metadata' '$container_effective_decoder'" \
         >/dev/null || true
     docker compose exec -T nemo-agent rmdir "$container_runner_dir" >/dev/null || true
 
@@ -519,6 +634,7 @@ score_fixture() {
     local history_path="$fixture_run_dir/history.json"
     local metadata_path="$fixture_run_dir/metadata.json"
     local score_path="$fixture_run_dir/transcript-quality.txt"
+    local effective_decoder_path="$fixture_run_dir/effective-decoder.json"
 
     printf 'second-pass fixture=%s model=%s dry_run=%s\n' "$fixture_name" "$MODEL" "$DRY_RUN" >&2
     # Dry mode stops after proving the selected TDT default and evidence destinations.
@@ -528,7 +644,8 @@ score_fixture() {
             "$history_path" \
             "$metadata_path" \
             "$live_history_path" \
-            "$fixture_index"
+            "$fixture_index" \
+            "$effective_decoder_path"
         return 0
     fi
 
@@ -539,7 +656,8 @@ score_fixture() {
         "$metadata_path" \
         "$fixture_name" \
         "$live_history_path" \
-        "$fixture_index" || candidate_exit_status=$?
+        "$fixture_index" \
+        "$effective_decoder_path" || candidate_exit_status=$?
 
     local cutoff_seconds
     cutoff_seconds="$(cutoff_seconds_for_history "$history_path" "$wav_path")"
@@ -561,6 +679,11 @@ mkdir -p "$RUN_DIR"
 fixture_index=0
 for fixture_query in "$@"; do
     live_history_path=""
+    # The frozen M02 ledger spends this process on one named target or guard only.
+    if [[ -n "$M02_ONLY_STEM" && "$fixture_query" != "$M02_ONLY_STEM" ]]; then
+        fixture_index=$((fixture_index + 1))
+        continue
+    fi
     # Production uses the exact manifest path and frozen source at this campaign position.
     if [[ "$PRODUCTION_SHAPE" -eq 1 ]]; then
         wav_path="$FIXTURE_DIR/${EXPECTED_DEVELOPMENT_STEMS[$fixture_index]}.wav"

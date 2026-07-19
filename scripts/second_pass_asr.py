@@ -10,6 +10,7 @@ mode remains available for explicit one-fixture wording experiments.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -36,6 +37,8 @@ __all__ = [
 
 DEFAULT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 DEFAULT_MAX_WORDS_PER_SEGMENT = 18
+M02_UNIFIED_MODEL = "nvidia/parakeet-unified-en-0.6b"
+M02_APPROVED_CORRECTION_PHRASE = "brand new sector"
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,32 @@ def transcribe_audio(model_name: str, audio_path: Path) -> str:
     if not transcription_results:
         return ""
     return normalise_text(transcription_results[0])
+
+
+def transcribe_application_post_visit_audio(
+    model_name: str,
+    audio_path: Path,
+    correction_phrase: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """Run the exact stopped-visit decoder without assembling browser rows.
+
+    Use for one approved A/B fixture; null phrase preserves the clinician's baseline words.
+    """
+    correction_module = importlib.import_module("post_visit_correction")
+    correction_module.CAPTURE_POST_VISIT_DECODING_CONFIG = True
+    transcription_result = correction_module.transcribe_audio_with_nemo(
+        model_name,
+        str(audio_path),
+        correction_phrase=correction_phrase,
+    )
+    effective_decoding_config = transcription_result.effective_decoding_config
+    # Missing config means the A/B cannot prove that phrase bias was its only variable.
+    if effective_decoding_config is None:
+        raise RuntimeError("effective decoder evidence is unavailable")
+    return (
+        normalise_text(transcription_result),
+        effective_decoding_config,
+    )
 
 
 def split_words(text: str) -> list[str]:
@@ -359,8 +388,62 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate sources and write empty evidence without loading NeMo",
     )
+    argument_parser.add_argument(
+        "--application-post-visit",
+        action="store_true",
+        help="Use the exact stopped-visit decoder instead of the legacy model probe",
+    )
+    argument_parser.add_argument(
+        "--correction-phrase",
+        default=None,
+        help="One approved corrected-lane phrase; absent keeps the baseline decoder",
+    )
+    argument_parser.add_argument(
+        "--effective-decoder-output",
+        type=Path,
+        default=None,
+        help="Write the effective stopped-visit decoder config after one real decode",
+    )
     production.add_production_arguments(argument_parser)
     return argument_parser.parse_args()
+
+
+def validate_application_post_visit_options(
+    operator_options: argparse.Namespace,
+) -> str | None:
+    """Reject an incomplete or unreviewed phrase experiment before source access.
+
+    Use after parsing; null return means the operator selected the frozen M02 lane.
+    """
+    # Legacy experiments cannot label themselves with the production decoder's phrase.
+    if not operator_options.application_post_visit:
+        if operator_options.correction_phrase is not None:
+            return "--correction-phrase requires --application-post-visit"
+        if operator_options.effective_decoder_output is not None:
+            return "--effective-decoder-output requires --application-post-visit"
+        return None
+    # M02 compares only the pinned Unified decoder used after the clinician presses Stop.
+    if operator_options.model != M02_UNIFIED_MODEL:
+        return f"--application-post-visit requires {M02_UNIFIED_MODEL}"
+    # A raw garble, list, or second phrase has no independent clinical review.
+    if operator_options.correction_phrase not in {
+        None,
+        M02_APPROVED_CORRECTION_PHRASE,
+    }:
+        return "--correction-phrase is not the approved M02 canonical phrase"
+    # A real arm without effective config evidence cannot prove its one-variable boundary.
+    if (
+        not operator_options.dry_run
+        and operator_options.effective_decoder_output is None
+    ):
+        return "--application-post-visit requires --effective-decoder-output"
+    # Completed decoder evidence is immutable and cannot be overwritten by a favorable rerun.
+    if (
+        operator_options.effective_decoder_output is not None
+        and operator_options.effective_decoder_output.exists()
+    ):
+        return "effective decoder evidence already exists"
+    return None
 
 
 def run_legacy_second_pass(operator_options: argparse.Namespace) -> int:
@@ -388,7 +471,16 @@ def run_legacy_second_pass(operator_options: argparse.Namespace) -> int:
         # A dry run proves selection/output wiring without loading NeMo or wording.
         if operator_options.dry_run:
             transcript = ""
-        # A real legacy comparison transcribes the selected consultation interval.
+        # An application-shaped arm uses the same decoder the clinician receives after Stop.
+        elif operator_options.application_post_visit:
+            transcript, effective_decoding_config = (
+                transcribe_application_post_visit_audio(
+                    operator_options.model,
+                    transcribe_path,
+                    operator_options.correction_phrase,
+                )
+            )
+        # A real legacy comparison retains its pre-existing model probe.
         else:
             transcript = transcribe_audio(operator_options.model, transcribe_path)
     # Example: the selected model cannot construct or the chosen WAV is malformed.
@@ -422,6 +514,16 @@ def run_legacy_second_pass(operator_options: argparse.Namespace) -> int:
     # Requested metadata lets the operator audit the model and audio without wording.
     if operator_options.metadata_output is not None:
         write_json(operator_options.metadata_output, metadata)
+    # A real application-shaped arm records the actual merged NeMo decoder config once.
+    if (
+        not operator_options.dry_run
+        and operator_options.application_post_visit
+        and operator_options.effective_decoder_output is not None
+    ):
+        write_json(
+            operator_options.effective_decoder_output,
+            effective_decoding_config,
+        )
 
     print(
         "second-pass-asr "
@@ -440,9 +542,38 @@ def main() -> int:
         Exit 0 for saved evidence, 1 for retained failure, or 2 for invalid input.
     """
     operator_options = parse_args()
+    option_error = validate_application_post_visit_options(operator_options)
+    # Invalid experiment identity stops before audio, model, or output access.
+    if option_error is not None:
+        print(f"error: {option_error}", file=sys.stderr)
+        return 2
     # Production mode owns fail-closed validation and write-once application evidence.
     if operator_options.production_shape:
-        return production.run_production_shape(operator_options)
+        # A dry source proof must not import application NeMo code or create decoder evidence.
+        if operator_options.dry_run:
+            return production.run_production_shape(operator_options)
+        correction_module = importlib.import_module("post_visit_correction")
+        correction_module.DEFAULT_POST_VISIT_CORRECTION_PHRASE = (
+            operator_options.correction_phrase
+        )
+        correction_module.CAPTURE_POST_VISIT_DECODING_CONFIG = True
+        production_exit_code = production.run_production_shape(operator_options)
+        # A successful production decode must preserve its actual merged decoder config.
+        if production_exit_code == 0 and not operator_options.dry_run:
+            effective_decoding_config = (
+                correction_module.LAST_POST_VISIT_DECODING_CONFIG
+            )
+            # Missing decoder evidence invalidates an otherwise plausible transcript arm.
+            if effective_decoding_config is None:
+                print(
+                    "error: effective decoder evidence is unavailable", file=sys.stderr
+                )
+                return 1
+            write_json(
+                operator_options.effective_decoder_output,
+                effective_decoding_config,
+            )
+        return production_exit_code
     return run_legacy_second_pass(operator_options)
 
 
