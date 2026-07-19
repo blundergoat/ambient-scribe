@@ -1,51 +1,112 @@
-# Ambient Scribe medical lexicon.
-# Provenance: project-curated common primary-care terms for synthetic demos.
-# Format: canonical term | likely ASR variant | likely ASR variant
-# Keep this small until NeMo decode-time boosting is GPU-verified.
-metoprolol|metro pro lol|meto prolol
-sumatriptan|summa trip tan|sumatryptan
-empagliflozin|empa glyph lozin|empa gliflozin
-lisinopril|lisin april
-troponin|tro pony|troponen
-naproxen|na proxen|naproxin
-ibuprofen|i buprofen|eye buprofen
-paracetamol|para seat amol|paracetemol
-amoxicillin|amoxi cillin|amoxy cillin
-azithromycin|azithro mycin|azythromycin
-atorvastatin|a torva statin|atorva statin
-metformin|met formin|metforman
-omeprazole|omep razole|omeprazol
-levothyroxine|levo thyroxine|levothyroxin
-hydrochlorothiazide|hydrochloro thiazide|hydro chlorothiazide
-prednisone|predni zone|prednizone
-gabapentin|gaba pentin|gabapentyn
+# Ambient Scribe medical lexicon (runtime asset, ambient-scribe-medical-lexicon/v1).
+# Provenance: project-curated primary-care terms for synthetic demos plus
+# consult-1.2 observed ASR misses (m02-acceptance replay).
+# Format: canonical term | ASR variant | ASR variant
+# Rows sort by casefolded canonical. Every canonical/variant pair needs an
+# active row in medical_lexicon_review.json, which binds this file's SHA-256.
+# Verify: scripts/clinical-data-audit.py and scripts/evaluate-medical-boost.py.
 albuterol|al buterol|albuteral
-salbutamol|sal butamol|salbutamole
+alendronate|alen dronate|alendronat
+allopurinol|allo purinol|alopurinol
+amitriptyline|ami triptyline|amitriptylene
 amlodipine|amlo dipine|amlodepine
-rosuvastatin|rosuva statin|ro suva statin
-pantoprazole|panto prazole|pantoprazol
-warfarin|war farin|warfaren
+amoxicillin|amoxi cillin|amoxy cillin
+anaphylaxis|ana phylaxis|anafalaxis
 apixaban|a pixaban|apixiban
-rivaroxaban|riva roxaban|rivaroxiban
-sertraline|sertra line|sertralyn
-fluoxetine|flu oxetine|fluoxetin
-semaglutide|sema glutide|semaglutid
-HbA1c|h b a one c|hba one c
-hypertension|high per tension
-radiculopathy|radiculo pathy|ridiculopathy
-hypothyroidism|hypo thyroidism|hypothyroid ism
-hyperlipidemia|hyper lipid emia|hyper lipidemia
-osteoarthritis|osteo arthritis|osteoarthritus
-pneumonia|new monia|pneumon ia
-cellulitis|cell u litis|cellulitus
-eczema|ex zema|egzema
-gastroenteritis|gastro enteritis|gastroenteritus
+appendicitis|appendi citis|appendicitus
+aspirin|asprin|as prin
 asthma|az ma|asma
-endometriosis|endo metriosis|endometreosis
-myocardial infarction|my cardial infarction
+atorvastatin|a torva statin|atorva statin
 atrial fibrillation|a trial fibrillation|a fib
-gestational diabetes|gestation diabetes
-loratadine|Luratidine
-Piriton|Pyritin
-fexofenadine|Fexaphenidine
+azithromycin|azithro mycin|azythromycin
+bisoprolol|biso prolol|bisoprelol
+bronchiolitis|bronchio litis|bronchialitis
+budesonide|bu desonide|budesonyde
+candesartan|cande sartan|candesarten
+carbamazepine|carba mazepine|carbamazapine
+cellulitis|cell u litis|cellulitus
+cetirizine|ceti rizine|cetirazine
+citalopram|cita lopram|citaloprem
+clopidogrel|clopido grel|clopidogril
+coeliac disease|celiac disease|see liac disease
+colchicine|colchi cine|colchiseen
+conjunctivitis|conjunctiv itis|conjunctivitus
+COPD|c o p d
+CRP|c r p
+dapagliflozin|dapa gliflozin|dapagliflozen
+deep vein thrombosis|deep vain thrombosis|d v t
+diclofenac|diclo fenac|dyclofenac
+diverticulitis|diver ticulitis|diverticulitus
+doxycycline|doxy cycline|doxicycline
+ECG|e c g
+eczema|ex zema|egzema
+eGFR|e g f r
 emollients|emolons
+empagliflozin|empa glyph lozin|empa gliflozin
+endometriosis|endo metriosis|endometreosis
+fexofenadine|Fexaphenidine
+fibromyalgia|fibro myalgia|fibromyalgea
+flucloxacillin|flu cloxacillin|fluclox
+fluoxetine|flu oxetine|fluoxetin
+gabapentin|gaba pentin|gabapentyn
+gastro-oesophageal reflux|gastro esophageal reflux|gastro oesophageal reflux
+gastroenteritis|gastro enteritis|gastroenteritus
+gestational diabetes|gestation diabetes
+gliclazide|glic lazide|gliclizide
+HbA1c|h b a one c|hba one c
+hydrochlorothiazide|hydrochloro thiazide|hydro chlorothiazide
+hydrocortisone|hydro cortisone|hydrocortizone
+hyperlipidemia|hyper lipid emia|hyper lipidemia
+hypertension|high per tension
+hypothyroidism|hypo thyroidism|hypothyroid ism
+ibuprofen|i buprofen|eye buprofen
+INR|i n r
+levothyroxine|levo thyroxine|levothyroxin
+lisinopril|lisin april
+loratadine|Luratidine
+metformin|met formin|metforman
+methotrexate|metho trexate|methotrexat
+metoprolol|metro pro lol|meto prolol
+migraine|mi grain|migrane
+mirtazapine|mirta zapine|mertazapine
+montelukast|monte lukast|montelucast
+myocardial infarction|my cardial infarction
+naproxen|na proxen|naproxin
+nitrofurantoin|nitro furantoin|nitrofurantoyn
+omeprazole|omep razole|omeprazol
+ondansetron|ondan setron|ondansetran
+osteoarthritis|osteo arthritis|osteoarthritus
+osteoporosis|osteo porosis|osteoperosis
+pantoprazole|panto prazole|pantoprazol
+paracetamol|para seat amol|paracetemol
+PCOS|p c o s
+pertussis|per tussis|pertusis
+Piriton|Pyritin
+plantar fasciitis|plantar fascia itis|planter fasciitis
+pneumonia|new monia|pneumon ia
+prednisone|predni zone|prednizone
+pregabalin|pre gabalin|pregablin
+psoriasis|so riasis|soriasis
+radiculopathy|radiculo pathy|ridiculopathy
+ramipril|rami pril|ramapril
+rheumatoid arthritis|rheuma toid arthritis|rumatoid arthritis
+rivaroxaban|riva roxaban|rivaroxiban
+rosuvastatin|rosuva statin|ro suva statin
+salbutamol|sal butamol|salbutamole
+sciatica|sy attica|siatica
+semaglutide|sema glutide|semaglutid
+sertraline|sertra line|sertralyn
+sinusitis|sinus itis|sinusitus
+spirometry|spiro metry|spyrometry
+spironolactone|spirono lactone|spironolacton
+sumatriptan|summa trip tan|sumatryptan
+terbinafine|terbina fine|terbinafeen
+tonsillitis|tonsil litis|tonsilitis
+tramadol|trama dol|tramadole
+troponin|tro pony|troponen
+TSH|t s h
+urticaria|urti caria|urticarea
+UTI|u t i
+venlafaxine|venla faxine|venlafaxeen
+Ventolin|vento lin|ventalin
+warfarin|war farin|warfaren

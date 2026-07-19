@@ -7,6 +7,7 @@ text replacement, and the pipeline seam that feeds the browser and summaries.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import importlib.util
 import subprocess
@@ -204,20 +205,32 @@ def test_default_lexicon_keeps_disabled_synonyms_and_plurals_raw():
 
 
 def test_review_table_classifies_every_active_lexicon_row():
-    """Every active visible correction has a reviewer category and guard."""
+    """Every executable pair has an active ledger row with category and guards."""
     phrases = load_medical_lexicon(default_medical_lexicon_path())
     payload = json.loads(REVIEW_PATH.read_text(encoding="utf-8"))
-    review_rows = payload["entries"]
+
+    lexicon_bytes = default_medical_lexicon_path().read_bytes()
+    assert (
+        payload["runtime_lexicon"]["sha256"]
+        == hashlib.sha256(lexicon_bytes).hexdigest()
+    )
 
     active_rows = {
-        str(row["canonical"]): row
-        for row in review_rows
+        (str(row["canonical"]).casefold(), str(row["variant"]).casefold()): row
+        for row in payload["entries"]
         if row.get("status") == "active"
     }
+    runtime_pairs = {
+        (phrase.canonical.casefold(), variant.casefold())
+        # The loader lists the canonical among variants; only real rewrites need review.
+        for phrase in phrases
+        for variant in phrase.variants
+        if variant.casefold() != phrase.canonical.casefold()
+    }
 
-    assert {phrase.canonical for phrase in phrases} == set(active_rows)
+    assert runtime_pairs == set(active_rows)
     assert all(row["category"] != "semantic_synonym" for row in active_rows.values())
-    assert all(row.get("false_positive_guard") for row in active_rows.values())
+    assert all(row.get("hard_negatives") for row in active_rows.values())
 
 
 def test_medical_boost_eval_script_scores_review_table():
@@ -235,21 +248,22 @@ def test_medical_boost_eval_script_scores_review_table():
 
 
 def test_medical_boost_eval_requires_metadata_and_active_coverage():
-    """Reviewer rows need provenance and must match active visible corrections."""
+    """Ledger rows need complete v2 metadata and exact active-pair coverage."""
     evaluator = load_medical_boost_evaluator()
     incomplete_review = evaluator.ReviewEntry(
+        entry_id="metoprolol-metro-pro-lol",
         canonical="metoprolol",
+        variant="metro pro lol",
         status="active",
         category="asr_variant",
-        raw_phrase="metro pro lol",
-        expected_visible_phrase="metoprolol",
-        false_positive_guard="The metro prologue was unrelated.",
-        provenance="",
+        raw_text="metro pro lol",
+        expected_visible_text="metoprolol",
+        hard_negatives=("The metro prologue was unrelated.",),
         safety_rationale="",
     )
     lexicon_phrases = (
-        MedicalPhrase(canonical="metoprolol", variants=("metro pro lol",)),
-        MedicalPhrase(canonical="naproxen", variants=("na proxen",)),
+        MedicalPhrase(canonical="metoprolol", variants=("metoprolol", "metro pro lol")),
+        MedicalPhrase(canonical="naproxen", variants=("naproxen", "na proxen")),
     )
 
     structural_issues = evaluator.validate_review_entries([incomplete_review])
@@ -258,8 +272,12 @@ def test_medical_boost_eval_requires_metadata_and_active_coverage():
         lexicon_phrases,
     )
 
-    assert structural_issues == ["metoprolol: missing required review field"]
-    assert coverage_issues == ["active lexicon rows missing review entries: naproxen"]
+    assert structural_issues == [
+        "metoprolol-metro-pro-lol: missing required review field"
+    ]
+    assert coverage_issues == [
+        "active lexicon pairs missing review rows: naproxen::na proxen"
+    ]
 
 
 def test_empty_phrases_keep_transcript_text_unchanged():

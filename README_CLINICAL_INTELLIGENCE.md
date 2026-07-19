@@ -81,23 +81,25 @@ Key files:
 | --- | --- |
 | `strands_agents/nemo_pipeline.py` | Loads the optional lexicon and applies correction at the pipeline seam. |
 | `strands_agents/medical_lexicon.py` | Loads canonical terms and exact ASR variants, then performs safe replacements. |
-| `strands_agents/data/medical_lexicon.txt` | Small project-curated clinical lexicon for synthetic demos and local review. |
-| `strands_agents/data/medical_lexicon_review.json` | Reviewer table with category, expected correction, false-positive guard, provenance, and rationale. |
-| `scripts/evaluate-medical-boost.py` | CPU-only before/after evaluator for lexicon review; validates active-row coverage without loading NeMo or using the GPU. |
+| `strands_agents/data/medical_lexicon.txt` | Project-curated clinical lexicon (sorted by casefolded canonical); every pair is bound to the review ledger. |
+| `strands_agents/data/medical_lexicon_review.json` | v2 pair ledger: per-pair category, hard negatives, source artifact, review identity, and safety rationale, plus the SHA-256 binding of the runtime `.txt`. |
+| `scripts/evaluate-medical-boost.py` | CPU-only before/after evaluator; checks the runtime hash binding, per-pair coverage, and guard sentences without loading NeMo or using the GPU. |
 | `tests/python/test_medical_lexicon.py` | Proves missing files, exact replacements, and the pipeline seam. |
 | `docs/medical-phrase-boosting.md` | Focused operating notes for extending the lexicon. |
 
 Configuration:
 
 ```text
-MEDICAL_BOOST_ENABLED=0
+MEDICAL_BOOST_ENABLED=1
 MEDICAL_LEXICON_PATH=/app/data/medical_lexicon.txt
 ```
 
-`MEDICAL_BOOST_ENABLED=1` turns the fallback on. It uses exact word-boundary
+The fallback is on by default; `MEDICAL_BOOST_ENABLED=0` opts a deployment
+back out for baseline ASR comparisons. It uses exact word-boundary
 replacement only. It does not fuzzy-match random words into clinical terms.
-The active review disables risky semantic or false-positive-prone prior rows:
-`heart attack`, `thyroid function tests`, and `listen april` stay unchanged.
+The review ledger keeps risky candidates inactive: `heart attack`,
+`thyroid function tests`, and `listen april` stay unchanged, and ambiguous
+product wording such as `steroid cream` is documented as rejected.
 
 ### Why It Makes The System Better
 
@@ -111,9 +113,10 @@ The active review disables risky semantic or false-positive-prone prior rows:
 ### Current Limits
 
 - This is not proven NeMo decode-time phrase boosting yet.
-- The lexicon is intentionally small and project-curated.
+- The lexicon is project-curated and audit-gated (`scripts/clinical-data-audit.py`),
+  not a licensed clinical vocabulary.
 - Before/after clinical ASR accuracy on real GPU replay remains human-pending.
-- This feature should stay off for baseline ASR comparisons.
+- Turn the feature off for baseline ASR comparisons.
 
 ## Clinical Summary Grounding
 
@@ -142,15 +145,19 @@ Key files:
 
 | File | Responsibility |
 | --- | --- |
-| `strands_agents/clinical_context.py` | Loads the tiny KB and retrieves matched snippets. |
-| `strands_agents/data/clinical_knowledge.json` | Project-authored PoC snippets for documentation reminders. |
+| `strands_agents/clinical_context.py` | Validates the governed KB asset fail-closed and retrieves matched snippets. |
+| `strands_agents/data/clinical_knowledge.json` | Governed knowledge asset (`ambient-scribe-clinical-knowledge/v1`): reviewed documentation-checklist cards, inactive by default. |
+| `docs/clinical-documentation-checklists.md` | Source document each card cites; the asset binds its SHA-256. |
 | `strands_agents/api/summary_generation.py` | Adds retrieved snippets to the summary prompt. |
 | `strands_agents/agents/summary_agent.py` | Defines the medical SOAP JSON summary agent. |
 | `tests/python/test_clinical_context.py` | Proves retrieval, blank transcript behavior, malformed KB fallback, and GPU isolation. |
 
-The current KB covers small PoC reminders for chest-pain documentation, NSAID
-plus ACE-inhibitor review, and diabetes medication review. It is not a clinical
-guideline corpus.
+The current KB carries eleven documentation-checklist cards (chest pain,
+NSAID plus ACE inhibitor, diabetes medicines, allergy and antihistamine plans,
+asthma review, antibiotic courses, anticoagulants, thyroid monitoring, mental
+health safety planning, tiredness workup, and skin infection red flags). It is
+not a clinical guideline corpus, and cards reach a summary prompt only when an
+internal caller explicitly enables context.
 
 ### Why It Makes The System Better
 

@@ -44,8 +44,8 @@ Role inference, summaries, clinical context retrieval, and medical term correcti
 | Bedrock role model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | AWS Bedrock in `ap-southeast-2` | `ROLE_AGENT_MODEL_PROVIDER=bedrock` plus `ROLE_AGENT_MODEL_ID` | `.env.example`, Compose, Python, and production Terraform agree on AU Haiku 4.5. |
 | Bedrock summary model | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | AWS Bedrock in `ap-southeast-2` | `SUMMARY_AGENT_MODEL_ID`; provider normally inherits the role provider | Haiku 4.5 is retained deliberately for lower note-generation cost. Sonnet is deferred rather than silently selected by a fallback. |
 | Summary generation | Independent Strands summary agent | AWS Bedrock or CPU-only Ollama | `SUMMARY_AGENT_*`, with provider/model inheritance from effective `ROLE_AGENT_*` values | Generates JSON SOAP-style sections and key points after the visit. Max tokens default to 4096 (`SUMMARY_AGENT_MAX_TOKENS`). |
-| Clinical summary grounding | Project-authored `strands_agents/data/clinical_knowledge.json` | CPU keyword retrieval | Always available to summary prompt when snippets match | Not an LLM or external RAG service. It adds short documentation reminders to the summary prompt. |
-| Medical term correction | `strands_agents/data/medical_lexicon.txt` | CPU post-ASR text normaliser | `MEDICAL_BOOST_ENABLED=0` by default | Exact word-boundary replacement only. NeMo decode-time phrase boosting remains GPU-pending. |
+| Clinical summary grounding | Governed `strands_agents/data/clinical_knowledge.json` (`ambient-scribe-clinical-knowledge/v1`) | CPU keyword retrieval | Off by default; only an internal caller that explicitly enables context can add matched cards | Not an LLM or external RAG service. Reviewed documentation-checklist reminders, validated fail-closed before any prompt use. |
+| Medical term correction | `strands_agents/data/medical_lexicon.txt` | CPU post-ASR text normaliser | On by default; `MEDICAL_BOOST_ENABLED=0` opts out | Exact word-boundary replacement only. NeMo decode-time phrase boosting remains GPU-pending. |
 | Role fallback | Keyword heuristics in `strands_agents/api/role_heuristics.py` | CPU | Automatic after agent failure | Gives low-confidence labels when the configured Strands model is unavailable. |
 
 ## NeMo Speech Pipeline
@@ -180,8 +180,12 @@ Browser source files:
 
 Clinical context assistance is intentionally lightweight in this version.
 
-- `strands_agents/data/clinical_knowledge.json` is a project-authored PoC corpus,
-  not clinical guideline authority.
+- `strands_agents/data/clinical_knowledge.json` is a governed project-authored
+  asset (`ambient-scribe-clinical-knowledge/v1`), not clinical guideline
+  authority; each card cites `docs/clinical-documentation-checklists.md` and
+  carries review identity, hard negatives, and privacy exclusions.
+- Context stays off by default: cards are retrieved only when an internal
+  caller explicitly enables it, and schema-invalid assets fail closed.
 - `retrieve_clinical_context()` uses simple keyword scoring to add short notes
   to the summary prompt.
 - The retrieval helper never diagnoses, prescribes, mutates the transcript, or
@@ -189,15 +193,18 @@ Clinical context assistance is intentionally lightweight in this version.
 
 ## Medical Phrase Normalisation
 
-`MEDICAL_BOOST_ENABLED=1` enables a conservative post-ASR correction fallback.
-It loads `strands_agents/data/medical_lexicon.txt` and replaces exact
-word-boundary variants with canonical clinical terms before text reaches the UI,
-summary, or download.
+A conservative post-ASR correction fallback runs by default
+(`MEDICAL_BOOST_ENABLED=0` opts out). It loads
+`strands_agents/data/medical_lexicon.txt` and replaces exact word-boundary
+variants with canonical clinical terms before text reaches the UI, summary, or
+download.
 
-`strands_agents/data/medical_lexicon_review.json` records the reviewer category,
-expected correction, false-positive guard, provenance, and safety rationale for
-each active row. `python3 scripts/evaluate-medical-boost.py` prints the CPU-only
-before/after table without loading NeMo.
+`strands_agents/data/medical_lexicon_review.json` is the v2 pair ledger: one
+row per canonical/variant pair with category, hard negatives, source artifact,
+review identity, and safety rationale, plus a SHA-256 binding of the exact
+runtime `.txt` bytes. `python3 scripts/evaluate-medical-boost.py` prints the
+CPU-only before/after table and verifies the binding without loading NeMo;
+`scripts/clinical-data-audit.py` is the full governance gate.
 
 This is not NeMo decode-time phrase boosting. The NeMo 2.7.x multitalker
 decode-time API still needs a GPU-container proof before this fallback should be

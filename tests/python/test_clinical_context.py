@@ -91,9 +91,20 @@ def test_load_clinical_knowledge_ignores_invalid_json(tmp_path):
     assert load_clinical_knowledge(knowledge_path) == []
 
 
-def test_bundled_legacy_knowledge_is_ineligible() -> None:
-    """The current legacy cards stay out of every clinician note by default."""
-    assert load_clinical_knowledge() == []
+def test_bundled_knowledge_asset_is_schema_eligible() -> None:
+    """The governed bundled cards stay available for explicitly enabled probes.
+
+    Default clinician notes still run without cards: the summary path only
+    retrieves context when an internal caller passes context_enabled=True,
+    which test_summary_generation_keeps_context_disabled_by_default proves.
+    """
+    loaded_entries = load_clinical_knowledge()
+
+    loaded_ids = [entry["id"] for entry in loaded_entries]
+    assert len(loaded_ids) >= 3
+    assert loaded_ids == sorted(loaded_ids)
+    assert "chest-pain-objective" in loaded_ids
+    assert all(entry["review"]["status"] == "approved" for entry in loaded_entries)
 
 
 def test_schema_eligible_knowledge_can_be_loaded_for_an_internal_probe(

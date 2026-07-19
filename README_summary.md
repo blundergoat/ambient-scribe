@@ -83,19 +83,21 @@ Not everything is a model. Row 6, the **medical lexicon**
 (`strands_agents/data/medical_lexicon.txt`), is a human-reviewed text file
 where each line pairs a correct clinical term with the ways speech recognition
 commonly mishears it - "metro pro lol" → **metoprolol**, "high per tension" →
-**hypertension**. When enabled (`MEDICAL_BOOST_ENABLED=1`), the transcription
-pipeline swaps those exact phrases for the correct spelling the moment the
-speech model produces text, so the fix reaches the live transcript, the
-summary, and downloads alike. It is deliberately conservative: exact
+**hypertension**. On by default (disable with `MEDICAL_BOOST_ENABLED=0`), the
+transcription pipeline swaps those exact phrases for the correct spelling the
+moment the speech model produces text, so the fix reaches the live transcript,
+the summary, and downloads alike. It is deliberately conservative: exact
 whole-word matches only, and it never guesses - anything not on the list stays
-as heard. Each entry's provenance and safety rationale live in a companion
-file, `strands_agents/data/medical_lexicon_review.json`, which is audit
-documentation for reviewers and QA scripts - the running app reads only the
-`.txt` file. Two other non-AI helpers: a keyword-rule fallback that supplies
-low-confidence Doctor/Patient labels if the language model fails mid-visit,
-and a small project-authored clinical knowledge file
-(`strands_agents/data/clinical_knowledge.json`) that grounds the summary
-prompt (keyword lookup, not a licensed guideline corpus).
+as heard. Every canonical/variant pair has its own row in a companion ledger,
+`strands_agents/data/medical_lexicon_review.json`, carrying its category,
+guard sentences, source evidence, review identity, and safety rationale, and
+binding the exact `.txt` bytes by SHA-256 - audit documentation for reviewers
+and QA scripts; the running app reads only the `.txt` file. Two other non-AI
+helpers: a keyword-rule fallback that supplies low-confidence Doctor/Patient
+labels if the language model fails mid-visit, and a governed project-authored
+clinical knowledge file (`strands_agents/data/clinical_knowledge.json`) of
+reviewed documentation-checklist cards that can ground the summary prompt
+(keyword lookup, off by default, not a licensed guideline corpus).
 
 ## Why it's built this way
 
