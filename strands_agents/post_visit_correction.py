@@ -217,6 +217,10 @@ class _NemoTranscriptionResult:
     The user sees its text as corrected rows; attempt and chunk fields explain
     whether the request used bounded audio or a transient retry. Missing timing
     or confidence keeps the existing unstyled, unsplit rendering.
+
+    Attributes:
+        effective_decoding_config: Evaluator-only decoder evidence; null means the clinician used the
+            normal path or no auditable decode completed.
     """
 
     text: str
@@ -342,6 +346,16 @@ def _apply_post_visit_correction_phrase(
     """Apply one reviewed phrase after confidence setup for a stopped visit.
 
     Use only in the corrected transcript lane; null keeps the current words unchanged.
+
+    Args:
+        asr_model: Restored Unified model; missing decoder config stops correction before visible wording.
+        correction_phrase: Independently reviewed official wording; null preserves the baseline transcript.
+
+    Returns:
+        None; the model changes in place, while a null phrase leaves its decoder untouched.
+
+    Raises:
+        PostVisitCorrectionError: When the phrase or decoder is outside the approved experiment.
     """
     # No reviewed phrase means the clinician receives the unchanged baseline decode.
     if correction_phrase is None:
@@ -379,6 +393,15 @@ def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
     """Capture the decoder settings that produced the corrected transcript.
 
     Use after decoding so reviewers can verify phrase, confidence, and timestamps together.
+
+    Args:
+        asr_model: Model that produced the stopped visit; missing config cannot support an accuracy claim.
+
+    Returns:
+        Plain decoder settings for evidence; an empty mapping is valid if NeMo reports one.
+
+    Raises:
+        PostVisitCorrectionError: When NeMo does not expose an auditable mapping.
     """
     from omegaconf import OmegaConf
 
@@ -392,6 +415,51 @@ def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
             "Post-visit decoding configuration is not auditable.",
             reason_category="invalid_decoding_evidence",
         )
+    return effective_decoding_config
+
+
+def _selected_post_visit_correction_phrase(
+    requested_correction_phrase: str | None,
+) -> str | None:
+    """Choose the reviewed phrase for one stopped-visit decode.
+
+    Use for normal and evaluator calls; null means the clinician receives the internal default.
+
+    Args:
+        requested_correction_phrase: Evaluator override; null uses the inactive production default.
+
+    Returns:
+        Reviewed phrase to apply, or null when the baseline transcript stays unchanged.
+    """
+    # No evaluator override means the clinician receives the current internal default.
+    if requested_correction_phrase is None:
+        return DEFAULT_POST_VISIT_CORRECTION_PHRASE
+    return requested_correction_phrase
+
+
+def _capture_post_visit_decoding_evidence(
+    asr_model: Any,
+) -> dict[str, Any] | None:
+    """Retain decoder evidence only for the isolated accuracy evaluator.
+
+    Use after a completed A/B decode; normal clinician requests return null and retain no new state.
+
+    Args:
+        asr_model: Model that produced the transcript; missing config makes evaluator evidence unavailable.
+
+    Returns:
+        Effective decoder mapping for an evaluator run, or null for the normal user path.
+
+    Raises:
+        PostVisitCorrectionError: When an opted-in evaluator cannot read decoder evidence.
+    """
+    # Normal clinician requests keep decoder internals out of application state.
+    if not CAPTURE_POST_VISIT_DECODING_CONFIG:
+        return None
+
+    effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
+    global LAST_POST_VISIT_DECODING_CONFIG
+    LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
     return effective_decoding_config
 
 
@@ -431,10 +499,9 @@ def transcribe_audio_with_nemo(
             type(confidence_error).__name__,
         )
 
-    selected_correction_phrase = correction_phrase
-    # The normal app path uses the internal default; evaluators can pass the reviewed arm explicitly.
-    if selected_correction_phrase is None:
-        selected_correction_phrase = DEFAULT_POST_VISIT_CORRECTION_PHRASE
+    selected_correction_phrase = _selected_post_visit_correction_phrase(
+        correction_phrase
+    )
     _apply_post_visit_correction_phrase(asr_model, selected_correction_phrase)
 
     audio_chunks = _build_audio_chunks(Path(audio_path))
@@ -505,12 +572,7 @@ def transcribe_audio_with_nemo(
     finally:
         _remove_scratch_audio_chunks(audio_chunks)
 
-    effective_decoding_config: dict[str, Any] | None = None
-    # The isolated A/B process captures internals; normal user requests retain no new state.
-    if CAPTURE_POST_VISIT_DECODING_CONFIG:
-        effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
-        global LAST_POST_VISIT_DECODING_CONFIG
-        LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
+    effective_decoding_config = _capture_post_visit_decoding_evidence(asr_model)
     return _NemoTranscriptionResult(
         text=" ".join(combined_text_parts),
         word_timings=combined_word_timings if all_chunks_have_timings else None,

@@ -194,6 +194,17 @@ def transcribe_application_post_visit_audio(
     """Run the exact stopped-visit decoder without assembling browser rows.
 
     Use for one approved A/B fixture; null phrase preserves the clinician's baseline words.
+
+    Args:
+        model_name: Frozen Unified model ID; empty cannot produce comparable wording.
+        audio_path: Explicit development WAV; an absent path means there is no visit to score.
+        correction_phrase: Reviewed candidate phrase; null preserves the baseline decoder.
+
+    Returns:
+        Candidate wording and effective decoder settings; empty wording remains a failed result.
+
+    Raises:
+        RuntimeError: When application decoding or its required decoder evidence is unavailable.
     """
     correction_module = importlib.import_module("post_visit_correction")
     correction_module.CAPTURE_POST_VISIT_DECODING_CONFIG = True
@@ -414,6 +425,12 @@ def validate_application_post_visit_options(
     """Reject an incomplete or unreviewed phrase experiment before source access.
 
     Use after parsing; null return means the operator selected the frozen M02 lane.
+
+    Args:
+        operator_options: Requested evaluator arm; missing fields make the command invalid.
+
+    Returns:
+        User-facing validation error, or null when the frozen command may continue.
     """
     # Legacy experiments cannot label themselves with the production decoder's phrase.
     if not operator_options.application_post_visit:
