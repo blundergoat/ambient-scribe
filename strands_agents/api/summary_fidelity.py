@@ -1850,10 +1850,11 @@ _STATE_NARRATIVE_MARKER_PATTERN = re.compile(
     r"\b(?:initially|later|subsequently|eventually)\b", re.IGNORECASE
 )
 
-# Completion asserted in note-final prose: past forms only, so "clinician
-# arranges" (in progress) and "to call" (instruction) never match.
+# Completion asserted in note-final prose; "clinician arranges" (in progress)
+# and "to call" (instruction) never match.
 _ACTION_COMPLETION_VERB_PATTERN = re.compile(
-    r"\b(?:called|ordered|arranged|dispatched|administered)\b", re.IGNORECASE
+    r"\b(?:called|ordered|arranged|scheduled|booked|completed|dispatched|administered)\b",
+    re.IGNORECASE,
 )
 _ACTION_ADMINISTRATION_PATTERN = re.compile(
     r"\b(?:included|given)\b[^.;]{0,60}\badministration\b"
@@ -1869,16 +1870,14 @@ _ACTION_FUTURE_FRAME_WORDS = frozenset(
 _ACTION_PROMISE_FORM_PATTERN = re.compile(
     r"\bi'?ll\b|\bif you can\b|\bif you call\b|\bcould you\b|\bcan you\b"
     r"|\byou can\b|\bwe need to\b|\bneed to\b|\bworth having\b|\bmight\b"
-    r"|\bmay\b|\bwhether\b|\bjust call\b|\bcall the\b|\?",
+    r"|\bmay\b|\bwhether\b|\bjust call\b|\bcall the\b|\barranging\b|\?",
     re.IGNORECASE,
 )
 _ACTION_COMPLETION_EVIDENCE_PATTERN = re.compile(
     r"\b(?:has|have|had|was|were)\s+(?:been\s+)?"
-    r"(?:called|ordered|arranged|dispatched|administered)\b"
-    r"|\bon (?:its|their) way\b|\balready (?:called|ordered|arranged|done)\b"
-    # The speaker actively doing it ("and then arranging a GP follow-up") is
-    # the action underway, not a promise awaiting confirmation.
-    r"|\barranging\b",
+    r"(?:called|ordered|arranged|scheduled|booked|completed|dispatched|administered)\b"
+    r"|\bon (?:its|their) way\b"
+    r"|\balready (?:called|ordered|arranged|scheduled|booked|completed|done)\b",
     re.IGNORECASE,
 )
 # Actor-future arrangement claims ("Patient to call back ... to arrange X"):
@@ -1889,6 +1888,9 @@ _ARRANGEMENT_CONTENT_CLAIM_PATTERN = re.compile(
 # Parenthetical hedges ("(presumed epinephrine auto-injectors)") flag their own
 # uncertainty; hedged content is not held to the support requirement.
 _PARENTHETICAL_PATTERN = re.compile(r"\([^)]*\)")
+
+# Separate explicit compound Plan actions so one source action cannot confirm another.
+_ACTION_PROPOSITION_SEPARATOR_PATTERN = re.compile(r";|,\s+(?=with\b)", re.IGNORECASE)
 
 _TIME_RANGE_CLAIM_PATTERN = re.compile(
     r"\b(\d{1,3})\s*(?:-|–|-|to)\s*(\d{1,3})\s*(hours?|days?|weeks?)\b",
@@ -2127,44 +2129,60 @@ def _action_completion_reasons(
     sentence: str,
     source_rows: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
-    """Flag completion claims whose source only promises or instructs."""
-    completion_spans: list[tuple[int, str]] = []
-    # Past completion verbs assert the action happened.
-    for verb_match in _ACTION_COMPLETION_VERB_PATTERN.finditer(sentence):
-        preceding_words = re.findall(r"[a-z']+", sentence[: verb_match.start()].lower())
-        # "to call", "instructed to book" frame the future, not completion.
-        if preceding_words and preceding_words[-1] in _ACTION_FUTURE_FRAME_WORDS:
-            continue
-        completion_spans.append((verb_match.start(), verb_match.group(0)))
-    # "included ... administration" asserts the medication was given.
-    administration_match = _ACTION_ADMINISTRATION_PATTERN.search(sentence)
-    if administration_match is not None:
-        completion_spans.append(
-            (administration_match.start(), administration_match.group(0))
-        )
-
+    """Flag completed Plan wording that lacks matching source proof.
+    Use before the clinician reviews the generated note.
+    """
     review_reasons: list[dict[str, Any]] = []
-    if completion_spans:
-        object_tokens = _meaningful_object_tokens(
+    # Split combined next steps so each visible action keeps its own evidence.
+    action_propositions = [
+        action_proposition.strip()
+        for action_proposition in _ACTION_PROPOSITION_SEPARATOR_PATTERN.split(
             _PARENTHETICAL_PATTERN.sub(" ", sentence)
         )
-        object_row_indexes = _rows_with_any_token(source_rows, object_tokens)
-        promise_indexes = [
+        if action_proposition.strip()
+    ]
+    # One unsupported action is enough to mark the clinician-visible sentence.
+    for action_proposition in action_propositions:
+        asserted_completion_verbs: list[str] = []
+        # Completed-state wording tells the clinician this action already happened.
+        for completion_verb_match in _ACTION_COMPLETION_VERB_PATTERN.finditer(
+            action_proposition
+        ):
+            preceding_words = re.findall(
+                r"[a-z']+",
+                action_proposition[: completion_verb_match.start()].lower(),
+            )
+            # Future or instructed wording remains a next step, not a completed action.
+            if preceding_words and preceding_words[-1] in _ACTION_FUTURE_FRAME_WORDS:
+                continue
+            asserted_completion_verbs.append(completion_verb_match.group(0))
+        administration_match = _ACTION_ADMINISTRATION_PATTERN.search(action_proposition)
+        # An administration statement also tells the clinician treatment was given.
+        if administration_match is not None:
+            asserted_completion_verbs.append(administration_match.group(0))
+        # A proposition without a completed state needs no completion warning.
+        if not asserted_completion_verbs:
+            continue
+
+        action_object_tokens = _meaningful_object_tokens(action_proposition)
+        matching_source_row_indexes = _rows_with_any_token(
+            source_rows, action_object_tokens
+        )
+        # Prospective wording means this action still needs completion proof.
+        promise_source_row_indexes = [
             row_index
-            for row_index in object_row_indexes
+            for row_index in matching_source_row_indexes
             if _ACTION_PROMISE_FORM_PATTERN.search(
                 _window_text(source_rows, row_index, 1)
             )
         ]
-        # Evidence of completion must sit in the object's own row: a
-        # neighboring row's "arranging a GP follow-up" is about ITS objects,
-        # not this claim's.
-        completion_evidence = any(
+        # Only explicit completed-state wording confirms this same action.
+        has_completion_evidence = any(
             _ACTION_COMPLETION_EVIDENCE_PATTERN.search(source_rows[row_index]["text"])
-            for row_index in object_row_indexes
+            for row_index in matching_source_row_indexes
         )
-        # Promised/instructed but never confirmed done: the claim overreaches.
-        if promise_indexes and not completion_evidence:
+        # A promised action without matching completion evidence needs clinician review.
+        if promise_source_row_indexes and not has_completion_evidence:
             review_reasons.append(
                 {
                     "section": location,
@@ -2174,10 +2192,11 @@ def _action_completion_reasons(
                     " none confirms it was completed",
                     "segment_ids": [
                         source_rows[row_index]["segment_id"]
-                        for row_index in promise_indexes[:4]
+                        for row_index in promise_source_row_indexes[:4]
                     ],
                 }
             )
+            break
 
     review_reasons.extend(_arrangement_content_reasons(location, sentence, source_rows))
     return review_reasons

@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-16
+last_reviewed: 2026-07-19
 ---
 
 # READ / SCOPE / VERIFY Lessons

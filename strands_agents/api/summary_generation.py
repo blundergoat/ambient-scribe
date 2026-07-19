@@ -79,12 +79,34 @@ class SessionSummaryOutput(BaseModel):
     key_points: list[str] = Field(default_factory=list)
 
 
+def _summary_context_snippets(
+    transcript: str, *, context_enabled: bool
+) -> list[dict[str, str]]:
+    """Return reviewed documentation reminders for an approved internal probe.
+
+    Use after the user requests a note; false leaves the normal prompt unchanged.
+
+    Args:
+        transcript: Selected visit text; blank can retrieve no useful reminder.
+        context_enabled: Internal-only switch; false means the user gets no knowledge context.
+
+    Returns:
+        Eligible reminders; empty means the summary uses selected transcript evidence only.
+    """
+    # Normal clinician requests never receive optional documentation cards.
+    if not context_enabled:
+        return []
+    return retrieve_clinical_context(transcript)
+
+
 def run_summary_generation(
     session_id: str,
     transcript: str,
     citation_segments: list[dict[str, Any]] | None = None,
     transcript_segments: list[dict[str, Any]] | None = None,
     citation_source_index: str | None = None,
+    *,
+    context_enabled: bool = False,
 ) -> dict | None:
     """Generate the note the clinician sees after pressing Summarise.
 
@@ -102,6 +124,8 @@ def run_summary_generation(
             empty skips fidelity checking, so the note ships exactly as generated.
         citation_source_index: Preformatted selected citation rows; null preserves legacy
             formatting, while a truncation marker can separate selected opening/tail runs.
+        context_enabled: Internal experiment switch; false keeps documentation cards out of
+            the user's prompt, and it is never supplied by an HTTP or browser payload.
 
     Returns:
         Parsed summary payload. `None` means the browser should show a
@@ -110,7 +134,9 @@ def run_summary_generation(
         `note_output_limit`) for honest browser copy.
     """
     try:
-        context_snippets = retrieve_clinical_context(transcript)
+        context_snippets = _summary_context_snippets(
+            transcript, context_enabled=context_enabled
+        )
         # Units are built BEFORE generation: their ids are the only citation
         # targets the model ever sees, so it cannot cite an arbitrary row.
         source_units = build_source_units(citation_segments or [])

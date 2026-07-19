@@ -1,6 +1,6 @@
 ---
 category: summary
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-19
 ---
 
 # Summary / Note-Generation Footguns
@@ -77,6 +77,23 @@ claim (see the absence-mislabel entry in this file's backlog reference,
   `var/quality/m02-fidelity-denial-precision-20260711T083957Z/` (search:
   "c03-campaign-clean-audit.md"). The separate accurate `reports no recall of infections`
   classification remains open, so this footgun stays active.
+
+## Footgun: One action proposition can launder another action's completion state
+
+**Status:** active | **Created:** 2026-07-19 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: "_action_completion_reasons")
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: "_rows_with_any_token")
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: "_ACTION_COMPLETION_EVIDENCE_PATTERN")
+- **What breaks:** the action reviewer builds object tokens from a whole compound note sentence, admits a
+  source row after any one-token overlap, and treats bare `arranging` as completion evidence. A prospective
+  GP-follow-up row can therefore suppress the existing warning on a blood-test `arranged` claim. Missing
+  `scheduled`, `booked`, and `completed` claim verbs create independent false negatives.
+- **Evidence:** the exact persisted consult-5.3 Plan replay returned zero reasons. Removing its follow-up
+  clause, removing the row containing `arranging`, or changing only that gerund to `planning` restored
+  `action_not_confirmed_done`. The production pattern matched `arranged` but none of the three missing verbs.
+- **Prevention:** never merge persisted rows when characterising fidelity logic. Freeze exact row boundaries,
+  then require claim and source completion evidence to share the same proposition and clinical object.
 
 ## Resolved Entries
 
