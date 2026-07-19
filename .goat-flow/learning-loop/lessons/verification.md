@@ -5,34 +5,6 @@ last_reviewed: 2026-07-20
 
 # READ / SCOPE / VERIFY Lessons
 
-## Lesson: Existence-check every path a doc cites; combined shell output misattributes easily
-
-**Created:** 2026-07-20
-**What happened:** While refreshing the six README files against the current code, one Bash
-call combined `ls .goat-flow/plans/_done/0.3.0/ | head` with
-`ls .goat-flow/plans/_done/0.3.0/done/ | rg "M11|M12"`; the interleaved output made the
-M11/M12 plan files look like direct children of `_done/0.3.0/`, and that wrong path was
-written into `README_CLINICAL_INTELLIGENCE.md`. The final VERIFY sweep (`[ -e "$p" ]` over
-every path the edited READMEs reference) caught both dead links before completion.
-**Prevention:** When several listing commands share one shell call, print a delimiter naming
-each directory before its output, and never transcribe a path from memory of combined output.
-Before presenting doc changes, run a per-path existence check over every file, script, and
-directory the docs newly cite - it is cheap and it caught the session's only error.
-
-## Lesson: A truncated sweep grep ships an incomplete removal
-
-**Added:** 2026-07-17 · **Trigger:** VERIFY (full pytest) failed on a test the removal sweep never listed
-
-Removing row-level role corrections (PR #5 cleanup), the work-list came from
-`grep -rn "user_row|compute_row_role_exceptions" ... | head -20`; the truncation hid
-`test_clinician_corrected_orphan_rows_stay_untouched`, a second lane pinning the removed
-guard, so the first pytest run failed on a file the sweep had already "cleared". A feature's
-own test suite is never its whole surface: markers and side effects (`role_source ==
-"user_row"`) are pinned by other lanes' tests too.
-Prevention: never `head`-truncate the grep that builds a removal work-list - count the hits
-first (`grep -c`) or write them all to a file, and treat the full suite as part of the sweep,
-not a formality after it.
-
 ## Lesson: When a milestone makes timing user-controlled, re-verify every timer it now races
 
 **Added:** 2026-07-16 · **Trigger:** user-reported regression after M11 acceptance testing
@@ -207,7 +179,7 @@ A demo replay "stopped by itself" at ~70s and was signed off as the socket-drop 
 
 `./scripts/check-ai-model.sh` printed `✔ model us.anthropic.claude-haiku-4-5-20251001-v1:0` and `✔ AWS credentials resolve with STS`, so Bedrock looked healthy while every summary failed in ~140ms with the browser blaming "AI model unavailable". Neither checkmark had touched Bedrock: the model line was a plain `echo` of config, and STS only proves the access key authenticates against the identity service. The real error (`ValidationException: The provided model identifier is invalid` - a `us.` geo inference profile does not exist in ap-southeast-2) surfaced only by invoking `bedrock-runtime converse` from inside the nemo-agent container with the container's own env. The "obvious" fix (`apac.` prefix) was also wrong - only `aws bedrock list-inference-profiles` revealed that Sydney exposes Claude 4.5+ under `au.`/`global.` profiles. A second trap compounded the hunt: the exception WAS logged at the failure site, but only into `extra={}` fields that the plain log format silently drops (`strands_agents/api/summary_generation.py`, search: "summary.agent_failed"), so the ERROR line carried no reason.
 
-**Lesson:** When a health check passes but the feature fails: (1) distrust any ✔ that is an echo of config or a probe of an adjacent service (STS is not Bedrock); (2) reproduce the exact failing call from the runtime environment - same container, same env (`docker compose exec <svc> python3 -c ...`); (3) enumerate valid identifiers instead of pattern-guessing them (`list-inference-profiles`, not geo-prefix analogy); (4) remember `logger.error(msg, extra={...})` detail is invisible in plain log format - the answer may already be logged where you cannot see it. The script now probes for real (`scripts/check-ai-model.sh`, search: "model responds to a live invoke"). Related: `.goat-flow/learning-loop/lessons/verification.md` entry "Verify the running container's env, not the compose default".
+**Lesson:** When a health check passes but the feature fails: (1) distrust any ✔ that is an echo of config or a probe of an adjacent service (STS is not Bedrock); (2) reproduce the exact failing call from the runtime environment - same container, same env (`docker compose exec <svc> python3 -c ...`); (3) enumerate valid identifiers instead of pattern-guessing them (`list-inference-profiles`, not geo-prefix analogy); (4) inspect the failure-site log call because `logger.error(msg, extra={...})` detail is invisible in plain log format - the answer may already be logged where you cannot see it. The script now probes for real (`scripts/check-ai-model.sh`, search: "model responds to a live invoke"). Related: `.goat-flow/learning-loop/lessons/verification.md` entry "Verify the running container's env, not the compose default".
 
 ## Lesson: Guard shared socket handlers against stale-socket events (2026-07-05)
 
@@ -226,12 +198,6 @@ After changing the `docker-compose.yml` default to `OLLAMA_HOST=http://ollama:11
 AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while the browser MediaRecorder sent WebM/Opus. NeMo received garbage audio and produced nonsensical transcriptions with no errors in logs. Root cause was found only after reading both `templates/scribe/index.html.twig` (producer) and `strands_agents/nemo_session.py` (consumer).
 
 **Lesson:** Always read both ends of a data pipeline before diagnosing silent failures. Related footgun: `.goat-flow/learning-loop/footguns/audio.md`.
-
-## Lesson: Stale references after rename (2026-03-21)
-
-After renaming `mercure_topic_raw` to `mercure_topic_segments`, stale references remained in config and docs.
-
-**Lesson:** Always run `rg <old_symbol>` after renames and confirm zero remaining refs (DoD gate #6).
 
 ## Lesson: Live transcription fixes need cross-layer verification, not one-service checks (2026-07-04)
 
@@ -298,7 +264,8 @@ While creating the stack inventory, the root README still described Bedrock as t
 ## Lesson: Delivery-race claims need receiver-side evidence (2026-07-06)
 
 **Created:** 2026-07-06
-**Evidence:** `strands_agents/api/summary_request.py` (search: "Blank text is not useful"), `public/js/scribe-output.js` (search: "enterReplayDrain"), `.goat-flow/plans/0.3.0/M21-stop-race-finalize-delivery.md` (search: "corrected 2026-07-06").
+**Evidence:** `strands_agents/api/summary_request.py` (search: "Blank text is not useful") and
+`public/js/scribe-output.js` (search: "enterReplayDrain").
 
 Analyzing a manual replay from server logs alone, the agent saw the browser summary
 carry 38 segments while the server stored 40, saw the WebSocket disconnect timestamp
@@ -442,8 +409,7 @@ it was stopped only after the WAV duration and field cutoff were compared. M05 r
 cutoff error through headless UI timing: a 132.8-second target reached 215.6 seconds while tool
 polls lagged the faster audio clock, and the first stale control click hit hidden microphone Start
 instead of replay Stop. The eventual Stop also triggered one automatic 6,401-token summary.
-**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M11-note-phrasing-fidelity.md` (search: "initial
-uncapped replay") and
+**Evidence:** `scripts/eval-fixtures.sh` (search: "--seconds") and
 `var/quality/m05-dual-identity-duplicates-20260712T060345Z/instrumented-browser-20260712T081246Z/mechanism-verdict.md`.
 **Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
 field session's stop time. Pass that stop time explicitly with `--seconds` and verify the

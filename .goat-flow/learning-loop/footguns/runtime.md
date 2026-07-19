@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-10
+last_reviewed: 2026-07-20
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -164,7 +164,7 @@ last_reviewed: 2026-07-10
 
 **Status:** active | **Created:** 2026-07-07 | **Evidence:** OBSERVED
 
-- **Files:** `strands_agents/api/server.py` (search: "_apply_row_role_override")
+- **Files:** `strands_agents/api/server.py` (search: "async def roles_override")
 - **Files:** `strands_agents/tools/assign_roles.py` (search: "def get_or_create_state")
 - **Files:** `strands_agents/session_lifecycle.py` (search: "cleanup_role_state")
 - **Files:** `public/js/scribe-transcript.js` (search: "function handleRoleUpdate")
@@ -189,7 +189,7 @@ last_reviewed: 2026-07-10
 - **Files:** `strands_agents/api/server.py` (search: "confirmed_overrides.pop")
 - **Files:** `public/js/scribe-transcript.js` (search: "manualOverrides.delete")
 - **Files:** `strands_agents/api/server.py` (search: "corrected artifact snapshots roles")
-- **Files:** `strands_agents/api/summary_request.py` (search: "if corrected_segments:")
+- **Files:** `strands_agents/api/summary_request.py` (search: "if corrected_segments and _corrected_rows_are_current")
 - **What breaks:** A clinician role decision is recorded in three independent places: the server's `confirmed_overrides` (enforced over agent proposals by `_apply_confirmed_overrides`), the browser's `manualOverrides` set (blocks incoming `role_update` mappings client-side), and the corrected-transcript artifact (role snapshot taken at correction time, preferred by summaries). Any mutation path that touches only one diverges the rest. Two PR #3 review findings hit this: cycling a label back to Unknown (the documented undo) stored UNKNOWN as a PERMANENT confirmed override so the agent could never relabel - and even after the server fix, the browser's `manualOverrides` would still have blocked relabels until `cycleRole` also deleted its entry; separately, overrides after the first correction never reached `corrected_segments`, so retried summaries cited pre-fix roles.
 - **Prevention:** Any new role-mutation feature (bulk relabel, undo stack, review queue) must decide explicitly for EACH of the three stores: update, invalidate, or deliberately skip - and say why. Current wiring: UNKNOWN pops the confirmed override AND the browser set; speaker overrides rewrite corrected rows in place; row overrides invalidate the corrected artifact so the next summary re-corrects (regressions: `tests/python/test_api.py`, search: "unknown_override_clears_confirmed_override", "updates_corrected_rows_for_retried_summaries", "invalidates_stale_corrected_artifact").
 
@@ -231,7 +231,7 @@ last_reviewed: 2026-07-10
 - **Log-grep trap:** the failure is logged at WARNING with the wording "CUDA driver error", so sweeps for `ERROR`, `Traceback`, or the phrase "CUDA error" all miss it. Grep `correction.unavailable` explicitly when auditing a session.
 - **Evidence:** 2026-07-08 (UTC) session `0a40e243-c813-48a5-b87f-e069da4def40`: `correction.unavailable ... duration_ms=12350 detail=Second-pass ASR failed for nvidia/parakeet-tdt-0.6b-v3: CUDA driver error: device not ready`, then `summary.requested source=browser_visible_segments` 14s later. Same evening, sessions `d97a9bde`/`203d1d35` logged `correction.completed` (17.4s / 11.5s) and `summary.requested source=corrected_segments`. Related but distinct root cause with the same downstream fallback: lessons/verification.md (search: "correction smoke tests must stay inside reconnect grace").
 - **Prevention:** after every manual or e2e correction run, verify BOTH `correction.completed` AND `summary.requested source=corrected_segments` in the agent log before judging note quality - the existing grace-expiry lesson's check now has two root causes that trip it. Since M09 (2026-07-11) the fallback is no longer silent in the UI, but the log check remains the server-side truth.
-- **Update (2026-07-10, M08 c03 acceptance):** "a single retry would very likely have succeeded" is now REFUTED for long clips. Full-length c03 (9:04) corrections failed 3/3 today - once as an explicit CUDA OOM ("1.38 GiB ... 247 MiB free"), twice as "device not ready", including once on a freshly restarted agent with 10.6 GiB free - while 3:01-3:48 sessions succeeded on both days. GPU sampling during the clean-state run shows streaming stayed ~5.8 GiB and the correction's own transcribe spiked to 15.7 GiB in ~10s before failing, then stayed cached at 15.7 GiB, so same-lifetime retries inherit near-zero headroom. Treat full-length one-shot second-pass transcribe as over-capacity on this 16 GB card with the streaming stack resident; the failure is deterministic at ~9 min, not a teardown race. Full table and design implications: `.goat-flow/plans/0.4.0-slice-1/M09-correction-resilience.md` (search: "length-correlated capacity failure").
+- **Update (2026-07-10, M08 c03 acceptance):** "a single retry would very likely have succeeded" is now REFUTED for long clips. Full-length c03 (9:04) corrections failed 3/3 today - once as an explicit CUDA OOM ("1.38 GiB ... 247 MiB free"), twice as "device not ready", including once on a freshly restarted agent with 10.6 GiB free - while 3:01-3:48 sessions succeeded on both days. GPU sampling during the clean-state run shows streaming stayed ~5.8 GiB and the correction's own transcribe spiked to 15.7 GiB in ~10s before failing, then stayed cached at 15.7 GiB, so same-lifetime retries inherit near-zero headroom. Treat full-length one-shot second-pass transcribe as over-capacity on this 16 GB card with the streaming stack resident; the failure is deterministic at ~9 min, not a teardown race. The shipped length gate and tail-coalescing policy are anchored in `strands_agents/post_visit_correction.py` (search: "_ONE_SHOT_MAX_AUDIO_SECONDS") and `tests/python/test_post_visit_correction.py` (search: "_MIN_FINAL_CHUNK_SECONDS").
 - **Update (2026-07-11, 0.4.0-slice-1 M09 shipped - evidenced behavior only):**
   - Length-gated second pass: <=240s audio keeps the byte-identical one-shot call; longer audio runs as ordered 180s chunks through ONE restored model with visit-relative timing/confidence (`strands_agents/post_visit_correction.py`, search: "_ONE_SHOT_MAX_AUDIO_SECONDS"). The M01 trio stayed byte-identical on GPU. Corpus-sweep field fix (2026-07-11): a 541.56s visit's 1.56s tail sliver decoded empty and vetoed the whole correction (`empty_result`); remainders under `_MIN_FINAL_CHUNK_SECONDS` (10s) now ride inside the final chunk, while a full-size empty chunk still falls back loudly.
   - One same-model retry, ONLY for the case-insensitive `device not ready` exception/cause-chain signature, after synchronize + `empty_cache` + ~2s backoff (search: "_is_device_not_ready_error"). OOM, illegal-memory-access, device-side-assert, model-load, malformed-audio, and empty-result failures never retry.

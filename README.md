@@ -52,17 +52,17 @@ checks.
 
 ## Tech Stack
 
-| Layer              | Technology                                           |
-|--------------------|------------------------------------------------------|
-| ASR + Diarization  | NVIDIA NeMo multitalker Parakeet + Sortformer (GPU)  |
-| Post-visit ASR     | NeMo Parakeet second pass after Stop (GPU)           |
-| Role Inference     | Strands SDK + AWS Bedrock (or CPU-only Ollama)       |
-| SOAP Summary       | Strands SDK + AWS Bedrock (or CPU-only Ollama)       |
-| Backend            | PHP 8.3+, Symfony 6.4                                |
-| Audio Pipeline     | WebSocket (browser -> Python)                        |
-| Transcript Delivery| Mercure Hub (SSE)                                    |
-| Frontend           | Twig, Tailwind CSS, vanilla JS modules               |
-| Infrastructure     | Docker Compose, NVIDIA Container Toolkit             |
+| Layer | Technology / model |
+| --- | --- |
+| ASR + Diarization | NVIDIA NeMo Multitalker Parakeet 0.6B (`nvidia/multitalker-parakeet-streaming-0.6b-v1`) + streaming Sortformer v2.1 (`nvidia/diar_streaming_sortformer_4spk-v2.1`) on GPU |
+| Post-visit ASR | NVIDIA NeMo Parakeet Unified English 0.6B (`nvidia/parakeet-unified-en-0.6b`), second pass after Stop on GPU |
+| Role Inference | Strands SDK + Claude Haiku 4.5 (`au.anthropic.claude-haiku-4-5-20251001-v1:0`) on AWS Bedrock, or Qwen 3.5 9B (`qwen3.5:9b`) on CPU-only Ollama |
+| SOAP Summary | Strands SDK + Claude Haiku 4.5 (`au.anthropic.claude-haiku-4-5-20251001-v1:0`) on AWS Bedrock, or Qwen 3.5 9B (`qwen3.5:9b`) on CPU-only Ollama |
+| Backend | PHP 8.3+, Symfony 6.4 |
+| Audio Pipeline | WebSocket (browser -> Python) |
+| Transcript Delivery | Mercure Hub (SSE) |
+| Frontend | Twig, Tailwind CSS, vanilla JS modules |
+| Infrastructure | Docker Compose, NVIDIA Container Toolkit |
 
 ## Development
 
@@ -83,6 +83,6 @@ strands_agents/.venv/bin/pytest tests/python/ -q   # Python agent tests
 - [README_FIXTURES.md](README_FIXTURES.md) - demo/replay audio fixture setup
 - [CHANGELOG.md](CHANGELOG.md) - feature-by-feature history
 
-## Plans
+## Author
 
-See the [.goat-flow/plans/](.goat-flow/plans/) directory for project planning and progress tracking (contents are local workflow state; only the index is checked in).
+Built by [Matthew Hansen](https://www.blundergoat.com/about).

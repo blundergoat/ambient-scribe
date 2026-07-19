@@ -1,6 +1,6 @@
 ---
 category: browser-verification
-last_reviewed: 2026-07-17
+last_reviewed: 2026-07-20
 ---
 
 # Browser verification lessons
@@ -145,7 +145,7 @@ returns a blocked source from the real agent. Six older summary-flow e2e tests e
 mid-way (bare `requestSummary()` calls, no correction stub) and had been failing since, unnoticed
 because the full browser suite wasn't rerun at the M02/M03 gates. The failures surfaced only when
 M06's browser work ran the whole file; a stash-run against clean HEAD proved them pre-existing.
-**Evidence:** `tests/e2e/browser.spec.js` (search: "finalizing unlocks the button and warms correction"); stash-run
+**Evidence:** `tests/e2e/browser.spec.js` (search: "finalizing settles correction before unlocking, but never fires a summary by itself"); stash-run
 2026-07-16 (6 failed on clean HEAD, same list).
 **Prevention:** When a milestone adds a gate in front of an existing flow, grep the e2e specs for
 every direct entry into that flow (function calls, route stubs) and rerun the FULL spec file at

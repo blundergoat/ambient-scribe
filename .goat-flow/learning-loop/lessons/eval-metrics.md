@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-17
+last_reviewed: 2026-07-20
 ---
 
 # Eval and Metrics Lessons
@@ -26,7 +26,7 @@ attribution, chip findings, and WER buckets instead of expecting strict-attribut
 ## Lesson: Eval history fetch must wait out post-disconnect role churn (2026-07-05)
 
 **Created:** 2026-07-05
-**Evidence:** `scripts/eval-fixtures.sh` (search: "Fetching earlier made attribution depend on a fetch-vs-flip race"), `.goat-flow/plans/0.3.0/M20-improve-doctor-patient-detection.md` (search: "fetch-vs-flip race").
+**Evidence:** `scripts/eval-fixtures.sh` (search: "Fetching earlier made attribution depend on a fetch-vs-flip race").
 
 During M20 Phase 1, three c03 @83s runs after a publish-only payload change all scored
 45.0% strict attribution against a 55.0% Phase 0 median, which looked like the kill
@@ -58,7 +58,7 @@ role timeline's final mapping) - a self-contradicting run proves a measurement r
 ## Lesson: Free-assignment oracle metrics overstate reachable accuracy - constrain the assignment (2026-07-05)
 
 **Created:** 2026-07-05
-**Evidence:** `scripts/transcript-quality.py` (search: "def score_best_dyadic_mapping"), `.goat-flow/plans/0.3.0/M16-diarization-stability-role-confidence.md` (search: "Deep diagnosis (2026-07-05, second pass").
+**Evidence:** `scripts/transcript-quality.py` (search: "def score_best_dyadic_mapping").
 
 The M16 "speaker oracle accuracy" gave each emitted speaker ID its majority reference role
 independently, so on fixtures where diarization mixed one voice across BOTH IDs the oracle
@@ -91,7 +91,7 @@ when it is meant to prevent an exact dyadic inversion.
 ## Lesson: Region WER buckets need word-level allocation, not whole-interval exclusion (2026-07-05)
 
 **Created:** 2026-07-05
-**Evidence:** `scripts/transcript-quality.py` (search: "def timed_words_for_region"), `.goat-flow/plans/0.3.0/M17-transcript-accuracy-and-readability.md` (search: "Phase 0 baseline table").
+**Evidence:** `scripts/transcript-quality.py` (search: "def timed_words_for_region").
 
 During M17 Phase 0, the first clean-vs-overlap WER split assigned an entire TextGrid
 interval or transcript row to the overlap bucket if it touched cross-talk at all. A full
@@ -142,7 +142,7 @@ still sounds mechanically plausible.
 ## Lesson: Held-tail speaker anchors need replay proof before adoption (2026-07-05)
 
 **Created:** 2026-07-05
-**Evidence:** `strands_agents/nemo_session.py` (search: "_overlap_speaker_map"), `.goat-flow/plans/0.3.0/M20-improve-doctor-patient-detection.md` (search: "held-tail anchor voting").
+**Evidence:** `strands_agents/nemo_session.py` (search: "_overlap_speaker_map").
 
 During M20 Phase 5, the per-window artifacts made held-tail speaker anchoring look like the
 small seam mechanism M16 had left open: c03 @83s had 18 held rows and wrong rows clustered at
@@ -175,9 +175,7 @@ During M17 channel-ceiling work, the first eval script posted human-readable ses
 the plan was drafted but matched four WAVs after the local corpus expanded. The resolver
 correctly exited 2, while the outer loop repeated the same failure three times because its
 example omitted `set -e`.
-**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "matched multiple files"),
-`.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search: "Phase 1 - zero-code
-5-second/1x discriminator").
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "matched multiple files").
 **Prevention:** Persist exact fixture slugs or direct paths in plans and handoffs, even when a
 short consultation number is unique today. Put multi-run eval loops under `set -e`, and run
 the resolver once before committing to an expensive GPU batch.
@@ -190,8 +188,7 @@ before the corrected-fixture runner requested post-visit correction. The request
 past the documented 120-second budget while reconnect grace expired, even though the live
 replay and timeline were already complete. M02 did not need correction to diagnose roles.
 **Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction" and
-"write_role_timeline"), `.goat-flow/plans/0.4.0-slice-1/M02-eval-vs-browser-live-gap.md` (search:
-"Authoritative settled-role rerun").
+"write_role_timeline").
 **Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
 fixed diagnostic waits and give its client an explicit timeout. Use the live-only evaluator
 for live-lane diagnostics instead of making unrelated correction success a prerequisite.
@@ -203,9 +200,9 @@ for live-lane diagnostics instead of making unrelated correction success a prere
 improvements, zero worsened spans, and no new identities, then reproduced all three flag-OFF
 hashes. The canonical 20-fixture run still regressed corrected strict by 1.290 points and raised
 incorrect-confident by 1.645 points, with large failures on two non-target c07 fixtures.
-**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search:
-"Stable-alias candidate rejected and removed") and
-`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1c-full-corpus-gate-verdict.md`.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "CORPUS_MODE") and
+`scripts/transcript-quality.py` (search: "def score_best_dyadic_mapping") retain the corpus
+gate and attribution scorer that rejected the targeted-only result.
 **Prevention:** Treat named causal fixtures as mechanism proof, not release coverage. A visit-long
 speaker policy must still pass the full corpus quality/identity gates even when targeted deltas
 and default-OFF compatibility are exact.
@@ -216,8 +213,10 @@ and default-OFF compatibility are exact.
 **What happened:** M05's exact guard-ON replay scored zero safe repeats, but logged no withheld row;
 the retained 67-row/3-phantom target instead became 63 rows/10 phantoms and its original pair was
 not reproduced. The zero could not be attributed to the guard or prove no word loss.
-**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search:
-"duplicate_row_withheld event").
+**Evidence:** `scripts/duplicate-transcript-score.py` (search: "def find_duplicate_pairs") and
+`tests/python/test_duplicate_transcript_score.py` (search:
+"test_scorer_reports_only_overlapping_cross_identity_pairs") pin the matched-pair evidence
+needed alongside a zero count.
 **Prevention:** Require the causal guard event plus a matched before/after target. A zero detector
 count alone is not improvement when the input behavior or adjacent identity metrics changed.
 
@@ -242,8 +241,9 @@ projected at or below a 15-second browser batch interval. The target and browser
 but the 20-fixture run found four 20-25-second first-batch intervals. The worst window had five
 stable clock-ready rows yet only 9.8 seconds of measured hold, so a strict 10-second comparison
 waited for the next five-second evaluation step.
-**Evidence:** `var/quality/full-corpus-20260712T233933Z/m06-delivery-violation-details.txt` and
-`.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "CORPUS GATE REGRESSION").
+**Evidence:** `strands_agents/nemo_streaming_engine.py` (search:
+"def _should_release_bounded_rows") and `tests/python/test_streaming_engine_adapter.py`
+(search: "release_bounded_stability_frontier") pin the cadence-aware release boundary.
 **Prevention:** When a policy is evaluated only on a fixed cadence, project and test boundary
 values just below the threshold as well as long established holds. Include time-to-first-row in
 the corpus delivery gate; mid-consultation target fixtures do not cover startup quantization.

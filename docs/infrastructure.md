@@ -103,8 +103,6 @@ the-summit-chatroom/
 │       └── alarms/                   # ALB 5xx, response time, ECS task count
 ├── scripts/
 │   └── terraform.sh                  # Helper script for all terraform commands
-└── .github/workflows/
-    └── deploy-prod.yml               # CI/CD: build, push, deploy (no migrations)
 ```
 
 ## Prerequisites
@@ -191,7 +189,8 @@ curl -X POST https://summit.blundergoat.com/invoke \
 
 ## CI/CD
 
-The GitHub Actions workflow (`.github/workflows/deploy-prod.yml`) runs on every push to `main`:
+No GitHub Actions deployment workflow is committed in this checkout. The inherited sequence below
+describes the intended pipeline rather than active automation:
 
 1. Authenticates to AWS via OIDC (no long-lived credentials)
 2. Builds the Docker image from `strands_agents/`

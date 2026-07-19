@@ -83,8 +83,7 @@ review. Prefer in-place hunks when a full replacement is unnecessary.
 **What happened:** M04 retained two Ruff-only line wraps in `TranscriptionSession` after removing
 the rejected behavior. The changed-symbol hook then surfaced the class's pre-existing size debt
 as changed scope even though no behavior remained.
-**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope") and
-`.goat-flow/plans/0.4.0-slice-2/M04-crosstalk-bleed-mechanism.md` (search: "candidate rejected and removed").
+**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope").
 **Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
 but do not widen a debt-heavy symbol to chase formatter debt outside scope.
 
@@ -134,10 +133,9 @@ user-visible acceptance metric.
 **What happened:** M05's flag-OFF c02 stream finalized with zero quality errors, but the correction
 HTTP call timed out after 120 seconds before producing the artifact needed for canonical hashing.
 Health and CUDA stayed live, so neither a matching nor mismatching byte result existed.
-**Evidence:** `.goat-flow/plans/0.4.0-slice-2/M05-dual-identity-duplicates.md` (search: "120.002 seconds")
-and `.goat-flow/plans/0.4.0-slice-2/M06-emission-starvation.md` (search: "120.001 seconds"). M06 repeated
-the boundary with max-hold behavior explicitly off, confirming it is not a byte or release-policy
-result.
+**Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction"). A later run
+repeated the timeout boundary with max-hold behavior explicitly off, confirming it is not a byte
+or release-policy result.
 **Prevention:** Separate correction availability from byte comparison: retain the timeout timeline,
 health/CUDA proof, and partial artifacts, then stop before retrying or labeling the result drift.
 
@@ -261,18 +259,6 @@ unsafe artifact was deleted before the root was sealed and replaced with a non-s
 identity fields needed by the gate, scan the evidence root for credential assignments before
 sealing, and record the security correction without copying or printing secret values.
 
-## Lesson: Semantic anchors should prefer function names over escaped route strings (2026-07-04)
-
-`./scripts/context-validate.sh` rejected a generated footgun citation that used an escaped decorator string for the WebSocket route in `strands_agents/api/server.py`. The route existed, but the checker did not accept the escaped quote form.
-
-**Lesson:** For learning-loop citations, prefer stable function-name anchors such as `(search: "async def transcribe_stream")` over quoted decorator or route literals that require escaping.
-
-## Lesson: Goat-flow installed skill edits can drift from package templates (2026-07-04)
-
-Updating installed goat-plan skill copies under `.agents/skills/`, `.claude/skills/`, and `.github/skills/` removed stale project path text, but `goat-flow audit` still compares those files to the package template in `node_modules/@blundergoat/goat-flow/workflow/skills/goat-plan/SKILL.md`.
-
-**Lesson:** When changing installed goat-flow skill text for project policy, run `goat-flow audit` and either accept/report template drift or make the change upstream in the package before claiming the audit is clean.
-
 ## Lesson: Gruff context docs need marker vocabulary (2026-07-04)
 
 During M05, comments clearly described user-visible error handling but still failed `docs.missing-error-behavior-doc` because gruff's context-doc rule looks for marker words such as `reports`, `fallback`, `recover`, or `throws`.
@@ -291,7 +277,7 @@ During M06, intuitive placeholders such as `<generate-app-secret>` and `allowlis
 ## Lesson: Gruff PHP display filters do not lower the exit threshold (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `composer.json` (search: "vendor/bin/gruff-php analyse"), `.goat-flow/plans/0.3.0/M07-fix-gruff-php-findings.md` (search: "rewired").
+**Evidence:** `composer.json` (search: "vendor/bin/gruff-php analyse").
 
 During M07, a complexity-only gruff-php command was initially considered for the retired cyclomatic alias. The command still failed while unrelated advisory findings existed, because gruff-php's report selection changes displayed findings but the configured `minimumSeverity.analyse` threshold still controls the process exit.
 
@@ -331,28 +317,33 @@ and `post-stop-runtime-corrected.txt` beside it. When zero matches is the passin
 explicitly or use a counter that exits zero; never let an expected absence abort later integrity
 checks.
 
+The 1.14.0 setup verification added a smaller form of the same mistake: one invocation passed five
+paths to the unary `test -x` predicate and received exit 2 (`too many arguments`). The executable
+files were valid; the verifier was not. Run unary shell predicates once per target (or use a
+bounded checker that reports each path), and treat exit 2 as a broken check rather than a failed
+artifact.
+
 ## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `.goat-flow/plans/0.3.0/M08-observability-and-eval.md` (search: "ResponseObserver"), `vendor/blundergoat/strands-php-client/src/Http/RequestMiddleware.php` (search: "interface RequestMiddleware"), `src/Observability/StrandsClientTelemetry.php` (search: "implements RequestMiddleware").
+**Evidence:** `composer.lock` (search: "blundergoat/strands-php-client"),
+`vendor/blundergoat/strands-php-client/src/Http/RequestMiddleware.php` (search:
+"interface RequestMiddleware"), `vendor/blundergoat/strands-php-client/src/Http/ResponseObserver.php`
+(search: "interface ResponseObserver"), and `src/Observability/StrandsClientTelemetry.php`
+(search: "implements RequestMiddleware, ResponseObserver").
 
-During M08, the plan described PHP client 1.5.x `ResponseObserver` hooks, but the installed 1.4.0 client only exposes `RequestMiddleware` with `beforeRequest()` and `afterResponse()`. Implementing from the plan text alone would have created a class against an absent interface.
+During M08, the plan described PHP client 1.5.x `ResponseObserver` hooks, but the then-installed
+1.4.0 client exposed only `RequestMiddleware` with `beforeRequest()` and `afterResponse()`.
+Implementing from the plan text alone would have created a class against an absent interface.
+The current locked development client now exposes both interfaces, which reinforces that this
+contract must be re-read from the installed dependency for each change.
 
 **Lesson:** Before implementing SDK instrumentation from a plan, verify the installed vendor interface and lockfile version, then update the plan with the actual contract used.
-
-## Lesson: Goat-flow setup-green can still hide cross-agent drift (2026-07-05)
-
-**Created:** 2026-07-05
-**Evidence:** `.claude/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/skills/goat/SKILL.md` (search: "goat-flow-skill-version"), `.github/hooks/hooks.json` (search: "\"postToolUse\"").
-
-During a Codex goat-flow 1.13.1 repair, `goat-flow setup . --agent codex` reported `0 audit checks failed` after codex config, hooks, and skills were synced. The exact requested `goat-flow audit . --harness --agent codex` still exited non-zero because the audit drift section also compared installed `.claude/skills/`, `.github/skills/`, and `.github/hooks/hooks.json` copies against package templates.
-
-**Lesson:** When the exact audit command is the acceptance gate, trust the audit exit code and its top-level `drift.status`, not only the setup prompt's numbered checks. If drift remains, sync every named installed agent copy before declaring the audit clean.
 
 ## Lesson: Dataclass script imports need sys.modules registration (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import"), `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections").
+**Evidence:** `scripts/analyze-logs.py` (search: "class ProcessQualityStats"), `tests/python/test_observability.py` (search: "Dataclasses resolve postponed annotations through sys.modules during script import").
 
 Full pytest caught that the test helper loaded `scripts/analyze-logs.py` with `importlib.util.module_from_spec()` but did not register it in `sys.modules` before executing the module. Python dataclasses resolving postponed annotations then failed during import.
 
@@ -365,7 +356,7 @@ probe template, not only in one test helper.
 ## Lesson: Provider probes must modify the SDK-formatted request in place
 
 **Created:** 2026-07-10
-**Evidence:** `.goat-flow/plans/0.4.0-slice-1/M08-summary-context-tail-loss.md` (search: "Phase 1 probe harness corrections"), `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
+**Evidence:** `strands_agents/agents/summary_agent.py` (search: "max_tokens=SUMMARY_AGENT_MAX_TOKENS").
 
 The first M08 Bedrock token-cap probe passed a new `inferenceConfig` beside the request generated
 by the installed Strands formatter. That formatter had already embedded `inferenceConfig`, so the
@@ -378,7 +369,7 @@ Do not assume the wrapper leaves provider options for the caller to add again.
 ## Lesson: GPU image import gates need a local/pending split (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `.goat-flow/plans/0.3.0/M09-dependency-upgrades.md` (search: "Phase-0 import one-liner"), `docker/nemo/Dockerfile` (search: "nvcr.io/nvidia/nemo:26.02").
+**Evidence:** `docker/nemo/Dockerfile` (search: "nvcr.io/nvidia/nemo:26.02").
 
 During M09, the plan required a `docker run nvcr.io/nvidia/nemo:26.02 ...` import check before dependency edits. The image pull is multi-GB and was stopped locally, so claiming the import passed would have been false while blocking all GPU-free package and contract checks would have stalled useful work.
 
@@ -387,7 +378,7 @@ During M09, the plan required a `docker run nvcr.io/nvidia/nemo:26.02 ...` impor
 ## Lesson: Name GPU-pending fallbacks as fallbacks (2026-07-04)
 
 **Created:** 2026-07-04
-**Evidence:** `.goat-flow/plans/0.3.0/M11-medical-phrase-boosting.md` (search: "decode-time GPU spike pending"), `strands_agents/medical_lexicon.py` (search: "normaliser for common clinical terms").
+**Evidence:** `strands_agents/medical_lexicon.py` (search: "normaliser for common clinical terms").
 
 During M11, the plan targeted NeMo decode-time phrase boosting, but the exact multitalker transducer API still needs a pinned-container GPU spike. Shipping the useful local path as "phrase boosting" without naming that distinction would make reviewers think the GPU decoding contract had been proven.
 
@@ -396,7 +387,7 @@ During M11, the plan targeted NeMo decode-time phrase boosting, but the exact mu
 ## Lesson: New ASR checkpoints need pinned-container proof (2026-07-06)
 
 **Created:** 2026-07-06
-**Evidence:** `scripts/eval-second-pass.sh` (search: "run_container_asr"), `scripts/second_pass_asr.py` (search: "ASRModel.from_pretrained"), `.goat-flow/plans/second-pass-accuracy/M01-prove-second-pass-eval.md` (search: "att_chunk_context_size").
+**Evidence:** `scripts/eval-second-pass.sh` (search: "run_container_asr"), `scripts/second_pass_asr.py` (search: "ASRModel.from_pretrained").
 
 During the second-pass accuracy spike, `nvidia/parakeet-unified-en-0.6b` looked like
 the right newer English ASR candidate from the model card, but failed inside the pinned
@@ -521,8 +512,7 @@ real AWS credentials for approved replay campaigns. An estimated 3-6 UNAUTHORIZE
 generations occurred across two pytest invocations before the 8-19s suite runtimes exposed it
 (one test even PASSED on real model output). Root causes: name-based stubs one level above the
 boundary, and no fail-fast at the boundary itself.
-**Evidence:** `.goat-flow/logs/sessions/2026-07-14-prime-m01-source-integrity.md` (search:
-"UNAUTHORIZED"); the guard in `tests/python/conftest.py` (search: "_no_summary_provider_calls").
+**Evidence:** `tests/python/conftest.py` (search: "_no_summary_provider_calls").
 **Prevention:** (1) A session-scoped autouse conftest guard replaces
 `agents.create_summary_agent` with a raiser, so any unpatched generation path fails fast and
 free; tests patch their helper OVER the stub. (2) When renaming/replacing a function, grep the

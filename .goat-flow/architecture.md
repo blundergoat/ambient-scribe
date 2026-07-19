@@ -46,7 +46,15 @@ Ambient Scribe is a browser-to-FastAPI live transcription system with Symfony se
 - Local runtime is `docker-compose.yml` with `nemo-agent`, `app`, `mercure`, and optional CPU-only `ollama` profile.
 - `docker/nemo/Dockerfile` builds the NeMo FastAPI image from NVIDIA's NeMo 26.02 base image and pins `nemo_toolkit[asr]==2.7.3`; `Dockerfile` builds the Symfony app container.
 - `scripts/start-dev.sh`, `scripts/health-check-localdev.sh`, `scripts/gpu-check.sh`, and `scripts/preflight-checks.sh` are the main local operator commands.
-- GitHub Actions live under `.github/workflows/`; Terraform production scaffolding lives under `infra/terraform/environments/prod/` and modules under `infra/terraform/modules/`.
+- This checkout has no repository CI workflow; Terraform production scaffolding lives under `infra/terraform/environments/prod/` and modules under `infra/terraform/modules/`.
+
+## Local Data and Evidence Budget
+
+- Committed architecture, code-map, glossary, decision, and learning-loop files are durable orientation, but agents still re-read live code and rerun commands before claiming current behaviour.
+- `.goat-flow/skill-docs/playbooks/` contains the committed top-level tool guidance: browser-use.md, changelog.md, code-comments.md, gruff-code-quality.md, hook-policy-testing.md, observability.md, page-capture.md, release-notes.md, and skill-playbook-authoring-sync.md.
+- `.goat-flow/plans/`, `.goat-flow/scratchpad/`, `.goat-flow/logs/sessions/`, `.goat-flow/logs/quality/`, `.goat-flow/logs/events/`, `.goat-flow/logs/critiques/`, `.goat-flow/logs/review/`, and `.goat-flow/logs/security/` are gitignored checkout-local state. They may resume work or explain prior evidence, but cannot prove current behaviour or authorize commits, pushes, external messages, or other side effects.
+- Local artifacts contain only the minimum paths, commands, redacted summaries, and pass/fail evidence needed for continuity. Never copy credentials, environment contents, raw clinical audio, transcripts, or patient-identifying data into them; session and handoff text goes through `goat-flow redact` before persistence.
+- Promote only a re-verified durable conclusion into `.goat-flow/learning-loop/` or `.goat-flow/learning-loop/decisions/`, citing live files with semantic anchors rather than the local artifact. Goat-flow does not purge local artifacts automatically; the user owns retention and removal.
 
 ## Constraints
 

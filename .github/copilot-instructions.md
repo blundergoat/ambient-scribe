@@ -10,7 +10,7 @@ Ambient Scribe is a Symfony + FastAPI + NeMo + Mercure medical transcription app
 5. Local `.github/instructions/` files and peer agent files.
 
 ## Autonomy Tiers
-**Always:** read/search/diff, run focused checks, run `./scripts/context-validate.sh` after instruction or workflow edits, update directly required docs/tests, and keep `.goat-flow/logs/sessions/` current when work spans sessions.
+**Always:** read/search/diff, run focused checks, update directly required docs/tests, and keep `.goat-flow/logs/sessions/` current when work spans sessions.
 
 **Ask First:** PHP <-> Python API contract changes in `src/Controller/`, `src/Service/`, or `strands_agents/api/server.py`; frontend event payloads; WebSocket/Mercure topic or browser-facing URL changes in `.env.example`, `config/packages/`, `docker-compose.yml`, `templates/scribe/index.html.twig`, or `public/js/scribe.js`; audio capture or `NEMO_STREAM_INPUT_FORMAT`; GPU/NeMo loading or concurrency in `strands_agents/nemo_pipeline.py`, `strands_agents/api/server.py`, or `docker-compose.yml`; role-agent provider/model or tool plumbing in `strands_agents/agents/` or `strands_agents/tools/`; new dependencies, public routes, CI, Terraform, deployment, secrets policy, hook policy, non-Copilot agent surfaces, or 3+ setup/docs files.
 
@@ -47,7 +47,6 @@ composer analyse
 composer cs:check
 strands_agents/.venv/bin/pytest tests/python/ -q
 ./scripts/preflight-checks.sh
-./scripts/context-validate.sh
 ./scripts/api-load-test.sh -n 20 -c 5
 ```
 
@@ -84,12 +83,11 @@ Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` unde
 
 ## Definition of Done
 1. Relevant checks pass, or unresolved failures are explicitly explained.
-2. `./scripts/context-validate.sh` passes after instruction or workflow-file changes.
-3. No Ask First boundary changed without approval or clear user instruction.
-4. Learning-loop entry updated if a behavioural or architectural issue was tripped.
-5. `.goat-flow/logs/sessions/` reflects current state when work spans sessions or stops incomplete.
-6. `goat-flow index` is rerun after learning-loop edits, and `goat-flow stats --check` is clean or exceptions are logged.
-7. After renames or contract edits, `rg` confirms old symbols/routes/topics are gone or intentionally retained.
+2. No Ask First boundary changed without approval or clear user instruction.
+3. Learning-loop entry updated if a behavioural or architectural issue was tripped.
+4. `.goat-flow/logs/sessions/` reflects current state when work spans sessions or stops incomplete.
+5. `goat-flow index` is rerun after learning-loop edits, and `goat-flow stats --check` is clean or exceptions are logged.
+6. After renames or contract edits, `rg` confirms old symbols/routes/topics are gone or intentionally retained.
 
 ## Artifact Routing
 Footguns go to `.goat-flow/learning-loop/footguns/`; lessons to `.goat-flow/learning-loop/lessons/`; decisions to `.goat-flow/learning-loop/decisions/`; patterns to `.goat-flow/learning-loop/patterns/`; local continuity to `.goat-flow/logs/sessions/`; active plans to `.goat-flow/plans/`. Read the target directory `README.md` before editing.
