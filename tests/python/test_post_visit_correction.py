@@ -216,13 +216,13 @@ def test_build_corrected_segments_uses_live_rows_as_role_scaffold() -> None:
                 "end": 7.0,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == ["DOCTOR", "PATIENT"]
     assert corrected_rows[0]["segment_id"] == "corrected-0001"
     assert corrected_rows[1]["source"] == "post_visit_correction"
-    assert corrected_rows[1]["source_model"] == "nvidia/parakeet-tdt-0.6b-v3"
+    assert corrected_rows[1]["source_model"] == "nvidia/parakeet-unified-en-0.6b"
     assert corrected_rows[0]["start"] == 1.0
 
 
@@ -263,7 +263,7 @@ def test_build_corrected_segments_anchors_opening_question_to_doctor() -> None:
                 "end": 11.81,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert corrected_rows[1]["role"] == "DOCTOR"
@@ -318,7 +318,7 @@ def test_build_corrected_segments_keeps_empathy_phrase_with_doctor() -> None:
                 "end": 19.41,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert corrected_rows[1]["text"] == "need to vomit."
@@ -352,7 +352,7 @@ def test_build_corrected_segments_relabels_patient_first_person_source_rows() ->
                 "end": 31.81,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == ["DOCTOR", "PATIENT", "PATIENT"]
@@ -389,7 +389,7 @@ def test_build_corrected_segments_relabels_patient_identity_and_body_rows() -> N
                 "end": 39.81,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == [
@@ -426,7 +426,7 @@ def test_build_corrected_segments_relabels_short_answer_after_doctor_question() 
                 "end": 161.01,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == ["DOCTOR", "PATIENT"]
@@ -462,7 +462,7 @@ def test_build_corrected_segments_relabels_prompt_fragment_as_doctor() -> None:
                 "end": 36.45,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == ["DOCTOR", "DOCTOR", "PATIENT"]
@@ -484,7 +484,7 @@ def test_build_corrected_segments_keeps_identity_echo_unsplit_without_word_timin
                 "end": 15.89,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["segment_id"] for row in corrected_rows] == ["corrected-0001"]
@@ -498,7 +498,7 @@ def test_build_corrected_segments_splits_identity_echo_with_word_timings() -> No
     corrected_rows = build_corrected_segments(
         corrected_words=corrected_words,
         live_segments=identity_echo_live_rows(),
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -529,7 +529,7 @@ def test_identity_echo_split_requires_positive_word_gap() -> None:
     corrected_rows = build_corrected_segments(
         corrected_words=corrected_words,
         live_segments=identity_echo_live_rows(),
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -550,7 +550,7 @@ def test_identity_echo_split_requires_tail_to_reach_row_end() -> None:
     corrected_rows = build_corrected_segments(
         corrected_words=corrected_words,
         live_segments=identity_echo_live_rows(),
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -568,7 +568,7 @@ def test_identity_echo_split_skips_when_next_row_collides() -> None:
     corrected_rows = build_corrected_segments(
         corrected_words=corrected_words,
         live_segments=identity_echo_live_rows(),
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -616,7 +616,7 @@ def test_build_corrected_segments_splits_word_echo_with_word_timings() -> None:
                 "end": 163.4,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -657,7 +657,7 @@ def test_word_echo_split_requires_patient_cue_in_first_part() -> None:
                 "end": 11.0,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -686,7 +686,7 @@ def test_word_echo_split_ignores_filler_and_ack_duplicates() -> None:
                 "end": 12.0,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
         word_timings=word_timings,
     )
 
@@ -711,7 +711,7 @@ def test_identity_echo_split_requires_row_words_in_stream() -> None:
                 "end": 15.89,
                 "is_interim": False,
                 "source": "post_visit_correction",
-                "source_model": "nvidia/parakeet-tdt-0.6b-v3",
+                "source_model": "nvidia/parakeet-unified-en-0.6b",
             }
         ],
         corrected_words=corrected_words,
@@ -744,7 +744,7 @@ def test_build_corrected_segments_keeps_answer_with_filler_as_patient() -> None:
                 "end": 148.53,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert [row["role"] for row in corrected_rows] == ["DOCTOR", "PATIENT"]
@@ -832,7 +832,7 @@ def test_build_corrected_segments_preserves_live_row_when_asr_drops_patient_text
                 "end": 47.65,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert corrected_rows[1]["role"] == "PATIENT"
@@ -877,7 +877,7 @@ def test_build_corrected_segments_keeps_anchors_after_consumed_short_row() -> No
                 "end": 6.0,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert corrected_rows[0]["text"] == "first anchor oh"
@@ -918,7 +918,7 @@ def test_build_corrected_segments_keeps_patient_tail_before_doctor_prompt() -> N
                 "end": 80.93,
             },
         ],
-        model_name="nvidia/parakeet-tdt-0.6b-v3",
+        model_name="nvidia/parakeet-unified-en-0.6b",
     )
 
     assert corrected_rows[0]["role"] == "PATIENT"

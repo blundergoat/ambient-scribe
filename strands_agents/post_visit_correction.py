@@ -11,6 +11,7 @@ can consume without changing live Mercure contracts.
 from __future__ import annotations
 
 import gc
+import hashlib
 import logging
 import os
 import re
@@ -51,7 +52,22 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "POST_VISIT_ASR_MODEL",
-    "nvidia/parakeet-tdt-0.6b-v3",
+    "nvidia/parakeet-unified-en-0.6b",
+)
+# Baseline stays inactive until the reviewed phrase proves safer transcript wording.
+DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | None = None
+APPROVED_POST_VISIT_CORRECTION_PHRASE = "brand new sector"
+_POST_VISIT_CORRECTION_PHRASE_ALPHA = 1.0
+# The single-flight evaluator reads this after one decode; null means no auditable run completed.
+LAST_POST_VISIT_DECODING_CONFIG: dict[str, Any] | None = None
+# Normal clinician requests do not retain decoder internals; the isolated evaluator opts in.
+CAPTURE_POST_VISIT_DECODING_CONFIG = False
+# Keep the selected model available after the service is recreated for a later visit.
+POST_VISIT_MODEL_CACHE_DIR = Path(
+    os.environ.get(
+        "POST_VISIT_MODEL_CACHE_DIR",
+        "/data/post_visit_model_cache",
+    )
 )
 DEFAULT_MAX_WORDS_WITHOUT_SCAFFOLD = 18
 _AUDIO_SAMPLE_RATE = 16000
@@ -65,6 +81,35 @@ _AUDIO_CHUNK_SECONDS = 180.0
 _MIN_FINAL_CHUNK_SECONDS = 10.0
 _TRANSIENT_RETRY_BACKOFF_SECONDS = 2.0
 _DEVICE_NOT_READY_PATTERN = re.compile(r"\bdevice\s+not\s+ready\b", re.IGNORECASE)
+_CHECKPOINT_HASH_BLOCK_BYTES = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedPostVisitCheckpoint:
+    """Identify one locally cached correction checkpoint exactly.
+
+    Use this before a stopped visit loads NeMo so the clinician receives the
+    checkpoint that passed evaluation, never a floating repository revision.
+    """
+
+    repository_id: str
+    revision: str
+    filename: str
+    expected_bytes: int
+    expected_sha256: str
+
+
+_PINNED_POST_VISIT_CHECKPOINTS = {
+    "nvidia/parakeet-unified-en-0.6b": _PinnedPostVisitCheckpoint(
+        repository_id="nvidia/parakeet-unified-en-0.6b",
+        revision="fe53cd885760c96b6a5f51a0bfd362cb4584a98b",
+        filename="parakeet-unified-en-0.6b.nemo",
+        expected_bytes=2_474_055_680,
+        expected_sha256=(
+            "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b"
+        ),
+    ),
+}
 
 
 class PostVisitCorrectionError(RuntimeError):
@@ -163,6 +208,10 @@ class _NemoTranscriptionResult:
     The user sees its text as corrected rows; attempt and chunk fields explain
     whether the request used bounded audio or a transient retry. Missing timing
     or confidence keeps the existing unstyled, unsplit rendering.
+
+    Attributes:
+        effective_decoding_config: Evaluator-only decoder evidence; null means the clinician used the
+            normal path or no auditable decode completed.
     """
 
     text: str
@@ -171,6 +220,7 @@ class _NemoTranscriptionResult:
     attempts: int
     retried: bool
     chunk_count: int
+    effective_decoding_config: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,7 +330,135 @@ def run_post_visit_correction(
     )
 
 
-def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscriptionResult:
+def _apply_post_visit_correction_phrase(
+    asr_model: Any,
+    correction_phrase: str | None,
+) -> None:
+    """Apply one reviewed phrase after confidence setup for a stopped visit.
+
+    Use only in the corrected transcript lane; null keeps the current words unchanged.
+
+    Args:
+        asr_model: Restored Unified model; missing decoder config stops correction before visible wording.
+        correction_phrase: Independently reviewed official wording; null preserves the baseline transcript.
+
+    Returns:
+        None; the model changes in place, while a null phrase leaves its decoder untouched.
+
+    Raises:
+        PostVisitCorrectionError: When the phrase or decoder is outside the approved experiment.
+    """
+    # No reviewed phrase means the clinician receives the unchanged baseline decode.
+    if correction_phrase is None:
+        return
+    # Any other text could normalize a raw garble or activate multiple unreviewed hints.
+    if correction_phrase != APPROVED_POST_VISIT_CORRECTION_PHRASE:
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase is not the reviewed canonical phrase.",
+            reason_category="invalid_phrase_config",
+        )
+
+    from omegaconf import OmegaConf, open_dict
+
+    phrase_decoding_config = OmegaConf.create(
+        OmegaConf.to_container(asr_model.cfg.decoding, resolve=True)
+    )
+    # Native phrase fusion is proven only for the checkpoint's batched greedy decoder.
+    if phrase_decoding_config.strategy != "greedy_batch":
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase requires greedy_batch decoding.",
+            reason_category="unsupported_phrase_config",
+        )
+
+    with open_dict(phrase_decoding_config.greedy):
+        phrase_decoding_config.greedy.boosting_tree = {
+            "key_phrases_list": [correction_phrase]
+        }
+        phrase_decoding_config.greedy.boosting_tree_alpha = (
+            _POST_VISIT_CORRECTION_PHRASE_ALPHA
+        )
+    asr_model.change_decoding_strategy(phrase_decoding_config)
+
+
+def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
+    """Capture the decoder settings that produced the corrected transcript.
+
+    Use after decoding so reviewers can verify phrase, confidence, and timestamps together.
+
+    Args:
+        asr_model: Model that produced the stopped visit; missing config cannot support an accuracy claim.
+
+    Returns:
+        Plain decoder settings for evidence; an empty mapping is valid if NeMo reports one.
+
+    Raises:
+        PostVisitCorrectionError: When NeMo does not expose an auditable mapping.
+    """
+    from omegaconf import OmegaConf
+
+    effective_decoding_config = OmegaConf.to_container(
+        asr_model.cfg.decoding,
+        resolve=True,
+    )
+    # A non-object config cannot prove which decoder settings produced the visible words.
+    if not isinstance(effective_decoding_config, dict):
+        raise PostVisitCorrectionError(
+            "Post-visit decoding configuration is not auditable.",
+            reason_category="invalid_decoding_evidence",
+        )
+    return effective_decoding_config
+
+
+def _selected_post_visit_correction_phrase(
+    requested_correction_phrase: str | None,
+) -> str | None:
+    """Choose the reviewed phrase for one stopped-visit decode.
+
+    Use for normal and evaluator calls; null means the clinician receives the internal default.
+
+    Args:
+        requested_correction_phrase: Evaluator override; null uses the inactive production default.
+
+    Returns:
+        Reviewed phrase to apply, or null when the baseline transcript stays unchanged.
+    """
+    # No evaluator override means the clinician receives the current internal default.
+    if requested_correction_phrase is None:
+        return DEFAULT_POST_VISIT_CORRECTION_PHRASE
+    return requested_correction_phrase
+
+
+def _capture_post_visit_decoding_evidence(
+    asr_model: Any,
+) -> dict[str, Any] | None:
+    """Retain decoder evidence only for the isolated accuracy evaluator.
+
+    Use after a completed A/B decode; normal clinician requests return null and retain no new state.
+
+    Args:
+        asr_model: Model that produced the transcript; missing config makes evaluator evidence unavailable.
+
+    Returns:
+        Effective decoder mapping for an evaluator run, or null for the normal user path.
+
+    Raises:
+        PostVisitCorrectionError: When an opted-in evaluator cannot read decoder evidence.
+    """
+    # Normal clinician requests keep decoder internals out of application state.
+    if not CAPTURE_POST_VISIT_DECODING_CONFIG:
+        return None
+
+    effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
+    global LAST_POST_VISIT_DECODING_CONFIG
+    LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
+    return effective_decoding_config
+
+
+def transcribe_audio_with_nemo(
+    model_name: str,
+    audio_path: str,
+    correction_phrase: str | None = None,
+) -> _NemoTranscriptionResult:
     """Transcribe retained visit audio on one restored NeMo model.
 
     Short visits keep the original one-shot call. Capacity-risk visits use
@@ -290,6 +468,8 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
         audio_path: WAV path written from the stopped browser audio buffer.
+        correction_phrase: Reviewed phrase for this offline pass; null uses the
+            inactive production default and preserves baseline wording.
 
     Returns:
         Recombined transcript evidence plus attempts/chunk metadata; empty text
@@ -309,6 +489,11 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
             "post_visit_correction.confidence_enable_failed %s",
             type(confidence_error).__name__,
         )
+
+    selected_correction_phrase = _selected_post_visit_correction_phrase(
+        correction_phrase
+    )
+    _apply_post_visit_correction_phrase(asr_model, selected_correction_phrase)
 
     audio_chunks = _build_audio_chunks(Path(audio_path))
     combined_text_parts: list[str] = []
@@ -378,6 +563,7 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
     finally:
         _remove_scratch_audio_chunks(audio_chunks)
 
+    effective_decoding_config = _capture_post_visit_decoding_evidence(asr_model)
     return _NemoTranscriptionResult(
         text=" ".join(combined_text_parts),
         word_timings=combined_word_timings if all_chunks_have_timings else None,
@@ -387,6 +573,7 @@ def transcribe_audio_with_nemo(model_name: str, audio_path: str) -> _NemoTranscr
         attempts=attempts,
         retried=retried,
         chunk_count=len(audio_chunks),
+        effective_decoding_config=effective_decoding_config,
     )
 
 
@@ -399,7 +586,9 @@ def _release_cached_cuda_memory_before_model_restore() -> None:
     gc.collect()
     try:
         import torch
-    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+    except (
+        Exception
+    ) as torch_import_error:  # pragma: no cover - NeMo image always has torch.
         # Example: an unusual agent image reaches Summarise without its GPU runtime import.
         logger.warning(
             "post_visit_correction.preload_cache_release_import_failed %s",
@@ -415,6 +604,52 @@ def _release_cached_cuda_memory_before_model_restore() -> None:
             "post_visit_correction.preload_cache_release_failed %s",
             type(cache_release_error).__name__,
         )
+
+
+def _prepare_loaded_post_visit_asr_model(
+    asr_model: Any,
+    model_name: str,
+) -> Any:
+    """Give exact Unified the empty loader config it needs for transcription.
+
+    Use after restore so a stopped visit can reach NeMo decoding without changing
+    transcript settings or any other selected model.
+
+    Args:
+        asr_model: Restored speech model; missing config means no corrected transcript.
+        model_name: Operator-selected model; empty or another ID stays unchanged.
+
+    Returns:
+        The same ready model; this function never returns null to the user flow.
+    """
+    # Other selected models retain their checkpoint-defined transcription setup.
+    if model_name != "nvidia/parakeet-unified-en-0.6b":
+        return asr_model
+
+    unified_model_config = getattr(asr_model, "cfg", None)
+    # Missing Unified config cannot produce a safe corrected transcript.
+    if unified_model_config is None:
+        raise PostVisitCorrectionError(
+            "Unified post-visit ASR has no model configuration.",
+            reason_category="model_load_failed",
+        )
+
+    unified_validation_config = getattr(
+        unified_model_config,
+        "validation_ds",
+        None,
+    )
+    # A checkpoint-supplied validation config already supports its transcript loader.
+    if unified_validation_config is not None:
+        return asr_model
+
+    from omegaconf import open_dict
+
+    # The empty config selects NeMo's existing false default without tuning decoding.
+    with open_dict(unified_model_config):
+        unified_model_config.validation_ds = {}
+
+    return asr_model
 
 
 def _load_post_visit_asr_model(model_name: str) -> Any:
@@ -433,13 +668,103 @@ def _load_post_visit_asr_model(model_name: str) -> Any:
         ) from import_error
 
     try:
+        verified_checkpoint_path = _verified_checkpoint_path(model_name)
+        # A pinned model restores the exact artifact that earned clinician use.
+        if verified_checkpoint_path is not None:
+            restored_post_visit_model = nemo_asr.models.ASRModel.restore_from(
+                restore_path=str(verified_checkpoint_path)
+            )
+            return _prepare_loaded_post_visit_asr_model(
+                restored_post_visit_model, model_name
+            )
+
         return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
+    except PostVisitCorrectionError:
+        raise
     except Exception as model_load_error:  # pragma: no cover - GPU/model-specific.
         # Example: the clinician clicks Summarise while the configured checkpoint cannot load.
         raise PostVisitCorrectionError(
             f"Second-pass ASR model failed to load: {type(model_load_error).__name__}",
             reason_category="model_load_failed",
         ) from model_load_error
+
+
+def _checkpoint_sha256(checkpoint_path: Path) -> str:
+    """Hash one local NeMo artifact in bounded blocks.
+
+    Use before loading a stopped visit so cache drift cannot silently change
+    the transcript model behind the existing clinician workflow.
+    """
+    checkpoint_hash = hashlib.sha256()
+    with checkpoint_path.open("rb") as checkpoint_file:
+        # Bounded reads verify the large model without exhausting app memory.
+        while checkpoint_block := checkpoint_file.read(_CHECKPOINT_HASH_BLOCK_BYTES):
+            checkpoint_hash.update(checkpoint_block)
+    return checkpoint_hash.hexdigest()
+
+
+def _verified_checkpoint_path(model_name: str) -> Path | None:
+    """Resolve and verify a known correction checkpoint from local cache.
+
+    Use before NeMo restore; null means an explicit operator override keeps
+    the existing repository-ID loading behavior for the stopped visit.
+    """
+    pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS.get(model_name)
+    # An unknown explicit override retains the pre-existing operator seam.
+    if pinned_checkpoint is None:
+        return None
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        checkpoint_path = Path(
+            hf_hub_download(
+                repo_id=pinned_checkpoint.repository_id,
+                revision=pinned_checkpoint.revision,
+                filename=pinned_checkpoint.filename,
+                cache_dir=str(POST_VISIT_MODEL_CACHE_DIR),
+                local_files_only=True,
+            )
+        ).resolve(strict=True)
+    except Exception as checkpoint_cache_error:
+        # Example: the clinician stops a visit after the pinned cache file was removed.
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint is unavailable from local cache.",
+            reason_category="model_load_failed",
+        ) from checkpoint_cache_error
+
+    # A directory or broken cache target cannot produce the evaluated transcript.
+    if not checkpoint_path.is_file():
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint is not a file.",
+            reason_category="model_load_failed",
+        )
+
+    try:
+        checkpoint_bytes = checkpoint_path.stat().st_size
+        checkpoint_sha256 = _checkpoint_sha256(checkpoint_path)
+    except OSError as checkpoint_read_error:
+        # Example: cache permissions change while the user's stopped visit is awaiting correction.
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint could not be verified.",
+            reason_category="model_load_failed",
+        ) from checkpoint_read_error
+
+    # A byte-size mismatch means this is not the frozen candidate or baseline.
+    if checkpoint_bytes != pinned_checkpoint.expected_bytes:
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint size does not match.",
+            reason_category="model_load_failed",
+        )
+
+    # A hash mismatch blocks a plausible but different model from reaching the note.
+    if checkpoint_sha256 != pinned_checkpoint.expected_sha256:
+        raise PostVisitCorrectionError(
+            "Pinned post-visit ASR checkpoint hash does not match.",
+            reason_category="model_load_failed",
+        )
+
+    return checkpoint_path
 
 
 def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
@@ -493,7 +818,9 @@ def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
                 delete=False,
             ) as scratch_file:
                 chunk_path = Path(scratch_file.name)
-            soundfile.write(chunk_path, audio_samples[start_sample:end_sample], sample_rate)
+            soundfile.write(
+                chunk_path, audio_samples[start_sample:end_sample], sample_rate
+            )
             scratch_chunks.append(
                 _AudioChunk(
                     path=chunk_path,
@@ -529,7 +856,9 @@ def _remove_scratch_audio_chunks(audio_chunks: list[_AudioChunk]) -> None:
         audio_chunk.path.unlink(missing_ok=True)
 
 
-def _transcribe_with_loaded_model(asr_model: Any, audio_path: str) -> _TranscribeCallResult:
+def _transcribe_with_loaded_model(
+    asr_model: Any, audio_path: str
+) -> _TranscribeCallResult:
     """Run one audio path with at most one allowlisted same-model retry.
 
     Use for the original short WAV or each long-visit chunk. Fatal failures
@@ -593,7 +922,10 @@ def _is_device_not_ready_error(transcribe_error: Exception) -> bool:
 
     Use before making the user wait for a retry; all other CUDA text is fatal.
     """
-    return _DEVICE_NOT_READY_PATTERN.search(_exception_chain_text(transcribe_error)) is not None
+    return (
+        _DEVICE_NOT_READY_PATTERN.search(_exception_chain_text(transcribe_error))
+        is not None
+    )
 
 
 def _exception_chain_text(error: BaseException) -> str:
@@ -641,7 +973,9 @@ def _reclaim_cuda_memory() -> None:
     """
     try:
         import torch
-    except Exception as torch_import_error:  # pragma: no cover - NeMo image always has torch.
+    except (
+        Exception
+    ) as torch_import_error:  # pragma: no cover - NeMo image always has torch.
         # Example: an unusual agent image cannot prepare the GPU before the user's retry.
         logger.warning(
             "post_visit_correction.cuda_reclaim_import_failed %s",
@@ -920,7 +1254,9 @@ def stamp_corrected_row_confidence(
     return segments
 
 
-def normalise_scaffold_rows(live_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalise_scaffold_rows(
+    live_segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Return live rows usable as timing and role scaffolding.
 
     Args:
@@ -979,7 +1315,9 @@ def allocate_words_to_scaffold(
     if anchored_chunks is not None:
         return anchored_chunks
 
-    live_word_counts = [max(1, len(split_words(str(row["text"])))) for row in scaffold_rows]
+    live_word_counts = [
+        max(1, len(split_words(str(row["text"])))) for row in scaffold_rows
+    ]
     total_live_words = max(1, sum(live_word_counts))
     chunks: list[list[str]] = []
     word_cursor = 0
@@ -1016,14 +1354,19 @@ def allocate_words_by_text_anchors(
     if corrected_words == [] or scaffold_rows == []:
         return None
 
-    normalized_corrected_words = [_normalize_alignment_word(word) for word in corrected_words]
+    normalized_corrected_words = [
+        _normalize_alignment_word(word) for word in corrected_words
+    ]
     anchor_matches: list[AnchorMatch] = []
     word_cursor = 0
     confident_anchor_count = 0
 
     # Each preview row looks forward from the last match so row order stays chronological.
     for row_index, scaffold_row in enumerate(scaffold_rows):
-        row_words = [_normalize_alignment_word(word) for word in split_words(scaffold_row["text"])]
+        row_words = [
+            _normalize_alignment_word(word)
+            for word in split_words(scaffold_row["text"])
+        ]
         row_words = [word for word in row_words if word]
         anchor_match = find_best_anchor_match(
             normalized_corrected_words,
@@ -1049,7 +1392,10 @@ def allocate_words_by_text_anchors(
                 confident_anchor_count += 1
 
         # A malformed positive anchor would risk hiding later evidence behind row-share fallback.
-        if anchor_match.score > 0.0 and anchor_match.end_index <= anchor_match.start_index:
+        if (
+            anchor_match.score > 0.0
+            and anchor_match.end_index <= anchor_match.start_index
+        ):
             anchor_match = AnchorMatch(
                 word_cursor,
                 word_cursor,
@@ -1117,7 +1463,9 @@ def find_best_anchor_match(
     if best_match is None:
         return None
 
-    required_score = _MIN_SHORT_ANCHOR_SCORE if len(row_words) <= 2 else _MIN_ANCHOR_SCORE
+    required_score = (
+        _MIN_SHORT_ANCHOR_SCORE if len(row_words) <= 2 else _MIN_ANCHOR_SCORE
+    )
     # Weak anchors would move words to rows the user did not actually hear there.
     if best_match.score < required_score:
         return None
@@ -1240,7 +1588,9 @@ def is_anchor_match_missing(anchor_match: AnchorMatch) -> bool:
     Returns:
         True when the user-visible row should keep live preview text.
     """
-    return anchor_match.score == 0.0 and anchor_match.start_index == anchor_match.end_index
+    return (
+        anchor_match.score == 0.0 and anchor_match.start_index == anchor_match.end_index
+    )
 
 
 def append_gap_after_missing_anchor(
@@ -1336,7 +1686,9 @@ def _normalize_alignment_phrase(text: str) -> str:
     """
     return " ".join(
         word
-        for word in (_normalize_alignment_word(raw_word) for raw_word in split_words(text))
+        for word in (
+            _normalize_alignment_word(raw_word) for raw_word in split_words(text)
+        )
         if word
     )
 

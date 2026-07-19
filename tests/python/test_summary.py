@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import api.server as api_server
@@ -773,30 +774,34 @@ class TestRunSummaryGeneration:
         assert validated_summary.sections[0].citations == []
 
     def test_run_summary_generation_hydrates_valid_citations(self):
-        """The route helper hydrates cited units from storage, never the model."""
-        from api.summary_generation import (
-            ClaimOutput,
-            ClaimSectionOutput,
-            SessionSummaryV2Output,
-        )
+        """Opaque provider keys map back to server-owned stable unit ids."""
+        from api.summary_generation import SessionSummaryV2Output
 
         mock_agent = MagicMock()
-        mock_agent.return_value.structured_output = SessionSummaryV2Output(
-            title="Cited",
-            sections=[
-                ClaimSectionOutput(
-                    heading="Plan",
-                    claims=[
-                        ClaimOutput(
-                            text="Use treatment.",
-                            evidence_basis="source_unit",
-                            source_unit_ids=["unit-0001-0001"],
-                        )
+
+        def _provider_result(prompt, *, structured_output_model):
+            result = MagicMock()
+            result.structured_output = structured_output_model.model_validate(
+                {
+                    "title": "Cited",
+                    "sections": [
+                        {
+                            "heading": "Plan",
+                            "claims": [
+                                {
+                                    "text": "Use treatment.",
+                                    "evidence_basis": "source_unit",
+                                    "source_unit_ids": ["source-0001"],
+                                }
+                            ],
+                        }
                     ],
-                )
-            ],
-            key_points=[],
-        )
+                    "key_points": [],
+                }
+            )
+            return result
+
+        mock_agent.side_effect = _provider_result
 
         with patch("agents.create_summary_agent", return_value=mock_agent):
             result = api_server._run_summary_generation(
@@ -816,6 +821,9 @@ class TestRunSummaryGeneration:
         plan_claim = result["sections"][0]["claims"][0]
         assert plan_claim["claim_id"] == "plan-01"
         assert plan_claim["source_unit_ids"] == ["unit-0001-0001"]
+        provider_model = mock_agent.call_args.kwargs["structured_output_model"]
+        assert provider_model is not SessionSummaryV2Output
+        assert "[unit:source-0001 " in mock_agent.call_args.args[0]
         assert result["source_units"] == [
             {
                 "unit_id": "unit-0001-0001",
@@ -1122,8 +1130,44 @@ class TestSchemaV2MidImplementationProof:
         assert claim.source_unit_ids == []
         assert claim.evidence_basis == "none"
 
+    def test_provider_schema_rejects_fabricated_merged_unit_range(self):
+        """The provider boundary accepts only request-local citation keys."""
+        from pydantic import ValidationError
+
+        from api.summary_generation import _provider_summary_output_model
+
+        source_units = [
+            {"unit_id": "unit-0087-0089"},
+            {"unit_id": "unit-0090-0094"},
+        ]
+        output_model = _provider_summary_output_model(source_units)
+        payload = {
+            "title": "",
+            "sections": [
+                {
+                    "heading": "Subjective",
+                    "claims": [
+                        {
+                            "text": "Symptoms were discussed.",
+                            "evidence_basis": "source_unit",
+                            "source_unit_ids": ["source-0001"],
+                        }
+                    ],
+                }
+            ],
+            "key_points": [],
+        }
+
+        assert output_model.model_validate(payload).sections[0].claims[
+            0
+        ].source_unit_ids == ["source-0001"]
+        payload["sections"][0]["claims"][0]["source_unit_ids"] = ["unit-0087-0094"]
+
+        with pytest.raises(ValidationError):
+            output_model.model_validate(payload)
+
     def test_prompt_enumerates_units_never_row_ids(self):
-        """The v2 prompt's citation targets are unit ids only."""
+        """The provider sees opaque keys, never stable unit or row ids."""
         from api.summary_generation import (
             build_source_units,
             summary_generation_prompt_v2,
@@ -1132,9 +1176,38 @@ class TestSchemaV2MidImplementationProof:
         source_units = build_source_units(self._palpitation_rows())
         prompt = summary_generation_prompt_v2("[DOCTOR] text", [], source_units)
 
-        assert "[unit:unit-0416-0418" in prompt
+        assert "[unit:source-0001" in prompt
+        assert "unit-0416-0418" not in prompt
         assert "[source:" not in prompt
         assert "segment_id" not in prompt
+
+    def test_draft_rank_keeps_fidelity_primary_then_prefers_provenance(self):
+        """More citations can win only when clinical-safety counts tie."""
+        from api.summary_generation import (
+            ClaimOutput,
+            SessionSummaryV2Output,
+            _draft_rank,
+        )
+
+        uncited = SessionSummaryV2Output(
+            key_points=[ClaimOutput(text="Claim", evidence_basis="none")]
+        )
+        cited = SessionSummaryV2Output(
+            key_points=[
+                ClaimOutput(
+                    text="Claim",
+                    evidence_basis="source_unit",
+                    source_unit_ids=["unit-0001-0001"],
+                )
+            ]
+        )
+
+        assert _draft_rank(
+            uncited, violation_count=1, has_source_units=True
+        ) < _draft_rank(cited, violation_count=4, has_source_units=True)
+        assert _draft_rank(
+            cited, violation_count=1, has_source_units=True
+        ) < _draft_rank(uncited, violation_count=1, has_source_units=True)
 
     def test_no_units_prompt_reserves_absence_for_bounded_negatives(self):
         """The uncited fallback prompt must not invite absence-labelled positives."""
@@ -1156,8 +1229,13 @@ class TestSchemaV2MidImplementationProof:
         from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
 
         assert "Write like a clinician, not a transcriber" in MEDICAL_SUMMARY_PROMPT
-        assert "Never write one sentence per transcript utterance" in MEDICAL_SUMMARY_PROMPT
-        assert "cites EVERY source unit that supports any part" in MEDICAL_SUMMARY_PROMPT
+        assert (
+            "Never write one sentence per transcript utterance"
+            in MEDICAL_SUMMARY_PROMPT
+        )
+        assert (
+            "cites EVERY source unit that supports any part" in MEDICAL_SUMMARY_PROMPT
+        )
         assert "pertinent negatives" in MEDICAL_SUMMARY_PROMPT
         assert "ORDERED ATOMIC CLAIMS" not in MEDICAL_SUMMARY_PROMPT
         # Key Points keep their own count and hedge discipline (first live run
@@ -1177,7 +1255,10 @@ class TestSchemaV2MidImplementationProof:
         from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
 
         assert "may cover only part" in MEDICAL_SUMMARY_PROMPT
-        assert "A partial or interrupted transcript is still summarised" in MEDICAL_SUMMARY_PROMPT
+        assert (
+            "A partial or interrupted transcript is still summarised"
+            in MEDICAL_SUMMARY_PROMPT
+        )
         assert "no clinical content at all" in MEDICAL_SUMMARY_PROMPT
         assert "too short or uninformative" not in MEDICAL_SUMMARY_PROMPT
 
@@ -1227,16 +1308,27 @@ def test_run_summary_generation_maps_output_limit_to_named_failure(monkeypatch):
     from api import summary_generation
 
     def _raise_output_limit(session_id, prompt, source_units):
-        raise MaxTokensReachedException("Model stopped generating due to maximum token limit.")
+        raise MaxTokensReachedException(
+            "Model stopped generating due to maximum token limit."
+        )
 
     monkeypatch.setattr(
         summary_generation, "_generate_validated_v2_draft", _raise_output_limit
     )
-    result = summary_generation.run_summary_generation("m10-test", "DOCTOR: hello", [], [], None)
+    result = summary_generation.run_summary_generation(
+        "m10-test", "DOCTOR: hello", [], [], None
+    )
     assert result == {"status": "failed", "reason": "note_output_limit"}
 
     def _raise_generic(session_id, prompt, source_units):
         raise RuntimeError("anything else")
 
-    monkeypatch.setattr(summary_generation, "_generate_validated_v2_draft", _raise_generic)
-    assert summary_generation.run_summary_generation("m10-test", "DOCTOR: hello", [], [], None) is None
+    monkeypatch.setattr(
+        summary_generation, "_generate_validated_v2_draft", _raise_generic
+    )
+    assert (
+        summary_generation.run_summary_generation(
+            "m10-test", "DOCTOR: hello", [], [], None
+        )
+        is None
+    )

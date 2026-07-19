@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from api.summary_fidelity import (
     FidelityViolation,
     _non_verbatim_quote_violation,
@@ -544,7 +546,9 @@ def test_output_limit_on_the_first_draft_still_fails_with_the_named_reason(
                 "Model stopped generating due to maximum token limit."
             )
 
-    monkeypatch.setattr("agents.create_summary_agent", lambda: _AlwaysOverflowingAgent())
+    monkeypatch.setattr(
+        "agents.create_summary_agent", lambda: _AlwaysOverflowingAgent()
+    )
 
     payload = generation_module.run_summary_generation(
         "00000000-0000-4000-8000-000000000783",
@@ -2021,6 +2025,66 @@ def test_manifest_quote_negatives_stay_verified() -> None:
 # Pre-declared 3c deferrals (temporal entailment; M05-detector-family-specs.md).
 _TEMPORAL_ACTION_DEFERRED_IDS = {"a09", "a11"}
 
+_PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS = [
+    {
+        "segment_id": "corrected-0411",
+        "role": "DOCTOR",
+        "text": "it is probably worth having a couple of",
+    },
+    {
+        "segment_id": "corrected-0412",
+        "role": "DOCTOR",
+        "text": "basic blood tests just to make sure",
+    },
+    {
+        "segment_id": "corrected-0413",
+        "role": "DOCTOR",
+        "text": "that there is not something triggering",
+    },
+    {
+        "segment_id": "corrected-0414",
+        "role": "DOCTOR",
+        "text": "that off and then",
+    },
+    {
+        "segment_id": "corrected-0415",
+        "role": "DOCTOR",
+        "text": "arranging a GP follow-up a week after you have",
+    },
+    {
+        "segment_id": "corrected-0416",
+        "role": "DOCTOR",
+        "text": "had the test so we can go through the results with you",
+    },
+    {"segment_id": "corrected-0419", "role": "DOCTOR", "text": "so if you call"},
+    {
+        "segment_id": "corrected-0420",
+        "role": "DOCTOR",
+        "text": "the support line, you can arrange the",
+    },
+    {
+        "segment_id": "corrected-0421",
+        "role": "DOCTOR",
+        "text": "have the blood test done",
+    },
+]
+_COMPLETED_BLOOD_TEST_ROWS = [
+    *_PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+    {
+        "segment_id": "completed-tests",
+        "role": "DOCTOR",
+        "text": "The blood tests were completed yesterday.",
+    },
+]
+_BOOKED_FOLLOW_UP_ROWS = [
+    *_PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+    {
+        "segment_id": "booked-follow-up",
+        "role": "DOCTOR",
+        "text": "The GP follow-up was booked for next week.",
+    },
+]
+
 
 def _temporal_action_note_inputs(specimen: dict) -> tuple[list[dict], list[str]]:
     """Build the note inputs one temporal/action specimen describes."""
@@ -2061,6 +2125,138 @@ def test_manifest_temporal_action_specimens_classify_as_frozen() -> None:
             assert specimen["expected_reason"] in reason_codes, specimen["id"]
         else:
             assert reasons == [], specimen["id"]
+
+
+@pytest.mark.parametrize(
+    ("clinician_visible_claim", "selected_source_rows", "should_show_review_reason"),
+    (
+        pytest.param(
+            "Basic blood tests are arranged.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-arranged",
+        ),
+        pytest.param(
+            "Basic blood tests are scheduled.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-scheduled",
+        ),
+        pytest.param(
+            "Basic blood tests are booked.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-booked",
+        ),
+        pytest.param(
+            "Basic blood tests are already arranged.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-already-arranged",
+        ),
+        pytest.param(
+            "Basic blood tests were completed.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-completed",
+        ),
+        pytest.param(
+            "GP follow-up is scheduled.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="unsafe-follow-up-scheduled",
+        ),
+        pytest.param(
+            "Basic blood tests were recommended.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            False,
+            id="safe-recommended",
+        ),
+        pytest.param(
+            "The patient was instructed to call to arrange blood tests.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            False,
+            id="safe-call-instruction",
+        ),
+        pytest.param(
+            "GP follow-up is to be arranged after results.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            False,
+            id="safe-future-arrangement",
+        ),
+        pytest.param(
+            "Basic blood tests were completed.",
+            _COMPLETED_BLOOD_TEST_ROWS,
+            False,
+            id="safe-completed",
+        ),
+        pytest.param(
+            "GP follow-up was booked for next week.",
+            _BOOKED_FOLLOW_UP_ROWS,
+            False,
+            id="safe-booked",
+        ),
+        pytest.param(
+            "Basic blood tests are arranged, with GP follow-up planned.",
+            _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+            True,
+            id="cross-follow-up-cannot-complete-tests",
+        ),
+        pytest.param(
+            "Blood tests were completed; GP follow-up is scheduled.",
+            _COMPLETED_BLOOD_TEST_ROWS,
+            True,
+            id="cross-tests-cannot-schedule-follow-up",
+        ),
+    ),
+)
+def test_action_completion_review_keeps_each_plan_action_separate(
+    clinician_visible_claim: str,
+    selected_source_rows: list[dict[str, object]],
+    should_show_review_reason: bool,
+) -> None:
+    """Show a review marker only when that exact Plan action lacks completion proof.
+    Use when a clinician receives recommended, booked, or completed action wording.
+    """
+    from api.summary_fidelity import temporal_action_review_reasons
+
+    review_reasons = temporal_action_review_reasons(
+        [{"heading": "Plan", "content": clinician_visible_claim}],
+        [],
+        selected_source_rows,
+    )
+    # The clinician sees the existing marker only for an unsupported completed state.
+    shows_review_reason = any(
+        review_reason["reason"] == "action_not_confirmed_done"
+        for review_reason in review_reasons
+    )
+
+    assert shows_review_reason is should_show_review_reason
+
+
+def test_retained_compound_plan_does_not_share_completion_between_actions() -> None:
+    """The retained tests/follow-up sentence keeps both actions independently reviewable.
+    Use when one generated Plan sentence contains two proposed next steps.
+    """
+    from api.summary_fidelity import temporal_action_review_reasons
+
+    review_reasons = temporal_action_review_reasons(
+        [
+            {
+                "heading": "Plan",
+                "content": (
+                    "Basic blood tests are arranged to exclude other causes of palpitations, "
+                    "with GP follow-up scheduled one week after testing to review results."
+                ),
+            }
+        ],
+        [],
+        _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS,
+    )
+
+    assert {review_reason["reason"] for review_reason in review_reasons} == {
+        "action_not_confirmed_done"
+    }
 
 
 def test_arranged_to_arrange_with_unspoken_content_is_flagged() -> None:

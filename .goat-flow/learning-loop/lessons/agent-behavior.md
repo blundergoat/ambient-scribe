@@ -1,6 +1,6 @@
 ---
 category: agent-behavior
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-20
 ---
 
 # Agent Behavior Lessons
@@ -16,7 +16,7 @@ last_reviewed: 2026-07-07
 ## Lesson: Gitignored plan intake needs directory listing (2026-07-05)
 
 **Created:** 2026-07-05
-**Evidence:** `.goat-flow/plans/README.md` (search: "This directory is gitignored by design"), `.agents/skills/goat-plan/SKILL.md` (search: "Check for existing milestones first").
+**Evidence:** `.goat-flow/plans/README.md` (search: "This directory is gitignored by design"), `.agents/skills/goat-plan/SKILL.md` (search: "Inspect existing plan state only after retrieval").
 
 During a Copilot harness repair, `rg --files .goat-flow/plans` only showed tracked files and missed existing gitignored milestone directories. A later `ls -la .goat-flow/plans` and `find .goat-flow/plans -maxdepth 2 -type f -name 'M*.md' -print` corrected the intake before code edits.
 

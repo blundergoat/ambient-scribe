@@ -309,17 +309,17 @@ function handleRawSegment(segmentEvent) {
 
     // Finalized events close replay or mark live transcription complete.
     if (segmentEvent.type === 'finalized') {
-        // The backend just attested the terminal transcript; notes are now
-        // allowed. Older backends without the fields still count as terminal.
+        // The backend just attested the terminal transcript, so post-visit
+        // correction can start. Older backends without the fields still
+        // count as terminal.
         terminalAttestation = {
             id: segmentEvent.attestation_id ?? null,
             rowCount: segmentEvent.terminal_row_count ?? null,
             roleSettlement: segmentEvent.role_settlement ?? null,
         };
-        // Warm the free GPU correction now so however long the clinician reads
-        // before clicking Generate, the corrected lane is ready. The summary
-        // itself still never starts without their click (M11 gate), and a
-        // failed warm-up is retried by the click path.
+        // Start the free GPU correction now and expose that work in the
+        // post-visit panel. Generate stays locked until correction settles;
+        // the summary itself still never starts without the clinician's click.
         if (typeof ensureCorrectedTranscriptReady === 'function') {
             void ensureCorrectedTranscriptReady();
         }
@@ -329,8 +329,8 @@ function handleRawSegment(segmentEvent) {
             endLiveStop();
         } else {
             // The visit UI already ended on the bounded timeout; this late
-            // finalize means the complete source finally exists, so the note
-            // the user is waiting for can start now.
+            // finalize means the complete source finally exists, so the
+            // correction gate can now progress toward an on-demand note.
             setPlainStatus('Transcript finalized');
             if (typeof resumeSummaryAfterLateFinalize === 'function') {
                 resumeSummaryAfterLateFinalize();

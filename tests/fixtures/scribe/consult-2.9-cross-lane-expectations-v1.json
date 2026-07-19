@@ -1,0 +1,245 @@
+{
+  "schema_version": "ambient-scribe-consult-cross-lane-expectations/v1",
+  "fixture_id": "primock57-day2-consultation09-i-cant-move-my-left-arm",
+  "description": [
+    "Defines the medication and allergy evidence a quality reviewer must see.",
+    "Keeps official speech, stored transcript lanes, and SOAP behavior separate.",
+    "Preserves exact retained wording, speakers, timing, confidence, and order.",
+    "Use before comparing a new transcript or clinician-editable SOAP draft."
+  ],
+  "frozen_envelope": {
+    "start_seconds": 293.345,
+    "end_seconds": 310.436,
+    "membership_rule": "time_overlap"
+  },
+  "truth_contract": {
+    "speech_truth": "Official TextGrid truth scores transcript accuracy only.",
+    "selected_source_truth": "NOT_OBSERVED",
+    "required_note_behavior": "Omit or qualify every unsupported canonical name.",
+    "source_transition_rule": "A canonical name becomes note-authorized only through a newly accepted persisted source artifact and SHA-256 that safely supports its text and speaker."
+  },
+  "speech_truth_artifacts": {
+    "doctor": {
+      "path": "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.doctor.TextGrid",
+      "bytes": 12216,
+      "sha256": "1297724d572d7b6c4599beb05a73b3227bb85e521f90ee7eafe7a30caeef7122"
+    },
+    "patient": {
+      "path": "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.patient.TextGrid",
+      "bytes": 10876,
+      "sha256": "6f843fe765397be1afc635e8273334c30bfa61428a94b5686785397c903210fd"
+    }
+  },
+  "official_speech_intervals": [
+    {
+      "role": "PATIENT",
+      "start_seconds": 293.345549679933,
+      "end_seconds": 300.706443083774,
+      "text": "Um, I'm taking <UNIN/> Metformin losartan and Amlodipine.",
+      "canonical_terms": ["metformin", "losartan", "amlodipine"]
+    },
+    {
+      "role": "DOCTOR",
+      "start_seconds": 301.256790318753,
+      "end_seconds": 306.120044293285,
+      "text": "OK. Do you have any, um, uh, allergies to any medication?",
+      "canonical_terms": []
+    },
+    {
+      "role": "PATIENT",
+      "start_seconds": 306.495910102978,
+      "end_seconds": 310.435755635959,
+      "text": "Um, only penicillin, I believe.",
+      "canonical_terms": ["penicillin"]
+    }
+  ],
+  "retained_runs": [
+    {
+      "run_id": "full-corpus-20260710T2328Z",
+      "session_id": "09f65555-f812-4c64-8998-d1c54bafa107",
+      "live_artifact": {
+        "path": "var/quality/full-corpus-20260710T2328Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+        "bytes": 42349,
+        "sha256": "d691e00b9ffbca619f94b3789e508e95a7e30ba713bf3cfe572b8b6ddb2b20e5"
+      },
+      "corrected_artifact": {
+        "path": "var/quality/full-corpus-20260710T2328Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+        "bytes": 59355,
+        "sha256": "463915820ae8bd50707fd74a63e584c97eccb87d68181537483ca23437094624"
+      },
+      "live_segment_ids_in_artifact_order": ["seg-0164", "seg-0165", "seg-0166", "seg-0167", "seg-0168", "seg-0169", "seg-0170"],
+      "live_segment_ids_in_time_order": ["seg-0164", "seg-0165", "seg-0166", "seg-0167", "seg-0168", "seg-0169", "seg-0170"],
+      "corrected_segment_ids_in_artifact_order": ["corrected-0164", "corrected-0165", "corrected-0166", "corrected-0167", "corrected-0168", "corrected-0169", "corrected-0170"],
+      "corrected_segment_ids_in_time_order": ["corrected-0164", "corrected-0165", "corrected-0166", "corrected-0167", "corrected-0168", "corrected-0169", "corrected-0170"]
+    },
+    {
+      "run_id": "full-corpus-20260712T233933Z",
+      "session_id": "e413ec6d-9823-4c8f-a96c-bc1cd8b4fac8",
+      "live_artifact": {
+        "path": "var/quality/full-corpus-20260712T233933Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+        "bytes": 43174,
+        "sha256": "9d760df85810f58615003c97e19c7adf8fbe9a751253693a7613df17e23a700f"
+      },
+      "corrected_artifact": {
+        "path": "var/quality/full-corpus-20260712T233933Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+        "bytes": 60531,
+        "sha256": "5d755abbba9a6c37c128af77c9734783bc1cb420f4e38bae126225eac8dbde7b"
+      },
+      "live_segment_ids_in_artifact_order": ["seg-0169", "seg-0170", "seg-0171", "seg-0172", "seg-0173", "seg-0174", "seg-0175"],
+      "live_segment_ids_in_time_order": ["seg-0169", "seg-0170", "seg-0171", "seg-0172", "seg-0173", "seg-0174", "seg-0175"],
+      "corrected_segment_ids_in_artifact_order": ["corrected-0169", "corrected-0170", "corrected-0171", "corrected-0172", "corrected-0173", "corrected-0174", "corrected-0175"],
+      "corrected_segment_ids_in_time_order": ["corrected-0169", "corrected-0170", "corrected-0171", "corrected-0172", "corrected-0173", "corrected-0174", "corrected-0175"]
+    },
+    {
+      "run_id": "full-corpus-20260713T084709Z",
+      "session_id": "f22d4937-df0a-4b32-a4cd-ff7f0455eef0",
+      "live_artifact": {
+        "path": "var/quality/full-corpus-20260713T084709Z/primock57-day2-consultation09-i-cant-move-my-left-arm/live-history.json",
+        "bytes": 43999,
+        "sha256": "64bc0d90f3a9ae0d6c84e65afc36905be013b330591665905257520a8dd514c0"
+      },
+      "corrected_artifact": {
+        "path": "var/quality/full-corpus-20260713T084709Z/primock57-day2-consultation09-i-cant-move-my-left-arm/corrected-transcript.json",
+        "bytes": 61712,
+        "sha256": "52b11940d2989932beeb312972f7b0a07f79d9484525940b530e9242ddb42c95"
+      },
+      "live_segment_ids_in_artifact_order": ["seg-0173", "seg-0174", "seg-0175", "seg-0176", "seg-0177", "seg-0178", "seg-0179"],
+      "live_segment_ids_in_time_order": ["seg-0173", "seg-0174", "seg-0175", "seg-0178", "seg-0176", "seg-0177", "seg-0179"],
+      "corrected_segment_ids_in_artifact_order": ["corrected-0173", "corrected-0174", "corrected-0175", "corrected-0176", "corrected-0177", "corrected-0178", "corrected-0179"],
+      "corrected_segment_ids_in_time_order": ["corrected-0173", "corrected-0174", "corrected-0175", "corrected-0176", "corrected-0177", "corrected-0178", "corrected-0179"]
+    }
+  ],
+  "lane_hypotheses": {
+    "live": {
+      "description": "Rows normally shown in the clinician's live transcript.",
+      "rows_in_time_order": [
+        {"row_ref": "L01", "speaker_id": "speaker_1", "role": "PATIENT", "text": "i'm taking", "start": 295.12, "end": 296.37, "confidence": 0.7195, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L02", "speaker_id": "speaker_1", "role": "PATIENT", "text": "mouth forming", "start": 297.36, "end": 298.69, "confidence": 0.689, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L03", "speaker_id": "speaker_1", "role": "PATIENT", "text": "lo sartan", "start": 299.6, "end": 299.65000000000003, "confidence": 0.6485, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L04", "speaker_id": "speaker_1", "role": "PATIENT", "text": "and amlo deepin", "start": 300.72, "end": 300.77000000000004, "confidence": 0.7157, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L05", "speaker_id": "speaker_0", "role": "DOCTOR", "text": "Okay. Do you have any allergies", "start": 302.96, "end": 305.49, "confidence": 0.8285, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L06", "speaker_id": "speaker_0", "role": "DOCTOR", "text": "to any medication?", "start": 306.16, "end": 306.21000000000004, "confidence": 0.8717, "role_source": null, "source": null, "source_model": null},
+        {"row_ref": "L07", "speaker_id": "speaker_1", "role": "PATIENT", "text": "only i believe", "start": 309.92, "end": 310.69, "confidence": 0.7782, "role_source": null, "source": null, "source_model": null}
+      ]
+    },
+    "corrected": {
+      "description": "Rows a later SOAP request may select only with persisted provenance.",
+      "rows_in_time_order": [
+        {"row_ref": "C01", "speaker_id": "speaker_1", "role": "PATIENT", "text": "um um I'm taking", "start": 295.12, "end": 296.37, "confidence": 0.8179, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C02", "speaker_id": "speaker_1", "role": "PATIENT", "text": "mouth forming", "start": 297.36, "end": 298.69, "confidence": null, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C03", "speaker_id": "speaker_1", "role": "PATIENT", "text": "lo sartan", "start": 299.6, "end": 299.65000000000003, "confidence": null, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C04", "speaker_id": "speaker_1", "role": "PATIENT", "text": "meltformin low Sartan and", "start": 300.72, "end": 300.77000000000004, "confidence": 0.5555, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C05", "speaker_id": "speaker_0", "role": "DOCTOR", "text": "I'm low DP do you have any", "start": 302.96, "end": 305.49, "confidence": 0.7606, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C06", "speaker_id": "speaker_0", "role": "DOCTOR", "text": "um uh allergies to any medication", "start": 306.16, "end": 306.21000000000004, "confidence": 0.9616, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"},
+        {"row_ref": "C07", "speaker_id": "speaker_1", "role": "PATIENT", "text": "um only penithy I believe", "start": 309.92, "end": 310.69, "confidence": 0.5604, "role_source": null, "source": "post_visit_correction", "source_model": "nvidia/parakeet-tdt-0.6b-v3"}
+      ]
+    }
+  },
+  "canonical_term_expectations": [
+    {
+      "canonical_term": "metformin",
+      "speech_truth": {"role": "PATIENT", "interval_index": 0, "state": "official_canonical_term"},
+      "live_lane_truth": {"state": "garble", "evidence_refs": ["L02"], "observed_hypotheses": ["mouth forming"], "canonical_supported": false},
+      "corrected_lane_truth": {"state": "garble_and_wrong_term", "evidence_refs": ["C02", "C04"], "observed_hypotheses": ["mouth forming", "meltformin"], "canonical_supported": false},
+      "selected_source_truth": {"state": "NOT_OBSERVED", "canonical_supported": false},
+      "required_note_behavior": {"allowed_states": ["omit_canonical_term", "qualify_source_wording_as_uncertain"], "prohibited_states": ["clean_canonical_claim", "gold_reconstruction", "unconditional_mouth_forming_rewrite"]}
+    },
+    {
+      "canonical_term": "losartan",
+      "speech_truth": {"role": "PATIENT", "interval_index": 0, "state": "official_canonical_term"},
+      "live_lane_truth": {"state": "split_hypothesis", "evidence_refs": ["L03"], "observed_hypotheses": ["lo sartan"], "canonical_supported": false},
+      "corrected_lane_truth": {"state": "split_and_duplicate_like_hypotheses", "evidence_refs": ["C03", "C04"], "observed_hypotheses": ["lo sartan", "low Sartan"], "canonical_supported": false},
+      "selected_source_truth": {"state": "NOT_OBSERVED", "canonical_supported": false},
+      "required_note_behavior": {"allowed_states": ["omit_canonical_term", "qualify_source_wording_as_uncertain"], "prohibited_states": ["clean_canonical_claim", "gold_reconstruction", "duplicate_hypothesis_merge"]}
+    },
+    {
+      "canonical_term": "amlodipine",
+      "speech_truth": {"role": "PATIENT", "interval_index": 0, "state": "official_canonical_term"},
+      "live_lane_truth": {"state": "garble", "evidence_refs": ["L04"], "observed_hypotheses": ["amlo deepin"], "canonical_supported": false},
+      "corrected_lane_truth": {"state": "omission_and_cross_speaker_contamination", "evidence_refs": ["C05"], "observed_hypotheses": ["I'm low DP"], "observed_role": "DOCTOR", "canonical_supported": false},
+      "selected_source_truth": {"state": "NOT_OBSERVED", "canonical_supported": false},
+      "required_note_behavior": {"allowed_states": ["omit_canonical_term", "qualify_source_wording_as_uncertain"], "prohibited_states": ["clean_canonical_claim", "gold_reconstruction", "cross_speaker_borrowing"]}
+    },
+    {
+      "canonical_term": "penicillin",
+      "speech_truth": {"role": "PATIENT", "interval_index": 2, "state": "official_canonical_term"},
+      "live_lane_truth": {"state": "omission", "evidence_refs": ["L07"], "observed_hypotheses": [], "canonical_supported": false},
+      "corrected_lane_truth": {"state": "garble", "evidence_refs": ["C07"], "observed_hypotheses": ["penithy"], "canonical_supported": false},
+      "selected_source_truth": {"state": "NOT_OBSERVED", "canonical_supported": false},
+      "required_note_behavior": {"allowed_states": ["omit_canonical_term", "qualify_source_wording_as_uncertain"], "prohibited_states": ["clean_canonical_claim", "gold_reconstruction", "allergy_name_reconstruction"]}
+    }
+  ],
+  "independent_scoring_probes": [
+    {
+      "probe_id": "C29-01",
+      "outcome_class": "omission",
+      "scoring_scope": "transcript_lane",
+      "input": {"speech_truth_terms": ["penicillin"], "hypothesis_rows": [{"role": "PATIENT", "text": "only I believe", "confidence": 0.9}]},
+      "expected_score": {"outcomes": ["omission"], "affected_terms": ["penicillin"]}
+    },
+    {
+      "probe_id": "C29-02",
+      "outcome_class": "wrong_term",
+      "scoring_scope": "transcript_lane",
+      "input": {"speech_truth_terms": ["metformin"], "hypothesis_rows": [{"role": "PATIENT", "text": "warfarin", "confidence": 0.9}]},
+      "expected_score": {"outcomes": ["wrong_term"], "affected_terms": ["metformin"]}
+    },
+    {
+      "probe_id": "C29-03",
+      "outcome_class": "garble",
+      "scoring_scope": "transcript_lane",
+      "input": {"speech_truth_terms": ["metformin"], "hypothesis_rows": [{"role": "PATIENT", "text": "mouth forming", "confidence": 0.9}]},
+      "expected_score": {"outcomes": ["garble"], "affected_terms": ["metformin"]}
+    },
+    {
+      "probe_id": "C29-04",
+      "outcome_class": "false_insertion",
+      "scoring_scope": "transcript_lane",
+      "input": {"speech_truth_terms": ["metformin"], "hypothesis_rows": [{"role": "PATIENT", "text": "metformin aspirin", "confidence": 0.9}]},
+      "expected_score": {"outcomes": ["false_insertion"], "affected_terms": ["aspirin"]}
+    },
+    {
+      "probe_id": "C29-05",
+      "outcome_class": "cross_speaker_contamination",
+      "scoring_scope": "transcript_lane",
+      "input": {"speech_truth_terms": ["amlodipine"], "hypothesis_rows": [{"role": "DOCTOR", "text": "amlodipine", "confidence": 0.9}], "required_role": "PATIENT"},
+      "expected_score": {"outcomes": ["cross_speaker_contamination"], "affected_terms": ["amlodipine"]}
+    },
+    {
+      "probe_id": "C29-06",
+      "outcome_class": "low_trust_flag",
+      "scoring_scope": "selected_source_review",
+      "input": {"selected_source_rows": [{"role": "PATIENT", "text": "metformin", "confidence": 0.55}], "note": {"claims": ["Takes metformin"]}},
+      "expected_score": {"outcomes": ["low_trust_flag"], "affected_terms": ["metformin"], "review_required": true}
+    },
+    {
+      "probe_id": "C29-07",
+      "outcome_class": "faithful_soap_abstention",
+      "scoring_scope": "saved_note",
+      "input": {"selected_source_rows": [{"role": "PATIENT", "text": "mouth forming and penithy", "confidence": null}], "note": {"claims": []}},
+      "expected_score": {"outcomes": ["faithful_soap_abstention"], "affected_terms": ["metformin", "penicillin"], "passed": true}
+    }
+  ],
+  "confidence_null_policy": {
+    "state": "unmeasured",
+    "low_confidence": false,
+    "high_confidence": false,
+    "included_in_measured_majority_denominator": false,
+    "markers_produced_by_null_alone": []
+  },
+  "overlap_boundary_probe": {
+    "row_ref": "C07",
+    "row_start_seconds": 309.92,
+    "row_end_seconds": 310.69,
+    "intersection_seconds": 0.516,
+    "end_overhang_seconds": 0.254,
+    "strict_containment": false,
+    "time_overlap_membership": true
+  },
+  "candidate_policy": {
+    "promoted_candidates": [],
+    "mouth_forming": "observed_garble_not_an_unconditional_rewrite",
+    "corrected_lane_lexicon_normalization": "not_applied",
+    "runtime_changes_authorized": false
+  }
+}

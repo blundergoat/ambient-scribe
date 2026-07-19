@@ -47,7 +47,7 @@ def _corrected_row(text: str = "corrected transcript") -> dict:
         "is_interim": False,
         "segment_id": "corrected-0001",
         "source": "second_pass",
-        "source_model": "nvidia/parakeet-tdt-0.6b-v3",
+        "source_model": "nvidia/parakeet-unified-en-0.6b",
     }
 
 
@@ -65,7 +65,7 @@ class TestCorrectedTranscriptStorage:
         assert [row["text"] for row in live_rows] == ["live typo"]
         assert [row["text"] for row in corrected_rows] == ["corrected transcript"]
         assert corrected_rows[0]["source"] == "second_pass"
-        assert corrected_rows[0]["source_model"] == "nvidia/parakeet-tdt-0.6b-v3"
+        assert corrected_rows[0]["source_model"] == "nvidia/parakeet-unified-en-0.6b"
         assert "[PATIENT] live typo" in backend.get_transcript_text(SESSION_ID)
         assert "[DOCTOR] corrected transcript" in backend.get_corrected_transcript_text(
             SESSION_ID

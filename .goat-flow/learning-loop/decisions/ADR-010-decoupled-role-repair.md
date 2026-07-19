@@ -12,7 +12,8 @@ At 60 seconds, three c08 browser-cadence replays produced byte-identical
 split **84.4 / 59.4 / 84.4%**. The bad session
 `c69e00d3-d4a2-439a-87f3-a14ef5ccb414` never proposed a repair. A current full-corpus c08
 session did propose one, but coupled the strong `speaker_1 -> DOCTOR` repair with a contradicted
-`speaker_2 -> PATIENT` flip. Whole-map damping correctly held that mixed proposal.
+`speaker_2 -> PATIENT` flip. Whole-map damping held that mixed proposal because one changed
+speaker contradicted the bounded evidence.
 
 The current 20-fixture corpus contains eight suppressed multi-speaker proposals across three
 fixtures. Only one proposal, in c08, combines a majority-truth repair and regression. Aggregate

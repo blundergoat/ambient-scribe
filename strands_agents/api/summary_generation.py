@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from functools import lru_cache
+from typing import Any, Literal
 
 from api.agent_observability import agent_metric_fields as _agent_metric_fields
 from api.summary_confidence import (
@@ -28,7 +29,7 @@ from api.summary_fidelity import (
 )
 from clinical_context import retrieve_clinical_context
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 from strands.types.exceptions import MaxTokensReachedException
 
 logger = logging.getLogger(__name__)
@@ -79,12 +80,34 @@ class SessionSummaryOutput(BaseModel):
     key_points: list[str] = Field(default_factory=list)
 
 
+def _summary_context_snippets(
+    transcript: str, *, context_enabled: bool
+) -> list[dict[str, str]]:
+    """Return reviewed documentation reminders for an approved internal probe.
+
+    Use after the user requests a note; false leaves the normal prompt unchanged.
+
+    Args:
+        transcript: Selected visit text; blank can retrieve no useful reminder.
+        context_enabled: Internal-only switch; false means the user gets no knowledge context.
+
+    Returns:
+        Eligible reminders; empty means the summary uses selected transcript evidence only.
+    """
+    # Normal clinician requests never receive optional documentation cards.
+    if not context_enabled:
+        return []
+    return retrieve_clinical_context(transcript)
+
+
 def run_summary_generation(
     session_id: str,
     transcript: str,
     citation_segments: list[dict[str, Any]] | None = None,
     transcript_segments: list[dict[str, Any]] | None = None,
     citation_source_index: str | None = None,
+    *,
+    context_enabled: bool = False,
 ) -> dict | None:
     """Generate the note the clinician sees after pressing Summarise.
 
@@ -102,6 +125,8 @@ def run_summary_generation(
             empty skips fidelity checking, so the note ships exactly as generated.
         citation_source_index: Preformatted selected citation rows; null preserves legacy
             formatting, while a truncation marker can separate selected opening/tail runs.
+        context_enabled: Internal experiment switch; false keeps documentation cards out of
+            the user's prompt, and it is never supplied by an HTTP or browser payload.
 
     Returns:
         Parsed summary payload. `None` means the browser should show a
@@ -110,7 +135,9 @@ def run_summary_generation(
         `note_output_limit`) for honest browser copy.
     """
     try:
-        context_snippets = retrieve_clinical_context(transcript)
+        context_snippets = _summary_context_snippets(
+            transcript, context_enabled=context_enabled
+        )
         # Units are built BEFORE generation: their ids are the only citation
         # targets the model ever sees, so it cannot cite an arbitrary row.
         source_units = build_source_units(citation_segments or [])
@@ -185,12 +212,19 @@ def run_summary_generation(
 
             _log_fidelity_violations(session_id, attempt, violations)
 
-        # The redo must never make the note worse: ship whichever draft has
-        # fewer unsupported sentences; a tie keeps the redo, which followed the
-        # named-sentence feedback (M10 field case: a 1-violation first draft
-        # was once replaced by a 3-violation retry).
+        # The redo must never make the note less safe: fidelity violations stay
+        # the primary rank. For equally safe drafts, prefer fewer claims with no
+        # evidence; a complete tie keeps the feedback-guided redo (M10).
         selected_attempt = min(
-            range(len(drafts)), key=lambda index: (len(drafts[index][1]), -index)
+            range(len(drafts)),
+            key=lambda index: (
+                *_draft_rank(
+                    drafts[index][0],
+                    violation_count=len(drafts[index][1]),
+                    has_source_units=bool(source_units),
+                ),
+                -index,
+            ),
         )
         validated_summary, violations, metric_fields = drafts[selected_attempt]
         if len(drafts) > 1:
@@ -414,12 +448,13 @@ def _generate_validated_v2_draft(
     from agents import create_summary_agent
 
     agent = create_summary_agent()
-    agent_result = agent(prompt, structured_output_model=SessionSummaryV2Output)
+    output_model = _provider_summary_output_model(source_units)
+    agent_result = agent(prompt, structured_output_model=output_model)
 
     metric_fields = _agent_metric_fields(agent_result, "summary")
     structured_summary = getattr(agent_result, "structured_output", None)
     # Without a validated object, the browser should show a retryable failure.
-    if not isinstance(structured_summary, SessionSummaryV2Output):
+    if not isinstance(structured_summary, output_model):
         logger.warning(
             "summary.structured_output_missing session_id=%s output_type=%s",
             session_id,
@@ -432,6 +467,7 @@ def _generate_validated_v2_draft(
         )
         return None, metric_fields
 
+    structured_summary = _summary_with_stable_unit_ids(structured_summary, source_units)
     validated_summary = validated_v2_summary(
         structured_summary, source_units, session_id=session_id
     )
@@ -826,6 +862,102 @@ class SessionSummaryV2Output(BaseModel):
     key_points: list[ClaimOutput] = Field(default_factory=list)
 
 
+def _citation_keys(source_units: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Return opaque request-local keys in the same order as source units."""
+    return tuple(f"source-{ordinal:04d}" for ordinal in range(1, len(source_units) + 1))
+
+
+@lru_cache(maxsize=128)
+def _provider_summary_output_model_for_count(unit_count: int) -> type[BaseModel]:
+    """Build the provider schema whose citations are exact request-local keys.
+
+    The browser-facing schema intentionally remains ``SessionSummaryV2Output``.
+    This provider-only model prevents a range-looking unit id fabricated by the
+    model from surviving structured-output validation in the first place.
+    """
+    if unit_count <= 0:
+        return SessionSummaryV2Output
+
+    citation_keys = tuple(
+        f"source-{ordinal:04d}" for ordinal in range(1, unit_count + 1)
+    )
+    citation_key_type = Literal.__getitem__(citation_keys)
+    claim_model = create_model(
+        f"ProviderClaimOutput{unit_count}",
+        __module__=__name__,
+        text=(str, ""),
+        evidence_basis=(str, "none"),
+        source_unit_ids=(
+            list[citation_key_type],
+            Field(default_factory=list),
+        ),
+    )
+    section_model = create_model(
+        f"ProviderClaimSectionOutput{unit_count}",
+        __module__=__name__,
+        heading=(str, ""),
+        claims=(list[claim_model], Field(default_factory=list)),
+    )
+    return create_model(
+        f"ProviderSessionSummaryV2Output{unit_count}",
+        __module__=__name__,
+        title=(str, ""),
+        sections=(list[section_model], Field(default_factory=list)),
+        key_points=(list[claim_model], Field(default_factory=list)),
+    )
+
+
+def _provider_summary_output_model(
+    source_units: list[dict[str, Any]],
+) -> type[BaseModel]:
+    """Return the structured-output model for this request's unit count."""
+    return _provider_summary_output_model_for_count(len(source_units))
+
+
+def _summary_with_stable_unit_ids(
+    structured_summary: BaseModel,
+    source_units: list[dict[str, Any]],
+) -> SessionSummaryV2Output:
+    """Map validated provider citation keys back to stable browser unit ids."""
+    if not source_units:
+        return SessionSummaryV2Output.model_validate(structured_summary.model_dump())
+
+    unit_id_by_key = {
+        citation_key: str(source_unit["unit_id"])
+        for citation_key, source_unit in zip(
+            _citation_keys(source_units), source_units, strict=True
+        )
+    }
+    payload = structured_summary.model_dump()
+    claims = [claim for section in payload["sections"] for claim in section["claims"]]
+    claims.extend(payload["key_points"])
+    for claim in claims:
+        claim["source_unit_ids"] = [
+            unit_id_by_key[citation_key] for citation_key in claim["source_unit_ids"]
+        ]
+    return SessionSummaryV2Output.model_validate(payload)
+
+
+def _uncited_claim_count(structured_summary: SessionSummaryV2Output) -> int:
+    """Count visibly unsupported claims for a safety-preserving tie-break."""
+    claims = [
+        claim for section in structured_summary.sections for claim in section.claims
+    ]
+    claims.extend(structured_summary.key_points)
+    return sum(claim.evidence_basis == "none" for claim in claims)
+
+
+def _draft_rank(
+    structured_summary: SessionSummaryV2Output,
+    *,
+    violation_count: int,
+    has_source_units: bool,
+) -> tuple[int, int]:
+    """Rank safety first, then provenance only when citations are possible."""
+    uncited_count = _uncited_claim_count(structured_summary) if has_source_units else 0
+    return violation_count, uncited_count
+
+
 def _unit_row_view(segment: dict[str, Any]) -> dict[str, Any] | None:
     """One selected row as unit evidence; None when it cannot be cited."""
     segment_id = str(segment.get("segment_id", "")).strip()
@@ -945,14 +1077,16 @@ def _subdivided_turn_rows(
 
 
 def unit_index_text(source_units: list[dict[str, Any]]) -> str:
-    """Format the units as the only citation targets the model may use."""
+    """Format units with opaque keys as the model's only citation targets."""
     unit_lines: list[str] = []
-    for source_unit in source_units:
+    for citation_key, source_unit in zip(
+        _citation_keys(source_units), source_units, strict=True
+    ):
         start = _format_seconds(source_unit["start"])
         end = _format_seconds(source_unit["end"])
         unit_text = " ".join(row["text"] for row in source_unit["rows"])
         unit_lines.append(
-            f"[unit:{source_unit['unit_id']} {start}-{end} {source_unit['role']}] {unit_text}"
+            f"[unit:{citation_key} {start}-{end} {source_unit['role']}] {unit_text}"
         )
     return "\n".join(unit_lines)
 
@@ -985,12 +1119,14 @@ def summary_generation_prompt_v2(
 
     if source_units:
         prompt_parts.append(
-            "Cite evidence ONLY as source unit IDs from the list below, in each"
-            ' claim\'s `source_unit_ids` array (e.g. ["unit-0416-0423"]). Unit IDs'
-            " are the only permitted citation form; never invent IDs and never"
-            " cite row or segment IDs. Set `evidence_basis` to `source_unit` when"
-            " citing, `transcript_absence` for a bounded negative supported by"
-            " what the transcript covers, or `none` when no evidence exists."
+            "Cite evidence ONLY with the exact request-local citation keys from"
+            " the unit list below. Put each key separately in the claim's"
+            ' `source_unit_ids` array (e.g. ["source-0001", "source-0002"]).'
+            " Keys are opaque: copy them exactly and never join, extend, retype,"
+            " or invent one; never cite row, segment, timestamp, or stable server"
+            " unit IDs. Set `evidence_basis` to `source_unit` when citing,"
+            " `transcript_absence` for a bounded negative supported by what the"
+            " transcript covers, or `none` when no evidence exists."
         )
         prompt_parts.append(unit_index_text(source_units))
     else:

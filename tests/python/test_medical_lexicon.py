@@ -7,12 +7,17 @@ text replacement, and the pipeline seam that feeds the browser and summaries.
 
 from __future__ import annotations
 
-import json
+import hashlib
 import importlib.util
+import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 from medical_lexicon import (
     MedicalLexiconMatch,
@@ -28,6 +33,33 @@ from nemo_pipeline import NemoPipeline
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_PATH = REPO_ROOT / "strands_agents" / "data" / "medical_lexicon_review.json"
 EVALUATOR_PATH = REPO_ROOT / "scripts" / "evaluate-medical-boost.py"
+DEVELOPMENT_CORPUS_HELPER_PATH = REPO_ROOT / "scripts" / "development-corpus.py"
+DEVELOPMENT_CORPUS_MANIFEST_PATH = (
+    REPO_ROOT / "tests" / "fixtures" / "audio" / "development-corpus-0.5.0.json"
+)
+RUN_PROVISIONED_QUALITY_TESTS = (
+    os.environ.get("AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS") == "1"
+)
+CONSULT12_VARIANT_WORDS = ("luratidine", "pyritin", "fexaphenidine", "emolons")
+CONSULT12_CANONICAL_WORDS = (
+    "loratadine",
+    "piriton",
+    "fexofenadine",
+    "emollients",
+)
+
+
+def textgrid_words(textgrid_paths: tuple[Path, ...]) -> set[str]:
+    """Collect whole words from explicitly supplied TextGrids without discovery."""
+    collected_words: set[str] = set()
+    for textgrid_path in textgrid_paths:
+        textgrid_content = textgrid_path.read_text(encoding="utf-8", errors="replace")
+        for spoken_text in re.findall(r'text = "([^"]*)"', textgrid_content):
+            collected_words.update(
+                spoken_word.casefold()
+                for spoken_word in re.findall(r"[A-Za-z']+", spoken_text)
+            )
+    return collected_words
 
 
 def load_medical_boost_evaluator() -> ModuleType:
@@ -43,6 +75,26 @@ def load_medical_boost_evaluator() -> ModuleType:
     sys.modules[spec.name] = evaluator
     spec.loader.exec_module(evaluator)
     return evaluator
+
+
+def load_development_corpus_helper() -> ModuleType:
+    """Load the corpus gate used before a developer scans clinical vocabulary.
+    It keeps the collision test on approved consultations without starting the app.
+    """
+    helper_spec = importlib.util.spec_from_file_location(
+        "ambient_scribe_development_corpus",
+        DEVELOPMENT_CORPUS_HELPER_PATH,
+    )
+
+    # No import specification means the developer cannot prove the vocabulary scan is scoped.
+    assert helper_spec is not None
+    # No loader means the safety gate cannot supply approved consultation paths.
+    assert helper_spec.loader is not None
+
+    development_corpus_helper = importlib.util.module_from_spec(helper_spec)
+    sys.modules[helper_spec.name] = development_corpus_helper
+    helper_spec.loader.exec_module(development_corpus_helper)
+    return development_corpus_helper
 
 
 def test_missing_lexicon_loads_no_entries(tmp_path):
@@ -180,20 +232,32 @@ def test_default_lexicon_keeps_disabled_synonyms_and_plurals_raw():
 
 
 def test_review_table_classifies_every_active_lexicon_row():
-    """Every active visible correction has a reviewer category and guard."""
+    """Every executable pair has an active ledger row with category and guards."""
     phrases = load_medical_lexicon(default_medical_lexicon_path())
     payload = json.loads(REVIEW_PATH.read_text(encoding="utf-8"))
-    review_rows = payload["entries"]
+
+    lexicon_bytes = default_medical_lexicon_path().read_bytes()
+    assert (
+        payload["runtime_lexicon"]["sha256"]
+        == hashlib.sha256(lexicon_bytes).hexdigest()
+    )
 
     active_rows = {
-        str(row["canonical"]): row
-        for row in review_rows
+        (str(row["canonical"]).casefold(), str(row["variant"]).casefold()): row
+        for row in payload["entries"]
         if row.get("status") == "active"
     }
+    runtime_pairs = {
+        (phrase.canonical.casefold(), variant.casefold())
+        # The loader lists the canonical among variants; only real rewrites need review.
+        for phrase in phrases
+        for variant in phrase.variants
+        if variant.casefold() != phrase.canonical.casefold()
+    }
 
-    assert {phrase.canonical for phrase in phrases} == set(active_rows)
+    assert runtime_pairs == set(active_rows)
     assert all(row["category"] != "semantic_synonym" for row in active_rows.values())
-    assert all(row.get("false_positive_guard") for row in active_rows.values())
+    assert all(row.get("hard_negatives") for row in active_rows.values())
 
 
 def test_medical_boost_eval_script_scores_review_table():
@@ -211,21 +275,22 @@ def test_medical_boost_eval_script_scores_review_table():
 
 
 def test_medical_boost_eval_requires_metadata_and_active_coverage():
-    """Reviewer rows need provenance and must match active visible corrections."""
+    """Ledger rows need complete v2 metadata and exact active-pair coverage."""
     evaluator = load_medical_boost_evaluator()
     incomplete_review = evaluator.ReviewEntry(
+        entry_id="metoprolol-metro-pro-lol",
         canonical="metoprolol",
+        variant="metro pro lol",
         status="active",
         category="asr_variant",
-        raw_phrase="metro pro lol",
-        expected_visible_phrase="metoprolol",
-        false_positive_guard="The metro prologue was unrelated.",
-        provenance="",
+        raw_text="metro pro lol",
+        expected_visible_text="metoprolol",
+        hard_negatives=("The metro prologue was unrelated.",),
         safety_rationale="",
     )
     lexicon_phrases = (
-        MedicalPhrase(canonical="metoprolol", variants=("metro pro lol",)),
-        MedicalPhrase(canonical="naproxen", variants=("na proxen",)),
+        MedicalPhrase(canonical="metoprolol", variants=("metoprolol", "metro pro lol")),
+        MedicalPhrase(canonical="naproxen", variants=("naproxen", "na proxen")),
     )
 
     structural_issues = evaluator.validate_review_entries([incomplete_review])
@@ -234,8 +299,12 @@ def test_medical_boost_eval_requires_metadata_and_active_coverage():
         lexicon_phrases,
     )
 
-    assert structural_issues == ["metoprolol: missing required review field"]
-    assert coverage_issues == ["active lexicon rows missing review entries: naproxen"]
+    assert structural_issues == [
+        "metoprolol-metro-pro-lol: missing required review field"
+    ]
+    assert coverage_issues == [
+        "active lexicon pairs missing review rows: naproxen::na proxen"
+    ]
 
 
 def test_empty_phrases_keep_transcript_text_unchanged():
@@ -365,44 +434,63 @@ def test_consult12_hard_negatives_stay_byte_identical():
         assert correct_medical_terms(hard_negative_text, phrases) == hard_negative_text
 
 
-def test_consult12_variant_sweep_finds_no_collision_in_official_corpus():
-    """The retained ambiguity sweep: no new variant is a word anyone actually said.
+def test_consult12_variant_sweep_uses_explicit_temporary_textgrids(
+    tmp_path: Path,
+) -> None:
+    """Core collision assertions run from tracked test logic and temporary truth."""
+    doctor_textgrid_path = tmp_path / "consult-1.2.doctor.TextGrid"
+    patient_textgrid_path = tmp_path / "consult-1.2.patient.TextGrid"
+    doctor_textgrid_path.write_text(
+        'text = "Loratadine Piriton Fexofenadine and emollients."\n',
+        encoding="utf-8",
+    )
+    patient_textgrid_path.write_text(
+        'text = "No variant collision occurs in this safe mock truth."\n',
+        encoding="utf-8",
+    )
 
-    Every official PriMock57 TextGrid is the ground-truth of what was really
-    spoken. A candidate variant that appears there would mean the "misspelling"
-    is a real word or another medicine, and rewriting it would corrupt a
-    faithful transcript. The four canonicals must also exist in the consult-1.2
-    doctor ground truth, proving the targets are the clinician's actual words.
-    """
-    import re as sweep_re
+    development_corpus_words = textgrid_words(
+        (doctor_textgrid_path, patient_textgrid_path)
+    )
 
-    audio_fixture_dir = REPO_ROOT / "tests" / "fixtures" / "audio"
-    corpus_words: set[str] = set()
-    # Every TextGrid text interval contributes its spoken words to the vocabulary.
-    for textgrid_path in sorted(audio_fixture_dir.glob("*.TextGrid")):
-        textgrid_content = textgrid_path.read_text(encoding="utf-8", errors="replace")
-        for spoken_text in sweep_re.findall(r'text = "([^"]*)"', textgrid_content):
-            corpus_words.update(
-                word.casefold() for word in sweep_re.findall(r"[A-Za-z']+", spoken_text)
-            )
+    assert development_corpus_words
+    assert set(CONSULT12_VARIANT_WORDS).isdisjoint(development_corpus_words)
+    assert set(CONSULT12_CANONICAL_WORDS).issubset(development_corpus_words)
 
-    assert corpus_words, "the official corpus must be present for the sweep"
 
-    new_variant_words = ["luratidine", "pyritin", "fexaphenidine", "emolons"]
-    # Zero unsafe rewrites: none of the candidate variants is real spoken language.
-    for variant_word in new_variant_words:
-        assert variant_word not in corpus_words, (
+@pytest.mark.skipif(
+    not RUN_PROVISIONED_QUALITY_TESTS,
+    reason=(
+        "set AMBIENT_SCRIBE_RUN_PROVISIONED_QUALITY_TESTS=1 after provisioning "
+        "the ignored development TextGrids"
+    ),
+)
+def test_provisioned_consult12_variant_sweep_finds_no_official_collision() -> None:
+    """An explicit provisioned run scans all twenty frozen development truths."""
+    development_corpus_helper = load_development_corpus_helper()
+    development_audio_fixture_directory = REPO_ROOT / "tests" / "fixtures" / "audio"
+    development_textgrid_paths = development_corpus_helper.development_textgrid_paths(
+        DEVELOPMENT_CORPUS_MANIFEST_PATH,
+        REPO_ROOT,
+    )
+    development_corpus_words = textgrid_words(development_textgrid_paths)
+
+    assert development_corpus_words, "the official corpus must be present for the sweep"
+
+    # Each proposed variant must stay absent from real speech before users see rewrites.
+    for variant_word in CONSULT12_VARIANT_WORDS:
+        assert variant_word not in development_corpus_words, (
             f"variant '{variant_word}' collides with real corpus speech"
         )
 
-    consult12_doctor_grid = (
+    consult12_doctor_truth = (
         (
-            audio_fixture_dir
+            development_audio_fixture_directory
             / "primock57-day1-consultation02-i-have-sore-red-skin.doctor.TextGrid"
         )
         .read_text(encoding="utf-8", errors="replace")
         .casefold()
     )
-    # The canonical targets are exactly what the doctor really said.
-    for canonical_word in ["loratadine", "piriton", "fexofenadine", "emollients"]:
-        assert canonical_word in consult12_doctor_grid
+    # Every canonical target stays grounded in what the clinician officially said.
+    for canonical_word in CONSULT12_CANONICAL_WORDS:
+        assert canonical_word in consult12_doctor_truth

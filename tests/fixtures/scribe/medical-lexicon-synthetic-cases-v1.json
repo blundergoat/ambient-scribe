@@ -1,0 +1,1744 @@
+{
+  "schema_version": "ambient-scribe-medical-lexicon-synthetic-cases/v1",
+  "artifact_id": "medical-lexicon-synthetic-cases-v1",
+  "description": "Project-authored synthetic evidence for curated medical-lexicon pairs. Each correction case shows the exact raw ASR wording and the visible wording after the post-ASR normaliser; must_stay_raw cases prove disabled candidates never rewrite ordinary or patient wording.",
+  "cases": [
+    {
+      "id": "albuterol-al-buterol",
+      "kind": "correction",
+      "canonical": "albuterol",
+      "variant": "al buterol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions al buterol today.",
+      "expected_sentence": "The plan mentions albuterol today."
+    },
+    {
+      "id": "albuterol-albuteral",
+      "kind": "correction",
+      "canonical": "albuterol",
+      "variant": "albuteral",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions albuteral today.",
+      "expected_sentence": "The plan mentions albuterol today."
+    },
+    {
+      "id": "alendronate-alen-dronate",
+      "kind": "correction",
+      "canonical": "alendronate",
+      "variant": "alen dronate",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions alen dronate today.",
+      "expected_sentence": "The plan mentions alendronate today."
+    },
+    {
+      "id": "alendronate-alendronat",
+      "kind": "correction",
+      "canonical": "alendronate",
+      "variant": "alendronat",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions alendronat today.",
+      "expected_sentence": "The plan mentions alendronate today."
+    },
+    {
+      "id": "allopurinol-allo-purinol",
+      "kind": "correction",
+      "canonical": "allopurinol",
+      "variant": "allo purinol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions allo purinol today.",
+      "expected_sentence": "The plan mentions allopurinol today."
+    },
+    {
+      "id": "allopurinol-alopurinol",
+      "kind": "correction",
+      "canonical": "allopurinol",
+      "variant": "alopurinol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions alopurinol today.",
+      "expected_sentence": "The plan mentions allopurinol today."
+    },
+    {
+      "id": "amitriptyline-ami-triptyline",
+      "kind": "correction",
+      "canonical": "amitriptyline",
+      "variant": "ami triptyline",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ami triptyline today.",
+      "expected_sentence": "The plan mentions amitriptyline today."
+    },
+    {
+      "id": "amitriptyline-amitriptylene",
+      "kind": "correction",
+      "canonical": "amitriptyline",
+      "variant": "amitriptylene",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions amitriptylene today.",
+      "expected_sentence": "The plan mentions amitriptyline today."
+    },
+    {
+      "id": "amlodipine-amlo-dipine",
+      "kind": "correction",
+      "canonical": "amlodipine",
+      "variant": "amlo dipine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions amlo dipine today.",
+      "expected_sentence": "The plan mentions amlodipine today."
+    },
+    {
+      "id": "amlodipine-amlodepine",
+      "kind": "correction",
+      "canonical": "amlodipine",
+      "variant": "amlodepine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions amlodepine today.",
+      "expected_sentence": "The plan mentions amlodipine today."
+    },
+    {
+      "id": "amoxicillin-amoxi-cillin",
+      "kind": "correction",
+      "canonical": "amoxicillin",
+      "variant": "amoxi cillin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions amoxi cillin today.",
+      "expected_sentence": "The plan mentions amoxicillin today."
+    },
+    {
+      "id": "amoxicillin-amoxy-cillin",
+      "kind": "correction",
+      "canonical": "amoxicillin",
+      "variant": "amoxy cillin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions amoxy cillin today.",
+      "expected_sentence": "The plan mentions amoxicillin today."
+    },
+    {
+      "id": "anaphylaxis-ana-phylaxis",
+      "kind": "correction",
+      "canonical": "anaphylaxis",
+      "variant": "ana phylaxis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ana phylaxis today.",
+      "expected_sentence": "The plan mentions anaphylaxis today."
+    },
+    {
+      "id": "anaphylaxis-anafalaxis",
+      "kind": "correction",
+      "canonical": "anaphylaxis",
+      "variant": "anafalaxis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions anafalaxis today.",
+      "expected_sentence": "The plan mentions anaphylaxis today."
+    },
+    {
+      "id": "apixaban-a-pixaban",
+      "kind": "correction",
+      "canonical": "apixaban",
+      "variant": "a pixaban",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions a pixaban today.",
+      "expected_sentence": "The plan mentions apixaban today."
+    },
+    {
+      "id": "apixaban-apixiban",
+      "kind": "correction",
+      "canonical": "apixaban",
+      "variant": "apixiban",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions apixiban today.",
+      "expected_sentence": "The plan mentions apixaban today."
+    },
+    {
+      "id": "appendicitis-appendi-citis",
+      "kind": "correction",
+      "canonical": "appendicitis",
+      "variant": "appendi citis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions appendi citis today.",
+      "expected_sentence": "The plan mentions appendicitis today."
+    },
+    {
+      "id": "appendicitis-appendicitus",
+      "kind": "correction",
+      "canonical": "appendicitis",
+      "variant": "appendicitus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions appendicitus today.",
+      "expected_sentence": "The plan mentions appendicitis today."
+    },
+    {
+      "id": "aspirin-as-prin",
+      "kind": "correction",
+      "canonical": "aspirin",
+      "variant": "as prin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions as prin today.",
+      "expected_sentence": "The plan mentions aspirin today."
+    },
+    {
+      "id": "aspirin-asprin",
+      "kind": "correction",
+      "canonical": "aspirin",
+      "variant": "asprin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions asprin today.",
+      "expected_sentence": "The plan mentions aspirin today."
+    },
+    {
+      "id": "asthma-asma",
+      "kind": "correction",
+      "canonical": "asthma",
+      "variant": "asma",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions asma today.",
+      "expected_sentence": "The plan mentions asthma today."
+    },
+    {
+      "id": "asthma-az-ma",
+      "kind": "correction",
+      "canonical": "asthma",
+      "variant": "az ma",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions az ma today.",
+      "expected_sentence": "The plan mentions asthma today."
+    },
+    {
+      "id": "atorvastatin-a-torva-statin",
+      "kind": "correction",
+      "canonical": "atorvastatin",
+      "variant": "a torva statin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions a torva statin today.",
+      "expected_sentence": "The plan mentions atorvastatin today."
+    },
+    {
+      "id": "atorvastatin-atorva-statin",
+      "kind": "correction",
+      "canonical": "atorvastatin",
+      "variant": "atorva statin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions atorva statin today.",
+      "expected_sentence": "The plan mentions atorvastatin today."
+    },
+    {
+      "id": "atrial-fibrillation-a-fib",
+      "kind": "correction",
+      "canonical": "atrial fibrillation",
+      "variant": "a fib",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions a fib today.",
+      "expected_sentence": "The plan mentions atrial fibrillation today."
+    },
+    {
+      "id": "atrial-fibrillation-a-trial-fibrillation",
+      "kind": "correction",
+      "canonical": "atrial fibrillation",
+      "variant": "a trial fibrillation",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions a trial fibrillation today.",
+      "expected_sentence": "The plan mentions atrial fibrillation today."
+    },
+    {
+      "id": "azithromycin-azithro-mycin",
+      "kind": "correction",
+      "canonical": "azithromycin",
+      "variant": "azithro mycin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions azithro mycin today.",
+      "expected_sentence": "The plan mentions azithromycin today."
+    },
+    {
+      "id": "azithromycin-azythromycin",
+      "kind": "correction",
+      "canonical": "azithromycin",
+      "variant": "azythromycin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions azythromycin today.",
+      "expected_sentence": "The plan mentions azithromycin today."
+    },
+    {
+      "id": "bisoprolol-biso-prolol",
+      "kind": "correction",
+      "canonical": "bisoprolol",
+      "variant": "biso prolol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions biso prolol today.",
+      "expected_sentence": "The plan mentions bisoprolol today."
+    },
+    {
+      "id": "bisoprolol-bisoprelol",
+      "kind": "correction",
+      "canonical": "bisoprolol",
+      "variant": "bisoprelol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions bisoprelol today.",
+      "expected_sentence": "The plan mentions bisoprolol today."
+    },
+    {
+      "id": "bronchiolitis-bronchialitis",
+      "kind": "correction",
+      "canonical": "bronchiolitis",
+      "variant": "bronchialitis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions bronchialitis today.",
+      "expected_sentence": "The plan mentions bronchiolitis today."
+    },
+    {
+      "id": "bronchiolitis-bronchio-litis",
+      "kind": "correction",
+      "canonical": "bronchiolitis",
+      "variant": "bronchio litis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions bronchio litis today.",
+      "expected_sentence": "The plan mentions bronchiolitis today."
+    },
+    {
+      "id": "budesonide-bu-desonide",
+      "kind": "correction",
+      "canonical": "budesonide",
+      "variant": "bu desonide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions bu desonide today.",
+      "expected_sentence": "The plan mentions budesonide today."
+    },
+    {
+      "id": "budesonide-budesonyde",
+      "kind": "correction",
+      "canonical": "budesonide",
+      "variant": "budesonyde",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions budesonyde today.",
+      "expected_sentence": "The plan mentions budesonide today."
+    },
+    {
+      "id": "candesartan-cande-sartan",
+      "kind": "correction",
+      "canonical": "candesartan",
+      "variant": "cande sartan",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions cande sartan today.",
+      "expected_sentence": "The plan mentions candesartan today."
+    },
+    {
+      "id": "candesartan-candesarten",
+      "kind": "correction",
+      "canonical": "candesartan",
+      "variant": "candesarten",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions candesarten today.",
+      "expected_sentence": "The plan mentions candesartan today."
+    },
+    {
+      "id": "carbamazepine-carba-mazepine",
+      "kind": "correction",
+      "canonical": "carbamazepine",
+      "variant": "carba mazepine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions carba mazepine today.",
+      "expected_sentence": "The plan mentions carbamazepine today."
+    },
+    {
+      "id": "carbamazepine-carbamazapine",
+      "kind": "correction",
+      "canonical": "carbamazepine",
+      "variant": "carbamazapine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions carbamazapine today.",
+      "expected_sentence": "The plan mentions carbamazepine today."
+    },
+    {
+      "id": "cellulitis-cell-u-litis",
+      "kind": "correction",
+      "canonical": "cellulitis",
+      "variant": "cell u litis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions cell u litis today.",
+      "expected_sentence": "The plan mentions cellulitis today."
+    },
+    {
+      "id": "cellulitis-cellulitus",
+      "kind": "correction",
+      "canonical": "cellulitis",
+      "variant": "cellulitus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions cellulitus today.",
+      "expected_sentence": "The plan mentions cellulitis today."
+    },
+    {
+      "id": "cetirizine-ceti-rizine",
+      "kind": "correction",
+      "canonical": "cetirizine",
+      "variant": "ceti rizine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ceti rizine today.",
+      "expected_sentence": "The plan mentions cetirizine today."
+    },
+    {
+      "id": "cetirizine-cetirazine",
+      "kind": "correction",
+      "canonical": "cetirizine",
+      "variant": "cetirazine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions cetirazine today.",
+      "expected_sentence": "The plan mentions cetirizine today."
+    },
+    {
+      "id": "citalopram-cita-lopram",
+      "kind": "correction",
+      "canonical": "citalopram",
+      "variant": "cita lopram",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions cita lopram today.",
+      "expected_sentence": "The plan mentions citalopram today."
+    },
+    {
+      "id": "citalopram-citaloprem",
+      "kind": "correction",
+      "canonical": "citalopram",
+      "variant": "citaloprem",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions citaloprem today.",
+      "expected_sentence": "The plan mentions citalopram today."
+    },
+    {
+      "id": "clopidogrel-clopido-grel",
+      "kind": "correction",
+      "canonical": "clopidogrel",
+      "variant": "clopido grel",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions clopido grel today.",
+      "expected_sentence": "The plan mentions clopidogrel today."
+    },
+    {
+      "id": "clopidogrel-clopidogril",
+      "kind": "correction",
+      "canonical": "clopidogrel",
+      "variant": "clopidogril",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions clopidogril today.",
+      "expected_sentence": "The plan mentions clopidogrel today."
+    },
+    {
+      "id": "coeliac-disease-celiac-disease",
+      "kind": "correction",
+      "canonical": "coeliac disease",
+      "variant": "celiac disease",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions celiac disease today.",
+      "expected_sentence": "The plan mentions coeliac disease today."
+    },
+    {
+      "id": "coeliac-disease-see-liac-disease",
+      "kind": "correction",
+      "canonical": "coeliac disease",
+      "variant": "see liac disease",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions see liac disease today.",
+      "expected_sentence": "The plan mentions coeliac disease today."
+    },
+    {
+      "id": "colchicine-colchi-cine",
+      "kind": "correction",
+      "canonical": "colchicine",
+      "variant": "colchi cine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions colchi cine today.",
+      "expected_sentence": "The plan mentions colchicine today."
+    },
+    {
+      "id": "colchicine-colchiseen",
+      "kind": "correction",
+      "canonical": "colchicine",
+      "variant": "colchiseen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions colchiseen today.",
+      "expected_sentence": "The plan mentions colchicine today."
+    },
+    {
+      "id": "conjunctivitis-conjunctiv-itis",
+      "kind": "correction",
+      "canonical": "conjunctivitis",
+      "variant": "conjunctiv itis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions conjunctiv itis today.",
+      "expected_sentence": "The plan mentions conjunctivitis today."
+    },
+    {
+      "id": "conjunctivitis-conjunctivitus",
+      "kind": "correction",
+      "canonical": "conjunctivitis",
+      "variant": "conjunctivitus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions conjunctivitus today.",
+      "expected_sentence": "The plan mentions conjunctivitis today."
+    },
+    {
+      "id": "copd-c-o-p-d",
+      "kind": "correction",
+      "canonical": "COPD",
+      "variant": "c o p d",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions c o p d today.",
+      "expected_sentence": "The plan mentions COPD today."
+    },
+    {
+      "id": "crp-c-r-p",
+      "kind": "correction",
+      "canonical": "CRP",
+      "variant": "c r p",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions c r p today.",
+      "expected_sentence": "The plan mentions CRP today."
+    },
+    {
+      "id": "dapagliflozin-dapa-gliflozin",
+      "kind": "correction",
+      "canonical": "dapagliflozin",
+      "variant": "dapa gliflozin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions dapa gliflozin today.",
+      "expected_sentence": "The plan mentions dapagliflozin today."
+    },
+    {
+      "id": "dapagliflozin-dapagliflozen",
+      "kind": "correction",
+      "canonical": "dapagliflozin",
+      "variant": "dapagliflozen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions dapagliflozen today.",
+      "expected_sentence": "The plan mentions dapagliflozin today."
+    },
+    {
+      "id": "deep-vein-thrombosis-d-v-t",
+      "kind": "correction",
+      "canonical": "deep vein thrombosis",
+      "variant": "d v t",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions d v t today.",
+      "expected_sentence": "The plan mentions deep vein thrombosis today."
+    },
+    {
+      "id": "deep-vein-thrombosis-deep-vain-thrombosis",
+      "kind": "correction",
+      "canonical": "deep vein thrombosis",
+      "variant": "deep vain thrombosis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions deep vain thrombosis today.",
+      "expected_sentence": "The plan mentions deep vein thrombosis today."
+    },
+    {
+      "id": "diclofenac-diclo-fenac",
+      "kind": "correction",
+      "canonical": "diclofenac",
+      "variant": "diclo fenac",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions diclo fenac today.",
+      "expected_sentence": "The plan mentions diclofenac today."
+    },
+    {
+      "id": "diclofenac-dyclofenac",
+      "kind": "correction",
+      "canonical": "diclofenac",
+      "variant": "dyclofenac",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions dyclofenac today.",
+      "expected_sentence": "The plan mentions diclofenac today."
+    },
+    {
+      "id": "diverticulitis-diver-ticulitis",
+      "kind": "correction",
+      "canonical": "diverticulitis",
+      "variant": "diver ticulitis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions diver ticulitis today.",
+      "expected_sentence": "The plan mentions diverticulitis today."
+    },
+    {
+      "id": "diverticulitis-diverticulitus",
+      "kind": "correction",
+      "canonical": "diverticulitis",
+      "variant": "diverticulitus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions diverticulitus today.",
+      "expected_sentence": "The plan mentions diverticulitis today."
+    },
+    {
+      "id": "doxycycline-doxicycline",
+      "kind": "correction",
+      "canonical": "doxycycline",
+      "variant": "doxicycline",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions doxicycline today.",
+      "expected_sentence": "The plan mentions doxycycline today."
+    },
+    {
+      "id": "doxycycline-doxy-cycline",
+      "kind": "correction",
+      "canonical": "doxycycline",
+      "variant": "doxy cycline",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions doxy cycline today.",
+      "expected_sentence": "The plan mentions doxycycline today."
+    },
+    {
+      "id": "ecg-e-c-g",
+      "kind": "correction",
+      "canonical": "ECG",
+      "variant": "e c g",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions e c g today.",
+      "expected_sentence": "The plan mentions ECG today."
+    },
+    {
+      "id": "eczema-egzema",
+      "kind": "correction",
+      "canonical": "eczema",
+      "variant": "egzema",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions egzema today.",
+      "expected_sentence": "The plan mentions eczema today."
+    },
+    {
+      "id": "eczema-ex-zema",
+      "kind": "correction",
+      "canonical": "eczema",
+      "variant": "ex zema",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ex zema today.",
+      "expected_sentence": "The plan mentions eczema today."
+    },
+    {
+      "id": "egfr-e-g-f-r",
+      "kind": "correction",
+      "canonical": "eGFR",
+      "variant": "e g f r",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions e g f r today.",
+      "expected_sentence": "The plan mentions eGFR today."
+    },
+    {
+      "id": "empagliflozin-empa-gliflozin",
+      "kind": "correction",
+      "canonical": "empagliflozin",
+      "variant": "empa gliflozin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions empa gliflozin today.",
+      "expected_sentence": "The plan mentions empagliflozin today."
+    },
+    {
+      "id": "empagliflozin-empa-glyph-lozin",
+      "kind": "correction",
+      "canonical": "empagliflozin",
+      "variant": "empa glyph lozin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions empa glyph lozin today.",
+      "expected_sentence": "The plan mentions empagliflozin today."
+    },
+    {
+      "id": "endometriosis-endo-metriosis",
+      "kind": "correction",
+      "canonical": "endometriosis",
+      "variant": "endo metriosis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions endo metriosis today.",
+      "expected_sentence": "The plan mentions endometriosis today."
+    },
+    {
+      "id": "endometriosis-endometreosis",
+      "kind": "correction",
+      "canonical": "endometriosis",
+      "variant": "endometreosis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions endometreosis today.",
+      "expected_sentence": "The plan mentions endometriosis today."
+    },
+    {
+      "id": "fibromyalgia-fibro-myalgia",
+      "kind": "correction",
+      "canonical": "fibromyalgia",
+      "variant": "fibro myalgia",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions fibro myalgia today.",
+      "expected_sentence": "The plan mentions fibromyalgia today."
+    },
+    {
+      "id": "fibromyalgia-fibromyalgea",
+      "kind": "correction",
+      "canonical": "fibromyalgia",
+      "variant": "fibromyalgea",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions fibromyalgea today.",
+      "expected_sentence": "The plan mentions fibromyalgia today."
+    },
+    {
+      "id": "flucloxacillin-flu-cloxacillin",
+      "kind": "correction",
+      "canonical": "flucloxacillin",
+      "variant": "flu cloxacillin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions flu cloxacillin today.",
+      "expected_sentence": "The plan mentions flucloxacillin today."
+    },
+    {
+      "id": "flucloxacillin-fluclox",
+      "kind": "correction",
+      "canonical": "flucloxacillin",
+      "variant": "fluclox",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions fluclox today.",
+      "expected_sentence": "The plan mentions flucloxacillin today."
+    },
+    {
+      "id": "fluoxetine-flu-oxetine",
+      "kind": "correction",
+      "canonical": "fluoxetine",
+      "variant": "flu oxetine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions flu oxetine today.",
+      "expected_sentence": "The plan mentions fluoxetine today."
+    },
+    {
+      "id": "fluoxetine-fluoxetin",
+      "kind": "correction",
+      "canonical": "fluoxetine",
+      "variant": "fluoxetin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions fluoxetin today.",
+      "expected_sentence": "The plan mentions fluoxetine today."
+    },
+    {
+      "id": "gabapentin-gaba-pentin",
+      "kind": "correction",
+      "canonical": "gabapentin",
+      "variant": "gaba pentin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gaba pentin today.",
+      "expected_sentence": "The plan mentions gabapentin today."
+    },
+    {
+      "id": "gabapentin-gabapentyn",
+      "kind": "correction",
+      "canonical": "gabapentin",
+      "variant": "gabapentyn",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gabapentyn today.",
+      "expected_sentence": "The plan mentions gabapentin today."
+    },
+    {
+      "id": "gastro-oesophageal-reflux-gastro-esophageal-reflux",
+      "kind": "correction",
+      "canonical": "gastro-oesophageal reflux",
+      "variant": "gastro esophageal reflux",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gastro esophageal reflux today.",
+      "expected_sentence": "The plan mentions gastro-oesophageal reflux today."
+    },
+    {
+      "id": "gastro-oesophageal-reflux-gastro-oesophageal-reflux",
+      "kind": "correction",
+      "canonical": "gastro-oesophageal reflux",
+      "variant": "gastro oesophageal reflux",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gastro oesophageal reflux today.",
+      "expected_sentence": "The plan mentions gastro-oesophageal reflux today."
+    },
+    {
+      "id": "gastroenteritis-gastro-enteritis",
+      "kind": "correction",
+      "canonical": "gastroenteritis",
+      "variant": "gastro enteritis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gastro enteritis today.",
+      "expected_sentence": "The plan mentions gastroenteritis today."
+    },
+    {
+      "id": "gastroenteritis-gastroenteritus",
+      "kind": "correction",
+      "canonical": "gastroenteritis",
+      "variant": "gastroenteritus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gastroenteritus today.",
+      "expected_sentence": "The plan mentions gastroenteritis today."
+    },
+    {
+      "id": "gestational-diabetes-gestation-diabetes",
+      "kind": "correction",
+      "canonical": "gestational diabetes",
+      "variant": "gestation diabetes",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gestation diabetes today.",
+      "expected_sentence": "The plan mentions gestational diabetes today."
+    },
+    {
+      "id": "gliclazide-glic-lazide",
+      "kind": "correction",
+      "canonical": "gliclazide",
+      "variant": "glic lazide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions glic lazide today.",
+      "expected_sentence": "The plan mentions gliclazide today."
+    },
+    {
+      "id": "gliclazide-gliclizide",
+      "kind": "correction",
+      "canonical": "gliclazide",
+      "variant": "gliclizide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions gliclizide today.",
+      "expected_sentence": "The plan mentions gliclazide today."
+    },
+    {
+      "id": "hba1c-h-b-a-one-c",
+      "kind": "correction",
+      "canonical": "HbA1c",
+      "variant": "h b a one c",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions h b a one c today.",
+      "expected_sentence": "The plan mentions HbA1c today."
+    },
+    {
+      "id": "hba1c-hba-one-c",
+      "kind": "correction",
+      "canonical": "HbA1c",
+      "variant": "hba one c",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions hba one c today.",
+      "expected_sentence": "The plan mentions HbA1c today."
+    },
+    {
+      "id": "hydrochlorothiazide-hydro-chlorothiazide",
+      "kind": "correction",
+      "canonical": "hydrochlorothiazide",
+      "variant": "hydro chlorothiazide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hydro chlorothiazide today.",
+      "expected_sentence": "The plan mentions hydrochlorothiazide today."
+    },
+    {
+      "id": "hydrochlorothiazide-hydrochloro-thiazide",
+      "kind": "correction",
+      "canonical": "hydrochlorothiazide",
+      "variant": "hydrochloro thiazide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hydrochloro thiazide today.",
+      "expected_sentence": "The plan mentions hydrochlorothiazide today."
+    },
+    {
+      "id": "hydrocortisone-hydro-cortisone",
+      "kind": "correction",
+      "canonical": "hydrocortisone",
+      "variant": "hydro cortisone",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hydro cortisone today.",
+      "expected_sentence": "The plan mentions hydrocortisone today."
+    },
+    {
+      "id": "hydrocortisone-hydrocortizone",
+      "kind": "correction",
+      "canonical": "hydrocortisone",
+      "variant": "hydrocortizone",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hydrocortizone today.",
+      "expected_sentence": "The plan mentions hydrocortisone today."
+    },
+    {
+      "id": "hyperlipidemia-hyper-lipid-emia",
+      "kind": "correction",
+      "canonical": "hyperlipidemia",
+      "variant": "hyper lipid emia",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hyper lipid emia today.",
+      "expected_sentence": "The plan mentions hyperlipidemia today."
+    },
+    {
+      "id": "hyperlipidemia-hyper-lipidemia",
+      "kind": "correction",
+      "canonical": "hyperlipidemia",
+      "variant": "hyper lipidemia",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hyper lipidemia today.",
+      "expected_sentence": "The plan mentions hyperlipidemia today."
+    },
+    {
+      "id": "hypertension-high-per-tension",
+      "kind": "correction",
+      "canonical": "hypertension",
+      "variant": "high per tension",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions high per tension today.",
+      "expected_sentence": "The plan mentions hypertension today."
+    },
+    {
+      "id": "hypothyroidism-hypo-thyroidism",
+      "kind": "correction",
+      "canonical": "hypothyroidism",
+      "variant": "hypo thyroidism",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hypo thyroidism today.",
+      "expected_sentence": "The plan mentions hypothyroidism today."
+    },
+    {
+      "id": "hypothyroidism-hypothyroid-ism",
+      "kind": "correction",
+      "canonical": "hypothyroidism",
+      "variant": "hypothyroid ism",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions hypothyroid ism today.",
+      "expected_sentence": "The plan mentions hypothyroidism today."
+    },
+    {
+      "id": "ibuprofen-eye-buprofen",
+      "kind": "correction",
+      "canonical": "ibuprofen",
+      "variant": "eye buprofen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions eye buprofen today.",
+      "expected_sentence": "The plan mentions ibuprofen today."
+    },
+    {
+      "id": "ibuprofen-i-buprofen",
+      "kind": "correction",
+      "canonical": "ibuprofen",
+      "variant": "i buprofen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions i buprofen today.",
+      "expected_sentence": "The plan mentions ibuprofen today."
+    },
+    {
+      "id": "inr-i-n-r",
+      "kind": "correction",
+      "canonical": "INR",
+      "variant": "i n r",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions i n r today.",
+      "expected_sentence": "The plan mentions INR today."
+    },
+    {
+      "id": "levothyroxine-levo-thyroxine",
+      "kind": "correction",
+      "canonical": "levothyroxine",
+      "variant": "levo thyroxine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions levo thyroxine today.",
+      "expected_sentence": "The plan mentions levothyroxine today."
+    },
+    {
+      "id": "levothyroxine-levothyroxin",
+      "kind": "correction",
+      "canonical": "levothyroxine",
+      "variant": "levothyroxin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions levothyroxin today.",
+      "expected_sentence": "The plan mentions levothyroxine today."
+    },
+    {
+      "id": "lisinopril-lisin-april",
+      "kind": "correction",
+      "canonical": "lisinopril",
+      "variant": "lisin april",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions lisin april today.",
+      "expected_sentence": "The plan mentions lisinopril today."
+    },
+    {
+      "id": "lisinopril-listen-april-disabled",
+      "kind": "must_stay_raw",
+      "canonical": "lisinopril",
+      "variant": "listen april",
+      "category": "asr_variant",
+      "raw_sentence": "Please listen April is speaking.",
+      "expected_sentence": "Please listen April is speaking."
+    },
+    {
+      "id": "metformin-met-formin",
+      "kind": "correction",
+      "canonical": "metformin",
+      "variant": "met formin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions met formin today.",
+      "expected_sentence": "The plan mentions metformin today."
+    },
+    {
+      "id": "metformin-metforman",
+      "kind": "correction",
+      "canonical": "metformin",
+      "variant": "metforman",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions metforman today.",
+      "expected_sentence": "The plan mentions metformin today."
+    },
+    {
+      "id": "methotrexate-metho-trexate",
+      "kind": "correction",
+      "canonical": "methotrexate",
+      "variant": "metho trexate",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions metho trexate today.",
+      "expected_sentence": "The plan mentions methotrexate today."
+    },
+    {
+      "id": "methotrexate-methotrexat",
+      "kind": "correction",
+      "canonical": "methotrexate",
+      "variant": "methotrexat",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions methotrexat today.",
+      "expected_sentence": "The plan mentions methotrexate today."
+    },
+    {
+      "id": "metoprolol-meto-prolol",
+      "kind": "correction",
+      "canonical": "metoprolol",
+      "variant": "meto prolol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions meto prolol today.",
+      "expected_sentence": "The plan mentions metoprolol today."
+    },
+    {
+      "id": "metoprolol-metro-pro-lol",
+      "kind": "correction",
+      "canonical": "metoprolol",
+      "variant": "metro pro lol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions metro pro lol today.",
+      "expected_sentence": "The plan mentions metoprolol today."
+    },
+    {
+      "id": "migraine-mi-grain",
+      "kind": "correction",
+      "canonical": "migraine",
+      "variant": "mi grain",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions mi grain today.",
+      "expected_sentence": "The plan mentions migraine today."
+    },
+    {
+      "id": "migraine-migrane",
+      "kind": "correction",
+      "canonical": "migraine",
+      "variant": "migrane",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions migrane today.",
+      "expected_sentence": "The plan mentions migraine today."
+    },
+    {
+      "id": "mirtazapine-mertazapine",
+      "kind": "correction",
+      "canonical": "mirtazapine",
+      "variant": "mertazapine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions mertazapine today.",
+      "expected_sentence": "The plan mentions mirtazapine today."
+    },
+    {
+      "id": "mirtazapine-mirta-zapine",
+      "kind": "correction",
+      "canonical": "mirtazapine",
+      "variant": "mirta zapine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions mirta zapine today.",
+      "expected_sentence": "The plan mentions mirtazapine today."
+    },
+    {
+      "id": "montelukast-monte-lukast",
+      "kind": "correction",
+      "canonical": "montelukast",
+      "variant": "monte lukast",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions monte lukast today.",
+      "expected_sentence": "The plan mentions montelukast today."
+    },
+    {
+      "id": "montelukast-montelucast",
+      "kind": "correction",
+      "canonical": "montelukast",
+      "variant": "montelucast",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions montelucast today.",
+      "expected_sentence": "The plan mentions montelukast today."
+    },
+    {
+      "id": "myocardial-infarction-heart-attack-disabled",
+      "kind": "must_stay_raw",
+      "canonical": "myocardial infarction",
+      "variant": "heart attack",
+      "category": "semantic_synonym",
+      "raw_sentence": "The patient said heart attack in their own words.",
+      "expected_sentence": "The patient said heart attack in their own words."
+    },
+    {
+      "id": "myocardial-infarction-my-cardial-infarction",
+      "kind": "correction",
+      "canonical": "myocardial infarction",
+      "variant": "my cardial infarction",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions my cardial infarction today.",
+      "expected_sentence": "The plan mentions myocardial infarction today."
+    },
+    {
+      "id": "naproxen-na-proxen",
+      "kind": "correction",
+      "canonical": "naproxen",
+      "variant": "na proxen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions na proxen today.",
+      "expected_sentence": "The plan mentions naproxen today."
+    },
+    {
+      "id": "naproxen-naproxin",
+      "kind": "correction",
+      "canonical": "naproxen",
+      "variant": "naproxin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions naproxin today.",
+      "expected_sentence": "The plan mentions naproxen today."
+    },
+    {
+      "id": "nitrofurantoin-nitro-furantoin",
+      "kind": "correction",
+      "canonical": "nitrofurantoin",
+      "variant": "nitro furantoin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions nitro furantoin today.",
+      "expected_sentence": "The plan mentions nitrofurantoin today."
+    },
+    {
+      "id": "nitrofurantoin-nitrofurantoyn",
+      "kind": "correction",
+      "canonical": "nitrofurantoin",
+      "variant": "nitrofurantoyn",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions nitrofurantoyn today.",
+      "expected_sentence": "The plan mentions nitrofurantoin today."
+    },
+    {
+      "id": "omeprazole-omep-razole",
+      "kind": "correction",
+      "canonical": "omeprazole",
+      "variant": "omep razole",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions omep razole today.",
+      "expected_sentence": "The plan mentions omeprazole today."
+    },
+    {
+      "id": "omeprazole-omeprazol",
+      "kind": "correction",
+      "canonical": "omeprazole",
+      "variant": "omeprazol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions omeprazol today.",
+      "expected_sentence": "The plan mentions omeprazole today."
+    },
+    {
+      "id": "ondansetron-ondan-setron",
+      "kind": "correction",
+      "canonical": "ondansetron",
+      "variant": "ondan setron",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ondan setron today.",
+      "expected_sentence": "The plan mentions ondansetron today."
+    },
+    {
+      "id": "ondansetron-ondansetran",
+      "kind": "correction",
+      "canonical": "ondansetron",
+      "variant": "ondansetran",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ondansetran today.",
+      "expected_sentence": "The plan mentions ondansetron today."
+    },
+    {
+      "id": "osteoarthritis-osteo-arthritis",
+      "kind": "correction",
+      "canonical": "osteoarthritis",
+      "variant": "osteo arthritis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions osteo arthritis today.",
+      "expected_sentence": "The plan mentions osteoarthritis today."
+    },
+    {
+      "id": "osteoarthritis-osteoarthritus",
+      "kind": "correction",
+      "canonical": "osteoarthritis",
+      "variant": "osteoarthritus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions osteoarthritus today.",
+      "expected_sentence": "The plan mentions osteoarthritis today."
+    },
+    {
+      "id": "osteoporosis-osteo-porosis",
+      "kind": "correction",
+      "canonical": "osteoporosis",
+      "variant": "osteo porosis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions osteo porosis today.",
+      "expected_sentence": "The plan mentions osteoporosis today."
+    },
+    {
+      "id": "osteoporosis-osteoperosis",
+      "kind": "correction",
+      "canonical": "osteoporosis",
+      "variant": "osteoperosis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions osteoperosis today.",
+      "expected_sentence": "The plan mentions osteoporosis today."
+    },
+    {
+      "id": "pantoprazole-panto-prazole",
+      "kind": "correction",
+      "canonical": "pantoprazole",
+      "variant": "panto prazole",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions panto prazole today.",
+      "expected_sentence": "The plan mentions pantoprazole today."
+    },
+    {
+      "id": "pantoprazole-pantoprazol",
+      "kind": "correction",
+      "canonical": "pantoprazole",
+      "variant": "pantoprazol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions pantoprazol today.",
+      "expected_sentence": "The plan mentions pantoprazole today."
+    },
+    {
+      "id": "paracetamol-para-seat-amol",
+      "kind": "correction",
+      "canonical": "paracetamol",
+      "variant": "para seat amol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions para seat amol today.",
+      "expected_sentence": "The plan mentions paracetamol today."
+    },
+    {
+      "id": "paracetamol-paracetemol",
+      "kind": "correction",
+      "canonical": "paracetamol",
+      "variant": "paracetemol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions paracetemol today.",
+      "expected_sentence": "The plan mentions paracetamol today."
+    },
+    {
+      "id": "pcos-p-c-o-s",
+      "kind": "correction",
+      "canonical": "PCOS",
+      "variant": "p c o s",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions p c o s today.",
+      "expected_sentence": "The plan mentions PCOS today."
+    },
+    {
+      "id": "pertussis-per-tussis",
+      "kind": "correction",
+      "canonical": "pertussis",
+      "variant": "per tussis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions per tussis today.",
+      "expected_sentence": "The plan mentions pertussis today."
+    },
+    {
+      "id": "pertussis-pertusis",
+      "kind": "correction",
+      "canonical": "pertussis",
+      "variant": "pertusis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions pertusis today.",
+      "expected_sentence": "The plan mentions pertussis today."
+    },
+    {
+      "id": "plantar-fasciitis-plantar-fascia-itis",
+      "kind": "correction",
+      "canonical": "plantar fasciitis",
+      "variant": "plantar fascia itis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions plantar fascia itis today.",
+      "expected_sentence": "The plan mentions plantar fasciitis today."
+    },
+    {
+      "id": "plantar-fasciitis-planter-fasciitis",
+      "kind": "correction",
+      "canonical": "plantar fasciitis",
+      "variant": "planter fasciitis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions planter fasciitis today.",
+      "expected_sentence": "The plan mentions plantar fasciitis today."
+    },
+    {
+      "id": "pneumonia-new-monia",
+      "kind": "correction",
+      "canonical": "pneumonia",
+      "variant": "new monia",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions new monia today.",
+      "expected_sentence": "The plan mentions pneumonia today."
+    },
+    {
+      "id": "pneumonia-pneumon-ia",
+      "kind": "correction",
+      "canonical": "pneumonia",
+      "variant": "pneumon ia",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions pneumon ia today.",
+      "expected_sentence": "The plan mentions pneumonia today."
+    },
+    {
+      "id": "prednisone-predni-zone",
+      "kind": "correction",
+      "canonical": "prednisone",
+      "variant": "predni zone",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions predni zone today.",
+      "expected_sentence": "The plan mentions prednisone today."
+    },
+    {
+      "id": "prednisone-prednizone",
+      "kind": "correction",
+      "canonical": "prednisone",
+      "variant": "prednizone",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions prednizone today.",
+      "expected_sentence": "The plan mentions prednisone today."
+    },
+    {
+      "id": "pregabalin-pre-gabalin",
+      "kind": "correction",
+      "canonical": "pregabalin",
+      "variant": "pre gabalin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions pre gabalin today.",
+      "expected_sentence": "The plan mentions pregabalin today."
+    },
+    {
+      "id": "pregabalin-pregablin",
+      "kind": "correction",
+      "canonical": "pregabalin",
+      "variant": "pregablin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions pregablin today.",
+      "expected_sentence": "The plan mentions pregabalin today."
+    },
+    {
+      "id": "psoriasis-so-riasis",
+      "kind": "correction",
+      "canonical": "psoriasis",
+      "variant": "so riasis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions so riasis today.",
+      "expected_sentence": "The plan mentions psoriasis today."
+    },
+    {
+      "id": "psoriasis-soriasis",
+      "kind": "correction",
+      "canonical": "psoriasis",
+      "variant": "soriasis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions soriasis today.",
+      "expected_sentence": "The plan mentions psoriasis today."
+    },
+    {
+      "id": "radiculopathy-radiculo-pathy",
+      "kind": "correction",
+      "canonical": "radiculopathy",
+      "variant": "radiculo pathy",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions radiculo pathy today.",
+      "expected_sentence": "The plan mentions radiculopathy today."
+    },
+    {
+      "id": "radiculopathy-ridiculopathy",
+      "kind": "correction",
+      "canonical": "radiculopathy",
+      "variant": "ridiculopathy",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ridiculopathy today.",
+      "expected_sentence": "The plan mentions radiculopathy today."
+    },
+    {
+      "id": "ramipril-ramapril",
+      "kind": "correction",
+      "canonical": "ramipril",
+      "variant": "ramapril",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ramapril today.",
+      "expected_sentence": "The plan mentions ramipril today."
+    },
+    {
+      "id": "ramipril-rami-pril",
+      "kind": "correction",
+      "canonical": "ramipril",
+      "variant": "rami pril",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions rami pril today.",
+      "expected_sentence": "The plan mentions ramipril today."
+    },
+    {
+      "id": "rheumatoid-arthritis-rheuma-toid-arthritis",
+      "kind": "correction",
+      "canonical": "rheumatoid arthritis",
+      "variant": "rheuma toid arthritis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions rheuma toid arthritis today.",
+      "expected_sentence": "The plan mentions rheumatoid arthritis today."
+    },
+    {
+      "id": "rheumatoid-arthritis-rumatoid-arthritis",
+      "kind": "correction",
+      "canonical": "rheumatoid arthritis",
+      "variant": "rumatoid arthritis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions rumatoid arthritis today.",
+      "expected_sentence": "The plan mentions rheumatoid arthritis today."
+    },
+    {
+      "id": "rivaroxaban-riva-roxaban",
+      "kind": "correction",
+      "canonical": "rivaroxaban",
+      "variant": "riva roxaban",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions riva roxaban today.",
+      "expected_sentence": "The plan mentions rivaroxaban today."
+    },
+    {
+      "id": "rivaroxaban-rivaroxiban",
+      "kind": "correction",
+      "canonical": "rivaroxaban",
+      "variant": "rivaroxiban",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions rivaroxiban today.",
+      "expected_sentence": "The plan mentions rivaroxaban today."
+    },
+    {
+      "id": "rosuvastatin-ro-suva-statin",
+      "kind": "correction",
+      "canonical": "rosuvastatin",
+      "variant": "ro suva statin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ro suva statin today.",
+      "expected_sentence": "The plan mentions rosuvastatin today."
+    },
+    {
+      "id": "rosuvastatin-rosuva-statin",
+      "kind": "correction",
+      "canonical": "rosuvastatin",
+      "variant": "rosuva statin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions rosuva statin today.",
+      "expected_sentence": "The plan mentions rosuvastatin today."
+    },
+    {
+      "id": "salbutamol-sal-butamol",
+      "kind": "correction",
+      "canonical": "salbutamol",
+      "variant": "sal butamol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sal butamol today.",
+      "expected_sentence": "The plan mentions salbutamol today."
+    },
+    {
+      "id": "salbutamol-salbutamole",
+      "kind": "correction",
+      "canonical": "salbutamol",
+      "variant": "salbutamole",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions salbutamole today.",
+      "expected_sentence": "The plan mentions salbutamol today."
+    },
+    {
+      "id": "sciatica-siatica",
+      "kind": "correction",
+      "canonical": "sciatica",
+      "variant": "siatica",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions siatica today.",
+      "expected_sentence": "The plan mentions sciatica today."
+    },
+    {
+      "id": "sciatica-sy-attica",
+      "kind": "correction",
+      "canonical": "sciatica",
+      "variant": "sy attica",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sy attica today.",
+      "expected_sentence": "The plan mentions sciatica today."
+    },
+    {
+      "id": "semaglutide-sema-glutide",
+      "kind": "correction",
+      "canonical": "semaglutide",
+      "variant": "sema glutide",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sema glutide today.",
+      "expected_sentence": "The plan mentions semaglutide today."
+    },
+    {
+      "id": "semaglutide-semaglutid",
+      "kind": "correction",
+      "canonical": "semaglutide",
+      "variant": "semaglutid",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions semaglutid today.",
+      "expected_sentence": "The plan mentions semaglutide today."
+    },
+    {
+      "id": "sertraline-sertra-line",
+      "kind": "correction",
+      "canonical": "sertraline",
+      "variant": "sertra line",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sertra line today.",
+      "expected_sentence": "The plan mentions sertraline today."
+    },
+    {
+      "id": "sertraline-sertralyn",
+      "kind": "correction",
+      "canonical": "sertraline",
+      "variant": "sertralyn",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sertralyn today.",
+      "expected_sentence": "The plan mentions sertraline today."
+    },
+    {
+      "id": "sinusitis-sinus-itis",
+      "kind": "correction",
+      "canonical": "sinusitis",
+      "variant": "sinus itis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sinus itis today.",
+      "expected_sentence": "The plan mentions sinusitis today."
+    },
+    {
+      "id": "sinusitis-sinusitus",
+      "kind": "correction",
+      "canonical": "sinusitis",
+      "variant": "sinusitus",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sinusitus today.",
+      "expected_sentence": "The plan mentions sinusitis today."
+    },
+    {
+      "id": "spirometry-spiro-metry",
+      "kind": "correction",
+      "canonical": "spirometry",
+      "variant": "spiro metry",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions spiro metry today.",
+      "expected_sentence": "The plan mentions spirometry today."
+    },
+    {
+      "id": "spirometry-spyrometry",
+      "kind": "correction",
+      "canonical": "spirometry",
+      "variant": "spyrometry",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions spyrometry today.",
+      "expected_sentence": "The plan mentions spirometry today."
+    },
+    {
+      "id": "spironolactone-spirono-lactone",
+      "kind": "correction",
+      "canonical": "spironolactone",
+      "variant": "spirono lactone",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions spirono lactone today.",
+      "expected_sentence": "The plan mentions spironolactone today."
+    },
+    {
+      "id": "spironolactone-spironolacton",
+      "kind": "correction",
+      "canonical": "spironolactone",
+      "variant": "spironolacton",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions spironolacton today.",
+      "expected_sentence": "The plan mentions spironolactone today."
+    },
+    {
+      "id": "sumatriptan-sumatryptan",
+      "kind": "correction",
+      "canonical": "sumatriptan",
+      "variant": "sumatryptan",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions sumatryptan today.",
+      "expected_sentence": "The plan mentions sumatriptan today."
+    },
+    {
+      "id": "sumatriptan-summa-trip-tan",
+      "kind": "correction",
+      "canonical": "sumatriptan",
+      "variant": "summa trip tan",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions summa trip tan today.",
+      "expected_sentence": "The plan mentions sumatriptan today."
+    },
+    {
+      "id": "terbinafine-terbina-fine",
+      "kind": "correction",
+      "canonical": "terbinafine",
+      "variant": "terbina fine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions terbina fine today.",
+      "expected_sentence": "The plan mentions terbinafine today."
+    },
+    {
+      "id": "terbinafine-terbinafeen",
+      "kind": "correction",
+      "canonical": "terbinafine",
+      "variant": "terbinafeen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions terbinafeen today.",
+      "expected_sentence": "The plan mentions terbinafine today."
+    },
+    {
+      "id": "thyroid-function-test-thyroid-function-tests-disabled",
+      "kind": "must_stay_raw",
+      "canonical": "thyroid function test",
+      "variant": "thyroid function tests",
+      "category": "semantic_synonym",
+      "raw_sentence": "Please repeat thyroid function tests next month.",
+      "expected_sentence": "Please repeat thyroid function tests next month."
+    },
+    {
+      "id": "tonsillitis-tonsil-litis",
+      "kind": "correction",
+      "canonical": "tonsillitis",
+      "variant": "tonsil litis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions tonsil litis today.",
+      "expected_sentence": "The plan mentions tonsillitis today."
+    },
+    {
+      "id": "tonsillitis-tonsilitis",
+      "kind": "correction",
+      "canonical": "tonsillitis",
+      "variant": "tonsilitis",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions tonsilitis today.",
+      "expected_sentence": "The plan mentions tonsillitis today."
+    },
+    {
+      "id": "tramadol-trama-dol",
+      "kind": "correction",
+      "canonical": "tramadol",
+      "variant": "trama dol",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions trama dol today.",
+      "expected_sentence": "The plan mentions tramadol today."
+    },
+    {
+      "id": "tramadol-tramadole",
+      "kind": "correction",
+      "canonical": "tramadol",
+      "variant": "tramadole",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions tramadole today.",
+      "expected_sentence": "The plan mentions tramadol today."
+    },
+    {
+      "id": "troponin-tro-pony",
+      "kind": "correction",
+      "canonical": "troponin",
+      "variant": "tro pony",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions tro pony today.",
+      "expected_sentence": "The plan mentions troponin today."
+    },
+    {
+      "id": "troponin-troponen",
+      "kind": "correction",
+      "canonical": "troponin",
+      "variant": "troponen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions troponen today.",
+      "expected_sentence": "The plan mentions troponin today."
+    },
+    {
+      "id": "tsh-t-s-h",
+      "kind": "correction",
+      "canonical": "TSH",
+      "variant": "t s h",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions t s h today.",
+      "expected_sentence": "The plan mentions TSH today."
+    },
+    {
+      "id": "urticaria-urti-caria",
+      "kind": "correction",
+      "canonical": "urticaria",
+      "variant": "urti caria",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions urti caria today.",
+      "expected_sentence": "The plan mentions urticaria today."
+    },
+    {
+      "id": "urticaria-urticarea",
+      "kind": "correction",
+      "canonical": "urticaria",
+      "variant": "urticarea",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions urticarea today.",
+      "expected_sentence": "The plan mentions urticaria today."
+    },
+    {
+      "id": "uti-u-t-i",
+      "kind": "correction",
+      "canonical": "UTI",
+      "variant": "u t i",
+      "category": "abbreviation_acronym",
+      "raw_sentence": "The plan mentions u t i today.",
+      "expected_sentence": "The plan mentions UTI today."
+    },
+    {
+      "id": "venlafaxine-venla-faxine",
+      "kind": "correction",
+      "canonical": "venlafaxine",
+      "variant": "venla faxine",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions venla faxine today.",
+      "expected_sentence": "The plan mentions venlafaxine today."
+    },
+    {
+      "id": "venlafaxine-venlafaxeen",
+      "kind": "correction",
+      "canonical": "venlafaxine",
+      "variant": "venlafaxeen",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions venlafaxeen today.",
+      "expected_sentence": "The plan mentions venlafaxine today."
+    },
+    {
+      "id": "ventolin-ventalin",
+      "kind": "correction",
+      "canonical": "Ventolin",
+      "variant": "ventalin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions ventalin today.",
+      "expected_sentence": "The plan mentions Ventolin today."
+    },
+    {
+      "id": "ventolin-vento-lin",
+      "kind": "correction",
+      "canonical": "Ventolin",
+      "variant": "vento lin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions vento lin today.",
+      "expected_sentence": "The plan mentions Ventolin today."
+    },
+    {
+      "id": "warfarin-war-farin",
+      "kind": "correction",
+      "canonical": "warfarin",
+      "variant": "war farin",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions war farin today.",
+      "expected_sentence": "The plan mentions warfarin today."
+    },
+    {
+      "id": "warfarin-warfaren",
+      "kind": "correction",
+      "canonical": "warfarin",
+      "variant": "warfaren",
+      "category": "asr_variant",
+      "raw_sentence": "The plan mentions warfaren today.",
+      "expected_sentence": "The plan mentions warfarin today."
+    }
+  ]
+}

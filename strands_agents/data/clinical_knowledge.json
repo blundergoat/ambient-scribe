@@ -1,26 +1,422 @@
 {
-  "description": "Synthetic PoC snippets for Ambient Scribe summary grounding. Not exhaustive medical guidance.",
+  "schema_version": "ambient-scribe-clinical-knowledge/v1",
+  "asset_id": "ambient-scribe-clinical-knowledge",
+  "asset_version": "0.5.0-2026-07-19",
+  "default_state": "inactive",
   "entries": [
     {
-      "id": "chest-pain-objective",
-      "title": "Chest pain documentation",
-      "keywords": ["chest pain", "troponin", "ECG", "vitals"],
-      "snippet": "Chest-pain documentation should capture symptom history, relevant risk factors, objective assessment such as ECG/vitals, and follow-up or escalation plan.",
-      "provenance": "Project-authored PoC documentation checklist, not a clinical guideline."
+      "id": "allergy-antihistamine-plan",
+      "status": "active",
+      "title": "Allergic rash and antihistamine plan",
+      "keywords": [
+        "antihistamine",
+        "hives",
+        "loratadine"
+      ],
+      "snippet": "When an allergic rash is discussed, document the suspected trigger, the antihistamine chosen with dose and duration, and the escalation advice if swelling, breathing difficulty, or spreading symptoms develop.",
+      "hard_negatives": [
+        "Histamine pathways were covered in the lecture notes.",
+        "The beehive display at the market was unrelated.",
+        "The floral shirt order arrived late."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#allergy-antihistamine-plan",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
     },
     {
-      "id": "nsaid-ace-renal",
-      "title": "NSAID and ACE inhibitor review",
-      "keywords": ["naproxen", "ibuprofen", "lisinopril", "renal", "kidney"],
-      "snippet": "When NSAIDs are discussed with ACE inhibitors, consider documenting renal-risk review and safety-net advice.",
-      "provenance": "Project-authored PoC medication-safety reminder."
+      "id": "antibiotic-stewardship",
+      "status": "active",
+      "title": "Antibiotic course documentation",
+      "keywords": [
+        "amoxicillin",
+        "antibiotic course",
+        "delayed prescription"
+      ],
+      "snippet": "When an antibiotic is started, changed, or deferred, document the indication, the agent with dose and course length, any delayed prescription instructions, and the safety-net advice for worsening symptoms.",
+      "hard_negatives": [
+        "Antibiotics were mentioned only in a general news story.",
+        "The pharmacy delivery round was rescheduled.",
+        "The prescription pad redesign was administrative."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#antibiotic-stewardship",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "anticoagulant-review",
+      "status": "active",
+      "title": "Anticoagulant review",
+      "keywords": [
+        "apixaban",
+        "bleeding risk",
+        "warfarin"
+      ],
+      "snippet": "When anticoagulation is discussed, document the indication, the agent and dose, renal function and interaction checks where relevant, any bleeding-risk discussion, and the monitoring or follow-up plan.",
+      "hard_negatives": [
+        "The bleeding hem of the curtain was mended.",
+        "The pixel banner design was unrelated.",
+        "The war memorial visit was unrelated."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#anticoagulant-review",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "asthma-inhaler-review",
+      "status": "active",
+      "title": "Asthma inhaler and action plan",
+      "keywords": [
+        "inhaler technique",
+        "peak flow",
+        "salbutamol"
+      ],
+      "snippet": "When asthma control is reviewed, document reliever frequency, the inhaler technique check, peak-flow or symptom trend where available, and whether the written asthma action plan was updated.",
+      "hard_negatives": [
+        "The inhaler poster in the waiting room was decorative.",
+        "The peak hour traffic was unrelated.",
+        "The sail boat trip was unrelated."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#asthma-inhaler-review",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "chest-pain-objective",
+      "status": "active",
+      "title": "Chest pain documentation",
+      "keywords": [
+        "chest pain",
+        "ecg",
+        "troponin"
+      ],
+      "snippet": "Chest-pain documentation should capture symptom history, relevant risk factors, objective assessment such as ECG and vitals, and the follow-up or escalation plan.",
+      "hard_negatives": [
+        "The chest of drawers was moved upstairs.",
+        "The economy segment was unrelated.",
+        "The pony trek photos were unrelated."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#chest-pain-objective",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
     },
     {
       "id": "diabetes-medication-review",
+      "status": "active",
       "title": "Diabetes medication review",
-      "keywords": ["metformin", "empagliflozin", "blood glucose", "kidney tests", "renal"],
-      "snippet": "Diabetes medication changes should document glucose pattern, renal function considerations, and follow-up timing.",
-      "provenance": "Project-authored PoC documentation checklist."
+      "keywords": [
+        "blood glucose",
+        "empagliflozin",
+        "metformin"
+      ],
+      "snippet": "When diabetes medicines are started or changed, document the recent glucose pattern, renal function considerations for the chosen agent, sick-day advice where relevant, and the follow-up and repeat-testing timing.",
+      "hard_negatives": [
+        "The blood donation drive was advertised.",
+        "The empanada stall was popular.",
+        "The met office forecast was unrelated."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#diabetes-medication-review",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "fatigue-workup",
+      "status": "active",
+      "title": "Persistent tiredness workup",
+      "keywords": [
+        "iron studies",
+        "tired all the time"
+      ],
+      "snippet": "When persistent tiredness is assessed, document sleep pattern, mood screen, red-flag review, relevant baseline tests such as iron studies and thyroid function, and the agreed review interval.",
+      "hard_negatives": [
+        "The iron gate needed painting.",
+        "The tired old sign was replaced."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#fatigue-workup",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "mental-health-safety-plan",
+      "status": "active",
+      "title": "Mental health review and safety plan",
+      "keywords": [
+        "anxious",
+        "mood",
+        "safety plan"
+      ],
+      "snippet": "When low mood or anxiety is discussed, document the screening outcome, any risk assessment and safety-planning discussion, agreed supports or referrals, and the review timing.",
+      "hard_negatives": [
+        "The anxiousness before the recital passed quickly.",
+        "The moody weather delayed the ferry.",
+        "The safety rail on the stairs was fixed."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#mental-health-safety-plan",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "nsaid-ace-renal",
+      "status": "active",
+      "title": "NSAID and ACE inhibitor review",
+      "keywords": [
+        "ibuprofen",
+        "lisinopril",
+        "naproxen",
+        "renal function"
+      ],
+      "snippet": "When an NSAID is discussed alongside an ACE inhibitor, document the renal-risk review, the blood-pressure and renal function monitoring plan, and the safety-net advice that was given.",
+      "hard_negatives": [
+        "The eye drops were on the reception shelf.",
+        "The lease renewal was administrative.",
+        "The nap schedule for the toddler was discussed socially.",
+        "The renal ward tour was part of the open day."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#nsaid-ace-renal",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "skin-infection-redflags",
+      "status": "active",
+      "title": "Skin infection red flags",
+      "keywords": [
+        "cellulitis",
+        "spreading redness"
+      ],
+      "snippet": "When a skin infection is suspected, document the affected area and any marked border, systemic features such as fever, the chosen treatment, and the explicit advice about worsening pain or feeling unwell.",
+      "hard_negatives": [
+        "The cellular plan upgrade was unrelated.",
+        "The spreading of the picnic blanket was cheerful."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#skin-infection-redflags",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
+    },
+    {
+      "id": "thyroid-monitoring",
+      "status": "active",
+      "title": "Thyroid replacement monitoring",
+      "keywords": [
+        "levothyroxine",
+        "tsh"
+      ],
+      "snippet": "When thyroid replacement is reviewed, document the current dose, the symptom trend, the latest TSH result where mentioned, and the planned timing of repeat thyroid function testing.",
+      "hard_negatives": [
+        "The left thigh strain was from football.",
+        "The tissue box was refilled."
+      ],
+      "evidence_class": "project_authored_documentation_checklist",
+      "locale": "en-AU",
+      "intended_consumer": "summary_prompt_context",
+      "source": {
+        "artifact_id": "clinical-documentation-checklists",
+        "locator": "docs/clinical-documentation-checklists.md#thyroid-monitoring",
+        "sha256": "a4f0c87c707d0e2f81063d38874653526d1de646d832753c70116cfc5eb5cd53",
+        "published_at": "2026-07-19",
+        "updated_at": "2026-07-19"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-07-19"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ]
     }
   ]
 }
