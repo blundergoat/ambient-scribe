@@ -4,7 +4,7 @@ This directory holds PriMock57 mock consultation audio for manual replay demos.
 The `.wav` files are generated locally and ignored by git; run the generator
 when you need fresh files for the browser Demo Audio picker or `scripts/m2-verify.sh`.
 
-## Generate
+## Generate mono fixtures
 
 ```bash
 python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 \
@@ -22,11 +22,45 @@ python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 
 
 The generator downloads CC BY 4.0 PriMock57 doctor/patient channels, mixes each
 pair to a full-length 16 kHz mono 16-bit PCM WAV, and writes `generated-manifest.json`.
-For the 0.5.0 quality programme, the source of truth is the ordered ten-fixture
-`development-corpus-0.5.0.json` manifest. Do not add another local fixture to a
-0.5.0 runner or development evaluation. The generator's PriMock57 allowlist and
-the committed picker catalog contain these same ten cases; all other case IDs,
-including every sealed holdout, are excluded before note or audio selection.
+The current working set is the ten PriMock57 consultations listed below.
+`development-corpus-0.5.0.json` records the same ten fixtures for quality runs,
+and the committed picker catalog presents them in the browser. For now, generate
+and evaluate this set; additional consultation sources can be added later.
+
+## Generate stereo fixtures
+
+Run the mono generator above first so `generated-manifest.json` contains the
+current approved filenames and source paths. Then use the synchronized PriMock57
+source channels to put the doctor on the left and the patient on the right:
+
+```bash
+set -euo pipefail
+
+audio_dir=tests/fixtures/audio
+stereo_dir="$audio_dir/stereo"
+source_base_url=https://media.githubusercontent.com/media/babylonhealth/primock57/main
+
+mkdir -p "$stereo_dir"
+jq -r '.[] | [.filename, .source_audio[0], .source_audio[1]] | @tsv' \
+  "$audio_dir/generated-manifest.json" |
+while IFS=$'\t' read -r filename doctor_source patient_source; do
+  stereo_path="$stereo_dir/$filename"
+  ffmpeg -y \
+    -i "$source_base_url/$doctor_source" \
+    -i "$source_base_url/$patient_source" \
+    -filter_complex \
+      '[0:a][1:a]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[a]' \
+    -map '[a]' -ar 16000 -ac 2 -c:a pcm_s16le \
+    "$stereo_path"
+  cp "$stereo_path" "$audio_dir/$filename"
+done
+```
+
+Each final copy makes that stereo file an active browser Demo Audio fixture.
+Browser replay averages both channels into the 16 kHz mono PCM stream NeMo
+expects. The direct `scripts/eval-fixtures.sh` and
+`scripts/eval-corrected-fixtures.sh` runners bypass that browser conversion and
+still require the mono files produced by the first command.
 
 ## Ground-truth transcripts
 
@@ -37,19 +71,21 @@ Praat transcripts (CC BY 4.0). They pair with each WAV by name:
 scripts/download-primock57-transcripts.sh
 ```
 
-The downloader compares every discovered PriMock57 WAV stem with the ten ordered
+The downloader compares every discovered PriMock57 WAV stem with the ten selected
 development stems in `development-corpus-0.5.0.json` before opening a WAV or URL.
 It exits `2` on any missing or extra stem without downloading or deleting data.
 After that automatic preflight, it writes
-`<wav-stem>.doctor.TextGrid` and `<wav-stem>.patient.TextGrid` for every approved
+`<wav-stem>.doctor.TextGrid` and `<wav-stem>.patient.TextGrid` for every selected
 development consultation whose `.wav` exists locally, e.g.:
 
 - `primock57-day1-consultation02-i-have-sore-red-skin.wav`
 - `primock57-day1-consultation02-i-have-sore-red-skin.doctor.TextGrid`
 - `primock57-day1-consultation02-i-have-sore-red-skin.patient.TextGrid`
 
-The source WAV is a doctor+patient mixdown, so a full reference is both channel
-TextGrids together. Like the `.wav` fixtures, `.TextGrid` files are git-ignored.
+Each stereo WAV keeps the doctor source on the left and the patient source on the
+right; browser replay mixes both into one PCM stream. A full reference therefore
+uses both channel TextGrids together. Like the `.wav` fixtures, `.TextGrid` files
+are git-ignored.
 
 ## Included Cases
 
@@ -68,13 +104,13 @@ TextGrids together. Like the `.wav` fixtures, `.TextGrid` files are git-ignored.
 
 ## Contract
 
-Replay uploads are not resampled by the API, so every WAV must already be:
+The active stereo browser fixtures must already be:
 
 ```bash
 ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels,bits_per_sample -of default=nw=1 tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav
 ```
 
-Expected values are `sample_rate=16000`, `channels=1`, and `bits_per_sample=16`.
+Expected values are `sample_rate=16000`, `channels=2`, and `bits_per_sample=16`.
 PriMock57 replay fixtures are full-length consultations (roughly 8-12 minutes);
 `NEMO_BUFFER_MAX_DURATION` (default 900s) must comfortably exceed the clip length.
 Only CC-BY compatible mock audio belongs here; never commit scraped,
