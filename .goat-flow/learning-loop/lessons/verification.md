@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-20
+last_reviewed: 2026-07-21
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -501,3 +501,18 @@ directly; at most, the panic response is ambiguous.
 bounded exchange. When consecutive questions compete for one delayed response, record
 "asked; response ambiguous" unless the answer directly identifies the topic; adjacency alone
 must not become a positive or negative clinical fact.
+
+## Lesson: Resolve the published port before reading a 404 as absent state
+
+**Created:** 2026-07-21
+**What happened:** While capturing the 05:50 consult-1.2 manual run, a guessed `localhost:8081`
+probe of the nemo-agent session endpoints returned FastAPI-shaped `{"detail":"Not Found"}` from
+an unrelated service, briefly read as "the in-memory session store is gone." The real published
+port was 48101 (`docker port ambient-scribe-nemo-agent-1`); there, every lane was still served
+and the full capture succeeded.
+**Evidence:** `docker-compose.yml` (search: `AGENT_PORT:-48101`) - container port 8000 publishes
+as host 48101; `.env.example` (search: `AGENT_ENDPOINT`) repeats it. Nothing here maps 8081.
+**Prevention:** A FastAPI 404 proves only that SOME FastAPI answered. Before concluding
+in-memory state is lost, resolve the published port with `docker port <name>` and confirm
+service identity on a known-good route; an in-container healthcheck passing while the host
+probe 404s is the tell that the host port is wrong.
