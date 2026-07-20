@@ -65,6 +65,7 @@ crash.log
 # Audio fixtures (YouTube-extracted files must NOT be committed)
 # Self-recorded audio is OK to commit explicitly
 tests/fixtures/audio/*.wav
+tests/fixtures/audio/stereo/*.wav
 tests/fixtures/audio/*.mp3
 tests/fixtures/audio/*.webm
 # PriMock57 ground-truth transcripts are fetched, not bundled (see download-primock57-transcripts.sh)
