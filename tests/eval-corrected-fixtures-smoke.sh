@@ -103,4 +103,55 @@ if run_selected_fixtures; then
     exit 1
 fi
 
-printf 'eval-corrected-fixtures smoke passed: fixtures=3 ok=2 failed=1; single fixture failed hard\n'
+# --- Development-corpus selection stays fail-closed and manifest-ordered ---
+FIXTURE_QUERIES=()
+FIXTURE_PATHS=()
+resolve_development_corpus_fixtures
+expected_corpus_paths=(
+    "tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav"
+    "tests/fixtures/audio/primock57-day1-consultation03-i-have-terrible-headache.wav"
+    "tests/fixtures/audio/primock57-day1-consultation06-hard-to-breathe.wav"
+    "tests/fixtures/audio/primock57-day1-consultation07-i-have-a-cough-and-cold.wav"
+    "tests/fixtures/audio/primock57-day1-consultation08-i-have-dry-itchy-skin.wav"
+    "tests/fixtures/audio/primock57-day2-consultation03-i-cant-hear-very-well-and-my-face-is-a-bit-numb.wav"
+    "tests/fixtures/audio/primock57-day2-consultation09-i-cant-move-my-left-arm.wav"
+    "tests/fixtures/audio/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich.wav"
+    "tests/fixtures/audio/primock57-day5-consultation03-im-feeling-very-anxious.wav"
+    "tests/fixtures/audio/primock57-day5-consultation09-tired-all-the-time.wav"
+)
+if [[ "${FIXTURE_PATHS[*]}" != "${expected_corpus_paths[*]}" ]]; then
+    echo "smoke failure: development corpus selection differs from manifest order" >&2
+    printf 'got:  %s\n' "${FIXTURE_PATHS[@]}" >&2
+    exit 1
+fi
+
+# Mixing the frozen corpus with any other selection fails closed.
+FIXTURE_QUERIES=("__all__")
+FIXTURE_PATHS=()
+corpus_conflict_exit=0
+(resolve_development_corpus_fixtures) >/dev/null 2>&1 || corpus_conflict_exit=$?
+if [[ "$corpus_conflict_exit" != "2" ]]; then
+    echo "smoke failure: mixed corpus selection did not fail closed (exit $corpus_conflict_exit)" >&2
+    exit 1
+fi
+
+# A rejected corpus helper stops selection before any fixture path resolves.
+cat > "$SMOKE_DIR/rejecting-python" <<'STUB'
+#!/usr/bin/env bash
+echo "development corpus rejected: smoke stub" >&2
+exit 2
+STUB
+chmod +x "$SMOKE_DIR/rejecting-python"
+FIXTURE_QUERIES=()
+FIXTURE_PATHS=()
+real_python_bin="$PYTHON_BIN"
+PYTHON_BIN="$SMOKE_DIR/rejecting-python"
+corpus_reject_exit=0
+(resolve_development_corpus_fixtures) >/dev/null 2>&1 || corpus_reject_exit=$?
+PYTHON_BIN="$real_python_bin"
+if [[ "$corpus_reject_exit" != "2" ]]; then
+    echo "smoke failure: rejected corpus helper did not fail closed (exit $corpus_reject_exit)" >&2
+    exit 1
+fi
+
+printf 'eval-corrected-fixtures smoke passed: fixtures=3 ok=2 failed=1; single fixture failed hard; corpus selection fail-closed\n'

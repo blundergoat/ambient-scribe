@@ -503,6 +503,214 @@ class TestBoundedTranscriptRelease:
         assert evidence["bounded_release_applied"] is False
 
 
+class FakeDiarPredictionStream:
+    """Minimal cumulative diarizer prediction tensor for CPU pairwise tests.
+
+    It implements only the operations `_record_diar_activity` performs on the
+    real stream: shape queries, new-frame slicing, per-slot thresholding, and
+    active-index extraction. Frames append over time like NeMo's stream.
+    """
+
+    def __init__(self, frame_rows):
+        """Store per-frame slot activations, e.g. [[1.0, 0.0], [0.0, 1.0]]."""
+        self._frame_rows = list(frame_rows)
+        self.ndim = 3
+
+    def extend(self, frame_rows):
+        """Append later-step frames the way the cumulative stream grows."""
+        self._frame_rows.extend(frame_rows)
+
+    def size(self, dimension):
+        """Return the (1, frames, slots) shape the sampler expects."""
+        if dimension == 1:
+            return len(self._frame_rows)
+        if dimension == 2:
+            return len(self._frame_rows[0]) if self._frame_rows else 0
+        return 1
+
+    def __getitem__(self, key):
+        """Serve the sampler's `preds[0, seen:, :]` new-frame slice."""
+        _, frame_slice, _ = key
+        return _FakeFrameWindow(self._frame_rows[frame_slice])
+
+
+class _FakeFrameWindow:
+    """One already-sliced batch of new frames."""
+
+    def __init__(self, frame_rows):
+        self._frame_rows = frame_rows
+
+    def __getitem__(self, key):
+        """Serve the sampler's `new_preds[:, slot_index]` column read."""
+        _, slot_index = key
+        return _FakeSlotColumn([row[slot_index] for row in self._frame_rows])
+
+
+class _FakeSlotColumn:
+    """One slot's activation values across the new frames."""
+
+    def __init__(self, values):
+        self._values = values
+
+    def __gt__(self, threshold):
+        return _FakeActiveIndices(
+            [index for index, value in enumerate(self._values) if value > threshold]
+        )
+
+
+class _FakeActiveIndices:
+    """Active-frame indices supporting nonzero/numel/flatten/tolist."""
+
+    def __init__(self, indices):
+        self._indices = indices
+
+    def nonzero(self):
+        return self
+
+    def numel(self):
+        return len(self._indices)
+
+    def flatten(self):
+        return self
+
+    def tolist(self):
+        return list(self._indices)
+
+
+def make_diar_activity_engine(prediction_stream) -> StreamingSessionEngine:
+    """Build only the diar-sampling state used by pairwise activity tests."""
+    engine = StreamingSessionEngine.__new__(StreamingSessionEngine)
+    engine._streamer = SimpleNamespace(
+        instance_manager=SimpleNamespace(
+            diar_states=SimpleNamespace(diar_pred_out_stream=prediction_stream)
+        )
+    )
+    engine._slot_frame_ledgers = {}
+    engine._slot_last_burst_end = {}
+    engine._slot_pair_co_active_frames = {}
+    engine._diar_frames_seen = 0
+    engine._frame_len_sec = 0.08
+    return engine
+
+
+class TestEnginePairwiseSlotActivity:
+    """Count when two cache slots speak together versus alone, bounded and PHI-free.
+
+    These CPU contracts pin the M02 diagnostic counters that later distinguish a
+    harmful real-turn fold from a benign duplicate without transcript wording.
+    """
+
+    def test_pairwise_counters_accumulate_co_active_frames(self) -> None:
+        """Two slots sharing two frames yield one pair counter of exactly two."""
+        stream = FakeDiarPredictionStream(
+            [[1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]]
+        )
+        engine = make_diar_activity_engine(stream)
+
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {(0, 1): 2}
+        assert engine.speaker_slot_pair_co_active_frame_counts == {
+            "speaker_0|speaker_1": 2
+        }
+        # Per-slot ledgers keep their existing totals beside the new pair count.
+        assert engine._slot_frame_ledgers[0][-1][0] == 3
+        assert engine._slot_frame_ledgers[1][-1][0] == 3
+
+    def test_pairwise_counters_normalize_slot_order_keys(self) -> None:
+        """Non-adjacent slots report one lower-index-first normalized key."""
+        stream = FakeDiarPredictionStream([[1.0, 0.0, 1.0], [1.0, 0.0, 1.0]])
+        engine = make_diar_activity_engine(stream)
+
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {(0, 2): 2}
+        assert engine.speaker_slot_pair_co_active_frame_counts == {
+            "speaker_0|speaker_2": 2
+        }
+
+    def test_pairwise_counters_ignore_repeated_snapshots(self) -> None:
+        """Re-sampling an unchanged stream adds nothing; new frames add only deltas."""
+        stream = FakeDiarPredictionStream([[1.0, 1.0], [1.0, 1.0]])
+        engine = make_diar_activity_engine(stream)
+
+        engine._record_diar_activity()
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {(0, 1): 2}
+
+        stream.extend([[1.0, 1.0], [1.0, 0.0]])
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {(0, 1): 3}
+
+    def test_pairwise_counters_cover_more_than_two_slots(self) -> None:
+        """Three co-active slots produce every pair with its own frame count."""
+        stream = FakeDiarPredictionStream(
+            [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]]
+        )
+        engine = make_diar_activity_engine(stream)
+
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {
+            (0, 1): 2,
+            (0, 2): 2,
+            (1, 2): 3,
+        }
+
+    def test_pairwise_counters_cover_four_slot_frames(self) -> None:
+        """All four diarizer slots voicing at once yield every one of the six pairs."""
+        stream = FakeDiarPredictionStream([[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 1.0]])
+        engine = make_diar_activity_engine(stream)
+
+        engine._record_diar_activity()
+
+        assert engine._slot_pair_co_active_frames == {
+            (0, 1): 2,
+            (0, 2): 1,
+            (0, 3): 2,
+            (1, 2): 1,
+            (1, 3): 2,
+            (2, 3): 1,
+        }
+
+    def test_property_returns_a_defensive_copy(self) -> None:
+        """Mutating the returned mapping cannot corrupt the engine's counters."""
+        stream = FakeDiarPredictionStream([[1.0, 1.0]])
+        engine = make_diar_activity_engine(stream)
+        engine._record_diar_activity()
+
+        snapshot = engine.speaker_slot_pair_co_active_frame_counts
+        snapshot["speaker_0|speaker_1"] = 999
+
+        assert engine.speaker_slot_pair_co_active_frame_counts == {
+            "speaker_0|speaker_1": 1
+        }
+
+    def test_close_releases_pairwise_counters_and_frame_ledgers(self) -> None:
+        """Session close drops every pairwise counter beside the existing ledgers."""
+        from nemo_streaming_engine import EngineDiagnostics
+
+        engine = StreamingSessionEngine.__new__(StreamingSessionEngine)
+        engine._word_logs = {0: []}
+        engine._emitted_word_counts = {0: 0}
+        engine._slot_last_burst_end = {0: 1.0}
+        engine._ordered_pending = []
+        engine.diagnostics = EngineDiagnostics()
+        engine._slot_frame_ledgers = {0: [(4, 0.24)]}
+        engine._slot_token_counts = {0: 2}
+        engine._slot_pair_co_active_frames = {(0, 1): 7}
+        engine._buffer_iter = None
+        engine._buffer = None
+        engine._streamer = None
+
+        engine.close()
+
+        assert engine._slot_pair_co_active_frames == {}
+        assert engine._slot_frame_ledgers == {}
+
+
 class TestEngineSlotEvidence:
     """Keep fold diagnostics useful without exposing consultation wording.
 
@@ -578,6 +786,83 @@ class TestEngineSlotEvidence:
         assert "doctor wording" not in str(evidence_record.slot_share_evidence)
         assert "patient wording" not in str(evidence_record.folded_word_spans)
 
+    def test_enabled_evidence_logs_pairwise_deltas_and_exclusive_frames(
+        self,
+        caplog,
+        monkeypatch,
+    ) -> None:
+        """Report per-window co-active and exclusive frames as counts only."""
+        monkeypatch.setenv("NEMO_STREAMING_SLOT_EVIDENCE", "1")
+        caplog.set_level("INFO", logger="nemo_session")
+        engine = FakeStreamingEngine(
+            feed_batches=[
+                [
+                    EngineRow("speaker_0", "doctor wording", 0.0, 8.0),
+                    EngineRow("speaker_2", "short answer", 8.2, 8.4),
+                ],
+                [EngineRow("speaker_0", "more doctor wording", 9.0, 12.0)],
+            ]
+        )
+        engine.speaker_slot_voiced_frame_counts = {"speaker_0": 100, "speaker_2": 30}
+        engine.speaker_slot_pair_co_active_frame_counts = {"speaker_0|speaker_2": 12}
+        engine.diar_sample_frame_total = 400
+        session = make_session(engine)
+
+        session.process_chunk(PCM_CHUNK)
+
+        first_record = streaming_continuity_records(caplog)[-1]
+        assert first_record.pairwise_slot_evidence == {
+            "window_sample_frames": 400,
+            "cumulative_sample_frames": 400,
+            "pairs": [
+                {
+                    "speaker_slot_pair": "speaker_0|speaker_2",
+                    "window_co_active_frames": 12,
+                    "cumulative_co_active_frames": 12,
+                    "window_exclusive_frames": {"speaker_0": 88, "speaker_2": 18},
+                }
+            ],
+        }
+
+        # The next browser window adds voice only for speaker_0 and no co-activity,
+        # so the pair reports a zero co-active delta with one-sided exclusive frames.
+        engine.speaker_slot_voiced_frame_counts = {"speaker_0": 150, "speaker_2": 30}
+        engine.diar_sample_frame_total = 700
+        session.process_chunk(PCM_CHUNK)
+
+        second_record = streaming_continuity_records(caplog)[-1]
+        assert second_record.pairwise_slot_evidence == {
+            "window_sample_frames": 300,
+            "cumulative_sample_frames": 700,
+            "pairs": [
+                {
+                    "speaker_slot_pair": "speaker_0|speaker_2",
+                    "window_co_active_frames": 0,
+                    "cumulative_co_active_frames": 12,
+                    "window_exclusive_frames": {"speaker_0": 50, "speaker_2": 0},
+                }
+            ],
+        }
+        assert "doctor wording" not in str(second_record.pairwise_slot_evidence)
+
+    def test_pairwise_evidence_stays_absent_without_engine_counters(
+        self,
+        caplog,
+        monkeypatch,
+    ) -> None:
+        """An engine without pairwise counters yields no fabricated zero evidence."""
+        monkeypatch.setenv("NEMO_STREAMING_SLOT_EVIDENCE", "1")
+        caplog.set_level("INFO", logger="nemo_session")
+        engine = FakeStreamingEngine(
+            feed_batches=[[EngineRow("speaker_0", "ordinary row", 0.0, 1.0)]]
+        )
+        session = make_session(engine)
+
+        session.process_chunk(PCM_CHUNK)
+
+        record = streaming_continuity_records(caplog)[-1]
+        assert not hasattr(record, "pairwise_slot_evidence")
+
     def test_disabled_evidence_omits_operator_only_fields(
         self,
         caplog,
@@ -589,6 +874,8 @@ class TestEngineSlotEvidence:
         engine = FakeStreamingEngine(
             feed_batches=[[EngineRow("speaker_0", "ordinary row", 0.0, 1.0)]]
         )
+        engine.speaker_slot_pair_co_active_frame_counts = {"speaker_0|speaker_1": 5}
+        engine.diar_sample_frame_total = 100
         session = make_session(engine)
 
         session.process_chunk(PCM_CHUNK)
@@ -597,6 +884,7 @@ class TestEngineSlotEvidence:
         assert not hasattr(ordinary_record, "slot_share_evidence")
         assert not hasattr(ordinary_record, "folded_word_spans")
         assert not hasattr(ordinary_record, "emission_decision_evidence")
+        assert not hasattr(ordinary_record, "pairwise_slot_evidence")
 
 
 class TestEngineCrosstalkGuard:

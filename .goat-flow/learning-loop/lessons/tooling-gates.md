@@ -8,6 +8,23 @@ last_reviewed: 2026-07-20
 Lessons about gruff, goat-flow, composer gates, pinned containers, and probe tooling.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
 
+## Lesson: `python -` heredoc scripts cannot also read piped stdin
+
+**Created:** 2026-07-20
+**What happened:** The M01 development-corpus resolver piped validated JSON into
+`"$PYTHON_BIN" - <<'PY'` and read it with `json.load(sys.stdin)`. The heredoc IS the
+stdin that `python -` consumes as the program, so the piped JSON could never reach the
+parser and the positive path would always have failed closed. ShellCheck SC2259 caught
+the collision before any runtime test; the red-first smoke would have caught it next.
+**Evidence:** `scripts/eval-fixtures.sh` (search: "corpus = json.loads(sys.argv[1])") and
+`scripts/eval-corrected-fixtures.sh` (search: "corpus = json.loads(sys.argv[1])") retain
+the corrected argv-passing form, matching the file's existing
+`"$PYTHON_BIN" - "$TREND_FILE" <<'PY'` pattern.
+**Prevention:** When an inline Python step needs both a heredoc program and input data,
+pass the data as argv (`"$PYTHON_BIN" - "$data" <<'PY'` + `sys.argv[1]`) or a temp file;
+never pipe into `python -`. Run shellcheck on shell edits before the first execution -
+it catches this class statically.
+
 ## Lesson: Checkpoint byte checks must dereference snapshot symlinks
 
 **Created:** 2026-07-18

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Evaluation can run exactly the approved ten-case corpus** - Both fixture evaluators accept `--development-corpus`, which validates the frozen manifest, order, and file hashes before any audio opens and refuses mixed or implicit selections, so a quality baseline can never silently score the wrong consultation set.
+- **Named QA replays can show when two voices talked over each other** - Operator-enabled replays now record count-only pairwise co-activity evidence per speaker-slot pair (co-active and exclusive frames per browser window) beside the existing fold evidence; ordinary visits keep these diagnostics absent, no transcript wording is ever stored, and flag-off replays stay byte-identical (6/6 canonical transcript and continuity hashes across cold pre/post runs).
+
 ## v0.5.0 - 2026-07-20
 
 Establishes auditable clinical quality through safer SOAP claims, traceable evidence, deterministic evaluation, protected holdouts, and manual ASR review.

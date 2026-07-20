@@ -33,6 +33,7 @@ REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 CORRECTION_UNAVAILABLE_EXIT_CODE=20
 ALL_FIXTURES_REQUESTED=false
+DEVELOPMENT_CORPUS_REQUESTED=false
 CORPUS_MODE=false
 FIXTURE_TOTAL=0
 FIXTURE_OK=0
@@ -47,6 +48,7 @@ usage() {
 Usage:
   scripts/eval-corrected-fixtures.sh [--seconds N] <fixture-stem-or-wav> [...]
   scripts/eval-corrected-fixtures.sh [--seconds N] --all
+  scripts/eval-corrected-fixtures.sh [--seconds N] --development-corpus
 
 Examples:
   scripts/eval-corrected-fixtures.sh --seconds 60 consultation03-i-have-terrible-headache
@@ -71,6 +73,10 @@ Corpus behavior:
   --all or more than one resolved fixture records an unavailable correction,
   marks its corrected report columns FAILED, and continues. A single named
   fixture keeps the fail-fast correction gate.
+  --development-corpus runs exactly the ten manifest-authorized fixtures in
+  manifest order, validated by scripts/development-corpus.py before any audio
+  is opened. It fails closed on manifest, order, or hash drift and cannot be
+  combined with named fixtures or --all.
 USAGE
 }
 
@@ -88,6 +94,10 @@ while [[ $# -gt 0 ]]; do
     --all)
       ALL_FIXTURES_REQUESTED=true
       FIXTURE_QUERIES+=("__all__")
+      shift
+      ;;
+    --development-corpus)
+      DEVELOPMENT_CORPUS_REQUESTED=true
       shift
       ;;
     -h|--help)
@@ -144,6 +154,50 @@ resolve_fixtures() {
 
     FIXTURE_PATHS+=("${matches[0]}")
   done
+}
+
+resolve_development_corpus_fixtures() {
+  # The frozen ten-fixture manifest is the only authorization for this mode;
+  # combining it with named fixtures or --all would reintroduce implicit
+  # discovery beside the approved corpus.
+  if [[ ${#FIXTURE_QUERIES[@]} -gt 0 ]]; then
+    echo "error: --development-corpus cannot be combined with fixture names or --all" >&2
+    exit 2
+  fi
+
+  # Authorization, order, and hash checks live in scripts/development-corpus.py;
+  # any rejection there stops this runner before audio access.
+  local corpus_json
+  if ! corpus_json="$("$PYTHON_BIN" scripts/development-corpus.py --json)"; then
+    echo "error: development corpus validation rejected the run; no fixture was opened" >&2
+    exit 2
+  fi
+
+  local corpus_stems
+  if ! corpus_stems="$("$PYTHON_BIN" - "$corpus_json" <<'PY'
+import json
+import sys
+
+corpus = json.loads(sys.argv[1])
+
+# Anything but a fully valid ten-fixture answer keeps the runner closed.
+if corpus.get("status") != "valid" or corpus.get("fixture_count") != 10:
+    raise SystemExit("development corpus response is not a valid ten-fixture set")
+
+for stem in corpus["stems"]:
+    print(stem)
+PY
+  )"; then
+    echo "error: development corpus output failed validation; no fixture was opened" >&2
+    exit 2
+  fi
+
+  # Approved paths are the manifest's exact locations, kept in manifest order;
+  # no find-based discovery runs in this mode.
+  local corpus_stem
+  while IFS= read -r corpus_stem; do
+    FIXTURE_PATHS+=("tests/fixtures/audio/${corpus_stem}.wav")
+  done <<<"$corpus_stems"
 }
 
 select_corpus_mode() {
@@ -897,7 +951,12 @@ print_fixture_report() {
 
 main() {
   # Run the developer-facing corrected fixture evaluation from intake to terminal sentinel.
-  resolve_fixtures
+  # The frozen development corpus bypasses find-based discovery entirely.
+  if [[ "$DEVELOPMENT_CORPUS_REQUESTED" == "true" ]]; then
+    resolve_development_corpus_fixtures
+  else
+    resolve_fixtures
+  fi
   select_corpus_mode
   require_ready_agent
   require_structured_agent_logs

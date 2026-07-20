@@ -39,6 +39,7 @@ _WINDOW_ROW_FIELDS = (
     "window_phantom_merges",
     "slot_share_evidence",
     "folded_word_spans",
+    "pairwise_slot_evidence",
     "cumulative_anchor_remaps",
     "cumulative_phantom_merges",
     "emitted_rows",

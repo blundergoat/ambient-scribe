@@ -150,6 +150,12 @@ session-destroying restart. Capture `/history` and `/corrected-transcript` artif
 `var/quality/` BEFORE editing agent code. If server state is already gone, the summary route
 accepts the captured rows directly as `SummaryRequest.segments` under a fresh session UUID -
 that replays the full prompt+model path from on-disk artifacts.
+**Follow-up (2026-07-20, 0.5.1 M02):** the trap also kills LIVE eval replays, not just stored
+sessions - a comment-polish edit to `nemo_session.py` landed while a flag-off compatibility
+replay was streaming, uvicorn reloaded, and the WebSocket died with close code 1012
+(service restart). The run was preserved as failed and re-run. Freeze ALL `strands_agents/`
+edits (including comment-only ones) while any replay is in flight; batch documentation polish
+into the same edit window as the behavioral change it annotates.
 
 ## Lesson: Full-clip proportional word timings drift - timing splits need an internal coherence guard
 
