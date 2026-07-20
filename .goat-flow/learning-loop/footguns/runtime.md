@@ -249,18 +249,17 @@ last_reviewed: 2026-07-20
 - **Evidence:** CONFIRMED 2026-07-12 in `phase0-verdict.md`. Keeping origins exposed 8 new identities; stable aliasing then counted 14 harmful day3 folds, though all 14 wrong roles pre-existed (`phase1b-targeted-gate-verdict.md`).
 - **Prevention:** Keep `NEMO_STREAMING_CROSSTALK_GUARD=0`. A cache slot is not a visit-long person: neither expose it nor pin it globally. Any replacement remains Ask First and must pass grounded target, flag-off hash, no-new-identity, and corpus quality gates.
 
+## Resolved Entries
+
 ## Footgun: health-check-localdev.sh fails at HEAD because its roles probe uses a non-UUID session ID
 
-**Status:** active | **Created:** 2026-07-20 | **Evidence:** ACTUAL_MEASURED
+**Status:** resolved | **Created:** 2026-07-20 | **Evidence:** ACTUAL_MEASURED
 
-- **Files:** `scripts/health-check-localdev.sh` (search: "GET /session/test/roles")
+- **Files:** `scripts/health-check-localdev.sh` (search: "HEALTH_PROBE_SESSION_ID")
 - **Files:** `strands_agents/api/server.py` (search: "async def roles_snapshot")
-- **Files:** `strands_agents/api/server.py` (search: "_validate_session_id")
-- **What breaks:** The health script probes `GET /session/test/roles` with the literal ID `test` and requires a `session_id` JSON answer. The agent's roles route validates UUIDs and correctly answers 400 for `test`, so the script reports the agent unhealthy and exits 1 on an otherwise fully healthy stack. Any gate that requires a literal health-script pass (the M01 baseline command table does) becomes unpassable at HEAD. The PHP proxy check beside it still passes because Symfony wraps the failure into an empty-shape 200, which hides the mismatch.
-- **Evidence:** 2026-07-20 M01 campaign: `./scripts/health-check-localdev.sh` exited 1 with exactly one failing check while `curl http://localhost:48101/session/00000000-0000-4000-8000-000000000001/roles` returned 200 with the honest empty shape. The script last changed 2026-07-05 (755c449); the route's validation/peek behavior last changed 2026-07-07 (a2dd8ee). Preserved at `var/quality/0.5.1-m01-baseline/attempt-evidence-c02-150-run1-stale-health-gate/`.
-- **Prevention:** Fix the script to probe with a valid UUID (route validation is intended behavior per the eval-session-ID lesson). Until then, campaign gates must pair the script with a valid-UUID probe of the same route and block on any OTHER failing check; do not loosen the gate to "ignore health output".
-
-## Resolved Entries
+- **What breaks:** The health script probed `GET /session/test/roles` with the literal ID `test` and required a `session_id` JSON answer. The agent's roles route validates UUIDs and correctly answers 400 for `test`, so the script reported the agent unhealthy and exited 1 on an otherwise fully healthy stack; any gate requiring a literal health pass became unpassable. The PHP proxy check beside it masked the mismatch by wrapping the failure into an empty-shape 200.
+- **Evidence:** 2026-07-20 M01 campaign: the script exited 1 with exactly one failing check while a valid-UUID curl of the same route returned 200. Preserved at `var/quality/0.5.1-m01-baseline/attempt-evidence-c02-150-run1-stale-health-gate/`.
+- **Resolution (2026-07-20):** Both roles probes now use `HEALTH_PROBE_SESSION_ID` (a fixed valid UUID); the agent route peeks without creating state, so the probe stays side-effect free. Verified live: exit 0 with both probes passing on a healthy stack. Campaign helpers no longer need the substitute-probe workaround for new runs.
 
 ## Footgun: PriMock replay WAVs exceed PHP's default upload ceiling
 **Status:** resolved | **Created:** 2026-07-04 | **Evidence:** OBSERVED

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Local health check no longer fails a healthy stack** - The roles probes now use a valid session UUID instead of the literal `test`, which the agent correctly rejects as a malformed visit; a fully healthy stack reads as healthy again and evaluation gates can trust the script's exit code.
 - **Evaluation can run exactly the approved ten-case corpus** - Both fixture evaluators accept `--development-corpus`, which validates the frozen manifest, order, and file hashes before any audio opens and refuses mixed or implicit selections, so a quality baseline can never silently score the wrong consultation set.
 - **Named QA replays can show when two voices talked over each other** - Operator-enabled replays now record count-only pairwise co-activity evidence per speaker-slot pair (co-active and exclusive frames per browser window) beside the existing fold evidence; ordinary visits keep these diagnostics absent, no transcript wording is ever stored, and flag-off replays stay byte-identical (6/6 canonical transcript and continuity hashes across cold pre/post runs).
 
