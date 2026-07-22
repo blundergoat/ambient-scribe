@@ -1,10 +1,20 @@
 ---
 category: audio
 hallucination-risk: high
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-22
 ---
 
 # Audio Pipeline Footguns
+
+## Footgun: Stereo browser fixtures overwrite the mono eval WAVs at the same path
+**Status:** active | **Created:** 2026-07-22 | **Evidence:** ACTUAL_MEASURED
+
+- **Files:** `tests/fixtures/audio/README.md` (search: "Generate stereo fixtures")
+- **Files:** `tests/fixtures/audio/development-corpus-0.5.0.json` (search: "58283edfe790ba2d")
+- **Files:** `scripts/eval-fixtures.sh` (search: "16 kHz mono")
+- **What breaks:** The documented stereo-fixture flow copies each stereo WAV over the top-level `tests/fixtures/audio/<name>.wav` so the browser Demo Audio picker plays it (the browser averages channels client-side). But the SAME top-level path is what `scripts/eval-fixtures.sh` and every replay harness stream server-side, and that lane requires 16 kHz MONO signed 16-bit PCM. After a stereo refresh, all replay campaigns fail fast with "fixture must be 16 kHz mono signed 16-bit PCM for the browser PCM path" - and any hash-comparison campaign would be invalid even if it ran, because the input bytes no longer match the frozen corpus manifest.
+- **Evidence:** 2026-07-22 M04 flag-off trio leg 1 failed exactly this way; on-disk c02 WAV was 35,788,878 bytes / 2 channels (stereo copy dated 2026-07-21) vs the corpus-frozen mono 17,894,478 bytes sha256 `58283edf...`. Regenerating with `scripts/generate-demo-consultation-audio.py --force --include-primock57 --case ...` reproduced the frozen mono hashes byte-for-byte and left `generated-manifest.json` at its pinned sha `b1eea405...`.
+- **Prevention:** Before any replay or hash campaign, verify the target WAV's sha256 against `development-corpus-0.5.0.json` (or at minimum check channels==1 via `soundfile.info`). To restore the eval lane after a stereo refresh, back the stereo copies into `tests/fixtures/audio/stereo/` and rerun the mono generator for the affected cases; the mono output is deterministic against the frozen hashes.
 
 ## Footgun: PCM byte offsets must be sample-aligned or NeMo rejects the buffer
 **Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED

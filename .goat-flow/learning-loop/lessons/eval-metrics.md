@@ -1,6 +1,6 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-20
+last_reviewed: 2026-07-22
 ---
 
 # Eval and Metrics Lessons
@@ -312,3 +312,20 @@ snapshot.
 **Prevention:** Before scoring a generic state word such as increased, reduced, stopped, or
 unchanged, split the visible note into deterministic propositions and require the owning clinical
 topic in the same proposition. Never let one SOAP subject lend state to another.
+
+## Lesson: Grade rediar repairs at row level; runtime span counts exceed offline ledgers
+
+**Created:** 2026-07-22
+**What happened:** The M04 mid-proof verifier hardcoded c02-150's offline grading
+(spans=1). The live run reported spans=5/replacements=4 - not policy drift:
+retention (`strands_agents/nemo_session.py`, search: "_session_folded_word_spans")
+records one entry per folded segment per emission tick, so one region logs as
+several records (c02's 7+3 pair), duplicates dedupe in `row_exceptions`, and a
+second real fold at ~4.96s surfaced that the offline set lacked. TextGrid truth
+confirmed all 3 repaired rows improved.
+**Evidence:** `var/quality/rediar-m04-midproof/flagon-c02-150/`; the c02
+`.{doctor,patient}.TextGrid` channels.
+**Prevention:** Gate on WHICH rows changed, where, and in what direction against
+truth - never on span/replacement counts vs offline ledgers. Expect runtime counts
+>= specimen counts everywhere; M05 gates must encode row-level expectations. On a
+count deviation, diff pre/post live history first.

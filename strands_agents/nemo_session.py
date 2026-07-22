@@ -301,6 +301,9 @@ class TranscriptionSession:
         self._latest_slot_share_evidence: list[dict] = []
         self._latest_folded_word_spans: list[dict] = []
         self._latest_slot_pair_evidence: dict | None = None
+        # Every visit retains its fold spans (count/time-only, no transcript
+        # text) so the flag-on correction lane can re-judge them after Stop.
+        self._session_folded_word_spans: list[dict] = []
 
         # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
@@ -697,6 +700,8 @@ class TranscriptionSession:
             )
             capped_segments.append(replace(segment, speaker_id=dominant_slot))
 
+        # Retained unconditionally: correction-time repair needs every span.
+        self._session_folded_word_spans.extend(folded_word_spans)
         self._capture_streaming_slot_evidence(
             fold_threshold_seconds=marginal_below,
             substantial_speaker_slots=substantial_slots,
@@ -704,6 +709,18 @@ class TranscriptionSession:
             folded_word_spans=folded_word_spans,
         )
         return capped_segments
+
+    @property
+    def folded_word_spans(self) -> list[dict]:
+        """Every fold-suspect span this visit produced, in emission order.
+
+        The correction endpoint hands these to the flag-on rebuild lane.
+
+        Returns:
+            Copies of the retained span records; empty means no visible row
+            was ever folded into another chip.
+        """
+        return list(self._session_folded_word_spans)
 
     def _sustained_voice_speaker_slots(self) -> set[str]:
         """Return cache slots whose acoustic history proves a persistent consultation voice.

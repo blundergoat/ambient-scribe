@@ -54,9 +54,11 @@ from api.summary_request import (
     publish_summary_outputs,
 )
 from nemo_pipeline import NemoPipeline
+from rediar_rebuild import span_role_repairs_for_rows
 from post_visit_correction import (
     DEFAULT_POST_VISIT_ASR_MODEL,
     PostVisitCorrectionError,
+    PostVisitCorrectionResult,
     run_post_visit_correction,
 )
 from session import SessionStore
@@ -663,6 +665,11 @@ async def correct_session_transcript(
                     pcm_audio=retained_audio,
                     live_segments=live_segments,
                     model_name=DEFAULT_POST_VISIT_ASR_MODEL,
+                    # Fold spans travel in; the flag inside the correction
+                    # module decides whether the rebuild lane may use them.
+                    fold_spans=list(
+                        getattr(active_session, "folded_word_spans", []) or []
+                    ),
                 ),
             )
         except PostVisitCorrectionError as correction_error:
@@ -730,6 +737,9 @@ async def correct_session_transcript(
                 "Correction lost part of the visit; the note stays unavailable.",
             )
 
+        rediar_provenance = _apply_rediarization_repairs(
+            session_id, correction_result
+        )
         sessions.replace_corrected_segments(session_id, correction_result.segments)
         # Bind the artifact to the terminal identity so summary can attest it.
         watermark.correction_status = "attested_corrected"
@@ -763,7 +773,7 @@ async def correct_session_transcript(
             },
         )
 
-    return {
+    correction_response = {
         "session_id": session_id,
         "status": "ready",
         "source": correction_result.source,
@@ -778,6 +788,85 @@ async def correct_session_transcript(
         "retried": correction_result.retried,
         "chunk_count": correction_result.chunk_count,
     }
+    # Flag-off responses stay byte-identical; provenance appears only flag-on.
+    if rediar_provenance is not None:
+        correction_response["rediarization"] = rediar_provenance
+    return correction_response
+
+
+def _apply_rediarization_repairs(
+    session_id: str,
+    correction_result: PostVisitCorrectionResult,
+) -> dict[str, Any] | None:
+    """Apply flag-on span repairs to the corrected rows and live rows.
+
+    A rebuild may repair roles only inside policy-approved spans; roles are
+    outside row identity, so lineage and coverage attestations stay intact.
+    Live rows take the same exceptions through the existing auto-row lane.
+
+    Args:
+        session_id: Stopped visit whose correction just passed coverage.
+        correction_result: Correction output; its corrected rows are repaired
+            in place before storage.
+
+    Returns:
+        PHI-safe provenance counts for the correction response, or None when
+        the flag was off and nothing may change.
+    """
+    rediarization = correction_result.rediarization
+    # A flag-off correction carries no leg outcome and no response field.
+    if rediarization is None:
+        return None
+
+    corrected_role_repairs = span_role_repairs_for_rows(
+        correction_result.segments, rediarization.decisions
+    )
+    # Only rows inside approved spans change, and only their role label.
+    for corrected_row in correction_result.segments:
+        repaired_role = corrected_role_repairs.get(
+            str(corrected_row.get("segment_id", ""))
+        )
+        if repaired_role is not None:
+            corrected_row["role"] = repaired_role
+
+    if rediarization.row_exceptions:
+        sessions.set_auto_row_roles(session_id, rediarization.row_exceptions)
+
+    rediar_provenance = {
+        "status": rediarization.status,
+        "spans": len(rediarization.decisions),
+        "replacements": sum(
+            1
+            for decision in rediarization.decisions
+            if decision.decision == "replace_role"
+        ),
+        "reviews": sum(
+            1
+            for decision in rediarization.decisions
+            if decision.decision == "route_review"
+        ),
+        "row_exceptions": len(rediarization.row_exceptions),
+    }
+    logger.info(
+        (
+            "correction.rediarization session_id=%s status=%s spans=%s "
+            "replacements=%s reviews=%s row_exceptions=%s "
+            "corrected_role_repairs=%s diarization_seconds=%s"
+        ),
+        session_id,
+        rediarization.status,
+        rediar_provenance["spans"],
+        rediar_provenance["replacements"],
+        rediar_provenance["reviews"],
+        rediar_provenance["row_exceptions"],
+        len(corrected_role_repairs),
+        rediarization.diarization_seconds,
+        extra={
+            "session_id": session_id,
+            **rediar_provenance,
+        },
+    )
+    return rediar_provenance
 
 
 def _resolve_summary_source_state(

@@ -47,6 +47,11 @@ from post_visit_word_timing import (
     wav_duration_seconds,
     word_timings_from_hypothesis,
 )
+from rediar_rebuild import (
+    RediarRebuildResult,
+    correction_rediarization_enabled,
+    run_rediar_rebuild_leg,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +175,8 @@ class PostVisitCorrectionResult:
         attempts: Transcribe attempt count; `2` means one allowlisted retry occurred.
         retried: True only when the user waited for that one recovery retry.
         chunk_count: Audio pieces transcribed in order; `1` is the unchanged short-visit path.
+        rediarization: Flag-on rebuild-leg outcome; None means the flag was off
+            and the response carries no rediarization provenance.
     """
 
     segments: list[dict[str, Any]]
@@ -179,6 +186,7 @@ class PostVisitCorrectionResult:
     attempts: int = 1
     retried: bool = False
     chunk_count: int = 1
+    rediarization: RediarRebuildResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +267,8 @@ def run_post_visit_correction(
         [str, str], PostVisitTranscription | _NemoTranscriptionResult | str
     ]
     | None = None,
+    fold_spans: list[dict[str, Any]] | None = None,
+    rediar_leg: Callable[..., RediarRebuildResult] | None = None,
 ) -> PostVisitCorrectionResult:
     """Run second-pass ASR and map corrected text onto stored live rows.
 
@@ -268,6 +278,10 @@ def run_post_visit_correction(
         model_name: ASR model id shown in corrected-row provenance; empty uses the configured default.
         transcribe_audio_file: Optional test seam returning rich or plain-text output; null loads
             the configured NeMo ASR model.
+        fold_spans: The live session's fold-suspect spans; null or empty means
+            the flag-on rebuild leg has nothing to repair.
+        rediar_leg: Optional test seam for the rebuild leg; null runs the real
+            leg only when NEMO_CORRECTION_REDIARIZATION is on.
 
     Returns:
         Corrected rows plus model metadata; empty ASR text raises a correction error.
@@ -289,24 +303,38 @@ def run_post_visit_correction(
         transcript_text, raw_word_timings, raw_word_confidences = (
             coerce_post_visit_transcription(raw_transcription)
         )
+
+        words = split_words(transcript_text)
+        # ASR returning no words means corrected storage would only hide useful live text.
+        if not words:
+            raise PostVisitCorrectionError(
+                "Second-pass ASR returned no transcript text."
+            )
+
+        visit_word_timings = validated_word_timings(raw_word_timings, words)
+        corrected_segments = build_corrected_segments(
+            corrected_words=words,
+            live_segments=live_segments,
+            model_name=selected_model_name,
+            word_timings=visit_word_timings,
+            word_confidences=validated_word_confidences(raw_word_confidences, words),
+        )
+        # Empty corrected rows mean alignment had no user-visible artifact to store.
+        if corrected_segments == []:
+            raise PostVisitCorrectionError(
+                "Second-pass ASR produced no corrected rows."
+            )
+
+        rediarization = _maybe_run_rediar_leg(
+            audio_path=audio_path,
+            pcm_byte_count=len(pcm_audio),
+            visit_word_timings=visit_word_timings,
+            live_segments=live_segments,
+            fold_spans=fold_spans,
+            rediar_leg=rediar_leg,
+        )
     finally:
         audio_path.unlink(missing_ok=True)
-
-    words = split_words(transcript_text)
-    # ASR returning no words means corrected storage would only hide useful live text.
-    if not words:
-        raise PostVisitCorrectionError("Second-pass ASR returned no transcript text.")
-
-    corrected_segments = build_corrected_segments(
-        corrected_words=words,
-        live_segments=live_segments,
-        model_name=selected_model_name,
-        word_timings=validated_word_timings(raw_word_timings, words),
-        word_confidences=validated_word_confidences(raw_word_confidences, words),
-    )
-    # Empty corrected rows mean alignment had no user-visible artifact to store.
-    if corrected_segments == []:
-        raise PostVisitCorrectionError("Second-pass ASR produced no corrected rows.")
 
     logger.info(
         "post_visit_correction.completed",
@@ -327,6 +355,46 @@ def run_post_visit_correction(
         attempts=int(getattr(raw_transcription, "attempts", 1)),
         retried=bool(getattr(raw_transcription, "retried", False)),
         chunk_count=int(getattr(raw_transcription, "chunk_count", 1)),
+        rediarization=rediarization,
+    )
+
+
+def _maybe_run_rediar_leg(
+    *,
+    audio_path: Path,
+    pcm_byte_count: int,
+    visit_word_timings: list[dict[str, Any]] | None,
+    live_segments: list[dict[str, Any]],
+    fold_spans: list[dict[str, Any]] | None,
+    rediar_leg: Callable[..., RediarRebuildResult] | None,
+) -> RediarRebuildResult | None:
+    """Run the flag-on rebuild leg against this correction's WAV and timings.
+
+    The leg reuses the retained-audio WAV before its cleanup, on this same
+    executor thread, so the lane adds no new concurrency.
+
+    Args:
+        audio_path: The correction WAV still on disk inside the caller's try.
+        pcm_byte_count: Retained 16-bit PCM byte length for the envelope gate.
+        visit_word_timings: Validated visit-relative timings; None skips inside the leg.
+        live_segments: Settled live rows the clinician saw.
+        fold_spans: The live session's fold-suspect spans; None means none arrived.
+        rediar_leg: Test seam; None runs the production leg.
+
+    Returns:
+        The leg's outcome, or None when the operator flag keeps the lane closed.
+    """
+    # The operator flag alone opens the rebuild lane for stopped visits.
+    if not correction_rediarization_enabled():
+        return None
+
+    rebuild_leg = rediar_leg or run_rediar_rebuild_leg
+    return rebuild_leg(
+        audio_path=str(audio_path),
+        audio_duration_seconds=pcm_byte_count / (2.0 * _AUDIO_SAMPLE_RATE),
+        word_timings=visit_word_timings,
+        live_segments=live_segments,
+        fold_spans=list(fold_spans or []),
     )
 
 
