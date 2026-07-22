@@ -26,9 +26,12 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 REDIARIZATION_FLAG = "NEMO_CORRECTION_REDIARIZATION"
-# M02 froze the proven full-audio Sortformer envelope at 858s; longer retained
-# audio (possible up to the 900s buffer cap) is unproven and gates off.
-REDIAR_MAX_AUDIO_SECONDS = 858.0
+# M02's capacity ladder proved full-audio Sortformer through its longest leg,
+# c07 at 858.2s (two deterministic runs, VRAM flat - rediar-m02-capacity
+# ledger). 860 admits that proven maximum plus sub-second retention jitter;
+# longer retained audio (possible up to the 900s buffer cap) stays unproven
+# and gates off.
+REDIAR_MAX_AUDIO_SECONDS = 860.0
 # Frozen operating point from the rediar spikes: gap words may snap to the
 # nearest rebuilt turn edge within this window, farther words stay unassigned.
 ASSIGNMENT_TOLERANCE_SECONDS = 0.5
