@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-20
+last_reviewed: 2026-07-25
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -39,15 +39,55 @@ stdin before later rows were checked.
 ## Lesson: Derive GPU call caps from frozen durations and runtime tail rules
 
 **Created:** 2026-07-18
+**Decision changed:** Compose production fan-out with every retry scope before
+calling a cap conservative; a per-fixture recovery assumption is not a
+structural ceiling when the retry helper is invoked per chunk.
+**Trigger phase:** SCOPE
+**Incident count:** 2 | **Latest occurrence:** 2026-07-25
 **What happened:** M00A's approval packet hand-counted 36 post-visit transcribe calls per ten-case arm. The
 unchanged chunker correctly made 37: consult 1 is 559.2 seconds, so its 19.2-second remainder is above the
 10-second merge threshold and becomes a fourth 180-second-series chunk. The discrepancy appeared only after
 the complete TDT arm because the packet had copied the arithmetic instead of executing it over frozen WAV
 durations.
 **Evidence:** `var/quality/0.5.0-m00a-unified-recovery-20260718T054731Z/verification/m00a.6-tdt-audit.txt`.
-**Prevention:** Before requesting a decode cap, compute each planned chunk count from the frozen WAV duration
-through the production chunk-boundary function (including final-tail merging), preserve the ordered vector,
-and make the approval cap equal its sum. Stop for renewed approval if runtime metadata differs.
+**2026-07-25 recurrence:** M05B correctly executed the production chunker and
+obtained 37 base calls, but its proposed ten-call recovery allowance assumed
+one extra call per fixture. The frozen source invokes the retry-capable helper
+for every chunk, and device-not-ready recovery is local to each invocation;
+only word-confidence fallback is request-wide. The frozen-runtime structural
+vector is `8,6,8,10,6,6,6,6,10,8` = 74 calls, cumulative 146 from the current
+72. Expected cumulative 110 and the one-recovery-per-fixture estimate 119
+remain useful projections, but neither is a hard authorization ceiling.
+**Prevention:** Before requesting a decode cap, execute the production
+chunk-boundary function over frozen durations, inspect the lifetime of every
+retry budget, multiply each fan-out branch by its maximum physical calls, and
+preserve the ordered vectors. Label expected, policy-estimate, and structural
+ceilings separately. Stop for renewed approval if runtime metadata differs.
+
+## Lesson: Compare decoder changes at the recovery boundary
+
+**Created:** 2026-07-24
+**Decision changed:** Snapshot mutable vendor configuration immediately before and
+after the mutation being judged; do not attribute changes made by the preceding
+model call to a later recovery helper.
+**Trigger phase:** VERIFY
+**What happened:** The D4 application-path observer compared decoder configuration
+immediately before call 1 with configuration immediately before call 2. NeMo
+automatically persisted `compute_timestamps=true` when the first call requested
+timestamps, so the observer incorrectly counted that call-owned side effect as a
+recovery change and rejected a run whose application, timing, text, call-cap, and
+CUDA gates all passed.
+**Evidence:**
+`var/quality/rediar-m05-acceptance/diagnostics/2026-07-24_d2c09-application-recovery-acceptance1/probe-result.json`
+(search: "decoder_changed_paths_between_calls") preserves the raw rejection, while
+`probe-result-adjudication.json` in the same root proves NeMo declared the timestamp
+side effect twice and the exact recovery helper has one attribute mutation plus an
+applied-config drift guard.
+**Prevention:** For a post-failure decoder mutation, capture configuration after the
+failed call but before the helper, then again after the helper. If an already-spent
+write-once probe used broader snapshots, preserve its failed result and adjudicate
+only a vendor-declared side effect with source-hash, AST, focused-test, and runtime-log
+evidence; never rewrite the raw result or spend another GPU call to make the gate green.
 
 ## Lesson: A host dry run does not prove a container import path
 
@@ -214,12 +254,23 @@ from the caller environment. Do not add repo directories to `sys.path` inside th
 ## Lesson: Long runtime probes should become small scripts before execution
 
 **Created:** 2026-07-06
+**Decision changed:** Preflight compound runtime commands as reviewable units, resolve
+dynamic process targets in a separate read-only step, and use an existing reviewed
+helper or a small checked script when the command crosses the hook's complexity boundary.
+**Incident count:** 2 | **Latest occurrence:** 2026-07-24
 **What happened:** During M03 post-visit timestamp work, an inline `docker compose exec`
 probe with a long embedded Python heredoc was blocked by the PreToolUse hook as too complex
-to review safely.
+to review safely. During the later d2c09 full-replay closeout, the hook likewise rejected
+a null-command truncation, a combined dynamic-target guard stop, and a compound pair of
+adjudication pipelines. Each rejection occurred outside the replay and spent no GPU or
+provider call; splitting artifact creation from target resolution and then using the
+exact resolved pane/PID let cleanup complete without weakening the hook.
 **Prevention:** For GPU/runtime probes that need more than a few shell steps, add a small
 fixture-only script with `apply_patch`, compile it, and then run the script through the
-container. This gives the hook and reviewer a stable artifact instead of a dense terminal blob.
+container. This gives the hook and reviewer a stable artifact instead of a dense terminal
+blob. For one-shot operator cleanup, first resolve and record the exact target read-only,
+then issue one exact action in a separate command; create a new artifact with `touch` or
+the producing tool instead of a null-command redirect that resembles destructive truncation.
 
 ## Lesson: Long wall-clock campaigns need an active suspend-gap watchdog
 
@@ -264,6 +315,26 @@ timeout. Evidence: `var/quality/0.5.0-baseline-20260717T203831Z/campaign-stopped
 the guard process and its error channel authoritative: allow the measured startup window, stop
 immediately if the process exits, and do not classify a still-running startup as rejection merely
 because an unratified short poll elapsed.
+
+The 2026-07-24 M05 corpus watchdog then used tmux sessions named
+rediar-m05-corpus-off and rediar-m05-corpus-off-watchdog. Tmux target lookup treated the
+runner name as a prefix, so after the runner exited, has-session -t rediar-m05-corpus-off
+matched the watchdog itself and kept its monitor loop alive. Evidence:
+var/quality/rediar-m05-acceptance/arms/corpus-off/managed-stop.txt (search:
+TMUX-SESSIONS-BEFORE-STOP) and driver-exit.txt (search: CORPUS_ARM_DRIVER_EXIT=0). Use
+exact target syntax (`-t =<session-name>`) for session-scoped liveness and stop commands. Pane-scoped
+commands such as `send-keys` require an exact pane target (`-t '=<session-name>:<window>.<pane>'` or
+a captured pane ID); a bare exact session is rejected as "can't find pane." Also make the owned
+runner-exit sentinel authoritative instead of inferring completion from a prefix-matched session.
+Evidence: `var/quality/rediar-m05-acceptance/diagnostics/2026-07-24_corpus-off-d2c09-replay1/sleep-guard-stop-attempt1.txt`
+and `sleep-guard-stop.txt` beside it.
+
+The same diagnostic guard showed that a tmux server's inherited `PATH` may not contain a Windows
+bridge executable available to an interactive shell. Its first launch exited before readiness with
+`powershell.exe: not found`; the retry used the resolved absolute executable path and acquired the
+guard. Evidence: `sleep-guard-attempt1.log` and `sleep-guard-readiness.txt` in that diagnostic root.
+Resolve cross-host executables before launching a detached session and treat readiness, not process
+creation, as the acquisition gate.
 
 ## Lesson: Container identity evidence must whitelist environment values
 
@@ -339,6 +410,74 @@ paths to the unary `test -x` predicate and received exit 2 (`too many arguments`
 files were valid; the verifier was not. Run unary shell predicates once per target (or use a
 bounded checker that reports each path), and treat exit 2 as a broken check rather than a failed
 artifact.
+
+The 2026-07-24 d2c09 chunk probe restoration verifier assumed `restore-exit.txt` contained only a
+scalar and prepended another `restore_exit=` label. The runner had correctly written key/value event
+lines, so the first verifier synthesized `restore_exit=restore_exit=0...` and failed after the
+runtime was already healthy. Evidence:
+`var/quality/rediar-m05-acceptance/diagnostics/2026-07-24_d2c09-chunk3-probe1/runtime-verification.txt`
+(the corrected artifact) and the session log. When consuming an owned status artifact, extract one
+anchored key/value record, assert it occurs exactly once, and then compare its value; never relabel
+unparsed multi-line content as a scalar.
+
+The same probe's first static call-cap verifier searched the whole source for the word `retry`; its
+docstring truthfully said that the probe bypassed the retry wrapper, so the verifier rejected the
+very property it was meant to prove. The corrected
+`probe-static-verification.txt` parses the AST, counts the one direct `transcribe` call, and rejects
+only calls to the known retry-capable production wrappers. Use syntax/call-target checks for
+executable-path claims; comments and docstrings are evidence about intent, not reachable calls.
+
+Its first credential scan then embedded a character class containing both quote types in a
+single-quoted shell argument. The shell split the pattern and `rg` treated the remainder as a file,
+exiting 2 rather than reporting a scan result. The corrected scan passes only the evidence path as
+argv to an inline Python scanner and assigns distinct exits to clean, matched, and scanner-error
+states. For non-trivial patterns containing shell metacharacters or both quote types, keep the
+pattern inside the parser's source or a reviewed pattern file instead of composing it through shell
+quoting; always distinguish a tool error from the expected no-match state.
+
+The follow-up confidence-fallback probe first ran a negated privacy `rg` inside a composite command
+without fail-fast mode. The pattern matched the harmless identifier `recognized_text_fingerprint`,
+yet the command continued and printed `PRIVACY-STATIC: PASS`. A second substring assertion then
+confused the safe plural key `exception_messages_emitted` with the forbidden exact key
+`exception_message`. The corrected verifier enables fail-fast mode, parses the Python AST, and
+checks exact call targets and exact retained keys; longer parsers live in reviewed helper files
+instead of hook-sensitive inline commands. Evidence:
+`var/quality/rediar-m05-acceptance/diagnostics/2026-07-24_d2c09-confidence-fallback-probe1/probe-static-verification.txt`,
+`verify_inputs.py`, and `probe-output-verification.json`. Success labels must be downstream of the
+assertion they describe, and privacy checks over source should match syntax or exact identifiers,
+not substrings that also occur in safe metadata names. Its first handoff readback also assumed the
+restored flag would occur exactly once, although the handoff intentionally states it in both the
+operator-state and manual-test sections. Use an exact count only when uniqueness is part of the
+document contract; otherwise assert presence or first classify the intended repetitions. The
+corrected count is preserved in `handoff-verification.txt` in the same evidence root.
+
+The one-call timestamp-alignment follow-up then used `rg -c` to record an expected zero second-call
+count. Ripgrep exited 1 and printed no `0`, so the next key/value record joined the unfinished
+`second_call_markers=` line even though the raw log correctly contained no second call. Branch on
+the no-match exit and emit an explicit zero before composing a ledger, then parse every generated
+record and assert its field count. Evidence:
+`var/quality/rediar-m05-acceptance/diagnostics/2026-07-24_d2c09-timestamp-alignment-probe1/probe-call-counts.txt`.
+
+Its first final background scan then matched the verifier shell because that same command line
+contained the literal evidence-directory target in a variable assignment. Bracketing the first
+letter of a process pattern prevents a pattern argument from matching itself, but it does not
+protect against another literal copy elsewhere in the polling command. Run each `pgrep` absence
+check in an isolated command that contains only the bracketed executable/script pattern, record
+exit 1 explicitly, and combine the already-captured results afterward. Evidence:
+`background-process-scan-exits.txt` and `final-worktree-runtime-verification.txt` in the same root.
+
+The 2026-07-25 M05C midpoint verifier repeated both count and process-topology
+assumptions. Its first version used rg -c for an expected zero and received no
+printed zero; after that was normalized, it still treated one managed runner as
+one matching OS process even though the approved timeout wrapper and its bash
+child correctly produced two matches. The arm itself, its tmux owner, and its
+evidence remained valid. Evidence:
+var/quality/rediar-m05-acceptance/arms/corpus-on/mid-implementation-proof.txt
+and verify-midpoint.sh in the same sealed root. Normalize no-match exits before
+integer comparisons, and distinguish a logical runner owner from its expected
+wrapper-child process graph. Prove uniqueness at the managed session or pane
+layer, then assert the exact allowed child topology instead of assuming one
+grep row per logical runner.
 
 ## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
 

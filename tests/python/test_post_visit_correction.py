@@ -54,16 +54,34 @@ class StubPostVisitAsrModel:
         """Store one result or exception for each expected transcribe call."""
         self.prepared_results = list(prepared_results)
         self.transcribed_audio_paths: list[str] = []
+        self.transcribe_options: list[dict[str, object]] = []
 
-    def transcribe(self, audio_paths: list[str], **_options: object) -> list[object]:
+    def transcribe(self, audio_paths: list[str], **options: object) -> list[object]:
         """Return the next prepared result for the audio path shown to the model."""
         self.transcribed_audio_paths.append(audio_paths[0])
+        self.transcribe_options.append(options)
         prepared_result = self.prepared_results.pop(0)
         # A prepared exception represents the GPU/model failure seen by the user.
         if isinstance(prepared_result, Exception):
             raise prepared_result
 
         return [SimpleNamespace(text=str(prepared_result))]
+
+
+def _word_confidence_aggregation_error(
+    recognized_text: str,
+    *,
+    confidence_count_delta: int = 1,
+) -> RuntimeError:
+    """Build the exact PHI-bearing NeMo error shape with generic test wording."""
+    word_count = len(recognized_text.split())
+    return RuntimeError(
+        "Something went wrong with word-level confidence aggregation.\n"
+        "Please check these values for debugging:\n"
+        f"len(words): {word_count},\n"
+        f"len(word_confidence): {word_count + confidence_count_delta},\n"
+        f"recognized text: `{recognized_text}`"
+    )
 
 
 def _write_silent_test_wav(audio_path: Path, duration_seconds: float) -> None:
@@ -82,6 +100,9 @@ def _stub_post_visit_model_dependencies(
     )
     monkeypatch.setattr(
         correction_module, "enable_word_confidence_decoding", lambda _model: None
+    )
+    monkeypatch.setattr(
+        correction_module, "disable_word_confidence_decoding", lambda _model: None
     )
     monkeypatch.setattr(
         correction_module,
@@ -1027,6 +1048,36 @@ def test_short_visit_uses_the_original_audio_path_once(
     assert audio_path.exists()
 
 
+def test_normal_hypothesis_does_not_reconcile_punctuation_only_timings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A healthy decode keeps the historical exact one-row-per-word timing gate."""
+    audio_path = tmp_path / "normal-punctuation-timing.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(["x??"])
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(
+        correction_module,
+        "word_timings_from_hypothesis",
+        lambda _hypothesis, _duration: [
+            {"word": "x", "start": 0.1, "end": 0.18},
+            {"word": "??", "start": 0.18, "end": 0.26},
+        ],
+    )
+
+    transcription = correction_module.transcribe_audio_with_nemo(
+        "nvidia/parakeet-unified-en-0.6b",
+        str(audio_path),
+    )
+
+    assert transcription.text == "x??"
+    assert transcription.word_timings is None
+    assert transcription.attempts == 1
+    assert transcription.retried is False
+    assert len(asr_model.transcribed_audio_paths) == 1
+
+
 def test_long_visit_uses_ordered_chunks_on_one_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1194,6 +1245,257 @@ def test_device_not_ready_retries_once_on_the_same_model(
     assert len(asr_model.transcribed_audio_paths) == 2
     assert reclaimed_attempts == [True]
     assert backoffs == [correction_module._TRANSIENT_RETRY_BACKOFF_SECONDS]
+
+
+def test_exact_word_confidence_mismatch_recovers_once_with_aligned_timings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The pinned model gets one confidence-off call and exact punctuation fold."""
+    audio_path = tmp_path / "word-confidence-recovery.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [_word_confidence_aggregation_error("x??"), "x??"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    decoder_changes: list[object] = []
+    reclaimed_attempts: list[bool] = []
+    backoffs: list[float] = []
+    monkeypatch.setattr(
+        correction_module,
+        "disable_word_confidence_decoding",
+        decoder_changes.append,
+    )
+    monkeypatch.setattr(
+        correction_module,
+        "word_timings_from_hypothesis",
+        lambda _hypothesis, _duration: [
+            {"word": "x", "start": 0.1, "end": 0.18},
+            {"word": "??", "start": 0.18, "end": 0.26},
+        ],
+    )
+    monkeypatch.setattr(
+        correction_module,
+        "word_confidences_for_display_words",
+        lambda _hypothesis, _words: None,
+    )
+    monkeypatch.setattr(
+        correction_module,
+        "_reclaim_cuda_memory",
+        lambda: reclaimed_attempts.append(True),
+    )
+    monkeypatch.setattr(correction_module.time, "sleep", backoffs.append)
+
+    transcription = correction_module.transcribe_audio_with_nemo(
+        "nvidia/parakeet-unified-en-0.6b",
+        str(audio_path),
+    )
+
+    assert transcription.text == "x??"
+    assert transcription.word_timings == [{"word": "x??", "start": 0.1, "end": 0.26}]
+    assert transcription.attempts == 2
+    assert transcription.retried is True
+    assert decoder_changes == [asr_model]
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert [options["timestamps"] for options in asr_model.transcribe_options] == [
+        True,
+        True,
+    ]
+    assert reclaimed_attempts == []
+    assert backoffs == []
+
+
+def test_earlier_chunk_recovery_does_not_allow_a_second_confidence_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One request may recover one chunk only, even when a later chunk matches."""
+    audio_path = tmp_path / "two-confidence-mismatches.wav"
+    _write_silent_test_wav(audio_path, 2.0)
+    asr_model = StubPostVisitAsrModel(
+        [
+            _word_confidence_aggregation_error("first"),
+            "first",
+            _word_confidence_aggregation_error("second"),
+            "unused",
+        ]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(correction_module, "_ONE_SHOT_MAX_AUDIO_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_AUDIO_CHUNK_SECONDS", 1.0)
+    monkeypatch.setattr(correction_module, "_MIN_FINAL_CHUNK_SECONDS", 0.6)
+    decoder_changes: list[object] = []
+    monkeypatch.setattr(
+        correction_module,
+        "disable_word_confidence_decoding",
+        decoder_changes.append,
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "nvidia/parakeet-unified-en-0.6b",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 1
+    assert raised_error.value.retried is False
+    assert raised_error.value.failed_chunk_index == 2
+    assert raised_error.value.chunk_count_planned == 2
+    assert decoder_changes == [asr_model]
+    assert len(asr_model.transcribed_audio_paths) == 3
+
+
+def test_word_confidence_mismatch_outside_exact_counts_never_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A vendor-looking mismatch larger than one is fatal after the first call."""
+    audio_path = tmp_path / "word-confidence-unclassified.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [
+            _word_confidence_aggregation_error(
+                "generic words",
+                confidence_count_delta=2,
+            )
+        ]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    decoder_changes: list[object] = []
+    monkeypatch.setattr(
+        correction_module,
+        "disable_word_confidence_decoding",
+        decoder_changes.append,
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "nvidia/parakeet-unified-en-0.6b",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 1
+    assert raised_error.value.retried is False
+    assert decoder_changes == []
+    assert len(asr_model.transcribed_audio_paths) == 1
+
+
+def test_word_confidence_mismatch_on_override_model_never_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Even the exact error shape is not enough on an unmeasured model."""
+    audio_path = tmp_path / "word-confidence-override-model.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [_word_confidence_aggregation_error("generic words"), "unused"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    decoder_changes: list[object] = []
+    monkeypatch.setattr(
+        correction_module,
+        "disable_word_confidence_decoding",
+        decoder_changes.append,
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "unmeasured-override-model",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 1
+    assert raised_error.value.retried is False
+    assert decoder_changes == []
+    assert len(asr_model.transcribed_audio_paths) == 1
+
+
+def test_word_confidence_recovery_text_drift_fails_after_two_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A confidence-off result must equal the failed decode, not merely succeed."""
+    audio_path = tmp_path / "word-confidence-text-drift.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [_word_confidence_aggregation_error("alpha"), "beta", "unused"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "nvidia/parakeet-unified-en-0.6b",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 2
+    assert raised_error.value.retried is True
+    assert raised_error.value.reason_category == "transcribe_failed"
+    assert len(asr_model.transcribed_audio_paths) == 2
+
+
+def test_word_confidence_recovery_never_uses_legacy_third_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A recovery TypeError is final instead of invoking the old-model seam."""
+    audio_path = tmp_path / "word-confidence-call-cap.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [
+            _word_confidence_aggregation_error("alpha"),
+            TypeError("recovery signature failed"),
+            "unused",
+        ]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "nvidia/parakeet-unified-en-0.6b",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 2
+    assert raised_error.value.retried is True
+    assert len(asr_model.transcribed_audio_paths) == 2
+    assert all(
+        options.get("timestamps") is True
+        for options in asr_model.transcribe_options
+    )
+
+
+def test_word_confidence_recovery_requires_application_valid_timings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Recovered text with a lexical timing split still falls back to live rows."""
+    audio_path = tmp_path / "word-confidence-unsafe-timing.wav"
+    _write_silent_test_wav(audio_path, 0.5)
+    asr_model = StubPostVisitAsrModel(
+        [_word_confidence_aggregation_error("cannot"), "cannot", "unused"]
+    )
+    _stub_post_visit_model_dependencies(monkeypatch, asr_model)
+    monkeypatch.setattr(
+        correction_module,
+        "word_timings_from_hypothesis",
+        lambda _hypothesis, _duration: [
+            {"word": "can", "start": 0.1, "end": 0.2},
+            {"word": "not", "start": 0.2, "end": 0.3},
+        ],
+    )
+
+    with pytest.raises(PostVisitCorrectionError) as raised_error:
+        correction_module.transcribe_audio_with_nemo(
+            "nvidia/parakeet-unified-en-0.6b",
+            str(audio_path),
+        )
+
+    assert raised_error.value.attempts == 2
+    assert raised_error.value.retried is True
+    assert raised_error.value.reason_category == "transcribe_failed"
+    assert raised_error.value.failed_chunk_index == 1
+    assert len(asr_model.transcribed_audio_paths) == 2
 
 
 @pytest.mark.parametrize(

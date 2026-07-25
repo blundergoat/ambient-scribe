@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from post_visit_word_timing import (
     estimate_post_visit_word_timings,
+    reconcile_punctuation_only_word_timings,
+    validated_word_timings,
     word_timings_from_hypothesis,
 )
 
@@ -71,6 +73,60 @@ def test_word_timings_reject_malformed_native_entries() -> None:
     timings = word_timings_from_hypothesis(hypothesis, audio_duration_seconds=10.0)
 
     assert timings == []
+
+
+def test_punctuation_only_native_rows_fold_onto_exact_display_word() -> None:
+    """A separately timed punctuation token may join its exact display token."""
+    display_words = ["alpha", "x??", "omega"]
+    native_timings = [
+        {"word": "alpha", "start": 0.0, "end": 0.2},
+        {"word": "x", "start": 0.3, "end": 0.38},
+        {"word": "??", "start": 0.38, "end": 0.46},
+        {"word": "omega", "start": 0.5, "end": 0.8},
+    ]
+
+    reconciled = reconcile_punctuation_only_word_timings(
+        native_timings,
+        display_words,
+    )
+
+    assert reconciled == [
+        {"word": "alpha", "start": 0.0, "end": 0.2},
+        {"word": "x??", "start": 0.3, "end": 0.46},
+        {"word": "omega", "start": 0.5, "end": 0.8},
+    ]
+    # The normal one-to-one application validator remains the final gate.
+    assert validated_word_timings(reconciled, display_words) == reconciled
+
+
+def test_punctuation_reconciliation_rejects_lexical_token_merge() -> None:
+    """Two lexical timing rows never become one display word by concatenation."""
+    native_timings = [
+        {"word": "can", "start": 0.0, "end": 0.2},
+        {"word": "not", "start": 0.2, "end": 0.4},
+    ]
+
+    assert reconcile_punctuation_only_word_timings(native_timings, ["cannot"]) is None
+
+
+def test_punctuation_reconciliation_rejects_text_normalization() -> None:
+    """Punctuation may be folded but never replaced, removed, or normalized."""
+    native_timings = [
+        {"word": "word", "start": 0.0, "end": 0.2},
+        {"word": "!", "start": 0.2, "end": 0.3},
+    ]
+
+    assert reconcile_punctuation_only_word_timings(native_timings, ["word?"]) is None
+
+
+def test_punctuation_reconciliation_rejects_non_monotonic_bounds() -> None:
+    """Exact text is insufficient when a punctuation row moves backward in time."""
+    native_timings = [
+        {"word": "x", "start": 0.3, "end": 0.4},
+        {"word": "??", "start": 0.2, "end": 0.5},
+    ]
+
+    assert reconcile_punctuation_only_word_timings(native_timings, ["x??"]) is None
 
 
 def test_proportional_estimator_ignores_native_timestamp_mapping() -> None:

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import post_visit_correction as correction_module
+from nemo_confidence import disable_word_confidence_decoding
 
 TEST_REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_SCRIPTS_DIR = TEST_REPO_ROOT / "scripts"
@@ -124,6 +125,24 @@ def test_baseline_phrase_is_inactive_by_default() -> None:
 
     assert model.changed_configs == []
     assert correction_module.DEFAULT_POST_VISIT_CORRECTION_PHRASE is None
+
+
+def test_word_confidence_recovery_changes_only_the_aggregation_field() -> None:
+    """The recovery preserves phrase, token-confidence, beam, and greedy settings."""
+    model = _fake_unified_model()
+    original_config = _plain_value(model.cfg.decoding)
+
+    disable_word_confidence_decoding(model)
+
+    changed_config = _plain_value(model.changed_configs[0])
+    expected_config = {
+        **original_config,
+        "confidence_cfg": {
+            **original_config["confidence_cfg"],
+            "preserve_word_confidence": False,
+        },
+    }
+    assert changed_config == expected_config
 
 
 def test_candidate_adds_only_the_reviewed_native_phrase_profile() -> None:

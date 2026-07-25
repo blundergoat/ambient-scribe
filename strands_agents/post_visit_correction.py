@@ -36,12 +36,14 @@ from corrected_role_cues import (
     split_source_row_words,
 )
 from nemo_confidence import (
+    disable_word_confidence_decoding,
     enable_word_confidence_decoding,
     transcript_row_confidence,
     word_confidences_for_display_words,
 )
 from post_visit_word_timing import (
     PostVisitTranscription,
+    reconcile_punctuation_only_word_timings,
     validated_word_confidences,
     validated_word_timings,
     wav_duration_seconds,
@@ -59,6 +61,7 @@ DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "POST_VISIT_ASR_MODEL",
     "nvidia/parakeet-unified-en-0.6b",
 )
+_WORD_CONFIDENCE_RECOVERY_MODEL = "nvidia/parakeet-unified-en-0.6b"
 # Baseline stays inactive until the reviewed phrase proves safer transcript wording.
 DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | None = None
 APPROVED_POST_VISIT_CORRECTION_PHRASE = "brand new sector"
@@ -86,6 +89,15 @@ _AUDIO_CHUNK_SECONDS = 180.0
 _MIN_FINAL_CHUNK_SECONDS = 10.0
 _TRANSIENT_RETRY_BACKOFF_SECONDS = 2.0
 _DEVICE_NOT_READY_PATTERN = re.compile(r"\bdevice\s+not\s+ready\b", re.IGNORECASE)
+_WORD_CONFIDENCE_AGGREGATION_ERROR_PREFIX = (
+    "Something went wrong with word-level confidence aggregation."
+)
+_WORD_CONFIDENCE_WORD_COUNT_PATTERN = re.compile(r"len\(words\):\s*(\d+)")
+_WORD_CONFIDENCE_VALUE_COUNT_PATTERN = re.compile(r"len\(word_confidence\):\s*(\d+)")
+_WORD_CONFIDENCE_RECOGNIZED_TEXT_PATTERN = re.compile(
+    r"recognized text: `(.*)`\s*\Z",
+    flags=re.DOTALL,
+)
 _CHECKPOINT_HASH_BLOCK_BYTES = 8 * 1024 * 1024
 
 
@@ -214,8 +226,9 @@ class _NemoTranscriptionResult:
     """Carry recombined NeMo evidence and recovery metadata into correction.
 
     The user sees its text as corrected rows; attempt and chunk fields explain
-    whether the request used bounded audio or a transient retry. Missing timing
-    or confidence keeps the existing unstyled, unsplit rendering.
+    whether the request used bounded audio or an allowlisted recovery. Missing
+    timing or confidence normally keeps the existing unstyled, unsplit rendering;
+    the word-confidence recovery separately requires complete timing.
 
     Attributes:
         effective_decoding_config: Evaluator-only decoder evidence; null means the clinician used the
@@ -251,11 +264,22 @@ class _TranscribeCallResult:
 
     Use after a chunk or short visit transcribes so the correction response can
     distinguish a normal call from the single user-visible recovery attempt.
+    The internal fallback flag makes timing mandatory only for the exact
+    word-confidence path without changing browser metadata.
     """
 
     hypotheses: list[Any]
     attempts: int
     retried: bool
+    used_word_confidence_fallback: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _WordConfidenceAggregationMismatch:
+    """PHI-free proof that one vendor exception matches the approved recovery."""
+
+    word_count: int
+    recognized_text_sha256: str
 
 
 def run_post_visit_correction(
@@ -530,8 +554,10 @@ def transcribe_audio_with_nemo(
     """Transcribe retained visit audio on one restored NeMo model.
 
     Short visits keep the original one-shot call. Capacity-risk visits use
-    sequential chunks, and only the observed device-not-ready family receives
-    one same-model retry before the browser falls back to live rows.
+    sequential chunks. The observed device-not-ready family receives one
+    same-model retry; the pinned Unified model may instead receive one exact
+    word-confidence-off recovery when NeMo's aggregation count is one too high.
+    Neither recovery can chain into a third model call.
 
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
@@ -569,6 +595,8 @@ def transcribe_audio_with_nemo(
     combined_word_confidences: list[float] = []
     all_chunks_have_timings = True
     all_chunks_have_confidence = True
+    first_chunk_without_timings: int | None = None
+    word_confidence_fallback_used = False
     attempts = 1
     retried = False
     try:
@@ -578,6 +606,10 @@ def transcribe_audio_with_nemo(
                 transcribe_call = _transcribe_with_loaded_model(
                     asr_model,
                     str(audio_chunk.path),
+                    allow_word_confidence_fallback=(
+                        model_name == _WORD_CONFIDENCE_RECOVERY_MODEL
+                        and not word_confidence_fallback_used
+                    ),
                 )
             except PostVisitCorrectionError as correction_error:
                 # Support needs the exact failed piece without receiving audio or CUDA prose.
@@ -591,6 +623,10 @@ def transcribe_audio_with_nemo(
                 ) from correction_error
             attempts = max(attempts, transcribe_call.attempts)
             retried = retried or transcribe_call.retried
+            word_confidence_fallback_used = (
+                word_confidence_fallback_used
+                or transcribe_call.used_word_confidence_fallback
+            )
             # An empty chunk would silently remove part of the user's consultation.
             if transcribe_call.hypotheses == []:
                 raise PostVisitCorrectionError(
@@ -606,6 +642,9 @@ def transcribe_audio_with_nemo(
                 transcribe_call.hypotheses[0],
                 str(audio_chunk.path),
                 audio_chunk.start_seconds,
+                allow_punctuation_timing_reconciliation=(
+                    transcribe_call.used_word_confidence_fallback
+                ),
             )
             # Empty decoded text is not a complete corrected source for the note.
             if chunk_transcription.text == "":
@@ -621,6 +660,8 @@ def transcribe_audio_with_nemo(
             # Missing timing on one chunk makes the combined timing stream incomplete.
             if chunk_transcription.word_timings is None:
                 all_chunks_have_timings = False
+                if first_chunk_without_timings is None:
+                    first_chunk_without_timings = failed_chunk_index
             else:
                 combined_word_timings.extend(chunk_transcription.word_timings)
             # Missing confidence on one chunk keeps all recombined rows unmeasured.
@@ -630,6 +671,19 @@ def transcribe_audio_with_nemo(
                 combined_word_confidences.extend(chunk_transcription.word_confidences)
     finally:
         _remove_scratch_audio_chunks(audio_chunks)
+
+    # The confidence fallback is safe only together with application-valid
+    # timings; otherwise the recovered text would silently skip timing-owned
+    # rediarization and echo-boundary behavior.
+    if word_confidence_fallback_used and not all_chunks_have_timings:
+        raise PostVisitCorrectionError(
+            "Word-confidence recovery did not produce aligned word timings.",
+            attempts=attempts,
+            retried=retried,
+            reason_category="transcribe_failed",
+            failed_chunk_index=first_chunk_without_timings,
+            chunk_count_planned=len(audio_chunks),
+        )
 
     effective_decoding_config = _capture_post_visit_decoding_evidence(asr_model)
     return _NemoTranscriptionResult(
@@ -925,16 +979,81 @@ def _remove_scratch_audio_chunks(audio_chunks: list[_AudioChunk]) -> None:
 
 
 def _transcribe_with_loaded_model(
-    asr_model: Any, audio_path: str
+    asr_model: Any,
+    audio_path: str,
+    *,
+    allow_word_confidence_fallback: bool = False,
 ) -> _TranscribeCallResult:
     """Run one audio path with at most one allowlisted same-model retry.
 
-    Use for the original short WAV or each long-visit chunk. Fatal failures
-    return immediately so the user is not kept waiting on a hopeless retry.
+    Use for the original short WAV or each long-visit chunk. The exact pinned
+    Unified confidence mismatch may turn off only word confidence before one
+    strict timestamped call. Otherwise only device-not-ready earns the existing
+    CUDA retry. A recovery call is final and can never enter the other branch.
     """
     try:
         hypotheses = _transcribe_loaded_model_once(asr_model, audio_path)
     except Exception as first_transcribe_error:
+        confidence_mismatch = (
+            _word_confidence_aggregation_mismatch(first_transcribe_error)
+            if allow_word_confidence_fallback
+            else None
+        )
+        if confidence_mismatch is not None:
+            try:
+                disable_word_confidence_decoding(asr_model)
+            except Exception as configuration_error:
+                raise PostVisitCorrectionError(
+                    (
+                        "Second-pass ASR word-confidence recovery could not "
+                        f"configure the decoder: {type(configuration_error).__name__}"
+                    ),
+                    attempts=1,
+                    retried=False,
+                    reason_category="transcribe_failed",
+                ) from configuration_error
+
+            logger.info(
+                "post_visit_correction.word_confidence_fallback",
+                extra={"word_count": confidence_mismatch.word_count},
+            )
+            try:
+                # The first RuntimeError proves this model accepted timestamps.
+                # Calling the strict form prevents a legacy-signature fallback
+                # from turning the approved two-call recovery into three calls.
+                hypotheses = _transcribe_loaded_model_with_timestamps(
+                    asr_model,
+                    audio_path,
+                )
+            except Exception as recovery_error:
+                raise PostVisitCorrectionError(
+                    (
+                        "Second-pass ASR failed after word-confidence recovery: "
+                        f"{type(recovery_error).__name__}"
+                    ),
+                    attempts=2,
+                    retried=True,
+                    reason_category=_transcribe_failure_category(recovery_error),
+                ) from recovery_error
+
+            if not _recovered_hypothesis_matches(
+                hypotheses,
+                confidence_mismatch.recognized_text_sha256,
+            ):
+                raise PostVisitCorrectionError(
+                    "Word-confidence recovery changed the decoded transcript.",
+                    attempts=2,
+                    retried=True,
+                    reason_category="transcribe_failed",
+                )
+
+            return _TranscribeCallResult(
+                hypotheses,
+                attempts=2,
+                retried=True,
+                used_word_confidence_fallback=True,
+            )
+
         # Only the exact field-observed device-not-ready family earns another wait.
         if not _is_device_not_ready_error(first_transcribe_error):
             raise PostVisitCorrectionError(
@@ -983,6 +1102,77 @@ def _transcribe_loaded_model_once(asr_model: Any, audio_path: str) -> list[Any]:
     except TypeError:
         # Example: a local override model predates the timestamp option used by the note UI.
         return asr_model.transcribe([audio_path], return_hypotheses=True)
+
+
+def _transcribe_loaded_model_with_timestamps(
+    asr_model: Any,
+    audio_path: str,
+) -> list[Any]:
+    """Make the confidence recovery's one final timestamped model call."""
+    return asr_model.transcribe(
+        [audio_path],
+        return_hypotheses=True,
+        timestamps=True,
+    )
+
+
+def _word_confidence_aggregation_mismatch(
+    transcribe_error: Exception,
+) -> _WordConfidenceAggregationMismatch | None:
+    """Classify only the measured one-extra-value NeMo aggregation failure.
+
+    The vendor exception contains decoded clinical text. This function keeps
+    that text in memory only long enough to validate its word count and retain
+    a SHA-256 fingerprint for the recovery-call equality check.
+    """
+    if type(transcribe_error) is not RuntimeError:
+        return None
+
+    message = str(transcribe_error)
+    if not message.startswith(_WORD_CONFIDENCE_AGGREGATION_ERROR_PREFIX):
+        return None
+
+    word_count_match = _WORD_CONFIDENCE_WORD_COUNT_PATTERN.search(message)
+    confidence_count_match = _WORD_CONFIDENCE_VALUE_COUNT_PATTERN.search(message)
+    recognized_text_match = _WORD_CONFIDENCE_RECOGNIZED_TEXT_PATTERN.search(message)
+    if (
+        word_count_match is None
+        or confidence_count_match is None
+        or recognized_text_match is None
+    ):
+        return None
+
+    word_count = int(word_count_match.group(1))
+    confidence_count = int(confidence_count_match.group(1))
+    recognized_text = recognized_text_match.group(1)
+    if (
+        word_count <= 0
+        or confidence_count != word_count + 1
+        or len(recognized_text.split()) != word_count
+    ):
+        return None
+
+    return _WordConfidenceAggregationMismatch(
+        word_count=word_count,
+        recognized_text_sha256=hashlib.sha256(
+            recognized_text.encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def _recovered_hypothesis_matches(
+    hypotheses: list[Any],
+    expected_text_sha256: str,
+) -> bool:
+    """Require the confidence-off call to preserve the failed call's text exactly."""
+    if not hypotheses:
+        return False
+
+    recovered_text = normalise_transcript_text(hypotheses[0])
+    return (
+        hashlib.sha256(recovered_text.encode("utf-8")).hexdigest()
+        == expected_text_sha256
+    )
 
 
 def _is_device_not_ready_error(transcribe_error: Exception) -> bool:
@@ -1073,18 +1263,35 @@ def _transcription_from_hypothesis(
     hypothesis: Any,
     audio_path: str,
     start_seconds: float,
+    *,
+    allow_punctuation_timing_reconciliation: bool = False,
 ) -> PostVisitTranscription:
     """Extract one chunk's text and shift evidence onto the full visit timeline.
 
     Use after a successful model call; absent timing/confidence remains honest
-    optional evidence and never blocks the corrected note by itself.
+    optional evidence and never blocks the corrected note by itself. Only the
+    exact confidence-off recovery may reconcile separately timed punctuation;
+    every normal hypothesis keeps the historical one-row-per-display-word gate.
     """
     transcript_text = normalise_transcript_text(hypothesis)
+    display_words = split_words(transcript_text)
     word_timings: list[dict[str, Any]] | None = None
     try:
-        chunk_word_timings = word_timings_from_hypothesis(
+        raw_chunk_word_timings = word_timings_from_hypothesis(
             hypothesis,
             wav_duration_seconds(audio_path),
+        )
+        candidate_chunk_word_timings = raw_chunk_word_timings
+        if allow_punctuation_timing_reconciliation:
+            candidate_chunk_word_timings = reconcile_punctuation_only_word_timings(
+                raw_chunk_word_timings,
+                display_words,
+            )
+        # Recovery reconciliation may change row boundaries only; the existing
+        # exact display-word validator remains the final trust gate for every path.
+        chunk_word_timings = validated_word_timings(
+            candidate_chunk_word_timings,
+            display_words,
         )
         # Each timing row moves from chunk-relative to consultation-relative seconds.
         if chunk_word_timings:
@@ -1107,7 +1314,7 @@ def _transcription_from_hypothesis(
     try:
         word_confidences = word_confidences_for_display_words(
             hypothesis,
-            split_words(transcript_text),
+            display_words,
         )
     except Exception as confidence_error:  # pragma: no cover - hypothesis-specific.
         # Example: the corrected note renders without confidence styling for this model.

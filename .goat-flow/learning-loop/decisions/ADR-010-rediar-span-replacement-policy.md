@@ -1,8 +1,9 @@
 # ADR-010: Two-Witness Span Replacement for the Corrected Transcript
 
-**Status:** Proposed (implementation approved 2026-07-21; moves to Accepted or Rejected on the M05 corpus verdict)
+**Status:** Rejected (M05 corpus verdict; human-approved 2026-07-25)
 **Date:** 2026-07-21
-**Ticket/Context:** post-stop-rediarization M03
+**Resolved:** 2026-07-25
+**Ticket/Context:** post-stop-rediarization M03-M05E
 
 ## Context
 
@@ -14,6 +15,20 @@ control fixture, and rebuilt slots can be locally impure. The replacement
 policy therefore cannot trust any single witness.
 
 ## Decision
+
+Reject the two-witness span-replacement policy as a promotable correction
+policy. The M05 corpus gate confirmed substantive candidate regressions, so
+the candidate line ends without threshold tuning, a default flip, or a
+supplemental comparison. `NEMO_CORRECTION_REDIARIZATION` remains 0 in the
+restored operator state. The experimental implementation remains default-off
+pending any separately scoped removal decision; its presence is not
+acceptance or release authorization.
+
+M05B's `PASS_HYBRID_FLAG_OFF` and M05C's `PASS_CORPUS_ON_EXECUTION` remain
+limited execution receipts. They do not override M05D's human-approved
+`REJECT_CANDIDATE_KEEP_FLAG_OFF` quality disposition.
+
+## Evaluated policy
 
 Correction-time replacement operates only at fold-suspect spans (the spans the
 live session itself folded into another chip) and changes only row-level roles
@@ -48,16 +63,36 @@ without a settled role routes the span to the review lane as UNKNOWN.
   scripts/rediar-span-comparer.py; grading ledger in
   var/quality/rediar-m03-policy/.
 
+## M05 corpus verdict
+
+- On c03, corrected row index 220 / `corrected-0221` is time- and
+  fingerprint-aligned across arms. It changes from expected and visible DOCTOR
+  in the off arm to visible PATIENT in the on arm. This is one causal
+  regression represented by the worsened-row and newly-confident-wrong gates,
+  not two independent failures.
+- On c08, strict attribution falls from 196/216 to 187/216, while
+  incorrect-confident attribution rises from 20/216 to 29/216. Those two
+  per-fixture metric regressions independently block the candidate; the
+  separate corrected-row text mismatch remains unverified and is not used to
+  strengthen or rescue the verdict.
+- Available aggregate rates improve, but the frozen campaign contract
+  prohibits aggregate improvement from waiving a causal-row or per-fixture
+  regression.
+- The sealed M05D packet records `promotion_authorized=false`,
+  `full_campaign_pass=false`, and `runtime_calls_added=0`. The human approved
+  its rejection disposition on 2026-07-25.
+
+Evidence:
+`var/quality/rediar-m05-acceptance/adjudication/2026-07-25_m05d-quality1/`.
+
 ## Consequences
 
-- The thresholds (3.0s, 2.0x, 0.25s) live in this ADR; code reads them and
-  in-campaign tuning is prohibited - a failed gate kills the candidate.
-- M04 integration must retain each session's fold spans unconditionally
-  (today they are only logged under the evidence flag) and run one role-agent
-  pass over rebuilt rows per correction to supply the wording witness.
-- Truthless spans (silence/crosstalk) can be replaced when both witnesses
-  agree; measured effect is state-neutral, and the M05 corpus gates own the
-  final word-loss/attribution verdict.
-- Rejection of this policy at any later gate ends the candidate line per the
-  plan's kill discipline; no second in-plan policy may be tuned against the
-  same corpus.
+- Do not promote or enable the two-witness correction lane. The restored
+  runtime and release posture stay flag-off.
+- Retaining default-off implementation and QA evidence does not make the
+  policy supported behavior; removal or reuse requires a separate scope and
+  approval.
+- No second in-plan policy or threshold may be tuned against the consumed
+  corpus. A future mechanism starts from a new plan and new evidence.
+- Preserve M05B `PASS_HYBRID_FLAG_OFF`, M05C `PASS_CORPUS_ON_EXECUTION`, and
+  M05D `REJECT_CANDIDATE_KEEP_FLAG_OFF` as distinct verdicts.
