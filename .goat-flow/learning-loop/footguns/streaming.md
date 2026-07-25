@@ -1,9 +1,23 @@
 ---
 category: streaming
-last_reviewed: 2026-07-14
+last_reviewed: 2026-07-26
 ---
 
 # Streaming Footguns
+
+## Footgun: A minimum-duration floor turns missing word timing into a plausible measurement
+
+**Status:** active | **Created:** 2026-07-26 | **Evidence:** ACTUAL_MEASURED
+**Decision changed:** Treat any row whose span equals a code floor as timing-absent, not timing-known. Before drawing a conclusion from live row spans, count the floor-valued rows first.
+**Trigger phase:** VERIFY
+
+- **Files:** `strands_agents/nemo_streaming_engine.py` (search: `def _appended_word_entries`)
+- **Files:** `scripts/transcript-quality.py` (search: `--row-diagnostics-json`)
+- **What breaks:** `_appended_word_entries` shares a decode step's new token timestamps across the words appended in that step by proportional index. When a step appends more words than it received tokens, several words resolve to the same token index, `token_hi - 1 == token_lo`, and both ends of the span derive from one token. `end=max(word_end, word_start + 0.05)` then stamps each of those words with an identical 0.05-second span. Nothing errors. The rows look ordinary, carry a real-looking `start`, and flow into every span-overlap consumer — role attribution, the TextGrid scorer, overlap classification, and any fold or repair policy that reasons about time. The harm is not the fake duration; it is that every word in the group is asserted at one instant, so near a speaker change words land on the wrong side of the boundary and inherit the wrong speaker.
+- **Evidence:** Measured 2026-07-26 on five captured consult-1.2 browser runs of fixture ordinal 1 in `tests/fixtures/audio/development-corpus-0.5.0.json` (search: `"fixture_id"`), scored with `scripts/transcript-quality.py` at a 557-second cutoff against that fixture's two official TextGrids. Working evidence lives in the gitignored 0.5.2 plan tree; the measurements are recorded here because that tree is local state. 42.1-42.3% of rows carry the exact 0.05-second span in every run (130-131 of 309-310). Scoring at each row's `start` only, so the fabricated `end` cannot influence the result, and stratifying by proximity to a true turn boundary: floor-valued rows score 81.4% in clean regions and 38.7-40.0% within 250 ms of a boundary, while real-span rows score 98.7% and 94.1-100% in the same regions. Boundaries are therefore not inherently hard; only the token-starved path collapses there. Two competing explanations were tested and both fail: re-scoring at `start` alone preserves the gap (69.0% vs 98.8%), so it is not a scorer artifact, and the real-span near-boundary result refutes acoustic difficulty.
+- **Prevention:** When the engine cannot place words individually, keep them together under the interval it did measure, or mark the span estimated — never synthesize a plausible number. Do not interpolate per-word times inside a starved group; `.goat-flow/learning-loop/lessons/verification.md` (search: `## Lesson: Full-clip proportional word timings drift`) records a proportional estimate driving strict attribution from 83.3% to 78.9%. Before trusting any timing-derived metric on live rows, count rows whose span equals the floor; above a few percent, treat span-based conclusions as unsafe until the mapping is fixed. A floor is a tell that evidence was missing, not that timing was recovered.
+- **Relationship to the alignment-traps entry below:** trap (5) in that entry established that step-clock word times are fiction and that true times come from mapping token timestamps through the per-slot voiced-frame ledger. That remedy is implemented and correct — but only when tokens are at least as numerous as words. This footgun is its starvation case, and it went unnoticed because the floor made the output look measured.
+- **Consequence for prior decisions:** ADR-010's two-witness span-replacement policy depended on a structural witness reasoning over these spans. Its flag-on arm scored 38.7% near boundaries, identical to flag-off, and gained rows only in clean regions. Do not read that rejection as evidence the two-witness idea is unsound without first re-testing on honest timings.
 
 ## Footgun: NeMo cache-aware streaming integration has three silent alignment traps
 

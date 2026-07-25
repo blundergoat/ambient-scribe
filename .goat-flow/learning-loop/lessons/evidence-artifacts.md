@@ -1,9 +1,35 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-25
+last_reviewed: 2026-07-26
 ---
 
 # Evidence Artifact Lessons
+
+## Lesson: A simulated fix can only measure what the artifacts persisted
+
+**Created:** 2026-07-26
+**Decision changed:** Before planning to rehearse a fix on captured evidence, confirm the artifacts
+contain the field the fix would repair. If they do not, bound the prize and say so; do not emit a
+simulated result.
+**Trigger phase:** SCOPE
+**What happened:** A milestone was drafted to validate a streaming-timing fix offline by transforming
+captured `live-history.json` rows — merging rows that shared a fabricated span and re-scoring — and
+reporting the attribution gain as the fix's expected ceiling. That number would have been meaningless.
+The defect corrupts each word's `start`, and true per-word starts exist only in the NeMo token
+timestamps consumed inside the streaming engine and never written to the history artifact. The
+transform could rearrange rows but could not move a word to the time it was actually spoken, so the
+measurement would have reflected the merge heuristic rather than the repair. The milestone was
+rewritten to characterize the defect and bound an upper limit instead, with an explicit instruction
+not to produce a simulated-fix figure.
+**Evidence:** `strands_agents/nemo_streaming_engine.py` (search: `def _appended_word_entries`) is the
+code that holds the token timestamps; no field in the emitted history carries them, which is what made
+the simulation underdetermined. The milestone that was rewritten and the bound that replaced it live in
+the gitignored 0.5.2 plan tree, so the constraint is stated here rather than linked.
+**Prevention:** Ask which field the fix writes, then grep an artifact for it. A transform over captured
+evidence measures the transform unless the artifact carries the repaired quantity. When it does not,
+an upper bound derived from a healthy comparison class is honest and still decision-grade — label it a
+bound, not a forecast. A confident number from an underdetermined simulation is worse than no number,
+because it survives into the plan as a target.
 
 This bucket records mistakes that can corrupt an evidence bundle without changing its visible meaning.
 Use it before duplicating hash-bound fixtures or sealing a write-once artifact manifest.

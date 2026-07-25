@@ -1,9 +1,38 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-22
+last_reviewed: 2026-07-26
 ---
 
 # Eval and Metrics Lessons
+
+## Lesson: Prove a class gap is causal before planning a fix on it
+
+**Created:** 2026-07-26
+**Decision changed:** When two row classes differ sharply on a metric, run two cheap eliminations
+before treating the class marker as the cause: re-score through a projection that excludes the
+suspect field, and stratify by the obvious confounder. Only then plan work against it.
+**Trigger phase:** SCOPE
+**What happened:** Consult-1.2 rows split cleanly by span class — 67.3% strict attribution for rows
+carrying a fabricated 0.05-second span against 97.2% for real-span rows. That gap was almost planned
+against directly. Two alternative explanations were untested and each would have invalidated the
+plan. First, a measurement artifact: only the span's `end` is fabricated, so the scorer's span-overlap
+matching could have been failing on rows the product had labelled correctly. Re-scoring at each row's
+`start` alone, which ignores `end` entirely, preserved the gap at 69.0% versus 98.8% and refuted it.
+Second, acoustic difficulty: the fabricated class starts inside overlap 17% of the time against 4.5%
+for real-span rows, so the class could have been a proxy for hard audio. Stratifying start-point
+accuracy by proximity to a true turn boundary refuted it decisively — real-span rows score 94.1-100%
+within 250 ms of a boundary while the fabricated class collapses to 38.7-40.0%. Boundaries are not
+hard; only that path fails there.
+**Evidence:** `scripts/transcript-quality.py` (search: `--row-diagnostics-json`) supplies the per-row
+expected roles both eliminations used; the row class comes from
+`strands_agents/nemo_streaming_engine.py` (search: `def _appended_word_entries`). The five-run
+decomposition itself lives in the gitignored 0.5.2 plan tree, so its figures are quoted above rather
+than linked.
+**Prevention:** A class marker that correlates with a metric is not yet a cause. Score by an
+independent projection that excludes the field under suspicion, and stratify by whichever confounder
+would most embarrass the conclusion. Both eliminations here were pure CPU work on already-captured
+artifacts and together changed the milestone's structure, its success gate, and the size of the
+claimed prize. Run them before any runtime change is scoped, not after a fix disappoints.
 
 Lessons about scoring, fixture evals, oracles, and log-derived counters.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).

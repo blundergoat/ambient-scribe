@@ -480,6 +480,15 @@ wrapper-child process graph. Prove uniqueness at the managed session or pane
 layer, then assert the exact allowed child topology instead of assuming one
 grep row per logical runner.
 
+The 2026-07-25 naming-migration audit then filtered `git diff` output through `^[+-][^+-]` to keep
+only payload lines. That character class silently excludes every diff line whose own content starts
+with `-` or `+`, which is every Markdown list item, so a generated-index check printed no matches and
+read as clean while the superseded labels were still present. A direct read of the regenerated index
+files showed the real state, and the second audit used the source lines rather than the filtered
+diff. When auditing a diff of list-based prose, strip exactly one leading `+`/`-` column instead of
+rejecting a line by its second character, and confirm any empty audit result against a direct read of
+at least one line the audit should have matched.
+
 ## Lesson: SDK observability plans must match installed vendor contracts (2026-07-04)
 
 **Created:** 2026-07-04

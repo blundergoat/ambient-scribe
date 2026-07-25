@@ -16,11 +16,16 @@ last_reviewed: 2026-07-20
 ## Lesson: Gitignored plan intake needs directory listing (2026-07-05)
 
 **Created:** 2026-07-05
+**Incident count:** 2 | **Latest occurrence:** 2026-07-26
 **Evidence:** `.goat-flow/plans/README.md` (search: "This directory is gitignored by design"), `.agents/skills/goat-plan/SKILL.md` (search: "Inspect existing plan state only after retrieval").
 
 During a Copilot harness repair, `rg --files .goat-flow/plans` only showed tracked files and missed existing gitignored milestone directories. A later `ls -la .goat-flow/plans` and `find .goat-flow/plans -maxdepth 2 -type f -name 'M*.md' -print` corrected the intake before code edits.
 
 **Lesson:** When goat-plan checks existing milestones, use `ls` or `find` for `.goat-flow/plans/` instead of `rg --files`, because plan artifacts are intentionally gitignored local state.
+
+**2026-07-26 recurrence, content auditing rather than intake:** after writing milestone files, a `rg` search over `.goat-flow/plans/0.5.2/` for stale symbol references returned zero hits and was briefly read as "every anchor resolves". Ripgrep had skipped the whole directory because it honours `.gitignore`, and `.goat-flow/plans/.gitignore` ignores `*`. Re-running with `--no-ignore` exposed five stale references to a function name that never existed. The same blindness applies to any `rg` over `.goat-flow/plans/`, `.goat-flow/logs/`, or another ignored tree — including the audit scripts written to check those trees.
+
+**Lesson:** Pass `--no-ignore` to `rg` whenever the target is a gitignored directory, and treat an empty audit result as unproven until the audit demonstrably matches a case known to be present. An audit that cannot see its target reports clean, which is indistinguishable from success at a glance.
 
 ## Lesson: Appended tests inherit whatever class ends the file
 
