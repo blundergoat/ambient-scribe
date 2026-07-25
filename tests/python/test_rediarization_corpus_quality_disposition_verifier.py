@@ -1,4 +1,4 @@
-"""Fail-closed contracts for the M05D corpus-quality adjudicator."""
+"""Fail-closed contracts for the corpus-quality disposition verifier."""
 
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VERIFIER_PATH = REPO_ROOT / "scripts" / "verify-rediar-m05d-quality.py"
+VERIFIER_PATH = (
+    REPO_ROOT / "scripts" / "verify-rediarization-corpus-quality-disposition.py"
+)
 
 verifier_spec = importlib.util.spec_from_file_location(
-    "verify_rediar_m05d_quality",
+    "verify_rediarization_corpus_quality_disposition",
     VERIFIER_PATH,
 )
 assert verifier_spec is not None
@@ -114,6 +116,22 @@ def synthetic_gate(
             "timing_aligned": True,
         },
         "proof_class": "SYNTHETIC_MECHANICAL",
+    }
+
+
+def flag_off_recovery_attestation() -> dict[str, object]:
+    """Create the exact narrow recovery scope consumed by the disposition."""
+    return {
+        "claim_scope": "flag-off recovery availability/correctness only",
+        "corpus_on": {
+            "authorized": False,
+            "physical_correction_calls": 0,
+            "status": "NOT_EVALUATED",
+        },
+        "full_campaign_status": "NOT_EVALUATED",
+        "promotion_authorized": False,
+        "schema_version": quality_verifier.FLAG_OFF_RECOVERY_SCHEMA_VERSION,
+        "verdict": "PASS_HYBRID_FLAG_OFF",
     }
 
 
@@ -239,26 +257,34 @@ def build_synthetic_packet(
     full_campaign_pass: bool = False,
     manifest_drift: bool = False,
     source_drift: bool = False,
+    source_missing: bool = False,
+    source_malformed: bool = False,
+    source_path_escape: bool = False,
     writable_packet: bool = False,
 ) -> tuple[Path, Path]:
-    """Build one isolated M05D packet with optional fail-closed mutations."""
+    """Build one isolated corpus-quality packet with fail-closed mutations."""
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    packet_root = workspace_root / "var/quality/m05d-test-packet"
+    packet_root = workspace_root / "var/quality/corpus-quality-test-packet"
     packet_root.mkdir(parents=True)
 
     frozen_input = workspace_root / "inputs/frozen-input.json"
     write_json(frozen_input, {"schema_version": "synthetic-frozen-input/v1"})
+    source_record = {
+        "label": "synthetic_frozen_input",
+        **evidence_record(workspace_root, frozen_input),
+    }
+    if source_missing:
+        source_record["path"] = "inputs/missing-input.json"
+    if source_malformed:
+        source_record["sha256"] = "not-a-sha256"
+    if source_path_escape:
+        source_record["path"] = "../outside-workspace.json"
     source_identities_path = packet_root / "source-identities.json"
     write_json(
         source_identities_path,
         {
-            "records": [
-                {
-                    "label": "synthetic_frozen_input",
-                    **evidence_record(workspace_root, frozen_input),
-                }
-            ],
+            "records": [source_record],
             "schema_version": quality_verifier.SOURCE_IDENTITIES_SCHEMA_VERSION,
         },
     )
@@ -306,7 +332,7 @@ def build_synthetic_packet(
     decision_markdown_path.write_text(
         "\n".join(
             [
-                "# M05D candidate disposition",
+                "# Rediarization corpus-quality disposition",
                 "",
                 f"Disposition: {disposition}",
                 "Promotion authorized: false.",
@@ -322,7 +348,7 @@ def build_synthetic_packet(
     write_json(
         decision_path,
         {
-            "claim_scope": "sealed CPU-only quality adjudication",
+            "claim_scope": "sealed CPU-only corpus-quality disposition",
             "decision_markdown": evidence_record(
                 workspace_root,
                 decision_markdown_path,
@@ -493,11 +519,70 @@ def test_truth_aligned_alert_does_not_require_historical_off_lane() -> None:
     }
 
 
+def test_flag_off_recovery_attestation_accepts_only_narrow_scope() -> None:
+    """The approved recovery result is valid without authorizing corpus-on."""
+    quality_verifier._validate_flag_off_recovery_attestation(
+        flag_off_recovery_attestation()
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "failure_fragment"),
+    [
+        (
+            "schema_version",
+            "ambient-scribe-rediarization-flag-off-recovery/v2",
+            "schema drifted",
+        ),
+        (
+            "claim_scope",
+            "full campaign and promotion",
+            "claim scope drifted",
+        ),
+        ("verdict", "PASS_FULL_CAMPAIGN", "verdict drifted"),
+        ("full_campaign_status", "PASS", "full-campaign scope drifted"),
+        ("promotion_authorized", True, "authorizes promotion"),
+        (
+            "corpus_on",
+            {
+                "authorized": True,
+                "physical_correction_calls": 1,
+                "status": "PASS",
+            },
+            "corpus-on boundary drifted",
+        ),
+    ],
+)
+def test_flag_off_recovery_scope_drift_fails_closed(
+    field: str,
+    value: object,
+    failure_fragment: str,
+) -> None:
+    """Every recovery authority field remains identical to the approved input."""
+    attestation = flag_off_recovery_attestation()
+    attestation[field] = value
+
+    with pytest.raises(
+        quality_verifier.EvidenceError,
+        match=failure_fragment,
+    ):
+        quality_verifier._validate_flag_off_recovery_attestation(attestation)
+
+
 @pytest.mark.parametrize(
     ("options", "failure_fragment"),
     [
         ({"manifest_drift": True}, "manifest SHA-256 mismatch"),
         ({"source_drift": True}, "source identity SHA-256 mismatch"),
+        ({"source_missing": True}, "source identity file is missing"),
+        (
+            {"source_malformed": True},
+            "source identity SHA-256 must be 64 lowercase hex characters",
+        ),
+        (
+            {"source_path_escape": True},
+            "source identity path is not root-confined",
+        ),
         ({"missing_gate": True}, "legacy gate IDs"),
         ({"duplicate_alert": True}, "source alert identities must be unique"),
         ({"wording_leak": True}, "forbidden decoded-wording key"),

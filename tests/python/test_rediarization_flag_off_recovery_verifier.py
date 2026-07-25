@@ -1,4 +1,4 @@
-"""Fail-closed contracts for the M05 hybrid flag-off evidence verifier."""
+"""Fail-closed contracts for the flag-off recovery evidence verifier."""
 
 from __future__ import annotations
 
@@ -13,17 +13,17 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VERIFIER_PATH = REPO_ROOT / "scripts" / "verify-rediar-m05-hybrid.py"
+VERIFIER_PATH = REPO_ROOT / "scripts" / "verify-rediarization-flag-off-recovery.py"
 
 verifier_spec = importlib.util.spec_from_file_location(
-    "verify_rediar_m05_hybrid",
+    "verify_rediarization_flag_off_recovery",
     VERIFIER_PATH,
 )
 assert verifier_spec is not None
-hybrid_verifier = importlib.util.module_from_spec(verifier_spec)
+recovery_verifier = importlib.util.module_from_spec(verifier_spec)
 assert verifier_spec.loader is not None
-sys.modules[verifier_spec.name] = hybrid_verifier
-verifier_spec.loader.exec_module(hybrid_verifier)
+sys.modules[verifier_spec.name] = recovery_verifier
+verifier_spec.loader.exec_module(recovery_verifier)
 
 
 FIXTURE_DURATIONS = (
@@ -112,50 +112,60 @@ def write_sha_manifest(root: Path, paths: list[Path], manifest_path: Path) -> No
     manifest_path.write_text("\n".join(records) + "\n", encoding="utf-8")
 
 
-def build_synthetic_hybrid_workspace(
+def build_synthetic_recovery_workspace(
     tmp_path: Path,
     *,
     corpus_on_status: str = "NOT_EVALUATED",
-    malformed_d3_hash: bool = False,
+    malformed_source_hash: bool = False,
     missing_replay_proof: bool = False,
     physical_calls: int = 4,
     fifth_call_attempted: bool = False,
     identity_clean: bool = True,
     mutate_source_after_manifest: bool = False,
 ) -> tuple[Path, Path]:
-    """Create a sealed, internally hash-consistent hybrid packet."""
+    """Create a sealed, internally hash-consistent recovery packet."""
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    d3_paths = tuple(Path(path) for path in hybrid_verifier.D3_DELTA_PATHS)
-    for index, relative_path in enumerate(d3_paths, start=1):
+    recovery_source_paths = tuple(
+        Path(path) for path in recovery_verifier.RECOVERY_SOURCE_PATHS
+    )
+    for index, relative_path in enumerate(recovery_source_paths, start=1):
         source_path = workspace_root / relative_path
         source_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path.write_text(f"d3 file {index}\n", encoding="utf-8")
+        source_path.write_text(f"recovery source {index}\n", encoding="utf-8")
 
     packet_root = (
-        workspace_root / "var/quality/rediar-m05-acceptance/hybrid/2026-07-25-test"
+        workspace_root
+        / recovery_verifier.SEMANTIC_EVIDENCE_ROOT
+        / "flag-off-recovery/2026-07-25-test"
     )
     packet_root.mkdir(parents=True)
-    d3_manifest_path = packet_root / "d3-delta-manifest.tsv"
-    d3_lines = ["path\tbytes\tsha256"]
-    for index, relative_path in enumerate(d3_paths):
+    recovery_source_manifest_path = packet_root / "recovery-source-manifest.tsv"
+    recovery_source_lines = ["path\tbytes\tsha256"]
+    for index, relative_path in enumerate(recovery_source_paths):
         source_path = workspace_root / relative_path
         digest = (
             "not-a-sha256"
-            if malformed_d3_hash and index == 0
+            if malformed_source_hash and index == 0
             else file_sha256(source_path)
         )
-        d3_lines.append(
+        recovery_source_lines.append(
             f"{relative_path.as_posix()}\t{source_path.stat().st_size}\t{digest}"
         )
-    d3_manifest_path.write_text("\n".join(d3_lines) + "\n", encoding="utf-8")
+    recovery_source_manifest_path.write_text(
+        "\n".join(recovery_source_lines) + "\n",
+        encoding="utf-8",
+    )
 
     identity_receipts: list[dict[str, object]] = []
-    for arm in hybrid_verifier.HISTORICAL_IDENTITY_ARMS:
+    for arm in recovery_verifier.HISTORICAL_IDENTITY_ARMS:
         receipt_path = (
             workspace_root
-            / f"var/quality/rediar-m05-acceptance/arms/{arm}/identity-check.txt"
+            / recovery_verifier.LEGACY_ACCEPTANCE_ROOT
+            / "arms"
+            / arm
+            / "identity-check.txt"
         )
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
         clean_marker = (
@@ -167,8 +177,8 @@ def build_synthetic_hybrid_workspace(
             "\n".join(
                 [
                     f"arm={arm} checked_at=2026-07-24T00:00:00Z",
-                    f"freeze_sha={hybrid_verifier.FREEZE_SHA}",
-                    f"head_sha={hybrid_verifier.FREEZE_SHA}",
+                    f"freeze_sha={recovery_verifier.FREEZE_SHA}",
+                    f"head_sha={recovery_verifier.FREEZE_SHA}",
                     clean_marker,
                     "development-corpus: valid",
                 ]
@@ -185,11 +195,12 @@ def build_synthetic_hybrid_workspace(
 
     historical_corpus_receipts: list[dict[str, object]] = []
     for fixture, _duration, chunks in FIXTURE_DURATIONS:
-        if fixture == hybrid_verifier.REPLACEMENT_FIXTURE:
+        if fixture == recovery_verifier.REPLACEMENT_FIXTURE:
             continue
         response_path = (
             workspace_root
-            / "var/quality/rediar-m05-acceptance/arms/corpus-off/corpus"
+            / recovery_verifier.LEGACY_ACCEPTANCE_ROOT
+            / "arms/corpus-off/corpus"
             / fixture
             / "correction-response.json"
         )
@@ -213,7 +224,8 @@ def build_synthetic_hybrid_workspace(
 
     replay_root = (
         workspace_root
-        / "var/quality/rediar-m05-acceptance/diagnostics"
+        / recovery_verifier.LEGACY_ACCEPTANCE_ROOT
+        / "diagnostics"
         / "2026-07-25_d2c09-d3-recovery-only-replay1"
     )
     replay_root.mkdir(parents=True)
@@ -228,7 +240,7 @@ def build_synthetic_hybrid_workspace(
                 "not evaluated"
             ),
             "correction_status": "ready",
-            "fixture": hybrid_verifier.REPLACEMENT_FIXTURE,
+            "fixture": recovery_verifier.REPLACEMENT_FIXTURE,
             "normal_runtime_restored": True,
             "physical_correction_calls": physical_calls,
             "punctuation_timing_folds": 1,
@@ -298,7 +310,7 @@ def build_synthetic_hybrid_workspace(
             [
                 "diagnostic=d2c09-d3-recovery-only-replay1",
                 "flag=0",
-                f"fixture={hybrid_verifier.REPLACEMENT_FIXTURE}",
+                f"fixture={recovery_verifier.REPLACEMENT_FIXTURE}",
                 "pace=1x",
                 "chunk_ms=5000",
                 "replay_cap=1",
@@ -318,7 +330,7 @@ def build_synthetic_hybrid_workspace(
     ]
     if diagnostic_path.exists():
         replay_files.append(diagnostic_path)
-    filler_count = hybrid_verifier.REPLAY_MANIFEST_RECORDS - len(replay_files)
+    filler_count = recovery_verifier.REPLAY_MANIFEST_RECORDS - len(replay_files)
     for filler_index in range(filler_count):
         filler_path = replay_root / "synthetic" / f"proof-{filler_index:03d}.txt"
         filler_path.parent.mkdir(parents=True, exist_ok=True)
@@ -375,7 +387,7 @@ def build_synthetic_hybrid_workspace(
                 workspace_root / "strands_agents/post_visit_correction.py",
             ),
             "requires_new_approval": True,
-            "schema_version": hybrid_verifier.CAP_SCHEMA_VERSION,
+            "schema_version": recovery_verifier.CAP_SCHEMA_VERSION,
         },
     )
 
@@ -383,7 +395,7 @@ def build_synthetic_hybrid_workspace(
     decision_path.write_text(
         "\n".join(
             [
-                "# M05B hybrid flag-off decision",
+                "# Flag-off recovery decision",
                 "",
                 "Verdict: PASS_HYBRID_FLAG_OFF",
                 "Claim: flag-off recovery availability/correctness only.",
@@ -396,11 +408,13 @@ def build_synthetic_hybrid_workspace(
         encoding="utf-8",
     )
 
-    synthetic_verifier_path = workspace_root / "scripts/verify-rediar-m05-hybrid.py"
+    synthetic_verifier_path = (
+        workspace_root / "scripts/verify-rediarization-flag-off-recovery.py"
+    )
     synthetic_verifier_path.parent.mkdir(parents=True, exist_ok=True)
     synthetic_verifier_path.write_text("synthetic verifier\n", encoding="utf-8")
     legacy_verifier_path = (
-        workspace_root / "var/quality/rediar-m05-acceptance/verify-campaign.py"
+        workspace_root / recovery_verifier.LEGACY_ACCEPTANCE_ROOT / "verify-campaign.py"
     )
     legacy_verifier_path.parent.mkdir(parents=True, exist_ok=True)
     legacy_verifier_path.write_text("synthetic legacy verifier\n", encoding="utf-8")
@@ -431,18 +445,18 @@ def build_synthetic_hybrid_workspace(
 
     attestation_path = packet_root / "attestation.json"
     attestation = {
-        "claim_scope": hybrid_verifier.CLAIM_SCOPE,
+        "claim_scope": recovery_verifier.CLAIM_SCOPE,
         "corpus_on": {
             "authorized": False,
             "physical_correction_calls": 0,
             "status": corpus_on_status,
         },
-        "d3_delta_manifest": evidence_record(
+        "recovery_source_manifest": evidence_record(
             workspace_root,
-            d3_manifest_path,
+            recovery_source_manifest_path,
         ),
         "decision": evidence_record(workspace_root, decision_path),
-        "freeze_sha": hybrid_verifier.FREEZE_SHA,
+        "freeze_sha": recovery_verifier.FREEZE_SHA,
         "full_campaign_status": "NOT_EVALUATED",
         "historical_corpus_off_receipts": historical_corpus_receipts,
         "historical_identity_receipts": identity_receipts,
@@ -456,15 +470,15 @@ def build_synthetic_hybrid_workspace(
         "promotion_authorized": False,
         "replacement_replay": {
             "artifact_manifest": {
-                "records": hybrid_verifier.REPLAY_MANIFEST_RECORDS,
+                "records": recovery_verifier.REPLAY_MANIFEST_RECORDS,
                 **evidence_record(workspace_root, replay_manifest_path),
             },
             "bindings": replay_bindings,
-            "fixture": hybrid_verifier.REPLACEMENT_FIXTURE,
+            "fixture": recovery_verifier.REPLACEMENT_FIXTURE,
             "root": replay_root.relative_to(workspace_root).as_posix(),
         },
-        "schema_version": hybrid_verifier.ATTESTATION_SCHEMA_VERSION,
-        "supplemental_verifier": evidence_record(
+        "schema_version": recovery_verifier.ATTESTATION_SCHEMA_VERSION,
+        "flag_off_recovery_verifier": evidence_record(
             workspace_root,
             synthetic_verifier_path,
         ),
@@ -482,14 +496,14 @@ def build_synthetic_hybrid_workspace(
         [
             attestation_path,
             cap_packet_path,
-            d3_manifest_path,
+            recovery_source_manifest_path,
             decision_path,
         ],
         packet_manifest_path,
     )
 
     if mutate_source_after_manifest:
-        (workspace_root / d3_paths[0]).write_text(
+        (workspace_root / recovery_source_paths[0]).write_text(
             "changed after manifest\n",
             encoding="utf-8",
         )
@@ -516,17 +530,17 @@ def verify_synthetic_packet(
     **options: object,
 ) -> Any:
     """Build and verify one isolated packet variant."""
-    workspace_root, attestation_path = build_synthetic_hybrid_workspace(
+    workspace_root, attestation_path = build_synthetic_recovery_workspace(
         tmp_path,
         **options,
     )
-    return hybrid_verifier.verify_hybrid_attestation(
+    return recovery_verifier.verify_flag_off_recovery_attestation(
         workspace_root,
         attestation_path,
     )
 
 
-def test_valid_hybrid_packet_passes_only_flag_off_scope(tmp_path: Path) -> None:
+def test_valid_recovery_packet_passes_only_flag_off_scope(tmp_path: Path) -> None:
     """A valid packet emits the narrow verdict, never a full-campaign pass."""
     result = verify_synthetic_packet(tmp_path)
 
@@ -539,8 +553,14 @@ def test_valid_hybrid_packet_passes_only_flag_off_scope(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("options", "failure_fragment"),
     [
-        ({"malformed_d3_hash": True}, "D3 manifest SHA-256"),
-        ({"mutate_source_after_manifest": True}, "D3 file SHA-256 mismatch"),
+        (
+            {"malformed_source_hash": True},
+            "recovery source SHA-256",
+        ),
+        (
+            {"mutate_source_after_manifest": True},
+            "recovery source SHA-256 mismatch",
+        ),
         ({"missing_replay_proof": True}, "replay binding file is missing"),
         (
             {"physical_calls": 5, "fifth_call_attempted": True},
@@ -550,7 +570,7 @@ def test_valid_hybrid_packet_passes_only_flag_off_scope(tmp_path: Path) -> None:
         ({"identity_clean": False}, "candidate-surface: clean"),
     ],
 )
-def test_hybrid_packet_mutations_fail_closed(
+def test_recovery_packet_mutations_fail_closed(
     tmp_path: Path,
     options: dict[str, object],
     failure_fragment: str,

@@ -50,8 +50,9 @@ unchanged chunker correctly made 37: consult 1 is 559.2 seconds, so its 19.2-sec
 the complete TDT arm because the packet had copied the arithmetic instead of executing it over frozen WAV
 durations.
 **Evidence:** `var/quality/0.5.0-m00a-unified-recovery-20260718T054731Z/verification/m00a.6-tdt-audit.txt`.
-**2026-07-25 recurrence:** M05B correctly executed the production chunker and
-obtained 37 base calls, but its proposed ten-call recovery allowance assumed
+**2026-07-25 recurrence:** The flag-off recovery attestation's future-cap packet
+correctly executed the production chunker and obtained 37 base calls, but its
+proposed ten-call recovery allowance assumed
 one extra call per fixture. The frozen source invokes the retry-capable helper
 for every chunk, and device-not-ready recovery is local to each invocation;
 only word-confidence fallback is request-wide. The frozen-runtime structural
@@ -71,7 +72,7 @@ ceilings separately. Stop for renewed approval if runtime metadata differs.
 after the mutation being judged; do not attribute changes made by the preceding
 model call to a later recovery helper.
 **Trigger phase:** VERIFY
-**What happened:** The D4 application-path observer compared decoder configuration
+**What happened:** The application-path recovery observer compared decoder configuration
 immediately before call 1 with configuration immediately before call 2. NeMo
 automatically persisted `compute_timestamps=true` when the first call requested
 timestamps, so the observer incorrectly counted that call-owned side effect as a
@@ -316,7 +317,7 @@ the guard process and its error channel authoritative: allow the measured startu
 immediately if the process exits, and do not classify a still-running startup as rejection merely
 because an unratified short poll elapsed.
 
-The 2026-07-24 M05 corpus watchdog then used tmux sessions named
+The 2026-07-24 corpus-off arm watchdog then used tmux sessions named
 rediar-m05-corpus-off and rediar-m05-corpus-off-watchdog. Tmux target lookup treated the
 runner name as a prefix, so after the runner exited, has-session -t rediar-m05-corpus-off
 matched the watchdog itself and kept its monitor loop alive. Evidence:
@@ -466,8 +467,8 @@ check in an isolated command that contains only the bracketed executable/script 
 exit 1 explicitly, and combine the already-captured results afterward. Evidence:
 `background-process-scan-exits.txt` and `final-worktree-runtime-verification.txt` in the same root.
 
-The 2026-07-25 M05C midpoint verifier repeated both count and process-topology
-assumptions. Its first version used rg -c for an expected zero and received no
+The 2026-07-25 bounded corpus-on midpoint verifier repeated both count and
+process-topology assumptions. Its first version used rg -c for an expected zero and received no
 printed zero; after that was normalized, it still treated one managed runner as
 one matching OS process even though the approved timeout wrapper and its bash
 child correctly produced two matches. The arm itself, its tmux owner, and its

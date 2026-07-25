@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build and verify the CPU-only M05D corpus-quality adjudication packet.
+"""Build and verify a CPU-only rediarization corpus-quality disposition packet.
 
-The adjudicator consumes only existing sealed artifacts. It never calls the
+The disposition verifier consumes only existing sealed artifacts. It never calls the
 application runtime, GPU, model provider, correction API, or role agent, and
 it cannot emit a full-campaign pass or authorize promotion.
 """
@@ -20,32 +20,50 @@ from typing import Any, Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ACCEPTANCE_ROOT = Path("var/quality/rediar-m05-acceptance")
-CORPUS_OFF_ROOT = ACCEPTANCE_ROOT / "arms/corpus-off"
-CORPUS_ON_ROOT = ACCEPTANCE_ROOT / "arms/corpus-on"
-M05B_PACKET_ROOT = ACCEPTANCE_ROOT / "hybrid/2026-07-25_d3-flag-off-promotion2"
-M05B_VERIFICATION_ROOT = (
-    ACCEPTANCE_ROOT / "hybrid/2026-07-25_d3-flag-off-promotion2-verification"
+LEGACY_ACCEPTANCE_ROOT = Path("var/quality/rediar-m05-acceptance")
+LEGACY_CORPUS_OFF_ROOT = LEGACY_ACCEPTANCE_ROOT / "arms/corpus-off"
+LEGACY_CORPUS_ON_ROOT = LEGACY_ACCEPTANCE_ROOT / "arms/corpus-on"
+SEMANTIC_EVIDENCE_ROOT = Path("var/quality/rediarization-candidate-evaluation")
+FLAG_OFF_RECOVERY_PACKET_ROOT = (
+    SEMANTIC_EVIDENCE_ROOT / "flag-off-recovery/2026-07-25_recovered-corpus-off"
 )
-DEFAULT_PACKET_ROOT = ACCEPTANCE_ROOT / "adjudication/2026-07-25_m05d-quality1"
+DEFAULT_PACKET_ROOT = (
+    SEMANTIC_EVIDENCE_ROOT
+    / "corpus-quality-disposition/2026-07-25_reject-candidate-keep-flag-off"
+)
 
-LEGACY_ADJUDICATION_PATH = CORPUS_ON_ROOT / "legacy-full-verifier-adjudication.json"
-SOURCE_ADJUDICATION_PATH = CORPUS_ON_ROOT / "source-chip-findings-adjudication.json"
-ARM_VERIFICATION_PATH = CORPUS_ON_ROOT / "arm-verification.json"
-LEGACY_VERIFIER_PATH = ACCEPTANCE_ROOT / "verify-campaign.py"
-M05B_ATTESTATION_PATH = M05B_PACKET_ROOT / "attestation.json"
-M05B_VERIFIER_PATH = Path("scripts/verify-rediar-m05-hybrid.py")
+LEGACY_ADJUDICATION_PATH = (
+    LEGACY_CORPUS_ON_ROOT / "legacy-full-verifier-adjudication.json"
+)
+SOURCE_ADJUDICATION_PATH = (
+    LEGACY_CORPUS_ON_ROOT / "source-chip-findings-adjudication.json"
+)
+ARM_VERIFICATION_PATH = LEGACY_CORPUS_ON_ROOT / "arm-verification.json"
+LEGACY_VERIFIER_PATH = LEGACY_ACCEPTANCE_ROOT / "verify-campaign.py"
+FLAG_OFF_RECOVERY_ATTESTATION_PATH = FLAG_OFF_RECOVERY_PACKET_ROOT / "attestation.json"
+FLAG_OFF_RECOVERY_VERIFIER_PATH = Path(
+    "scripts/verify-rediarization-flag-off-recovery.py"
+)
 
 C03_FIXTURE = "primock57-day1-consultation03-i-have-terrible-headache"
 C08_FIXTURE = "primock57-day1-consultation08-i-have-dry-itchy-skin"
 D2C09_FIXTURE = "primock57-day2-consultation09-i-cant-move-my-left-arm"
 
-DECISION_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-decision/v1"
-GATE_MATRIX_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-gates/v1"
-SOURCE_MATRIX_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-source-chip/v1"
-SOURCE_IDENTITIES_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-sources/v1"
-RECEIPTS_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-receipts/v1"
-RESULT_SCHEMA_VERSION = "ambient-scribe-rediar-m05d-verifier-result/v1"
+FLAG_OFF_RECOVERY_SCHEMA_VERSION = "ambient-scribe-rediarization-flag-off-recovery/v1"
+DECISION_SCHEMA_VERSION = "ambient-scribe-rediarization-corpus-quality-decision/v1"
+GATE_MATRIX_SCHEMA_VERSION = "ambient-scribe-rediarization-corpus-quality-gates/v1"
+SOURCE_MATRIX_SCHEMA_VERSION = (
+    "ambient-scribe-rediarization-corpus-quality-source-chip-findings/v1"
+)
+SOURCE_IDENTITIES_SCHEMA_VERSION = (
+    "ambient-scribe-rediarization-corpus-quality-source-identities/v1"
+)
+RECEIPTS_SCHEMA_VERSION = (
+    "ambient-scribe-rediarization-corpus-quality-verification-receipts/v1"
+)
+RESULT_SCHEMA_VERSION = (
+    "ambient-scribe-rediarization-corpus-quality-disposition-result/v1"
+)
 
 ALLOWED_DISPOSITIONS = frozenset(
     {
@@ -101,8 +119,8 @@ FROZEN_SOURCE_HASHES = {
     "strands_agents/post_visit_correction.py": (
         "aa3d1fc40580cc942ccde1f2c71e9ce553711f08064b80a67e09ddde7935a525"
     ),
-    "scripts/verify-rediar-m05-hybrid.py": (
-        "7d3960e249a04fc2fa60645a8189ecd7d2e20ced4e76c13f17360922ca80ff69"
+    FLAG_OFF_RECOVERY_VERIFIER_PATH.as_posix(): (
+        "67619417f71eee13d8559332c0d84b3f312870b87f2f53011f5d3e3059efdc1f"
     ),
     (
         "var/quality/rediar-m05-acceptance/arms/corpus-on/verify-arm.py"
@@ -167,8 +185,8 @@ ALLOWED_GATE_PROOF_KEYS = frozenset(
         "historical_corrected_diagnostics_present",
         "historical_corrected_transcript_present",
         "legacy_reported",
-        "m05b_full_campaign_status",
-        "m05b_recovery_verdict",
+        "flag_off_recovery_full_campaign_status",
+        "flag_off_recovery_verdict",
         "off_numerator",
         "off_rate",
         "off_role",
@@ -761,7 +779,7 @@ def derive_disposition(
     gates: Iterable[dict[str, Any]],
     alerts: Iterable[dict[str, Any]],
 ) -> str:
-    """Apply the frozen rejection-first M05D decision rule."""
+    """Apply the frozen rejection-first corpus-quality decision rule."""
     entries = [*gates, *alerts]
     confirmed = any(
         (
@@ -870,7 +888,7 @@ def verify_decision_packet(
     *,
     require_read_only: bool = True,
 ) -> VerificationResult:
-    """Verify one M05D packet without mutating it."""
+    """Verify one corpus-quality disposition packet without mutating it."""
     result = VerificationResult()
     resolved_root = workspace_root.resolve()
     resolved_decision = decision_path.resolve()
@@ -905,7 +923,7 @@ def verify_decision_packet(
     _verify_no_wording_keys(result, decision, "decision")
     if decision.get("schema_version") != DECISION_SCHEMA_VERSION:
         result.fail("decision schema_version is invalid")
-    if decision.get("claim_scope") != "sealed CPU-only quality adjudication":
+    if decision.get("claim_scope") != "sealed CPU-only corpus-quality disposition":
         result.fail("decision claim_scope is invalid")
     if decision.get("disposition") not in ALLOWED_DISPOSITIONS:
         result.fail("decision disposition is not one of the three allowed values")
@@ -1074,22 +1092,16 @@ def _verify_frozen_inputs(workspace_root: Path) -> None:
     checks = VerificationResult()
     selected_manifests = (
         (
-            workspace_root / CORPUS_ON_ROOT,
-            workspace_root / CORPUS_ON_ROOT / "artifact-manifest.sha256",
-            "M05C artifact manifest",
+            workspace_root / LEGACY_CORPUS_ON_ROOT,
+            workspace_root / LEGACY_CORPUS_ON_ROOT / "artifact-manifest.sha256",
+            "bounded corpus-on artifact manifest",
             167,
         ),
         (
-            workspace_root / M05B_PACKET_ROOT,
-            workspace_root / M05B_PACKET_ROOT / "packet-manifest.sha256",
-            "M05B packet manifest",
+            workspace_root / FLAG_OFF_RECOVERY_PACKET_ROOT,
+            workspace_root / FLAG_OFF_RECOVERY_PACKET_ROOT / "packet-manifest.sha256",
+            "flag-off recovery packet manifest",
             5,
-        ),
-        (
-            workspace_root / M05B_VERIFICATION_ROOT,
-            workspace_root / M05B_VERIFICATION_ROOT / "artifact-manifest.sha256",
-            "M05B verification manifest",
-            23,
         ),
     )
     for root, manifest, label, expected_records in selected_manifests:
@@ -1261,12 +1273,12 @@ def _build_c03_gates(
     """Recompute the single c03 row regression behind two legacy gates."""
     off_segments, off_rows, off_paths = _load_fixture_lane(
         workspace_root,
-        CORPUS_OFF_ROOT,
+        LEGACY_CORPUS_OFF_ROOT,
         C03_FIXTURE,
     )
     on_segments, on_rows, on_paths = _load_fixture_lane(
         workspace_root,
-        CORPUS_ON_ROOT,
+        LEGACY_CORPUS_ON_ROOT,
         C03_FIXTURE,
     )
     _require(
@@ -1395,22 +1407,22 @@ def _build_c08_gates(
     """Recompute c08 rates and fingerprint the first text-alignment failure."""
     off_segments, off_rows, off_paths = _load_fixture_lane(
         workspace_root,
-        CORPUS_OFF_ROOT,
+        LEGACY_CORPUS_OFF_ROOT,
         C08_FIXTURE,
     )
     on_segments, on_rows, on_paths = _load_fixture_lane(
         workspace_root,
-        CORPUS_ON_ROOT,
+        LEGACY_CORPUS_ON_ROOT,
         C08_FIXTURE,
     )
     off_summary, off_diag_path = _diagnostic_summary(
         workspace_root,
-        CORPUS_OFF_ROOT,
+        LEGACY_CORPUS_OFF_ROOT,
         C08_FIXTURE,
     )
     on_summary, on_diag_path = _diagnostic_summary(
         workspace_root,
-        CORPUS_ON_ROOT,
+        LEGACY_CORPUS_ON_ROOT,
         C08_FIXTURE,
     )
     _require(
@@ -1519,11 +1531,47 @@ def _parse_json_log_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _validate_flag_off_recovery_attestation(
+    document: dict[str, Any],
+) -> None:
+    """Require the frozen recovery result to retain its narrow authority."""
+    _require(
+        document.get("schema_version") == FLAG_OFF_RECOVERY_SCHEMA_VERSION,
+        "flag-off recovery schema drifted",
+    )
+    _require(
+        document.get("claim_scope")
+        == "flag-off recovery availability/correctness only",
+        "flag-off recovery claim scope drifted",
+    )
+    _require(
+        document.get("verdict") == "PASS_HYBRID_FLAG_OFF",
+        "flag-off recovery verdict drifted",
+    )
+    _require(
+        document.get("full_campaign_status") == "NOT_EVALUATED",
+        "flag-off recovery full-campaign scope drifted",
+    )
+    _require(
+        document.get("promotion_authorized") is False,
+        "flag-off recovery unexpectedly authorizes promotion",
+    )
+    _require(
+        document.get("corpus_on")
+        == {
+            "authorized": False,
+            "physical_correction_calls": 0,
+            "status": "NOT_EVALUATED",
+        },
+        "flag-off recovery corpus-on boundary drifted",
+    )
+
+
 def _build_historical_gates(
     workspace_root: Path,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
     """Mechanically retain the two known historical d2c09 gaps."""
-    fixture_root = workspace_root / CORPUS_OFF_ROOT / "corpus" / D2C09_FIXTURE
+    fixture_root = workspace_root / LEGACY_CORPUS_OFF_ROOT / "corpus" / D2C09_FIXTURE
     diagnostics_path = fixture_root / "corrected-row-diagnostics.json"
     transcript_path = fixture_root / "corrected-transcript.json"
     _require(
@@ -1532,7 +1580,7 @@ def _build_historical_gates(
     )
 
     quality_path = fixture_root / "quality.json"
-    log_path = workspace_root / CORPUS_OFF_ROOT / "correction-logs.txt"
+    log_path = workspace_root / LEGACY_CORPUS_OFF_ROOT / "correction-logs.txt"
     quality = _load_build_json(quality_path, "historical d2c09 quality")
     session_id = quality.get("session_id")
     _require(isinstance(session_id, str) and session_id, "session ID is missing")
@@ -1547,20 +1595,12 @@ def _build_historical_gates(
         "historical d2c09 completion event is no longer absent",
     )
 
-    attestation_path = workspace_root / M05B_ATTESTATION_PATH
-    attestation = _load_build_json(attestation_path, "M05B attestation")
-    _require(
-        attestation.get("verdict") == "PASS_HYBRID_FLAG_OFF",
-        "M05B recovery verdict drifted",
+    attestation_path = workspace_root / FLAG_OFF_RECOVERY_ATTESTATION_PATH
+    attestation = _load_build_json(
+        attestation_path,
+        "flag-off recovery attestation",
     )
-    _require(
-        attestation.get("full_campaign_status") == "NOT_EVALUATED",
-        "M05B full-campaign scope drifted",
-    )
-    _require(
-        attestation.get("promotion_authorized") is False,
-        "M05B unexpectedly authorizes promotion",
-    )
+    _validate_flag_off_recovery_attestation(attestation)
 
     common = {
         "blocking_effect": "SUPPLEMENTAL_COMPARISON_REQUIRED",
@@ -1582,8 +1622,8 @@ def _build_historical_gates(
                     "historical_corrected_diagnostics_present": False,
                     "historical_corrected_transcript_present": False,
                     "legacy_reported": True,
-                    "m05b_full_campaign_status": "NOT_EVALUATED",
-                    "m05b_recovery_verdict": "PASS_HYBRID_FLAG_OFF",
+                    "flag_off_recovery_full_campaign_status": "NOT_EVALUATED",
+                    "flag_off_recovery_verdict": "PASS_HYBRID_FLAG_OFF",
                 },
             },
             {
@@ -1594,8 +1634,8 @@ def _build_historical_gates(
                 "proof": {
                     "completion_event_count": 0,
                     "legacy_reported": True,
-                    "m05b_full_campaign_status": "NOT_EVALUATED",
-                    "m05b_recovery_verdict": "PASS_HYBRID_FLAG_OFF",
+                    "flag_off_recovery_full_campaign_status": "NOT_EVALUATED",
+                    "flag_off_recovery_verdict": "PASS_HYBRID_FLAG_OFF",
                 },
             },
         ],
@@ -1624,8 +1664,8 @@ def _fixture_lane_index(
         ],
     ] = {}
     for arm_name, arm_root in (
-        ("off", CORPUS_OFF_ROOT),
-        ("on", CORPUS_ON_ROOT),
+        ("off", LEGACY_CORPUS_OFF_ROOT),
+        ("on", LEGACY_CORPUS_ON_ROOT),
     ):
         key = (arm_name, fixture)
         if key not in cache:
@@ -1915,10 +1955,9 @@ def _source_identity_paths(
         workspace_root / LEGACY_ADJUDICATION_PATH,
         workspace_root / SOURCE_ADJUDICATION_PATH,
         workspace_root / ARM_VERIFICATION_PATH,
-        workspace_root / M05B_ATTESTATION_PATH,
-        workspace_root / CORPUS_ON_ROOT / "artifact-manifest.sha256",
-        workspace_root / M05B_PACKET_ROOT / "packet-manifest.sha256",
-        workspace_root / M05B_VERIFICATION_ROOT / "artifact-manifest.sha256",
+        workspace_root / FLAG_OFF_RECOVERY_ATTESTATION_PATH,
+        workspace_root / LEGACY_CORPUS_ON_ROOT / "artifact-manifest.sha256",
+        workspace_root / FLAG_OFF_RECOVERY_PACKET_ROOT / "packet-manifest.sha256",
         *(workspace_root / raw_path for raw_path in FROZEN_SOURCE_HASHES),
         *consumed_paths,
     ]
@@ -1996,7 +2035,7 @@ def _decision_markdown(disposition: str) -> str:
     """Render a narrow, wording-free operator decision."""
     return "\n".join(
         [
-            "# M05D candidate disposition",
+            "# Rediarization corpus-quality disposition",
             "",
             f"Disposition: {disposition}",
             "Promotion authorized: false.",
@@ -2042,7 +2081,7 @@ def build_quality_packet(
     packet_root: Path,
     receipts_path: Path,
 ) -> VerificationResult:
-    """Build, manifest, seal, and reverify one M05D decision packet."""
+    """Build, manifest, seal, and reverify one corpus-quality packet."""
     resolved_root = workspace_root.resolve()
     resolved_packet = (
         packet_root if packet_root.is_absolute() else resolved_root / packet_root
@@ -2107,7 +2146,7 @@ def build_quality_packet(
     write_json(
         decision_path,
         {
-            "claim_scope": "sealed CPU-only quality adjudication",
+            "claim_scope": "sealed CPU-only corpus-quality disposition",
             "decision_markdown": _evidence_record(
                 resolved_root,
                 decision_markdown_path,
@@ -2193,13 +2232,13 @@ def _parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser(
         "verify",
-        help="verify an existing sealed M05D packet",
+        help="verify an existing sealed corpus-quality disposition packet",
     )
     verify_parser.add_argument("--packet", type=Path, required=True)
 
     build_parser = subparsers.add_parser(
         "build",
-        help="build and seal the CPU-only M05D packet",
+        help="build and seal a CPU-only corpus-quality disposition packet",
     )
     build_parser.add_argument(
         "--packet-root",

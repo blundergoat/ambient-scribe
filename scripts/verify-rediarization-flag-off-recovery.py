@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build and verify the M05B hybrid flag-off promotion evidence packet.
+"""Build and verify the flag-off recovery evidence packet.
 
 This verifier deliberately cannot emit a full-campaign pass. It binds the
-historical frozen-arm receipts, the amended six-file D3 source delta, and the
-sealed replacement replay while requiring corpus-on to remain NOT_EVALUATED.
+historical frozen-arm receipts, the amended six-file recovery source delta,
+and the sealed replacement replay while requiring corpus-on to remain
+NOT_EVALUATED.
 """
 
 from __future__ import annotations
@@ -22,21 +23,24 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ACCEPTANCE_ROOT = Path("var/quality/rediar-m05-acceptance")
-DEFAULT_PACKET_ROOT = ACCEPTANCE_ROOT / "hybrid/2026-07-25_d3-flag-off-promotion1"
+LEGACY_ACCEPTANCE_ROOT = Path("var/quality/rediar-m05-acceptance")
+SEMANTIC_EVIDENCE_ROOT = Path("var/quality/rediarization-candidate-evaluation")
+DEFAULT_PACKET_ROOT = (
+    SEMANTIC_EVIDENCE_ROOT / "flag-off-recovery/2026-07-25_recovered-corpus-off"
+)
 DEFAULT_REPLAY_ROOT = (
-    ACCEPTANCE_ROOT / "diagnostics/2026-07-25_d2c09-d3-recovery-only-replay1"
+    LEGACY_ACCEPTANCE_ROOT / "diagnostics/2026-07-25_d2c09-d3-recovery-only-replay1"
 )
 
-ATTESTATION_SCHEMA_VERSION = "ambient-scribe-rediar-m05-hybrid/v1"
-CAP_SCHEMA_VERSION = "ambient-scribe-rediar-m05-future-cap/v1"
+ATTESTATION_SCHEMA_VERSION = "ambient-scribe-rediarization-flag-off-recovery/v1"
+CAP_SCHEMA_VERSION = "ambient-scribe-rediarization-future-call-cap/v1"
 FREEZE_SHA = "dc91eae7508ba7e784f78b589204cd8c27969a5a"
 CLAIM_SCOPE = "flag-off recovery availability/correctness only"
 REPLACEMENT_FIXTURE = "primock57-day2-consultation09-i-cant-move-my-left-arm"
 REPLAY_MANIFEST_RECORDS = 97
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
-D3_DELTA_PATHS = (
+RECOVERY_SOURCE_PATHS = (
     "strands_agents/nemo_confidence.py",
     "strands_agents/post_visit_word_timing.py",
     "strands_agents/post_visit_correction.py",
@@ -75,7 +79,7 @@ REPLAY_STATUS = "pass_with_nonblocking_truth_aligned_scorer_findings"
 
 @dataclass
 class VerificationResult:
-    """Collect a narrow hybrid verdict without ever promoting the full campaign."""
+    """Collect a narrow recovery verdict without promoting the full campaign."""
 
     failures: list[str] = field(default_factory=list)
     checks: dict[str, Any] = field(default_factory=dict)
@@ -93,7 +97,7 @@ class VerificationResult:
             self.failures.append(reason)
 
     def finish(self) -> VerificationResult:
-        """Set the only successful verdict this supplemental gate may emit."""
+        """Set the only successful verdict this recovery gate may emit."""
         if self.ok:
             self.verdict = "PASS_HYBRID_FLAG_OFF"
         return self
@@ -320,7 +324,7 @@ def _verify_packet_manifest(
     require_packet_manifest: bool,
     require_read_only: bool,
 ) -> None:
-    """Verify the supplemental packet's own sealed artifact manifest."""
+    """Verify the recovery packet's own sealed artifact manifest."""
     if not require_packet_manifest:
         return
     manifest_path = _root_confined_path(
@@ -354,7 +358,7 @@ def _verify_packet_manifest(
     required_names = {
         "attestation.json",
         "decision.md",
-        "d3-delta-manifest.tsv",
+        "recovery-source-manifest.tsv",
         "future-cap-packet.json",
     }
     if not required_names.issubset(records):
@@ -362,31 +366,31 @@ def _verify_packet_manifest(
         result.fail(f"packet manifest is missing required records: {missing}")
 
 
-def _verify_d3_delta_manifest(
+def _verify_recovery_source_manifest(
     result: VerificationResult,
     workspace_root: Path,
     attestation: dict[str, Any],
 ) -> dict[str, str]:
-    """Require exactly the three D3 production and three focused test files."""
+    """Require exactly the three recovery sources and three focused tests."""
     manifest_path = _verify_file_record(
         result,
         workspace_root,
-        attestation.get("d3_delta_manifest"),
-        "D3 delta manifest",
+        attestation.get("recovery_source_manifest"),
+        "recovery source manifest",
     )
     if manifest_path is None:
         return {}
     try:
         lines = manifest_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as error:
-        result.fail(f"D3 delta manifest cannot be read: {error}")
+        result.fail(f"recovery source manifest cannot be read: {error}")
         return {}
     if not lines or lines[0] != "path\tbytes\tsha256":
-        result.fail("D3 delta manifest header must be path<TAB>bytes<TAB>sha256")
+        result.fail("recovery source manifest header must be path<TAB>bytes<TAB>sha256")
         return {}
-    if len(lines) != len(D3_DELTA_PATHS) + 1:
+    if len(lines) != len(RECOVERY_SOURCE_PATHS) + 1:
         result.fail(
-            "D3 delta manifest must contain exactly six records "
+            "recovery source manifest must contain exactly six records "
             f"(got {max(0, len(lines) - 1)})"
         )
 
@@ -395,41 +399,45 @@ def _verify_d3_delta_manifest(
     for record_index, line in enumerate(lines[1:], start=1):
         fields = line.split("\t")
         if len(fields) != 3:
-            result.fail(f"D3 manifest record {record_index} has invalid shape")
+            result.fail(
+                f"recovery source manifest record {record_index} has invalid shape"
+            )
             continue
         raw_path, raw_bytes, expected_sha256 = fields
         observed_paths.append(raw_path)
         if raw_path in records:
-            result.fail(f"D3 manifest contains duplicate path: {raw_path}")
+            result.fail(f"recovery source manifest duplicates path: {raw_path}")
             continue
         if not raw_bytes.isdigit():
-            result.fail(f"D3 manifest byte count must be decimal: {raw_path!r}")
+            result.fail(f"recovery source byte count must be decimal: {raw_path!r}")
             continue
         if SHA256_PATTERN.fullmatch(expected_sha256) is None:
-            result.fail(f"D3 manifest SHA-256 must be 64 lowercase hex: {raw_path!r}")
+            result.fail(
+                f"recovery source SHA-256 must be 64 lowercase hex: {raw_path!r}"
+            )
             continue
         path = _root_confined_path(
             result,
             workspace_root,
             raw_path,
-            f"D3 manifest record {record_index}",
+            f"recovery source manifest record {record_index}",
         )
         if path is None:
             continue
         if not path.is_file():
-            result.fail(f"D3 file is missing: {raw_path}")
+            result.fail(f"recovery source file is missing: {raw_path}")
             continue
         if path.stat().st_size != int(raw_bytes):
-            result.fail(f"D3 file byte count mismatch: {raw_path}")
+            result.fail(f"recovery source byte count mismatch: {raw_path}")
         if file_sha256(path) != expected_sha256:
-            result.fail(f"D3 file SHA-256 mismatch: {raw_path}")
+            result.fail(f"recovery source SHA-256 mismatch: {raw_path}")
         records[raw_path] = expected_sha256
 
-    if tuple(observed_paths) != D3_DELTA_PATHS:
+    if tuple(observed_paths) != RECOVERY_SOURCE_PATHS:
         result.fail(
-            "D3 manifest paths/order must be exactly the approved six-file delta"
+            "recovery source paths/order must match the approved six-file delta"
         )
-    result.checks["d3_delta_records"] = len(records)
+    result.checks["recovery_source_records"] = len(records)
     return records
 
 
@@ -459,7 +467,9 @@ def _verify_historical_identity_receipts(
         arm = receipt.get("arm")
         if arm not in HISTORICAL_IDENTITY_ARMS:
             continue
-        expected_path = f"{ACCEPTANCE_ROOT.as_posix()}/arms/{arm}/identity-check.txt"
+        expected_path = (
+            f"{LEGACY_ACCEPTANCE_ROOT.as_posix()}/arms/{arm}/identity-check.txt"
+        )
         path = _verify_file_record(
             result,
             workspace_root,
@@ -529,7 +539,7 @@ def _verify_historical_corpus_receipts(
         if receipt.get("expected_chunks") != expected_chunks:
             result.fail(f"historical corpus-off expected_chunks mismatch: {fixture}")
         expected_path = (
-            f"{ACCEPTANCE_ROOT.as_posix()}/arms/corpus-off/corpus/"
+            f"{LEGACY_ACCEPTANCE_ROOT.as_posix()}/arms/corpus-off/corpus/"
             f"{fixture}/correction-response.json"
         )
         path = _verify_file_record(
@@ -844,7 +854,7 @@ def _verify_cap_packet(
     result: VerificationResult,
     workspace_root: Path,
     attestation: dict[str, Any],
-    d3_hashes: dict[str, str],
+    recovery_source_hashes: dict[str, str],
 ) -> None:
     """Verify executable future-arm arithmetic without granting authorization."""
     cap_path = _verify_file_record(
@@ -875,10 +885,10 @@ def _verify_cap_packet(
         "production chunker",
         expected_path=chunker_path,
     )
-    if production_chunker is not None and d3_hashes.get(chunker_path) != file_sha256(
-        production_chunker
-    ):
-        result.fail("future cap packet chunker hash is not the D3-bound hash")
+    if production_chunker is not None and recovery_source_hashes.get(
+        chunker_path
+    ) != file_sha256(production_chunker):
+        result.fail("future cap packet chunker hash is not recovery-source-bound")
     _verify_file_record(
         result,
         workspace_root,
@@ -967,22 +977,22 @@ def _verify_bound_tooling_and_decision(
     _verify_file_record(
         result,
         workspace_root,
-        attestation.get("supplemental_verifier"),
-        "supplemental verifier",
-        expected_path="scripts/verify-rediar-m05-hybrid.py",
+        attestation.get("flag_off_recovery_verifier"),
+        "flag-off recovery verifier",
+        expected_path="scripts/verify-rediarization-flag-off-recovery.py",
     )
     _verify_file_record(
         result,
         workspace_root,
         attestation.get("legacy_full_verifier"),
         "legacy full verifier",
-        expected_path=(f"{ACCEPTANCE_ROOT.as_posix()}/verify-campaign.py"),
+        expected_path=(f"{LEGACY_ACCEPTANCE_ROOT.as_posix()}/verify-campaign.py"),
     )
     decision_path = _verify_file_record(
         result,
         workspace_root,
         attestation.get("decision"),
-        "hybrid decision",
+        "flag-off recovery decision",
     )
     if decision_path is None:
         return
@@ -996,17 +1006,19 @@ def _verify_bound_tooling_and_decision(
     )
     for statement in required_statements:
         if decision.count(statement) != 1:
-            result.fail(f"hybrid decision must contain exactly one {statement!r}")
+            result.fail(
+                f"flag-off recovery decision must contain exactly one {statement!r}"
+            )
 
 
-def verify_hybrid_attestation(
+def verify_flag_off_recovery_attestation(
     workspace_root: Path,
     attestation_path: Path,
     *,
     require_packet_manifest: bool = True,
     require_read_only: bool = True,
 ) -> VerificationResult:
-    """Verify one hybrid packet against a workspace without mutating either."""
+    """Verify one recovery packet against a workspace without mutation."""
     result = VerificationResult()
     resolved_root = workspace_root.resolve()
     resolved_attestation = attestation_path.resolve()
@@ -1022,7 +1034,7 @@ def verify_hybrid_attestation(
     attestation = _load_json(
         result,
         resolved_attestation,
-        "hybrid attestation",
+        "flag-off recovery attestation",
     )
     if attestation is None:
         return result.finish()
@@ -1036,7 +1048,7 @@ def verify_hybrid_attestation(
         require_packet_manifest=require_packet_manifest,
         require_read_only=require_read_only,
     )
-    d3_hashes = _verify_d3_delta_manifest(
+    recovery_source_hashes = _verify_recovery_source_manifest(
         result,
         resolved_root,
         attestation,
@@ -1061,7 +1073,7 @@ def verify_hybrid_attestation(
         result,
         resolved_root,
         attestation,
-        d3_hashes,
+        recovery_source_hashes,
     )
     _verify_bound_tooling_and_decision(
         result,
@@ -1122,7 +1134,9 @@ def _production_chunk_counts(
     }
     sample_rate = 100
     counts: dict[str, int] = {}
-    with tempfile.TemporaryDirectory(prefix="m05b-cap-") as temporary_root:
+    with tempfile.TemporaryDirectory(
+        prefix="rediarization-recovery-cap-"
+    ) as temporary_root:
         temporary_path = Path(temporary_root)
         for fixture, duration in durations.items():
             surrogate_path = temporary_path / f"{fixture}.wav"
@@ -1156,7 +1170,7 @@ def _build_future_cap_packet(
     )
     if chunk_counts != CORPUS_CHUNK_VECTOR:
         raise ValueError(
-            "production chunk vector differs from the approved M05 vector: "
+            "production chunk vector differs from the approved recovery vector: "
             f"{chunk_counts}"
         )
 
@@ -1210,16 +1224,16 @@ def _build_future_cap_packet(
     }
 
 
-def _write_d3_manifest(
+def _write_recovery_source_manifest(
     workspace_root: Path,
     manifest_path: Path,
 ) -> None:
-    """Write the exact six-record D3 delta manifest."""
+    """Write the exact six-record recovery source manifest."""
     lines = ["path\tbytes\tsha256"]
-    for raw_path in D3_DELTA_PATHS:
+    for raw_path in RECOVERY_SOURCE_PATHS:
         path = workspace_root / raw_path
         if not path.is_file():
-            raise ValueError(f"D3 file is missing: {raw_path}")
+            raise ValueError(f"recovery source file is missing: {raw_path}")
         lines.append(f"{raw_path}\t{path.stat().st_size}\t{file_sha256(path)}")
     manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1228,7 +1242,13 @@ def _historical_receipts(workspace_root: Path) -> list[dict[str, object]]:
     """Bind all three historical identity receipt files."""
     receipts: list[dict[str, object]] = []
     for arm in HISTORICAL_IDENTITY_ARMS:
-        path = workspace_root / ACCEPTANCE_ROOT / "arms" / arm / "identity-check.txt"
+        path = (
+            workspace_root
+            / LEGACY_ACCEPTANCE_ROOT
+            / "arms"
+            / arm
+            / "identity-check.txt"
+        )
         receipts.append(
             {
                 "arm": arm,
@@ -1248,7 +1268,7 @@ def _historical_corpus_receipts(
             continue
         path = (
             workspace_root
-            / ACCEPTANCE_ROOT
+            / LEGACY_ACCEPTANCE_ROOT
             / "arms/corpus-off/corpus"
             / fixture
             / "correction-response.json"
@@ -1300,12 +1320,12 @@ def _write_packet_manifest(
     return manifest_path
 
 
-def build_hybrid_packet(
+def build_flag_off_recovery_packet(
     workspace_root: Path,
     packet_root: Path,
     replay_root: Path,
 ) -> VerificationResult:
-    """Create, pre-verify, manifest, and seal a new M05B evidence packet."""
+    """Create, pre-verify, manifest, and seal a recovery evidence packet."""
     resolved_root = workspace_root.resolve()
     resolved_packet = (
         packet_root if packet_root.is_absolute() else resolved_root / packet_root
@@ -1331,8 +1351,11 @@ def build_hybrid_packet(
 
     resolved_packet.mkdir(parents=True)
     try:
-        d3_manifest_path = resolved_packet / "d3-delta-manifest.tsv"
-        _write_d3_manifest(resolved_root, d3_manifest_path)
+        recovery_source_manifest_path = resolved_packet / "recovery-source-manifest.tsv"
+        _write_recovery_source_manifest(
+            resolved_root,
+            recovery_source_manifest_path,
+        )
 
         cap_packet_path = resolved_packet / "future-cap-packet.json"
         _write_json(
@@ -1344,7 +1367,7 @@ def build_hybrid_packet(
         decision_path.write_text(
             "\n".join(
                 [
-                    "# M05B hybrid flag-off decision",
+                    "# Flag-off recovery decision",
                     "",
                     "Verdict: PASS_HYBRID_FLAG_OFF",
                     "Claim: flag-off recovery availability/correctness only.",
@@ -1377,9 +1400,9 @@ def build_hybrid_packet(
                 "physical_correction_calls": 0,
                 "status": "NOT_EVALUATED",
             },
-            "d3_delta_manifest": _record_for_path(
+            "recovery_source_manifest": _record_for_path(
                 resolved_root,
-                d3_manifest_path,
+                recovery_source_manifest_path,
             ),
             "decision": _record_for_path(resolved_root, decision_path),
             "freeze_sha": FREEZE_SHA,
@@ -1394,7 +1417,7 @@ def build_hybrid_packet(
             "historical_identity_receipts": _historical_receipts(resolved_root),
             "legacy_full_verifier": _record_for_path(
                 resolved_root,
-                resolved_root / ACCEPTANCE_ROOT / "verify-campaign.py",
+                (resolved_root / LEGACY_ACCEPTANCE_ROOT / "verify-campaign.py"),
             ),
             "packet_manifest_path": packet_manifest_path.relative_to(
                 resolved_root
@@ -1405,15 +1428,15 @@ def build_hybrid_packet(
                 resolved_replay,
             ),
             "schema_version": ATTESTATION_SCHEMA_VERSION,
-            "supplemental_verifier": _record_for_path(
+            "flag_off_recovery_verifier": _record_for_path(
                 resolved_root,
-                resolved_root / "scripts/verify-rediar-m05-hybrid.py",
+                (resolved_root / "scripts/verify-rediarization-flag-off-recovery.py"),
             ),
             "verdict": "PASS_HYBRID_FLAG_OFF",
         }
         _write_json(attestation_path, attestation)
 
-        preseal_result = verify_hybrid_attestation(
+        preseal_result = verify_flag_off_recovery_attestation(
             resolved_root,
             attestation_path,
             require_packet_manifest=False,
@@ -1421,7 +1444,7 @@ def build_hybrid_packet(
         )
         if not preseal_result.ok:
             return preseal_result
-        preseal_path = resolved_packet / "hybrid-verifier-preseal.json"
+        preseal_path = resolved_packet / "flag-off-recovery-verifier-preseal.json"
         _write_json(preseal_path, preseal_result.as_document())
 
         manifest_path = _write_packet_manifest(
@@ -1429,7 +1452,7 @@ def build_hybrid_packet(
             [
                 attestation_path,
                 cap_packet_path,
-                d3_manifest_path,
+                recovery_source_manifest_path,
                 decision_path,
                 preseal_path,
             ],
@@ -1439,10 +1462,10 @@ def build_hybrid_packet(
         resolved_packet.chmod(0o555)
     except (ImportError, OSError, ValueError) as error:
         result = VerificationResult()
-        result.fail(f"hybrid packet build failed: {error}")
+        result.fail(f"flag-off recovery packet build failed: {error}")
         return result.finish()
 
-    return verify_hybrid_attestation(
+    return verify_flag_off_recovery_attestation(
         resolved_root,
         attestation_path,
     )
@@ -1461,13 +1484,13 @@ def _parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser(
         "verify",
-        help="verify an existing sealed hybrid packet",
+        help="verify an existing sealed flag-off recovery packet",
     )
     verify_parser.add_argument("--attestation", type=Path, required=True)
 
     build_parser = subparsers.add_parser(
         "build",
-        help="build and seal a new hybrid packet",
+        help="build and seal a new flag-off recovery packet",
     )
     build_parser.add_argument(
         "--packet-root",
@@ -1483,11 +1506,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Run one supplemental build or verification without broadening scope."""
+    """Run one recovery build or verification without broadening scope."""
     arguments = _parser().parse_args()
     workspace_root = arguments.repo_root.resolve()
     if arguments.command == "build":
-        result = build_hybrid_packet(
+        result = build_flag_off_recovery_packet(
             workspace_root,
             arguments.packet_root,
             arguments.replay_root,
@@ -1496,7 +1519,7 @@ def main() -> int:
         attestation_path = arguments.attestation
         if not attestation_path.is_absolute():
             attestation_path = workspace_root / attestation_path
-        result = verify_hybrid_attestation(
+        result = verify_flag_off_recovery_attestation(
             workspace_root,
             attestation_path,
         )

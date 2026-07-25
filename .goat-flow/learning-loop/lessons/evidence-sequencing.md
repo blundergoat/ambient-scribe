@@ -14,8 +14,8 @@ sealing steps were performed in an order that invalidated their evidence.
 **Decision changed:** Run formatter/check before any write-once manifest binds a
 tool's source bytes; rerun behavior tests after formatting and seal only those final bytes.
 **Trigger phase:** VERIFY
-**What happened:** M05B sealed a hybrid attestation that self-bound its supplemental
-verifier before running `ruff format --check`. The formatter changed only verifier/test
+**What happened:** The flag-off recovery attestation build sealed a packet that self-bound
+its supplemental verifier before running `ruff format --check`. The formatter changed only verifier/test
 layout, but that correctly invalidated the first packet's byte count and SHA-256. The
 sealed attempt was preserved and a second packet was built instead of altering evidence.
 **Evidence:**

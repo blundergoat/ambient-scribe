@@ -39,8 +39,9 @@ placeholder tokens. Only then compare duplicates, presence, sizes, hashes, and w
 **Decision changed:** Define comparison fields and the authoritative measurement boundary before running a
 promotion verifier; preserve a failed raw result when correcting only verifier semantics.
 **Trigger phase:** VERIFY
-**What happened:** The M05A replacement replay produced corrected and live segment arrays exactly equal to
-the prior accepted D3 replay. Its first verifier nevertheless rejected the final corrected row because it
+**What happened:** The recovery-only replacement replay produced corrected and live segment arrays exactly
+equal to the prior accepted full flag-off replay. Its first verifier nevertheless rejected the final
+corrected row because it
 used the artifact's rounded `duration_seconds=430.1` instead of the frozen input clip's 432.24-second
 boundary; the row ended at 430.13 seconds. A second comparison then reported different scorer findings only
 because each otherwise identical finding embedded its run-specific `artifact_path`. Both failed results
@@ -61,15 +62,16 @@ spend.
 **Decision changed:** Separate candidate-on truth classification from cross-arm candidate causality; require
 a historical comparison lane only for claims that actually depend on it.
 **Trigger phase:** VERIFY
-**What happened:** The first M05D build tried to load a corpus-off corrected transcript for every source-chip
-alert and stopped on d2c09. That transcript is intentionally absent and already recorded as a historical
+**What happened:** The first corpus-quality disposition build tried to load a corpus-off corrected transcript
+for every source-chip alert and stopped on d2c09. That transcript is intentionally absent and already recorded as a historical
 legacy gap. The d2c09 alerts in scope were independently truth-aligned candidate-on heuristic false
 positives, so clearing those heuristic alerts did not require an off-lane row. The corrected adjudicator
 records the baseline as unavailable: candidate-on truth may clear a false positive, while any role-error or
 unscored causality claim without a comparison remains unverified. The failed build stopped before creating
 the evidence root.
-**Evidence:** `scripts/verify-rediar-m05d-quality.py` (search: `def classify_source_finding`) separates truth
-status from candidate causality, and `tests/python/test_rediar_m05d_quality_verifier.py` (search:
+**Evidence:** `scripts/verify-rediarization-corpus-quality-disposition.py` (search:
+`def classify_source_finding`) separates truth status from candidate causality, and
+`tests/python/test_rediarization_corpus_quality_disposition_verifier.py` (search:
 `test_truth_aligned_alert_does_not_require_historical_off_lane`) pins the known-missing-lane case.
 **Prevention:** Before cross-mapping alerts, identify which fields prove truth status and which prove
 candidate causality. Load only available frozen lanes, encode missing comparison evidence explicitly, and

@@ -1,9 +1,9 @@
 # ADR-010: Two-Witness Span Replacement for the Corrected Transcript
 
-**Status:** Rejected (M05 corpus verdict; human-approved 2026-07-25)
+**Status:** Rejected (corpus-quality rejection decision; human-approved 2026-07-25)
 **Date:** 2026-07-21
 **Resolved:** 2026-07-25
-**Ticket/Context:** post-stop-rediarization M03-M05E
+**Ticket/Context:** Post-stop rediarization candidate evaluation, from the frozen replacement policy through the corpus-quality rejection decision
 
 ## Context
 
@@ -17,16 +17,17 @@ policy therefore cannot trust any single witness.
 ## Decision
 
 Reject the two-witness span-replacement policy as a promotable correction
-policy. The M05 corpus gate confirmed substantive candidate regressions, so
-the candidate line ends without threshold tuning, a default flip, or a
-supplemental comparison. `NEMO_CORRECTION_REDIARIZATION` remains 0 in the
-restored operator state. The experimental implementation remains default-off
-pending any separately scoped removal decision; its presence is not
-acceptance or release authorization.
+policy. The bounded corpus-on evaluation confirmed substantive candidate
+regressions, so the candidate line ends without threshold tuning, a default
+flip, or a supplemental comparison. `NEMO_CORRECTION_REDIARIZATION` remains 0
+in the restored operator state. The experimental implementation remains
+default-off pending any separately scoped removal decision; its presence is
+not acceptance or release authorization.
 
-M05B's `PASS_HYBRID_FLAG_OFF` and M05C's `PASS_CORPUS_ON_EXECUTION` remain
-limited execution receipts. They do not override M05D's human-approved
-`REJECT_CANDIDATE_KEEP_FLAG_OFF` quality disposition.
+The flag-off recovery attestation's `PASS_HYBRID_FLAG_OFF` and the bounded
+corpus-on execution's `PASS_CORPUS_ON_EXECUTION` remain limited execution
+receipts. Neither overrides the human-approved
+`REJECT_CANDIDATE_KEEP_FLAG_OFF` corpus-quality rejection decision.
 
 ## Evaluated policy
 
@@ -63,7 +64,7 @@ without a settled role routes the span to the review lane as UNKNOWN.
   scripts/rediar-span-comparer.py; grading ledger in
   var/quality/rediar-m03-policy/.
 
-## M05 corpus verdict
+## Corpus-quality rejection decision
 
 - On c03, corrected row index 220 / `corrected-0221` is time- and
   fingerprint-aligned across arms. It changes from expected and visible DOCTOR
@@ -78,11 +79,14 @@ without a settled role routes the span to the review lane as UNKNOWN.
 - Available aggregate rates improve, but the frozen campaign contract
   prohibits aggregate improvement from waiving a causal-row or per-fixture
   regression.
-- The sealed M05D packet records `promotion_authorized=false`,
-  `full_campaign_pass=false`, and `runtime_calls_added=0`. The human approved
-  its rejection disposition on 2026-07-25.
+- The sealed corpus-quality disposition packet records
+  `promotion_authorized=false`, `full_campaign_pass=false`, and
+  `runtime_calls_added=0`. The human approved its rejection disposition on
+  2026-07-25.
 
-Evidence:
+Evidence, reverifiable with `scripts/verify-rediarization-corpus-quality-disposition.py verify --packet`:
+`var/quality/rediarization-candidate-evaluation/corpus-quality-disposition/2026-07-25_reject-candidate-keep-flag-off/`.
+The superseded original adjudication is preserved byte-for-byte at
 `var/quality/rediar-m05-acceptance/adjudication/2026-07-25_m05d-quality1/`.
 
 ## Consequences
@@ -94,5 +98,7 @@ Evidence:
   approval.
 - No second in-plan policy or threshold may be tuned against the consumed
   corpus. A future mechanism starts from a new plan and new evidence.
-- Preserve M05B `PASS_HYBRID_FLAG_OFF`, M05C `PASS_CORPUS_ON_EXECUTION`, and
-  M05D `REJECT_CANDIDATE_KEEP_FLAG_OFF` as distinct verdicts.
+- Preserve the flag-off recovery attestation's `PASS_HYBRID_FLAG_OFF`, the
+  bounded corpus-on execution's `PASS_CORPUS_ON_EXECUTION`, and the
+  corpus-quality rejection decision's `REJECT_CANDIDATE_KEEP_FLAG_OFF` as
+  distinct verdicts.
