@@ -737,9 +737,7 @@ async def correct_session_transcript(
                 "Correction lost part of the visit; the note stays unavailable.",
             )
 
-        rediar_provenance = _apply_rediarization_repairs(
-            session_id, correction_result
-        )
+        rediar_provenance = _apply_rediarization_repairs(session_id, correction_result)
         sessions.replace_corrected_segments(session_id, correction_result.segments)
         # Bind the artifact to the terminal identity so summary can attest it.
         watermark.correction_status = "attested_corrected"
@@ -748,6 +746,17 @@ async def correct_session_transcript(
             correction_result.segments
         )
         watermark.unaccounted_meaningful_row_count = 0
+        # Internal allocation provenance is emitted only to structured process
+        # logs. It contains indices, counts, and bounded classes; no transcript
+        # wording reaches HTTP, Mercure, or corrected-row storage.
+        if correction_result.allocation_diagnostics is not None:
+            logger.info(
+                "correction.allocation_diagnostics",
+                extra={
+                    "session_id": session_id,
+                    "allocation": correction_result.allocation_diagnostics,
+                },
+            )
         duration_ms = int((time.time() - started_at) * 1000)
         logger.info(
             (

@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-25
+last_reviewed: 2026-07-26
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -134,6 +134,8 @@ mode `0644`, so direct use would have failed before any model check ran.
 **Prevention:** After replacing any executable script as a whole, compare `stat -c '%a %n'` with
 HEAD, restore the original executable mode before behavioral tests, and include mode in staging
 review. Prefer in-place hunks when a full replacement is unnecessary.
+
+**Follow-up (2026-07-26, 0.5.2 M04 Phase B):** The hash-verified WSL sleep-guard helper had mode `0644`, so its first direct launch failed before readiness. No replay, fixture mutation, or GPU inference occurred; the preserved failure is `var/quality/0.5.2-corrected-insertions/phase-b-single-replay/monitors/sleep-guard-attempt1.log` (search: `Permission denied`). Preflight executable mode as part of the process contract. When interpreter execution is permitted, invoke a non-executable shell helper explicitly with Bash rather than treating a direct-exec failure as a replay attempt.
 
 ## Lesson: Formatter-only churn can inherit class-wide Gruff debt
 

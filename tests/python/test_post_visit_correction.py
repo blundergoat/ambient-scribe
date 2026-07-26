@@ -36,6 +36,7 @@ from post_visit_correction import (
     PostVisitCorrectionResult,
     PostVisitTranscription,
     build_corrected_segments,
+    build_corrected_segments_with_diagnostics,
     run_post_visit_correction,
 )
 
@@ -864,6 +865,130 @@ def test_build_corrected_segments_preserves_live_row_when_asr_drops_patient_text
     assert corrected_rows[3]["text"].startswith("Well, let's try our best.")
 
 
+def test_allocation_diagnostics_preserve_mixed_source_corrected_rows() -> None:
+    """Anchored diagnostics identify retained live words without changing output."""
+    corrected_words = (
+        "Um okay. Well, let's try our best. Let's try and get you"
+    ).split()
+    live_segments = [
+        {
+            "speaker_id": "speaker_0",
+            "role": "DOCTOR",
+            "text": "Okay,",
+            "start": 40.88,
+            "end": 40.93,
+        },
+        {
+            "speaker_id": "speaker_2",
+            "role": "PATIENT",
+            "text": "and I",
+            "start": 43.12,
+            "end": 43.17,
+        },
+        {
+            "speaker_id": "speaker_2",
+            "role": "PATIENT",
+            "text": "just want you to do something.",
+            "start": 43.12,
+            "end": 44.13,
+        },
+        {
+            "speaker_id": "speaker_0",
+            "role": "DOCTOR",
+            "text": "well, let's try best.",
+            "start": 45.36,
+            "end": 45.41,
+        },
+        {
+            "speaker_id": "speaker_0",
+            "role": "DOCTOR",
+            "text": "Let's try and get you",
+            "start": 46.48,
+            "end": 47.65,
+        },
+    ]
+
+    expected_rows = build_corrected_segments(
+        corrected_words=corrected_words,
+        live_segments=live_segments,
+        model_name="test-model",
+    )
+    actual_rows, diagnostics = build_corrected_segments_with_diagnostics(
+        corrected_words=corrected_words,
+        live_segments=live_segments,
+        model_name="test-model",
+    )
+
+    assert actual_rows == expected_rows
+    assert diagnostics["allocation_mode"] == "anchored"
+    assert diagnostics["retained_live_words"] == 8
+    assert diagnostics["accounting"]["output_word_coverage_complete"] is True
+    assert diagnostics["accounting"]["final_output_matches_allocation"] is True
+    assert diagnostics["accounting"]["duplicate_corrected_asr_source_indices"] == []
+    assert diagnostics["accounting"]["unallocated_corrected_asr_source_indices"] == []
+    sources = {
+        source_run["source"]
+        for row in diagnostics["rows"]
+        for source_run in row["source_runs"]
+    }
+    assert sources == {"corrected_asr", "retained_live"}
+    assert all("text" not in row for row in diagnostics["rows"])
+    assert "just want you" not in json.dumps(diagnostics)
+
+
+def test_global_allocation_diagnostics_account_for_each_asr_word() -> None:
+    """Weak anchors expose proportional mode without adding live wording."""
+    corrected_words = "alpha beta gamma delta".split()
+    corrected_rows, diagnostics = build_corrected_segments_with_diagnostics(
+        corrected_words=corrected_words,
+        live_segments=[
+            {
+                "speaker_id": "speaker_0",
+                "role": "DOCTOR",
+                "text": "unrelated preview",
+                "start": 0.0,
+                "end": 1.0,
+            },
+            {
+                "speaker_id": "speaker_1",
+                "role": "PATIENT",
+                "text": "different wording",
+                "start": 1.0,
+                "end": 2.0,
+            },
+        ],
+        model_name="test-model",
+    )
+
+    assert diagnostics["allocation_mode"] == "global_proportional"
+    assert diagnostics["allocated_asr_words"] == len(corrected_words)
+    assert diagnostics["retained_live_words"] == 0
+    assert diagnostics["final_display_words"] == len(corrected_words)
+    assert diagnostics["accounting"]["final_output_matches_allocation"] is True
+    assert [row["text"] for row in corrected_rows] == [
+        "alpha beta",
+        "gamma delta",
+    ]
+
+
+def test_unscaffolded_allocation_diagnostics_stay_asr_owned() -> None:
+    """No live rows produces generic corrected rows with complete ASR ownership."""
+    corrected_words = [f"word-{index}" for index in range(20)]
+
+    corrected_rows, diagnostics = build_corrected_segments_with_diagnostics(
+        corrected_words=corrected_words,
+        live_segments=[],
+        model_name="test-model",
+    )
+
+    assert len(corrected_rows) == 2
+    assert diagnostics["allocation_mode"] == "unscaffolded"
+    assert diagnostics["allocated_asr_words"] == 20
+    assert diagnostics["retained_live_words"] == 0
+    assert diagnostics["accounting"]["output_word_coverage_complete"] is True
+    assert diagnostics["accounting"]["final_output_matches_allocation"] is True
+
+
 def test_build_corrected_segments_keeps_anchors_after_consumed_short_row() -> None:
     """A consumed short row should not collapse the visit into proportional source rows."""
     corrected_rows = build_corrected_segments(
@@ -1105,6 +1230,11 @@ def test_long_visit_uses_ordered_chunks_on_one_model(
     ]
     assert transcription.word_confidences == [0.9, 0.9, 0.9]
     assert transcription.chunk_count == 3
+    assert transcription.chunk_word_ranges == [
+        {"chunk_index": 1, "start_index": 0, "end_index": 1},
+        {"chunk_index": 2, "start_index": 1, "end_index": 2},
+        {"chunk_index": 3, "start_index": 2, "end_index": 3},
+    ]
     assert len(asr_model.transcribed_audio_paths) == 3
     assert all(
         Path(chunk_path) != audio_path
@@ -1460,8 +1590,7 @@ def test_word_confidence_recovery_never_uses_legacy_third_call(
     assert raised_error.value.retried is True
     assert len(asr_model.transcribed_audio_paths) == 2
     assert all(
-        options.get("timestamps") is True
-        for options in asr_model.transcribe_options
+        options.get("timestamps") is True for options in asr_model.transcribe_options
     )
 
 
@@ -1721,6 +1850,67 @@ def test_correction_endpoint_stores_corrected_rows_and_summary_prefers_them() ->
     assert summary_response.status_code == 200
     assert "[PATIENT] corrected doctor text" in summary_runner.call_args.args[1]
     assert summary_runner.call_args.args[2][0]["segment_id"] == "corrected-0001"
+
+
+def test_correction_endpoint_logs_diagnostics_without_public_schema(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Allocation provenance stays in a PHI-safe log field, never the response."""
+    _seed_stopped_session_with_audio()
+    sessions.append_segment(
+        TEST_SESSION_ID,
+        {
+            "speaker_id": "speaker_0",
+            "role": "PATIENT",
+            "text": "preview wording",
+            "start": 0.0,
+            "end": 1.0,
+            "segment_id": "live-0001",
+        },
+    )
+    _attest_terminal_visit()
+    correction_result = run_post_visit_correction(
+        pcm_audio=(b"\0\0" * 160),
+        live_segments=sessions.get_segments(TEST_SESSION_ID),
+        transcribe_audio_file=lambda _model, _path: "corrected wording",
+    )
+    caplog.set_level(logging.INFO, logger="api.server")
+
+    with patch(
+        "api.server.run_post_visit_correction",
+        return_value=correction_result,
+    ):
+        response = TestClient(app, raise_server_exceptions=False).post(
+            f"/session/{TEST_SESSION_ID}/correction",
+            json={"segments": sessions.get_segments(TEST_SESSION_ID)},
+        )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {
+        "session_id",
+        "status",
+        "source",
+        "source_state",
+        "attestation_id",
+        "segments",
+        "word_count",
+        "model",
+        "reused",
+        "attempted",
+        "attempts",
+        "retried",
+        "chunk_count",
+    }
+    allocation_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "correction.allocation_diagnostics"
+    )
+    assert allocation_record.session_id == TEST_SESSION_ID
+    assert allocation_record.allocation == correction_result.allocation_diagnostics
+    serialized_allocation = json.dumps(allocation_record.allocation)
+    assert "preview wording" not in serialized_allocation
+    assert "corrected wording" not in serialized_allocation
 
 
 def test_correction_endpoint_reuses_existing_corrected_rows() -> None:

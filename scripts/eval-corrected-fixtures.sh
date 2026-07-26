@@ -30,6 +30,8 @@ PACE_MODE="${EVAL_PACE:-fast}"
 CHUNK_MS="${EVAL_CHUNK_MS:-5000}"
 ROLE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-8}"
 REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
+REQUIRE_ALLOCATION_DIAGNOSTICS="${EVAL_REQUIRE_ALLOCATION_DIAGNOSTICS:-0}"
+DEVELOPMENT_CORPUS_HELPER="${EVAL_DEVELOPMENT_CORPUS_HELPER:-scripts/development-corpus.py}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 CORRECTION_UNAVAILABLE_EXIT_CODE=20
 ALL_FIXTURES_REQUESTED=false
@@ -64,6 +66,9 @@ Environment:
   EVAL_ROLE_TIMELINE_SETTLE_SECONDS
                                   seconds to wait for final role decisions; default 8
   EVAL_REQUIRE_STRUCTURED_LOGS     set 1 to require LOG_FORMAT=json before replay; default 0
+  EVAL_REQUIRE_ALLOCATION_DIAGNOSTICS
+                                  set 1 to require one PHI-safe allocation event; default 0
+  EVAL_DEVELOPMENT_CORPUS_HELPER   test seam for the corpus manifest helper
   CORRECTED_SOURCE_CHIP_FAIL_ON_FINDINGS
                                   set 1 to fail the eval when source-chip findings exist; default 0
   EVAL_PACE                      fast (default, historical-baseline blast) or 1x
@@ -168,7 +173,7 @@ resolve_development_corpus_fixtures() {
   # Authorization, order, and hash checks live in scripts/development-corpus.py;
   # any rejection there stops this runner before audio access.
   local corpus_json
-  if ! corpus_json="$("$PYTHON_BIN" scripts/development-corpus.py --json)"; then
+  if ! corpus_json="$("$PYTHON_BIN" "$DEVELOPMENT_CORPUS_HELPER" --json)"; then
     echo "error: development corpus validation rejected the run; no fixture was opened" >&2
     exit 2
   fi
@@ -224,7 +229,8 @@ require_ready_agent() {
 
 require_structured_agent_logs() {
   # M02-grade role diagnostics must fail before streaming if JSON events are unavailable.
-  if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" ]]; then
+  if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" \
+    && "$REQUIRE_ALLOCATION_DIAGNOSTICS" != "1" ]]; then
     return 0
   fi
 
@@ -233,7 +239,7 @@ require_structured_agent_logs() {
     docker compose exec -T nemo-agent sh -c 'printf "%s" "$LOG_FORMAT"' 2>/dev/null || true
   )"
   if [[ "$log_format" != "json" ]]; then
-    echo "error: EVAL_REQUIRE_STRUCTURED_LOGS=1 requires nemo-agent LOG_FORMAT=json" >&2
+    echo "error: required diagnostics need nemo-agent LOG_FORMAT=json" >&2
     exit 2
   fi
 }
@@ -520,6 +526,300 @@ raise SystemExit("correction response has an unknown status")
 PY
 }
 
+extract_allocation_diagnostics_from_logs() {
+  # Persist one session-matched allocation event without retaining raw service logs.
+  local session_id="$1"
+  local output_path="$2"
+
+  # File descriptor 3 preserves the pipeline while stdin carries this inline program.
+  "$PYTHON_BIN" - "$session_id" "$output_path" 3<&0 <<'PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+session_id = sys.argv[1]
+output_path = Path(sys.argv[2])
+matches = []
+
+with os.fdopen(3, encoding="utf-8", errors="replace") as log_stream:
+    for line in log_stream:
+        object_start = line.find("{")
+        if object_start < 0:
+            continue
+        try:
+            event = json.loads(line[object_start:])
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("event") == "correction.allocation_diagnostics"
+            and event.get("session_id") == session_id
+        ):
+            matches.append(event)
+
+if len(matches) != 1:
+    raise SystemExit("expected exactly one session allocation diagnostic event")
+
+allocation = matches[0].get("allocation")
+if not isinstance(allocation, dict):
+    raise SystemExit("allocation diagnostic event has no object payload")
+
+
+def exact_keys(value, required, context, optional=frozenset()):
+    """Reject unknown fields so transcript wording cannot enter the artifact."""
+    if not isinstance(value, dict):
+        raise SystemExit(f"{context} must be an object")
+    keys = set(value)
+    if not required.issubset(keys) or not keys.issubset(required | optional):
+        raise SystemExit(f"{context} has an unsafe schema")
+
+
+def integer(value, context, minimum=0):
+    """Accept JSON integers but reject booleans and negative indices/counts."""
+    if type(value) is not int or value < minimum:
+        raise SystemExit(f"{context} must be an integer >= {minimum}")
+    return value
+
+
+exact_keys(
+    allocation,
+    {
+        "schema_version",
+        "allocation_mode",
+        "corrected_asr_words",
+        "allocated_asr_words",
+        "retained_live_words",
+        "final_display_words",
+        "rows",
+        "accounting",
+        "chunk_provenance",
+    },
+    "allocation",
+)
+if allocation["schema_version"] != 1:
+    raise SystemExit("unsupported allocation diagnostic schema")
+if allocation["allocation_mode"] not in {
+    "empty",
+    "anchored",
+    "global_proportional",
+    "unscaffolded",
+}:
+    raise SystemExit("unknown allocation mode")
+
+for count_name in (
+    "corrected_asr_words",
+    "allocated_asr_words",
+    "retained_live_words",
+    "final_display_words",
+):
+    integer(allocation[count_name], f"allocation.{count_name}")
+
+rows = allocation["rows"]
+if not isinstance(rows, list):
+    raise SystemExit("allocation.rows must be a list")
+output_cursor = 0
+source_run_words = 0
+for expected_row_index, row in enumerate(rows):
+    exact_keys(
+        row,
+        {
+            "row_index",
+            "segment_id",
+            "output_start_index",
+            "output_end_index",
+            "output_word_count",
+            "anchor_outcome",
+            "anchor_score_class",
+            "anchor_score",
+            "anchor_clamped",
+            "source_runs",
+        },
+        "allocation row",
+    )
+    if row["row_index"] != expected_row_index:
+        raise SystemExit("allocation row indices are not contiguous")
+    if re.fullmatch(r"corrected-\d{4}", row["segment_id"]) is None:
+        raise SystemExit("allocation segment ID is unsafe")
+    row_start = integer(row["output_start_index"], "row output start")
+    row_end = integer(row["output_end_index"], "row output end")
+    row_count = integer(row["output_word_count"], "row output word count")
+    if row_start != output_cursor or row_end != row_start + row_count:
+        raise SystemExit("allocation row output accounting is inconsistent")
+    if row["anchor_outcome"] not in {"matched", "missing", "not_observed"}:
+        raise SystemExit("unknown anchor outcome")
+    if row["anchor_score_class"] not in {
+        "high",
+        "accepted",
+        "missing",
+        "not_observed",
+    }:
+        raise SystemExit("unknown anchor score class")
+    score = row["anchor_score"]
+    if score is not None and (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not 0.0 <= score <= 1.0
+    ):
+        raise SystemExit("anchor score must be null or a bounded number")
+    if type(row["anchor_clamped"]) is not bool:
+        raise SystemExit("anchor clamped flag must be boolean")
+
+    source_runs = row["source_runs"]
+    if not isinstance(source_runs, list):
+        raise SystemExit("allocation source runs must be a list")
+    run_cursor = row_start
+    for expected_run_index, source_run in enumerate(source_runs):
+        exact_keys(
+            source_run,
+            {
+                "source",
+                "source_start_index",
+                "source_end_index",
+                "word_count",
+                "source_run_index",
+                "output_start_index",
+                "output_end_index",
+            },
+            "allocation source run",
+            optional={"source_row_index"},
+        )
+        if source_run["source"] not in {"corrected_asr", "retained_live"}:
+            raise SystemExit("unknown allocation source")
+        if source_run["source_run_index"] != expected_run_index:
+            raise SystemExit("source run indices are not contiguous")
+        source_start = integer(
+            source_run["source_start_index"], "source run start"
+        )
+        source_end = integer(source_run["source_end_index"], "source run end")
+        word_count = integer(source_run["word_count"], "source run word count")
+        output_start = integer(
+            source_run["output_start_index"], "source run output start"
+        )
+        output_end = integer(
+            source_run["output_end_index"], "source run output end"
+        )
+        if (
+            source_end != source_start + word_count
+            or output_start != run_cursor
+            or output_end != output_start + word_count
+        ):
+            raise SystemExit("source run accounting is inconsistent")
+        if "source_row_index" in source_run:
+            integer(source_run["source_row_index"], "source row index")
+        run_cursor = output_end
+        source_run_words += word_count
+    if run_cursor != row_end:
+        raise SystemExit("source runs do not cover their output row")
+    output_cursor = row_end
+
+accounting = allocation["accounting"]
+exact_keys(
+    accounting,
+    {
+        "source_run_words",
+        "allocation_output_words",
+        "output_word_coverage_complete",
+        "final_output_matches_allocation",
+        "duplicate_corrected_asr_source_indices",
+        "unallocated_corrected_asr_source_indices",
+    },
+    "allocation accounting",
+)
+if integer(accounting["source_run_words"], "source run words") != source_run_words:
+    raise SystemExit("source run total is inconsistent")
+if (
+    integer(accounting["allocation_output_words"], "allocation output words")
+    != output_cursor
+):
+    raise SystemExit("allocation output total is inconsistent")
+if accounting["output_word_coverage_complete"] is not True:
+    raise SystemExit("allocation output coverage is incomplete")
+if accounting["final_output_matches_allocation"] is not True:
+    raise SystemExit("final output differs from allocation")
+if output_cursor != allocation["final_display_words"]:
+    raise SystemExit("final display total is inconsistent")
+for list_name in (
+    "duplicate_corrected_asr_source_indices",
+    "unallocated_corrected_asr_source_indices",
+):
+    values = accounting[list_name]
+    if not isinstance(values, list):
+        raise SystemExit(f"{list_name} must be a list")
+    for value in values:
+        integer(value, list_name)
+
+chunk_provenance = allocation["chunk_provenance"]
+exact_keys(
+    chunk_provenance,
+    {"status", "ranges", "seam_indices"},
+    "chunk provenance",
+)
+if chunk_provenance["status"] not in {"observed", "not_observed"}:
+    raise SystemExit("unknown chunk provenance status")
+if not isinstance(chunk_provenance["ranges"], list) or not isinstance(
+    chunk_provenance["seam_indices"], list
+):
+    raise SystemExit("chunk provenance ranges must be lists")
+for chunk_range in chunk_provenance["ranges"]:
+    exact_keys(
+        chunk_range,
+        {"chunk_index", "start_index", "end_index"},
+        "chunk range",
+    )
+    integer(chunk_range["chunk_index"], "chunk index", minimum=1)
+    integer(chunk_range["start_index"], "chunk start")
+    integer(chunk_range["end_index"], "chunk end", minimum=1)
+for seam_index in chunk_provenance["seam_indices"]:
+    integer(seam_index, "chunk seam")
+if chunk_provenance["status"] == "not_observed" and (
+    chunk_provenance["ranges"] or chunk_provenance["seam_indices"]
+):
+    raise SystemExit("unobserved chunk provenance must be empty")
+
+artifact = {
+    "schema_version": 1,
+    "session_id": session_id,
+    "allocation": allocation,
+}
+output_path.write_text(
+    json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+capture_allocation_diagnostics() {
+  # Docker log delivery can trail the HTTP response briefly, so retry bounded reads.
+  local session_id="$1"
+  local output_path="$2"
+  local attempt
+  local maximum_attempts=1
+  if [[ "$REQUIRE_ALLOCATION_DIAGNOSTICS" == "1" ]]; then
+    maximum_attempts=5
+  fi
+  rm -f -- "$output_path"
+
+  for ((attempt = 1; attempt <= maximum_attempts; attempt++)); do
+    if docker compose logs --no-color nemo-agent --since "$RUN_STARTED_AT" \
+        2>/dev/null \
+      | extract_allocation_diagnostics_from_logs "$session_id" "$output_path" \
+        2>/dev/null; then
+      return 0
+    fi
+    if ((attempt < maximum_attempts)); then
+      sleep 1
+    fi
+  done
+
+  if [[ "$REQUIRE_ALLOCATION_DIAGNOSTICS" == "1" ]]; then
+    echo "error: no valid allocation diagnostic captured for $session_id" >&2
+    return 1
+  fi
+  echo "warn: no allocation diagnostic captured for $session_id" >&2
+}
+
 assert_no_websocket_errors() {
   # Fail the fixture if NeMo logged a WebSocket error for this session.
   local session_id="$1"
@@ -797,6 +1097,7 @@ PY
   local timeline_path="$fixture_run_dir/role-timeline.jsonl"
   local live_row_diagnostics_path="$fixture_run_dir/live-row-diagnostics.json"
   local corrected_row_diagnostics_path="$fixture_run_dir/corrected-row-diagnostics.json"
+  local allocation_diagnostics_path="$fixture_run_dir/allocation-diagnostics.json"
 
   LAST_FIXTURE_OUTCOME="ready"
 
@@ -850,6 +1151,7 @@ PY
     return "$correction_exit_code"
   fi
 
+  capture_allocation_diagnostics "$session_id" "$allocation_diagnostics_path"
   fetch_json "$AGENT_HTTP_URL/session/$session_id/corrected-transcript" "$corrected_path"
 
   local cutoff_seconds

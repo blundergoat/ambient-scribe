@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-22
+last_reviewed: 2026-07-26
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -90,6 +90,8 @@ rerun affected tests so the formatted file—not the pre-format version—is the
 files needing Ruff formatting. In both cases, format/check and affected tests were rerun before the
 broad suite, verifying final bytes. Run the formatter after the last regression patch, not merely
 after the first behavioral green.
+
+**Follow-up (2026-07-26, 0.5.2 M04):** The first final static gate again found three late-edited Python files needing Ruff formatting. The files were formatted, then static, focused, and full-Python gates were rerun against the final bytes.
 
 ## Lesson: Verification wrappers must preserve the producer's exit status
 

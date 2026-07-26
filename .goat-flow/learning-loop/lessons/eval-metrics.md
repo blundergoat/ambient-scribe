@@ -5,6 +5,33 @@ last_reviewed: 2026-07-26
 
 # Eval and Metrics Lessons
 
+## Lesson: Row-denominated gates cannot judge a row-restructuring change
+
+**Created:** 2026-07-26
+**Decision changed:** When a candidate change merges, splits, or re-times transcript rows, restate
+every gate that counts rows — correct rows, incorrect-confident rows, per-class cells — at the word
+level (each display word inherits its row's verdict) with total display words conserved between arms,
+and judge row-level movement only against a structural null.
+**Trigger phase:** SCOPE
+**What happened:** The 0.5.2 corpus gate was drafted as "no fixture loses absolute correct rows" —
+the rule that correctly rejected ADR-010, where both arms shared one row structure. The 0.5.2 fix
+itself merges fragment rows, so two correct rows becoming one "loses" a correct row while losing
+nothing real: the drafted gate would have failed a perfect fix on every fixture, and the same
+arithmetic could have inflated the milestone's success cell instead. Rows the merge collapses share
+persisted start, slot, and role, so their start-point verdicts are identical by construction —
+merging moves row-level metrics with zero placement change. A structural spot-check across the five
+captured consult-1.2 runs measured the scale: collapsing same-(slot, start) runs removes ~22 of ~309
+rows per run.
+**Evidence:** `scripts/transcript-quality.py` (search: `def score_strict_attribution`) counts rows
+over clean reference rows, so numerator and denominator both shift with row structure. The probe and
+the reworked gates live in the gitignored 0.5.2 plan tree (`probe-floor-structure.py`); the figures
+are quoted here because that tree is local state.
+**Prevention:** Before adopting a gate, ask what the candidate change does to the metric's
+denominator. If the change can alter row structure, gate word-level with conserved totals — absolute
+word counts stay comparable between arms — and compute the structural null (re-score after applying
+the structure change alone) so cosmetic movement has a measured size. A gate that can fail a perfect
+fix, or pass a cosmetic one, is not a gate.
+
 ## Lesson: Prove a class gap is causal before planning a fix on it
 
 **Created:** 2026-07-26

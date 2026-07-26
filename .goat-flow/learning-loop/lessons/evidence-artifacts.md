@@ -31,8 +31,96 @@ an upper bound derived from a healthy comparison class is honest and still decis
 bound, not a forecast. A confident number from an underdetermined simulation is worse than no number,
 because it survives into the plan as a target.
 
+## Lesson: Preserve partial order when aligning parallel transcript channels
+
+**Created:** 2026-07-26
+**Decision changed:** Align each role's ordered reference channel independently against the display
+stream, then reject cross-role conflicts; never discard a whole reference interval or physically
+coalesce rows merely because timing makes their global order uncertain.
+**Trigger phase:** VERIFY
+**What happened:** M01's first timestamp-independent evaluator marked every word in any Doctor or
+Patient interval touching opposite-role speech as order-ambiguous. That excluded 1,282 of 1,741
+reference words and left only 22.2% display-word coverage. Its structural-null implementation also
+physically merged same-slot/same-start rows; four groups were non-contiguous in display order, so
+the transform moved words and changed the ownership result. Independent forced alignment within
+each role, followed by a cross-role conflict filter, raised coverage to 81.6% while leaving
+ambiguous words unscored. Recasting the structural null as row-count arithmetic preserved the
+original word stream and restored the planned 22-versus-17 accounting. A final reread also found
+that a repeated display word ambiguous in both role channels was safely unscored but mislabeled as
+within-role ambiguity; the classifier and regression now report that uncertainty as cross-role.
+**Evidence:** `scripts/transcript_alignment.py` (search: `def align_role_channels`) preserves each
+channel's known order and rejects cross-role candidates;
+`scripts/streaming-timing-diagnostics.py` (search: `def _structural_nulls`) labels the null as a
+row-count projection and hashes the unchanged word stream.
+`tests/python/test_transcript_alignment.py` (search:
+`test_role_channels_accept_interleaving_without_fabricating_reference_order`) and
+`tests/python/test_transcript_alignment.py` (search:
+`test_role_channels_classify_ambiguity_in_both_roles_as_cross_role`) plus
+`tests/python/test_streaming_timing_diagnostics.py` (search:
+`test_structural_nulls_distinguish_real_rows_and_preserve_ownership`) pin these corrections.
+**Prevention:** Treat parallel speaker channels as a partial-order problem. Prove coverage and
+timestamp invariance on one real capture before a corpus pass, reject only lexical candidates whose
+ownership is actually ambiguous, and keep a structural null word-preserving by definition instead
+of implementing it as a transcript rewrite.
+
 This bucket records mistakes that can corrupt an evidence bundle without changing its visible meaning.
 Use it before duplicating hash-bound fixtures or sealing a write-once artifact manifest.
+
+## Lesson: Isolate operational rollback patches from mutable evidence
+
+**Created:** 2026-07-26
+**Decision changed:** Seal candidate behavior and append-only evidence as
+separate artifacts against an explicit accepted base; never use a full dirty
+worktree diff as an operational rollback.
+**Trigger phase:** VERIFY
+**Incident count:** 2
+**Latest occurrence:** 2026-07-26
+
+**What happened:** M02 sealed one full-worktree patch that combined accepted
+diagnostic tooling, two successive timing candidates, generated indexes, and
+learning text. After the decoded-state probe was rejected and its lesson was
+updated, the exact reverse check stopped applying. A narrower reversal of only
+the current unstaged behavior was also unsafe because its target was the
+already-rejected raw-frame candidate rather than the accepted pre-M02 runtime.
+The preflight caught both conditions and no rollback ran.
+
+The approved replacement validated the prevention:
+`m02-runtime-rollback.patch` covered only eight behavior/direct-contract
+paths, preserved the index receipt and four M01 evaluator hashes, restored
+every path to its accepted base blob, and recreated a healthy
+host/container-matched service.
+
+The later index-only reconciliation exposed a second mismatch. Four staged
+paths held earlier rejected-candidate blobs rather than the sealed runtime
+patch postimages, so a cached reverse-check failed before mutation. A proposed
+readable recovery patch was then passed through the required durable-text
+scrubber; it replaced an environment-looking source expression and no longer
+applied. The invalid artifact was removed. The real index remained untouched
+until a mode/blob/path receipt recreated the original target receipt in a
+temporary index.
+
+**Evidence:** `var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch`
+(search: `diff --git`) includes source, tests, generated indexes, and learning
+files. `.goat-flow/learning-loop/lessons/source-semantics.md` (search:
+`corrected decoded-state probe`) records the runtime falsification that made
+the rollback preflight necessary. The completed operational proof is
+`var/quality/0.5.2-span-fidelity/m02-runtime-rollback-receipt.json` (search:
+`index_preservation`). The index-only course correction is sealed in
+`var/quality/0.5.2-span-fidelity/m02-index-reconciliation-receipt.json`
+(search: `course_correction`).
+
+**Prevention:** Before implementation, record an explicit base tree or base
+blob hash for every behavior file. Seal separate patches for candidate
+behavior and append-only evidence/docs. Re-run the behavior patch's forward
+and reverse checks after each implementation edit, but do not include mutable
+indexes, plans, lessons, or evidence in the operational rollback. Before
+applying any rollback, inspect the resulting source identity and prove it is an
+accepted baseline, not merely the current index or previous candidate. Before
+reconciling a dirty index, compare every staged blob with the rollback patch
+postimage. If candidate generations differ, record mode, blob, and path entries
+and prove their restoration in a temporary index. Do not treat a scrubbed
+source patch as byte-faithful recovery evidence; reject it when its bytes or
+apply-check change.
 
 ## Lesson: Reference byte-bound fixtures instead of text-patch copying them
 
@@ -158,3 +246,71 @@ caught before the milestone gate and frozen in `tests/python/test_development_co
 matched before the first mutation. Inject failure immediately after the kernel mutation and before local
 bookkeeping, then recover ownership from durable identity such as the staged inode rather than only an
 in-memory success list.
+
+## Lesson: Keep shell tracing out of machine-readable campaign logs
+
+**Created:** 2026-07-26
+**Decision changed:** Never launch a write-once campaign under `bash -x` unless
+xtrace has a dedicated file descriptor; monitor files must accept only records
+that match their declared schema, and live guards must read the latest valid
+record rather than the last physical line.
+**Trigger phase:** ACT
+**Incident count:** 1
+**Latest occurrence:** 2026-07-26
+
+**What happened:** Three detached launch attempts exited before the campaign
+body, so `bash -x` was used to diagnose the launch. That diagnostic invocation
+unexpectedly became the one successful 16-session baseline run. Bash tracing
+propagated into background subshells; the GPU and watchdog blocks redirected
+stderr with stdout, so `+ docker ...` and `+ sleep 10` lines were mixed with
+CSV/TSV samples. The watchdog's `tail -n 1` GPU check could therefore parse a
+trace line as zero and weaken its live memory threshold. The campaign itself
+remained valid: direct GPU polling stayed below the limit, health/container/
+suspend/fatal guards remained active, the final peak calculation still saw the
+real numeric field, and post-run validation extracted 944 timestamped GPU rows
+and 952 numeric watchdog rows. The raw traced files were retained and sealed
+rather than silently cleaned.
+
+**Evidence:** `var/quality/0.5.2-corpus-validation/fresh-baseline/monitors/`
+(search the GPU and watchdog files for `+ sleep 10`) and
+`var/quality/0.5.2-corpus-validation/fresh-baseline-summary.json` (search:
+`real_sample_count`).
+
+**Prevention:** Debug launch/preflight separately from the write-once payload.
+If tracing is essential, set `BASH_XTRACEFD` to a dedicated trace file before
+starting any redirected monitor. Give stdout records an exact JSON/CSV/TSV
+shape, route command diagnostics elsewhere, and make both live and final
+validators reject or skip nonconforming lines explicitly. Select the latest
+valid GPU record, not `tail -n 1`, and pin that behavior with a shell smoke test
+before a long campaign.
+
+## Lesson: Optional diagnostics must not create runtime prerequisites
+
+**Created:** 2026-07-26
+**Decision changed:** Gate optional diagnostic calculations on the evidence they
+observe, and tolerate intentionally partial CPU test engines at that boundary.
+**Trigger phase:** VERIFY
+**Incident count:** 1
+**Latest occurrence:** 2026-07-26
+
+**What happened:** Phase A timing diagnostics calculated the processed-audio
+boundary before checking whether a hypothesis supplied compatible token
+timestamps. Four word-confidence tests construct a deliberately partial
+`StreamingSessionEngine` with `object.__new__`; those tests do not need diarizer
+state, so the new observer raised `AttributeError` for `_diar_frames_seen`.
+Focused timing tests passed, but the full Python suite caught the expanded
+runtime prerequisite. Production engines had the field and the completed
+baseline campaign was unaffected.
+
+**Evidence:** the sealed rejected implementation patch
+`var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch` (search:
+`diagnostic_frame_len_sec`) records the optional diagnostic state with total
+defaults, and `tests/python/test_word_confidence_persistence.py` (search:
+`make_bookkeeping_engine`) preserves the partial-engine contract.
+
+**Prevention:** A diagnostics-only observer must not require state that the
+underlying behavior path does not require. Compute only after confirming the
+relevant evidence exists, or use explicit total defaults at the diagnostic
+boundary. Run the full CPU suite after adding observers, even when their focused
+contracts pass, because lightweight test doubles reveal accidental coupling to
+production initialization.
