@@ -26,6 +26,7 @@ consultation-03 @70s -> dup 3.0%, recall 77.7%, ratio 0.77.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from collections import Counter
@@ -1266,6 +1267,75 @@ def is_phrase_present_in_text(text: str, required_phrase: str) -> bool:
         if visible_words[start_index:end_index] == required_words:
             return True
     return False
+
+
+def score_clinical_term_identity(
+    required_terms: list[str],
+    hypothesis_segments: list[HypothesisSegment],
+) -> dict[str, Any]:
+    """Score exact clinical phrases without consulting transcript timestamps.
+
+    Args:
+        required_terms: Canonical phrases in frozen manifest order.
+        hypothesis_segments: One displayed transcript lane; empty omits every term.
+
+    Returns:
+        Text-free term-set identity, supported/missing indices, counts, and recall.
+
+    Raises:
+        ValueError: When a canonical term is empty or duplicates another normalized term.
+    """
+    normalized_terms = [tokens(required_term) for required_term in required_terms]
+    # Empty canonical wording could become a vacuous match and must fail closed.
+    if any(not normalized_term for normalized_term in normalized_terms):
+        raise ValueError("clinical terms must contain normalized words")
+
+    normalized_term_phrases = [
+        " ".join(normalized_term) for normalized_term in normalized_terms
+    ]
+    # Duplicate normalized phrases would overweight one clinical fact.
+    if len(normalized_term_phrases) != len(set(normalized_term_phrases)):
+        raise ValueError("clinical terms must be unique after normalization")
+
+    supported_term_indices = [
+        term_index
+        for term_index, required_term in enumerate(required_terms)
+        if any(
+            is_phrase_present_in_text(segment.text, required_term)
+            for segment in hypothesis_segments
+        )
+    ]
+    supported_index_set = set(supported_term_indices)
+    missing_term_indices = [
+        term_index
+        for term_index in range(len(required_terms))
+        if term_index not in supported_index_set
+    ]
+    recall: float | None = None
+    # An empty registered term set is unmeasured, never a favorable pass.
+    if required_terms:
+        recall = len(supported_term_indices) / len(required_terms)
+
+    term_set_sha256 = hashlib.sha256(
+        json.dumps(
+            normalized_term_phrases,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return {
+        "metric_contract": (
+            "exact normalized phrase in any displayed row; transcript start/end "
+            "and role fields are not read"
+        ),
+        "normalization": "[a-z']+ lowercase words",
+        "term_set_sha256": term_set_sha256,
+        "required_term_count": len(required_terms),
+        "supported_term_count": len(supported_term_indices),
+        "supported_term_indices": supported_term_indices,
+        "missing_term_indices": missing_term_indices,
+        "recall": recall,
+    }
 
 
 def _validated_critical_span_bounds(

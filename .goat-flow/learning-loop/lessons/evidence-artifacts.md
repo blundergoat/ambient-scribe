@@ -1,6 +1,6 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-26
+last_reviewed: 2026-07-27
 ---
 
 # Evidence Artifact Lessons
@@ -70,11 +70,12 @@ Use it before duplicating hash-bound fixtures or sealing a write-once artifact m
 
 **Created:** 2026-07-26
 **Decision changed:** Seal candidate behavior and append-only evidence as
-separate artifacts against an explicit accepted base; never use a full dirty
-worktree diff as an operational rollback.
+separate artifacts against an explicit accepted base, then execute every
+nested identity check before a one-shot attempt sentinel; never use a full
+dirty worktree diff as an operational rollback.
 **Trigger phase:** VERIFY
-**Incident count:** 2
-**Latest occurrence:** 2026-07-26
+**Incident count:** 4
+**Latest occurrence:** 2026-07-27
 
 **What happened:** M02 sealed one full-worktree patch that combined accepted
 diagnostic tooling, two successive timing candidates, generated indexes, and
@@ -99,6 +100,28 @@ applied. The invalid artifact was removed. The real index remained untouched
 until a mode/blob/path receipt recreated the original target receipt in a
 temporary index.
 
+M05 exposed the same identity mistake from the evidence-consumer side. Its
+historical live campaign and all 207 artifact hashes still verified, but the
+campaign's three sealed runtime hashes belonged to the temporary M02
+diagnostic implementation that was later rejected and rolled back. Treating
+its 29.509147% clean WER as the current-runtime baseline would have compared
+future candidates across different sources. The Phase A preflight stopped on
+the hash mismatch, retained that campaign only as a historical comparator,
+and required Phase B's same-run live lanes to establish the accepted rollback
+runtime beside their corrected lanes.
+
+The approved M05 Phase B attempt exposed the composed-contract form of the
+same mistake. Phase A added a clinical identity helper to the scorer and froze
+that edited SHA-256 in its metric contract, while the simultaneously pinned
+development manifest still required the scorer's pre-edit size and SHA-256.
+The selected tests passed because they omitted the real-manifest unit test and
+the shell smoke deliberately substituted a corpus-helper stub. The one-shot
+runner verified its reverse patch but wrote the attempt sentinel before the
+restoration wrapper executed the nested scorer-manifest check. The wrapper
+then rejected `scorer_size_drift` before fixture 1, restored all ten stereo
+fixtures, and left zero replay or correction artifacts; the approved contract
+still forbade a retry once the sentinel existed.
+
 **Evidence:** `var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch`
 (search: `diff --git`) includes source, tests, generated indexes, and learning
 files. `.goat-flow/learning-loop/lessons/source-semantics.md` (search:
@@ -107,7 +130,12 @@ the rollback preflight necessary. The completed operational proof is
 `var/quality/0.5.2-span-fidelity/m02-runtime-rollback-receipt.json` (search:
 `index_preservation`). The index-only course correction is sealed in
 `var/quality/0.5.2-span-fidelity/m02-index-reconciliation-receipt.json`
-(search: `course_correction`).
+(search: `course_correction`). The later baseline reconciliation is sealed in
+`var/quality/0.5.2-asr-accuracy/m05-baseline/metric-contract.json`
+(search: `historical_comparator_source_sha256`) and binds the accepted hashes
+to the same rollback receipt. The terminal composed-contract failure is
+`var/quality/0.5.2-asr-accuracy/m05-baseline/phase-b/phase-b-failure-report.md`
+(search: `The frozen contracts were internally incompatible`).
 
 **Prevention:** Before implementation, record an explicit base tree or base
 blob hash for every behavior file. Seal separate patches for candidate
@@ -120,7 +148,17 @@ reconciling a dirty index, compare every staged blob with the rollback patch
 postimage. If candidate generations differ, record mode, blob, and path entries
 and prove their restoration in a temporary index. Do not treat a scrubbed
 source patch as byte-faithful recovery evidence; reject it when its bytes or
-apply-check change.
+apply-check change. When reusing campaign evidence, compare its sealed runtime
+hashes with the accepted current runtime before calling it a baseline. A
+verified mismatch does not erase the old measurement: relabel it as a
+historical comparator and establish a matched current-runtime baseline before
+candidate selection. Before sealing a one-shot runner, execute every nested
+CPU-only authorization check against the exact proposed worktree, including
+tracked-manifest tests that a stubbed smoke cannot cover. A reverse patch and
+two individually valid hashes do not prove their composed contracts agree.
+Write the attempt sentinel only after all deterministic nested preflights have
+passed, unless the approved policy explicitly intends preflight rejection to
+spend the attempt.
 
 ## Lesson: Reference byte-bound fixtures instead of text-patch copying them
 

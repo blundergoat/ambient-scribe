@@ -819,6 +819,55 @@ def test_live_and_corrected_lane_scores_keep_word_defects_independent() -> None:
     assert lane_scores["corrected"]["artifact_sha256"] == "b" * 64
 
 
+def test_clinical_term_identity_ignores_transcript_timestamps_and_roles() -> None:
+    """Canonical term support reads wording, not unreliable timing or ownership."""
+    transcript_quality_scorer = load_transcript_quality_scorer()
+    original_segments = [
+        transcript_quality_scorer.HypothesisSegment(
+            start=293.0,
+            end=296.0,
+            speaker_id="speaker_1",
+            role="PATIENT",
+            text="metformin and penicillin",
+        ),
+        transcript_quality_scorer.HypothesisSegment(
+            start=300.0,
+            end=302.0,
+            speaker_id="speaker_0",
+            role="DOCTOR",
+            text="amlodipine",
+        ),
+    ]
+    metadata_mutated_segments = [
+        transcript_quality_scorer.HypothesisSegment(
+            start=900.0,
+            end=900.05,
+            speaker_id="mutated_speaker",
+            role="UNKNOWN",
+            text=segment.text,
+        )
+        for segment in original_segments
+    ]
+    required_terms = ["metformin", "losartan", "amlodipine", "penicillin"]
+
+    original_score = transcript_quality_scorer.score_clinical_term_identity(
+        required_terms,
+        original_segments,
+    )
+    metadata_mutated_score = (
+        transcript_quality_scorer.score_clinical_term_identity(
+            required_terms,
+            metadata_mutated_segments,
+        )
+    )
+
+    assert original_score == metadata_mutated_score
+    assert original_score["supported_term_indices"] == [0, 2, 3]
+    assert original_score["missing_term_indices"] == [1]
+    assert original_score["recall"] == 0.75
+    assert "metformin" not in json.dumps(original_score)
+
+
 def test_consult_29_probe_scores_ignore_expected_labels() -> None:
     """Each medication/allergy defect is computed before a reviewer trusts its label."""
     transcript_quality_scorer = load_transcript_quality_scorer()
