@@ -1,6 +1,6 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-28
+last_reviewed: 2026-07-29
 ---
 
 # Evidence Artifact Lessons
@@ -379,3 +379,32 @@ relevant evidence exists, or use explicit total defaults at the diagnostic
 boundary. Run the full CPU suite after adding observers, even when their focused
 contracts pass, because lightweight test doubles reveal accidental coupling to
 production initialization.
+
+## Lesson: Project fields before searching minified clinical JSON
+
+**Created:** 2026-07-29
+**Decision changed:** Inspect structured clinical evidence with an explicit
+field whitelist; never run broad content searches across one-line transcript
+JSON.
+**Trigger phase:** READ
+**Incident count:** 1
+**Latest occurrence:** 2026-07-29
+
+**What happened:** During the M05 post-failure investigation, a read-only search
+across a broad quality-artifact root matched a minified corrected-transcript
+JSON record. Because the file was one line, the tool expanded the entire record
+into its output even though only stable identity fields were needed. Nothing
+was written, and the investigation immediately switched to sanitized
+projections and hashes, but the read exceeded the intended evidence boundary.
+
+**Evidence:** `.goat-flow/architecture.md` (search: `Local artifacts contain only`)
+restricts durable evidence to minimal, non-clinical content. The M05 recovery
+investigation required only fixture identity, segment identity, role, timing,
+classification, and text hash.
+
+**Prevention:** Use `rg --files` to identify candidate JSON files, inspect their
+schema, and then use `jq` to whitelist non-clinical fields before searching or
+comparing values. Prefer hashes for text identity. Do not run broad `rg`
+content searches over minified clinical artifacts; when a textual search is
+unavoidable, constrain it to known non-clinical files or an exact bounded
+projection.
