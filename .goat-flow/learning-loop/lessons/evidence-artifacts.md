@@ -1,6 +1,6 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-27
+last_reviewed: 2026-07-28
 ---
 
 # Evidence Artifact Lessons
@@ -211,8 +211,11 @@ spend.
 ## Lesson: Cross-map only evidence available in each frozen lane
 
 **Created:** 2026-07-25
-**Decision changed:** Separate candidate-on truth classification from cross-arm candidate causality; require
-a historical comparison lane only for claims that actually depend on it.
+**Incident count:** 2
+**Latest occurrence:** 2026-07-28
+**Decision changed:** Separate candidate-on truth classification from cross-arm
+candidate causality, and adjudicate heuristic review findings before freezing
+any raw-count correctness gate.
 **Trigger phase:** VERIFY
 **What happened:** The first corpus-quality disposition build tried to load a corpus-off corrected transcript
 for every source-chip alert and stopped on d2c09. That transcript is intentionally absent and already recorded as a historical
@@ -221,14 +224,38 @@ positives, so clearing those heuristic alerts did not require an off-lane row. T
 records the baseline as unavailable: candidate-on truth may clear a false positive, while any role-error or
 unscored causality claim without a comparison remains unverified. The failed build stopped before creating
 the evidence root.
+
+On 2026-07-28, the M05 replacement contract froze the raw source-chip finding
+maximum at zero even though this lesson already recorded truth-aligned lexical
+false positives. The sole approved campaign completed all ten replays and ten
+correction requests, then terminally failed on 28 findings. Of the 28 current
+findings, 27 exactly match historical fixture, segment, code, text-hash,
+visible-role, and timing payloads: 21 were already adjudicated as lexical
+heuristic false positives, three as confirmed role errors, and three as
+reference gaps. One is new and unadjudicated. The approved zero gate was
+correctly enforced and must not be waived after results; the mistake was
+freezing absence of heuristic alerts as if it were equivalent to absence of
+adjudicated role errors.
 **Evidence:** `scripts/verify-rediarization-corpus-quality-disposition.py` (search:
 `def classify_source_finding`) separates truth status from candidate causality, and
 `tests/python/test_rediarization_corpus_quality_disposition_verifier.py` (search:
 `test_truth_aligned_alert_does_not_require_historical_off_lane`) pins the known-missing-lane case.
+
+`var/quality/0.5.2-asr-accuracy/m05-baseline/replacement-campaign/terminal-failure-summary.json`
+(search: `diagnostic_cross_map`) records the text-free recurrence evidence, and
+`var/quality/rediar-m05-acceptance/arms/corpus-on/source-chip-findings-adjudication.json`
+(search: `classifications`) records the prior 22/3/4 truth split.
 **Prevention:** Before cross-mapping alerts, identify which fields prove truth status and which prove
 candidate causality. Load only available frozen lanes, encode missing comparison evidence explicitly, and
 never turn an already-declared historical absence into a prerequisite for an independent truth
 classification.
+
+Before freezing a heuristic finding maximum, cross-map stable identities,
+define which adjudicated truth classes are blockers, and preserve unknowns as
+review work rather than silently equating severity with ground truth. If a raw
+zero threshold is already approved, enforce it and preserve the terminal
+failure; seek a new pre-results contract through a separate plan instead of
+waiving the gate post hoc.
 
 ## Lesson: CPU config fakes must preserve runtime-only value types
 

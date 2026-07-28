@@ -260,7 +260,7 @@ from the caller environment. Do not add repo directories to `sys.path` inside th
 **Decision changed:** Preflight compound runtime commands as reviewable units, resolve
 dynamic process targets in a separate read-only step, and use an existing reviewed
 helper or a small checked script when the command crosses the hook's complexity boundary.
-**Incident count:** 2 | **Latest occurrence:** 2026-07-24
+**Incident count:** 3 | **Latest occurrence:** 2026-07-28
 **What happened:** During M03 post-visit timestamp work, an inline `docker compose exec`
 probe with a long embedded Python heredoc was blocked by the PreToolUse hook as too complex
 to review safely. During the later d2c09 full-replay closeout, the hook likewise rejected
@@ -268,12 +268,26 @@ a null-command truncation, a combined dynamic-target guard stop, and a compound 
 adjudication pipelines. Each rejection occurred outside the replay and spent no GPU or
 provider call; splitting artifact creation from target resolution and then using the
 exact resolved pane/PID let cleanup complete without weakening the hook.
+
+M05 repeated the orchestration trap through a yielding tool boundary. A CPU
+proof launched the trapped fixture wrapper through a nested execution cell;
+the cell returned without retaining the inner terminal session, so the child
+was terminated outside its normal `EXIT` path after mono preparation. Eight
+resting fixture hashes were temporarily mismatched. The approved restore helper
+recovered all ten stereo hashes, and the same proof passed when launched in a
+persistent terminal session and polled by its session ID.
+
 **Prevention:** For GPU/runtime probes that need more than a few shell steps, add a small
 fixture-only script with `apply_patch`, compile it, and then run the script through the
 container. This gives the hook and reviewer a stable artifact instead of a dense terminal
 blob. For one-shot operator cleanup, first resolve and record the exact target read-only,
 then issue one exact action in a separate command; create a new artifact with `touch` or
 the producing tool instead of a null-command redirect that resembles destructive truncation.
+For mutating commands whose cleanup depends on shell traps, use an execution
+surface that preserves a process/session handle across yields and poll that
+exact handle to terminal completion. After an interrupted or ambiguous yield,
+check for live children, verify the cleanup invariant directly, and run the
+approved recovery before another attempt.
 
 ## Lesson: Long wall-clock campaigns need an active suspend-gap watchdog
 
