@@ -1,6 +1,6 @@
 ---
 category: runtime
-last_reviewed: 2026-07-24
+last_reviewed: 2026-07-30
 ---
 
 # Runtime / Session / Mercure Footguns
@@ -15,15 +15,34 @@ last_reviewed: 2026-07-24
 - **aiobotocore constraint:** The base image's `aiobotocore` pins `botocore<1.42.62`, so you cannot just upgrade botocore to match the newer boto3 - install the matched **1.42.61** pair (which is `<1.42.62`) directly INTO `/opt/venv`.
 - **Fix:** `RUN /opt/venv/bin/python -m pip install --no-cache-dir "boto3==1.42.61" "botocore==1.42.61"`, placed AFTER the model-download layer so a rebuild keeps the multi-GB model cache. Bump the pair only alongside the pinned `nemo:26.02` base image. Diagnose with `docker compose exec nemo-agent /opt/venv/bin/python -c "import boto3"`.
 
-## Footgun: Mercure publish failure only surfaces as a browser banner
-**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
+## Footgun: Mercure publish failure can terminate WebSocket replay
 
-- **Files:** `strands_agents/api/server.py` (search: "async def publish_to_mercure")
-- **Files:** `strands_agents/api/streaming_session.py` (search: "async def _warn_live_streaming_failure")
-- **Files:** `public/js/scribe-recording.js` (search: "if (socketMessage.type === 'system_error')")
-- **Files:** `public/js/scribe-recording.js` (search: "function showSystemBanner")
-- **What breaks:** If Mercure is down, transcription can still run on the server but live segments stop appearing in the browser. The user gets a one-time `system_error` banner, not a fallback delivery path.
-- **Evidence:** `publish_to_mercure()` returns `False` after retries, the streaming workflow emits a `system_error` frame on the first failed raw publish, and the browser only renders that message into `#systemBanner`.
+**Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED
+**Decision changed:** Require Mercure DNS and publish-endpoint readiness before the
+attempt sentinel for any write-once WebSocket campaign; NeMo health alone is not a
+complete replay preflight.
+**Trigger phase:** SCOPE
+**Incident count:** 2 | **Latest occurrence:** 2026-07-30
+
+- **Files:** `strands_agents/api/mercure_publisher.py` (search: "async def did_publish_mercure_event")
+- **Files:** `strands_agents/api/streaming_session.py` (search: "async def _publish_raw_segments")
+- **Files:** `scripts/eval-corrected-fixtures.sh` (search: "async with websockets.connect")
+- **What breaks:** If Mercure is down, each visible segment awaits three bounded
+  publish attempts before the WebSocket loop can advance. The browser gets a one-time
+  banner during ordinary use, but a paced QA client using the library keepalive defaults
+  can close before the delayed stream recovers. A write-once campaign can therefore
+  spend its attempt on replay transport before any correction request or score exists.
+- **Evidence:** The 2026-07-30 M05 disposition attempt began with the compose Mercure
+  container stopped. The agent logged nine DNS retry events and four failed publishes;
+  chunk totals reached 18,605 ms and 18,597 ms while NeMo health and CUDA stayed good.
+  The unchanged `websockets` 16.1.1 client then failed on its 20-second ping timeout
+  during fixture one. The terminal record is
+  `var/quality/0.5.2-asr-accuracy/m05-baseline/source-chip-disposition-campaign/terminal-failure-summary.json`
+  (search: "first_fixture_websocket_keepalive_timeout").
+- **Prevention:** Before any attempt sentinel, verify the running Mercure container,
+  resolve `mercure` from the exact NeMo container, and make a bounded authenticated
+  publish/readiness probe. Stop as unspent when any check fails. Do not weaken client
+  keepalives or reinterpret a spent transport failure after results.
 
 ## Footgun: Session lifecycle split across active sessions, transcript storage, and role state
 **Status:** active | **Created:** 2026-03-21 | **Evidence:** ACTUAL_MEASURED

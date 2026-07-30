@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-26
+last_reviewed: 2026-07-30
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -356,13 +356,28 @@ creation, as the acquisition gate.
 ## Lesson: Container identity evidence must whitelist environment values
 
 **Created:** 2026-07-18
+**Decision changed:** Container state probes must select only named, reviewed
+non-secret fields; never include the complete environment in terminal output or
+durable evidence.
+**Trigger phase:** VERIFY
+**Incident count:** 2
+**Latest occurrence:** 2026-07-30
 **What happened:** The T03.3 JSON-runtime preflight wrote the full container environment to an
 evidence file. A filename-only scan showed that it included credential-bearing variables, so the
 unsafe artifact was deleted before the root was sealed and replaced with a non-secret whitelist.
+
+On 2026-07-30, an M05 final-state probe formatted the complete container
+environment alongside its status fields. Credential-bearing values were
+therefore emitted into the tool transcript even though no repository artifact
+was created. The values were not copied or reused, and later checks selected
+only the required non-secret state.
 **Evidence:** `var/quality/0.5.0-baseline-20260717T204434Z/identity/identity-capture-correction.md`.
-**Prevention:** Never persist `docker inspect`'s complete `.Config.Env`. Select only named runtime
-identity fields needed by the gate, scan the evidence root for credential assignments before
-sealing, and record the security correction without copying or printing secret values.
+The recurrence is recorded here rather than in a durable raw-output artifact so
+the unsafe values are not propagated.
+**Prevention:** Never print or persist `docker inspect`'s complete `.Config.Env`.
+Select only named, reviewed non-secret runtime identity fields needed by the
+gate, scan the evidence root for credential assignments before sealing, and
+record the security correction without copying or printing secret values.
 
 ## Lesson: Gruff context docs need marker vocabulary (2026-07-04)
 

@@ -1,6 +1,6 @@
 ---
 category: evidence-artifacts
-last_reviewed: 2026-07-29
+last_reviewed: 2026-07-30
 ---
 
 # Evidence Artifact Lessons
@@ -211,8 +211,8 @@ spend.
 ## Lesson: Cross-map only evidence available in each frozen lane
 
 **Created:** 2026-07-25
-**Incident count:** 2
-**Latest occurrence:** 2026-07-28
+**Incident count:** 3
+**Latest occurrence:** 2026-07-30
 **Decision changed:** Separate candidate-on truth classification from cross-arm
 candidate causality, and adjudicate heuristic review findings before freezing
 any raw-count correctness gate.
@@ -236,6 +236,15 @@ reference gaps. One is new and unadjudicated. The approved zero gate was
 correctly enforced and must not be waived after results; the mistake was
 freezing absence of heuristic alerts as if it were equivalent to absence of
 adjudicated role errors.
+
+On 2026-07-30, the first M05 disposition evaluator applied the supported
+Doctor/Patient-role prerequisite to every corrected row before selecting the
+source-chip findings. Historical corpus-off therefore stopped on an unresolved
+non-finding row even though that row was not evidence for any requested
+classification. The evaluator was corrected to require complete row-index,
+role, and timing agreement across the lane while applying supported-role and
+truth-class requirements only to the flagged findings. Its synthetic fixture
+now includes an aligned unresolved non-finding row.
 **Evidence:** `scripts/verify-rediarization-corpus-quality-disposition.py` (search:
 `def classify_source_finding`) separates truth status from candidate causality, and
 `tests/python/test_rediarization_corpus_quality_disposition_verifier.py` (search:
@@ -245,6 +254,10 @@ adjudicated role errors.
 (search: `diagnostic_cross_map`) records the text-free recurrence evidence, and
 `var/quality/rediar-m05-acceptance/arms/corpus-on/source-chip-findings-adjudication.json`
 (search: `classifications`) records the prior 22/3/4 truth split.
+`scripts/m05-source-chip-disposition.py` (search: `def _validate_aligned_rows`)
+now separates whole-lane identity checks from finding classification, and
+`tests/python/test_m05_source_chip_disposition.py` (search:
+`"role": "UNRESOLVED"`) pins the non-finding case.
 **Prevention:** Before cross-mapping alerts, identify which fields prove truth status and which prove
 candidate causality. Load only available frozen lanes, encode missing comparison evidence explicitly, and
 never turn an already-declared historical absence into a prerequisite for an independent truth
@@ -255,7 +268,9 @@ define which adjudicated truth classes are blockers, and preserve unknowns as
 review work rather than silently equating severity with ground truth. If a raw
 zero threshold is already approved, enforce it and preserve the terminal
 failure; seek a new pre-results contract through a separate plan instead of
-waiving the gate post hoc.
+waiving the gate post hoc. Validate full-lane alignment with the broadest
+values the lane contract permits, then apply narrower classification
+prerequisites only to rows that actually participate in that classification.
 
 ## Lesson: CPU config fakes must preserve runtime-only value types
 
@@ -408,3 +423,29 @@ comparing values. Prefer hashes for text identity. Do not run broad `rg`
 content searches over minified clinical artifacts; when a textual search is
 unavoidable, constrain it to known non-clinical files or an exact bounded
 projection.
+
+## Lesson: Run relative checksum manifests from their declared root
+
+**Created:** 2026-07-30
+**Decision changed:** Inspect a checksum file's record paths before invoking
+`sha256sum -c`, then run it from the root those paths declare; do not assume
+that an adjacent checksum file is relative to its own directory.
+**Trigger phase:** VERIFY
+**Incident count:** 1
+**Latest occurrence:** 2026-07-30
+
+**What happened:** The final M05 disposition evidence recheck first ran from
+the campaign directory. Both checksum files contain repository-root-relative
+records, so `sha256sum` reported the sealed files as unreadable even though
+their bytes had not changed. Rerunning from the workspace root verified all 83
+manifest records and the terminal summary.
+
+**Evidence:**
+`var/quality/0.5.2-asr-accuracy/m05-baseline/source-chip-disposition-campaign/terminal-evidence-manifest.sha256`
+and the adjacent `terminal-failure-summary.sha256` retain their root-relative
+record paths and pass from the controlling workspace root.
+
+**Prevention:** Read one record before verification, resolve its base against
+the artifact contract, and set the command working directory explicitly.
+Classify `FAILED open or read` as a path-resolution failure, not a digest
+mismatch; preserve the manifest and correct only the invocation.

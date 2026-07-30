@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-19
+last_reviewed: 2026-07-31
 ---
 
 # Audit Runner Lessons
@@ -8,15 +8,26 @@ last_reviewed: 2026-07-19
 ## Lesson: Prove process and artifact contracts before paid work
 
 **Created:** 2026-07-14
+**Decision changed:** Freeze a runner identity only after static checks and a direct synthetic
+exercise of its real entry function both pass.
+**Trigger phase:** VERIFY
+**Incident count:** 2
+**Latest occurrence:** 2026-07-31
 **What happened:** M08's one-shot shell reaped a bare `nohup` child before replay, while its first
 provenance reader expected `id` instead of the retained rows' `segment_id`. No audio or provider
 request was lost: a no-token artifact probe caught the schema error, and `setsid --fork` plus
 process, first-log-line, and unchanged-ledger checks proved the replacement launch.
-**Evidence:** `var/quality/note-fidelity-audit-20260713T234904Z/` and the M08 plan's runner evidence
-(search: `54/54 citations`).
+M05B later declared two proof-only patch variables that its successor runner never consumed;
+ShellCheck rejected both as `SC2034` before the contract identity was frozen, and the variables
+were removed before the successor-only default-entry smoke ran.
+**Evidence:** `var/quality/note-fidelity-audit-20260713T234904Z/` and
+`var/quality/0.5.2-asr-accuracy/m05-baseline/approval-entry-remediation-cpu-proof/20260730T204841Z/verification-correction.txt`
+(search: `54/54 citations` and `SC2034`).
 **Prevention:** Before paid or long evidence runs, assert one known non-zero result through every
 new artifact reader. After launch, require live process state, first progress, and an owned exit
-sentinel; a successful shell return proves neither schema compatibility nor detachment.
+sentinel; a successful shell return proves neither schema compatibility nor detachment. For
+approval runners, run Bash syntax and ShellCheck before freezing hashes, declare proof-only state
+only when it is consumed, and exercise the exact default entry function with failing command shims.
 
 ## Lesson: Keep repository lint separate from changed-file formatting
 
