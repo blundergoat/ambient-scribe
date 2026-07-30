@@ -1,6 +1,6 @@
 ---
 category: cross-reference-verification
-last_reviewed: 2026-07-20
+last_reviewed: 2026-07-31
 ---
 
 # Cross-Reference Verification Lessons
@@ -18,6 +18,27 @@ every path the edited READMEs reference) caught both dead links before completio
 each directory before its output, and never transcribe a path from memory of combined output.
 Before presenting doc changes, run a per-path existence check over every file, script, and
 directory the docs newly cite - it is cheap and it caught the session's only error.
+
+## Lesson: A `(search: ...)` anchor must sit on one physical line
+
+**Created:** 2026-07-31
+**Decision changed:** After writing or editing any doc that a `(search: ...)` anchor points
+into, grep the literal anchor string instead of assuming the file's existence is enough.
+**Trigger phase:** VERIFY
+**What happened:** `.goat-flow/plans/0.5.2/M05B-remediate-runtime-approval-entry-gate.md`
+cited `.goat-flow/plans/0.5.2/HANDOFF.md` with search anchor `same sealed runner path
+requires that record both absent and present`. That handoff was a declared M05A and M05B
+deliverable, was listed in the M05B approval record's `writable_paths`, had its task ticked
+in both milestones, and had never been created - a dead anchor that survived two closed
+milestones. Recreating it did not fix the anchor either: prose wrapping at ~88 columns split
+the phrase across two lines, and because `rg` matches per line, the grep still returned
+nothing. Rewrapping so the whole phrase sat on one line resolved it.
+**Prevention:** Anchors are line-scoped. When authoring a target, keep the anchored phrase
+unbroken on a single line even if that line runs long, or choose a short anchor - a heading
+or a symbol name - that cannot wrap. Existence-checking the cited path proves only half the
+reference; the retrieval that the anchor promises is the other half, so verify both with
+`rg -n '<anchor>' <path>` before claiming a Read-first block is valid. A ticked "update
+`HANDOFF.md`" task is not evidence the file exists.
 
 ## Lesson: A truncated sweep grep ships an incomplete removal
 
