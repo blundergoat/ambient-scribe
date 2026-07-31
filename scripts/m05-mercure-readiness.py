@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one bounded, secret-free Mercure readiness publish for M05.
+"""Run one bounded, secret-free Mercure readiness publish for a baseline campaign.
 
 The future campaign pipes this source into the existing NeMo container. The
 probe imports the application's Mercure publisher, limits that isolated Python
@@ -379,7 +379,7 @@ async def build_readiness_receipt(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run or validate the M05 Mercure readiness probe."
+        description="Run or validate the Mercure readiness probe."
     )
     parser.add_argument(
         "--validate-receipt",

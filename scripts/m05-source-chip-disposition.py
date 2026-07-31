@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic, text-free M05 source-chip disposition.
+"""Build a deterministic, text-free source-chip disposition.
 
 The evaluator consumes one saved source-chip score plus the same-run corrected
 transcript and corrected-row diagnostics for each fixture. It performs no
@@ -524,7 +524,7 @@ def main() -> int:
         )
         sys.stdout.write(render_source_chip_disposition(document))
     except (M05SourceChipDispositionError, OSError) as error:
-        print(f"M05 source-chip disposition rejected: {error}", file=sys.stderr)
+        print(f"source-chip disposition rejected: {error}", file=sys.stderr)
         return 1
     return 0
 

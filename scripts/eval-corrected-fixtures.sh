@@ -228,7 +228,7 @@ require_ready_agent() {
 }
 
 require_structured_agent_logs() {
-  # M02-grade role diagnostics must fail before streaming if JSON events are unavailable.
+  # Span-faithful-grade role diagnostics must fail before streaming if JSON events are unavailable.
   if [[ "$REQUIRE_STRUCTURED_LOGS" != "1" \
     && "$REQUIRE_ALLOCATION_DIAGNOSTICS" != "1" ]]; then
     return 0
@@ -1211,7 +1211,7 @@ run_selected_fixtures() {
     # An unavailable correction is complete evidence in corpus mode, not a lost run.
     if [[ "$LAST_FIXTURE_OUTCOME" == "correction_unavailable" ]]; then
       FIXTURE_FAILED=$((FIXTURE_FAILED + 1))
-      # A named fixture remains a hard quality gate exactly as before M01.
+      # A named fixture remains a hard quality gate exactly as before.
       if [[ "$CORPUS_MODE" != "true" ]]; then
         echo "error: correction unavailable for single-fixture gate" >&2
         return 1

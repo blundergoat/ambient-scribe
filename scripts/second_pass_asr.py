@@ -424,7 +424,7 @@ def validate_application_post_visit_options(
 ) -> str | None:
     """Reject an incomplete or unreviewed phrase experiment before source access.
 
-    Use after parsing; null return means the operator selected the frozen M02 lane.
+    Use after parsing; null return means the operator selected the frozen second-pass lane.
 
     Args:
         operator_options: Requested evaluator arm; missing fields make the command invalid.
@@ -439,7 +439,7 @@ def validate_application_post_visit_options(
         if operator_options.effective_decoder_output is not None:
             return "--effective-decoder-output requires --application-post-visit"
         return None
-    # M02 compares only the pinned Unified decoder used after the clinician presses Stop.
+    # The comparison uses only the pinned Unified decoder used after the clinician presses Stop.
     if operator_options.model != M02_UNIFIED_MODEL:
         return f"--application-post-visit requires {M02_UNIFIED_MODEL}"
     # A raw garble, list, or second phrase has no independent clinical review.

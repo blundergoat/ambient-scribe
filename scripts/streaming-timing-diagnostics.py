@@ -701,7 +701,7 @@ def build_verdict(findings: dict[str, Any]) -> str:
             "The non-floor start-point rate is a timing-placement comparison "
             "class only. It is not a forecast of speaker-slot purity or visible "
             "role correctness. Captured histories do not contain the true "
-            "per-word NeMo timing needed to simulate M02.",
+            "per-word NeMo timing needed to simulate span-faithful placement.",
             "",
         ]
     )

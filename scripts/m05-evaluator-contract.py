@@ -1,4 +1,4 @@
-"""Verify every evaluator and scorer/manifest pair frozen by an M05 packet.
+"""Verify every evaluator and scorer/manifest pair frozen by an approval packet.
 
 The verifier is CPU-only and reads repository identities without opening any
 development audio or transcript truth. It rejects a packet when its files hash
@@ -20,7 +20,7 @@ SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class M05EvaluatorContractError(ValueError):
-    """Raised when a frozen M05 evaluator contract cannot compose safely."""
+    """Raised when a frozen evaluator contract cannot compose safely."""
 
 
 def _reject(category: str, detail: str) -> M05EvaluatorContractError:
@@ -253,7 +253,7 @@ def main() -> int:
             arguments.repo_root,
         )
     except (M05EvaluatorContractError, OSError, json.JSONDecodeError) as error:
-        raise SystemExit(f"M05 evaluator contract rejected: {error}") from error
+        raise SystemExit(f"evaluator contract rejected: {error}") from error
 
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0

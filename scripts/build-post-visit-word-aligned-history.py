@@ -489,7 +489,7 @@ def build_candidate_history(
     """Build the word-aligned candidate history payload.
 
     Args:
-        timestamp_report: M03-style ASR word timing report; empty timings mean blank candidate rows.
+        timestamp_report: diagnostic-style ASR word timing report; empty timings mean blank candidate rows.
         live_history: Live replay history; missing rows mean Unknown speaker candidate rows.
         max_nearest_gap_seconds: Optional nearest fallback cap; null means no cap is applied.
 

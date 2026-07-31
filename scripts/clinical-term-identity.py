@@ -1,6 +1,6 @@
 """Score exact clinical-term identity without reading transcript metadata.
 
-M05 uses this evaluator beside the manifest-bound primary transcript scorer.
+The baseline campaign uses this evaluator beside the manifest-bound primary transcript scorer.
 It accepts clinician-visible rows, reads only their text, and emits a text-free
 summary suitable for baseline and candidate comparison.
 """

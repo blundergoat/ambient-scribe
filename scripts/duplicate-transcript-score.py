@@ -4,7 +4,7 @@
 Operators run this after a replay to measure whether the same normalized words
 appeared twice at overlapping spoken times or as a grounded decoder variant.
 Clinical wording is compared only in memory; JSON evidence contains safe row/
-session IDs, roles, timing, counts, and metadata-derived pair IDs so M05 can
+session IDs, roles, timing, counts, and metadata-derived pair IDs so the baseline campaign can
 diagnose identity behavior safely.
 """
 
@@ -108,7 +108,7 @@ def discover_live_history_paths(selected_paths: list[Path]) -> list[Path]:
 
     # Each selection may be one renamed browser artifact or a complete fixture run.
     for selected_path in selected_paths:
-        # A direct JSON selection supports retained browser artifacts such as M08's capture.
+        # A direct JSON selection supports retained browser artifacts such as a retained browser capture.
         if selected_path.is_file():
             discovered_paths.add(selected_path.resolve())
             continue

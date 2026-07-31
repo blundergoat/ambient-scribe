@@ -159,7 +159,7 @@ print(
     "strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err"
 )
 # Each report row is one fixture's latest saved visit. Strict attribution is
-# the M20 headline (uncertain rows count as incorrect); the free oracle stays
+# the overlap headline (uncertain rows count as incorrect); the free oracle stays
 # diagnostic only.
 for fixture, row in sorted(latest_by_fixture.items()):
     metrics = row["metrics"]
@@ -785,7 +785,7 @@ if previous is not None:
         previous_value = previous.get("metrics", {}).get(key)
         current_value = metrics.get(key)
 
-        # Missing old attribution values are expected until the first M16 run lands.
+        # Missing old attribution values are expected until the first role-diagnostics run lands.
         if isinstance(previous_value, (int, float)) and isinstance(
             current_value, (int, float)
         ):
@@ -896,7 +896,7 @@ PY
   # The role queue keeps applying tail-batch flips for several seconds after
   # disconnect; the timeline step sleeps for that settle window, so history is
   # fetched AFTER it to score the final labels the clinician actually sees.
-  # Fetching earlier made attribution depend on a fetch-vs-flip race (M20).
+  # Fetching earlier made attribution depend on a fetch-vs-flip race.
   write_role_timeline "$session_id" "$timeline_path" "$quality_path"
   fetch_history "$session_id" "$history_path"
   assert_no_websocket_errors "$session_id"

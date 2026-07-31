@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe whether NeMo ASR word/token confidence is obtainable for one fixture clip.
 
-Use this developer-only spike (0.4.0 M06 phase 1) before persisting per-row
+Use this developer-only spike (0.4.0 confidence spike, phase 1) before persisting per-row
 confidence for the transcript UI. It runs inside the NeMo container, loads the
 selected ASR model with confidence enabled in the decoding config, transcribes
 a short fixture clip, and reports confidence-value statistics so a GO/NO-GO
