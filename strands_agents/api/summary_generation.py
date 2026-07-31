@@ -114,7 +114,7 @@ def run_summary_generation(
     Use after recording stops, so the SOAP panel can appear beside the
     transcript while the GPU remains reserved for speech recognition. Drafts
     failing the deterministic fidelity checks get ONE regeneration; sentences
-    that still fail ship visibly flagged, never silently stripped (M07).
+    that still fail ship visibly flagged, never silently stripped.
 
     Args:
         session_id: Session shown in the UI; empty would make the retry/error logs hard to trace.
@@ -190,7 +190,7 @@ def run_summary_generation(
             # screen or a spoken emergency-disposition component absent from
             # the whole note) join the same single bounded retry; their
             # synthetic sentences match no note text, so the payload itself
-            # never carries them (M05 - the reason lane surfaces survivors).
+            # never carries them (the reason lane surfaces survivors).
             violations.extend(
                 FidelityViolation(
                     location="note",
@@ -214,7 +214,7 @@ def run_summary_generation(
 
         # The redo must never make the note less safe: fidelity violations stay
         # the primary rank. For equally safe drafts, prefer fewer claims with no
-        # evidence; a complete tie keeps the feedback-guided redo (M10).
+        # evidence; a complete tie keeps the feedback-guided redo.
         selected_attempt = min(
             range(len(drafts)),
             key=lambda index: (
@@ -253,7 +253,7 @@ def run_summary_generation(
                 extra={"session_id": session_id, "flagged": len(violations)},
             )
 
-        # The M05 reason lanes attach per claim through the detector view; the
+        # The reason lanes attach per claim through the detector view; the
         # full selected rows supply the stored confidence values for linkage.
         detector_sections, key_point_texts = _detector_sections_view(
             validated_summary, source_units
@@ -806,16 +806,16 @@ def _format_seconds(value: Any) -> str:
     return f"{minutes:02d}:{remainder:02d}"
 
 
-# --- M06 schema v2: atomic claims citing complete source units ---------------
+# --- Schema v2: atomic claims citing complete source units ---------------
 # The model receives complete, server-defined UNIT ids (never row ids) and
 # returns atomic claims; the server validates ids, hydrates units from the
 # attested selected rows, assigns artifact-local claim ids, and attaches the
-# M05 review reasons per claim. Summaries stay ephemeral; the browser keeps a
+# Review reasons per claim. Summaries stay ephemeral; the browser keeps a
 # v1 renderer as the adapter for old payloads.
 
 SUMMARY_SCHEMA_VERSION = 2
 # A turn longer than this subdivides at row boundaries that end a sentence;
-# a turn that cannot split cleanly stays whole (frozen at M06 approval).
+# a turn that cannot split cleanly stays whole (frozen at schema-v2 approval).
 SOURCE_UNIT_SUBDIVISION_MAX_CHARS = 700
 # Display-only neighbor rows shown beside a unit; never counted as evidence.
 SOURCE_UNIT_CONTEXT_ROWS = 2
@@ -854,7 +854,7 @@ class SessionSummaryV2Output(BaseModel):
     Schema v2 for the generated post-consultation summary.
 
     Use as the Strands `structured_output_model`. Key points are claims, not
-    strings; string-only key points fail validation by design (M06).
+    strings; string-only key points fail validation by design.
     """
 
     title: str = ""
@@ -995,7 +995,7 @@ def build_source_units(
     are display and citation surfaces, not quote-matching runs.
 
     Args:
-        citation_segments: M02-attested selected rows; empty means the visit
+        citation_segments: attested selected rows; empty means the visit
             has no citable source and generation runs uncited.
 
     Returns:
@@ -1155,7 +1155,7 @@ def validated_v2_summary(
     precedent); a `source_unit` claim left with no valid ids downgrades to
     basis `none` (review-required), and `derived_metadata` always downgrades
     because 0.4.0 has no trusted encounter metadata. The note is never
-    rejected wholesale here - source-level rejection belongs to the M02 gates.
+    rejected wholesale here - source-level rejection belongs to the source-integrity gates.
     """
     known_unit_ids = {source_unit["unit_id"] for source_unit in source_units}
     dropped_ids: list[str] = []
@@ -1267,7 +1267,7 @@ def _detector_sections_view(
     structured_summary: SessionSummaryV2Output,
     source_units: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Present v2 claims in the v1 shape the M05 detectors consume.
+    """Present v2 claims in the v1 shape the detectors consume.
 
     Each section's content joins its claim texts (claims are sentences), and
     its citations enumerate the rows of every unit its claims cite, so the
@@ -1387,8 +1387,8 @@ def hydrated_v2_payload(
         source_units: Server-built units for this generation.
         citation_segments: Attested selected rows (context rows come from here).
         violations: Surviving fidelity-rule findings (visible-lane rules).
-        coverage_reasons: Note-level M05 coverage findings.
-        lane_reasons: Per-sentence M05 reason-lane findings.
+        coverage_reasons: Note-level coverage findings.
+        lane_reasons: Per-sentence reason-lane findings.
 
     Returns:
         schema_version-2 payload dict; the route adds attestation fields.
@@ -1424,7 +1424,7 @@ def hydrated_v2_payload(
         for unit_id in claim.source_unit_ids:
             if unit_id not in cited_unit_ids:
                 cited_unit_ids.append(unit_id)
-        # The M03 threshold lane, claim-scoped: uncertain cited wording keeps
+        # The threshold lane, claim-scoped: uncertain cited wording keeps
         # its visible review cue even without a lexicon-variant reason.
         cited_confidence_rows = [
             confidence_rows_by_id[row["segment_id"]]

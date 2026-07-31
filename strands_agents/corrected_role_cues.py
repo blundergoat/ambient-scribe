@@ -24,7 +24,7 @@ _ECHO_DUPLICATE_EXCLUDED_WORDS = (
     | _IDENTITY_ECHO_ACK_WORDS
     | frozenset({"yeah", "yes", "no", "mm", "hmm", "mhm"})
 )
-# M12: cues too generic to overrule a live scaffold on their own. On strong
+# Cues too generic to overrule a live scaffold on their own. On strong
 # scaffolds these were the ONLY source of cleanup damage ("Okay. Oh, I can do"
 # flipped to Doctor by "okay"; the doctor's "and I hope..." flipped to Patient
 # by "and i"), while on weak scaffolds they still help - so they form a weak
@@ -341,8 +341,8 @@ def identity_echo_boundary_index(normalized_row_words: list[str]) -> int | None:
     """Find the last patient word before a clinician's echoed acknowledgement.
 
     Covers both gated echo shapes: the identity/age digit echo
-    ("...I'm 26. 26, okay.", M07) and the patient-cued word echo
-    ("...I vomited twice. Twice, okay.", M10).
+    ("...I'm 26. 26, okay.") and the patient-cued word echo
+    ("...I vomited twice. Twice, okay.").
 
     Args:
         normalized_row_words: Lowercase alphanumeric row words; empty means no echo shape.
@@ -572,7 +572,7 @@ def safe_source_time(value: Any) -> float:
 def apply_role_cue_cleanup(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Adjust corrected-row roles when text carries obvious speaker cues.
 
-    M12 makes the cleanup scaffold-aware: strong cues always apply, but the
+    The cleanup is scaffold-aware: strong cues always apply, but the
     weak tier (bare "okay"/"and I" and short-row neighbor inheritance) only
     acts when the visit shows the weak-scaffold signal - enough strong-cue
     flips that the live labels clearly disagree with what was said.

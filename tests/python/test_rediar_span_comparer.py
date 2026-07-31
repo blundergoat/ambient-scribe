@@ -1,4 +1,4 @@
-"""Decision-table contracts for the fold-span replacement comparer (M03).
+"""Decision-table contracts for the fold-span replacement comparer.
 
 The comparer decides, per fold-suspect span, whether the corrected transcript
 keeps the live speaker ownership or takes a row-level role exception sourced

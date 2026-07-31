@@ -1,5 +1,5 @@
 """
-End-to-end contracts for per-row word confidence (0.4.0 M06 phase 2).
+End-to-end contracts for per-row word confidence (0.4.0 confidence spike, phase 2).
 
 Every lane that shows transcript rows to the clinician - live streaming
 emission, windowed emission, post-visit corrected rows, storage restore, and

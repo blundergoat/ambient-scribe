@@ -26,7 +26,7 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 REDIARIZATION_FLAG = "NEMO_CORRECTION_REDIARIZATION"
-# M02's capacity ladder proved full-audio Sortformer through its longest leg,
+# The capacity ladder proved full-audio Sortformer through its longest leg,
 # c07 at 858.2s (two deterministic runs, VRAM flat - rediar-m02-capacity
 # ledger). 860 admits that proven maximum plus sub-second retention jitter;
 # longer retained audio (possible up to the 900s buffer cap) stays unproven
@@ -764,7 +764,7 @@ def run_rediar_rebuild_leg(
     # Without timed words the rebuild cannot form rows for either witness.
     if not word_timings:
         return RediarRebuildResult(status="skipped_no_word_timings")
-    # Beyond the M02-proven envelope the lane gates by visit length.
+    # Beyond the proven envelope the lane gates by visit length.
     if audio_duration_seconds > REDIAR_MAX_AUDIO_SECONDS:
         return RediarRebuildResult(status="skipped_envelope")
 

@@ -152,7 +152,7 @@ def select_summary_segments(
     original_chars = len(original_text)
     original_segments = len(formattable_segments)
 
-    # Under budget means the model sees the exact pre-M08 row order and formatting.
+    # Under budget means the model sees the exact earlier row order and formatting.
     if original_chars <= max_chars:
         return TranscriptSelection(
             opening_segments=formattable_segments,

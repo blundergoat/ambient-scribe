@@ -180,7 +180,7 @@ async def _resume_or_create_session(
         # after the next Stop and block the note as stale lineage forever.
         services.sessions.replace_corrected_segments(session_id, [])
     else:
-        # M22: the process-level engine flag selects windowed (default) or
+        # The process-level engine flag selects windowed (default) or
         # session-long streaming identity at session construction only.
         engine = None
         if streaming_engine_enabled():
@@ -493,7 +493,7 @@ def _stream_cleanup_grace_seconds(
 
     A finalized visit keeps its audio for the post-visit retention window so the
     clinician can read the transcript before pressing Generate summary without
-    losing the corrected pass (the pre-M11 auto-summary fired within the short
+    losing the corrected pass (the earlier auto-summary fired within the short
     reconnect grace, which hid this). A visit that ended without a terminal
     watermark keeps the short reconnect grace: that timer exists for socket
     resumption, not for post-visit reading time.

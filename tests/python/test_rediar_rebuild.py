@@ -1,4 +1,4 @@
-"""Default-off rebuild lane inside post-visit correction (M04).
+"""Default-off rebuild lane inside post-visit correction.
 
 These tests pin the NEMO_CORRECTION_REDIARIZATION flag contract: flag-off
 corrections stay byte-identical to today's artifact, and flag-on runs may only
@@ -212,7 +212,7 @@ def test_leg_skips_without_word_timings() -> None:
 
 
 def test_leg_gates_on_the_frozen_capacity_envelope() -> None:
-    """Audio beyond the M02-proven envelope must not attempt a rebuild."""
+    """Audio beyond the proven envelope must not attempt a rebuild."""
     live_rows, fold_spans, _turns, word_timings = _synthetic_visit()
 
     result = run_rediar_rebuild_leg(

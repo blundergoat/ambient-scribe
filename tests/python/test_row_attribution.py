@@ -1,4 +1,4 @@
-"""Tests for the automatic row-exception cue lane (M20 Phase 3).
+"""Tests for the automatic row-exception cue lane (role-correction phase).
 
 The cue lane fixes the consult-03 complaint: single transcript rows whose
 wording contradicts their speaker's mapped role (a doctor question rendered on
@@ -385,11 +385,11 @@ CONSULT08_ORPHAN_MAPPING = {
 
 
 class TestOrphanSpeakerRowLane:
-    """M11: cue relabeling for orphan speaker IDs the engine minted pre-settle.
+    """Cue relabeling for orphan speaker IDs the engine minted pre-settle.
 
     Orphan = a speaker whose mapped role another, higher-row-count speaker
     already holds. Joins for cue matching may only use the immediate
-    chronological neighbor WITH THE SAME speaker ID - the M11 gate's one
+    chronological neighbor WITH THE SAME speaker ID - the orphan-span gate's one
     false flip came from joining the patient's "yes" across the doctor's turn.
     """
 
@@ -425,7 +425,7 @@ class TestOrphanSpeakerRowLane:
         assert "seg-0102" not in exceptions
 
     def test_m20_lane_keeps_precedence_over_the_orphan_lane(self) -> None:
-        """'Any further? Can I confirm...' is already flipped by the M20 cues."""
+        """'Any further? Can I confirm...' is already flipped by the overlap cues."""
         exceptions = compute_row_role_exceptions(
             CONSULT08_ORPHAN_ROWS, CONSULT08_ORPHAN_MAPPING
         )
@@ -453,7 +453,7 @@ class TestOrphanSpeakerRowLane:
         assert compute_row_role_exceptions(rows, mapping) == {}
 
 
-# --- M05: consult 1.2 live-lane role targets (official TextGrid wording) ---
+# --- consult 1.2 live-lane role targets (official TextGrid wording) ---
 
 
 def test_patient_offer_question_is_not_flipped_to_doctor() -> None:
@@ -505,7 +505,7 @@ def test_real_presenting_complaints_still_count_as_patient_evidence() -> None:
     assert action != "keep"
 
 
-# --- M05: consult 3.1 role no-regression/diagnostic fixture ---
+# --- consult 3.1 role no-regression/diagnostic fixture ---
 
 _DAY3C01_ROLE_FIXTURE_PATH = (
     Path(__file__).resolve().parents[1]
@@ -529,7 +529,7 @@ def _day3c01_role_fixture() -> dict:
 class TestDay3C01RoleNoRegression:
     """Consult 3.1 stays honestly messy.
 
-    The retained M02-acceptance replay carries the visit's identity debt:
+    The retained acceptance replay carries the visit's identity debt:
     three speaker IDs, eight phantom-speaker merges, 0.806 final confidence,
     and sub-5-word overlap rows holding the other speaker's words. The five
     phase-1 narrow guards do NOT solve that upstream debt; these pins make

@@ -77,12 +77,12 @@ class TestSummaryPrompts:
     def test_medical_prompt_requires_citations(self):
         """v2: citations are unit ids in each claim, never rows or timestamps."""
         assert "source_unit_ids" in MEDICAL_SUMMARY_PROMPT
-        # M13: sections are clinician-register synthesis, one theme per claim.
+        # sections are clinician-register synthesis, one theme per claim.
         assert "one theme, one claim" in MEDICAL_SUMMARY_PROMPT
         assert "MM:SS" not in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_preserves_patient_uncertainty(self):
-        """M00 fidelity: 'I don't know' must never become a definitive assertion."""
+        """Fidelity: 'I don't know' must never become a definitive assertion."""
         assert "Never assert a clinical fact" in MEDICAL_SUMMARY_PROMPT
         assert "unclear or not established" in MEDICAL_SUMMARY_PROMPT
         assert "preserving the speaker's own certainty" in MEDICAL_SUMMARY_PROMPT
@@ -100,7 +100,7 @@ class TestSummaryPrompts:
         assert "no assessment was documented" in MEDICAL_SUMMARY_PROMPT
 
     def test_medical_prompt_keeps_patient_reports_out_of_objective(self):
-        """Objective may hold only clinician-performed examination content (M03 item a)."""
+        """Objective may hold only clinician-performed examination content (examination-content rule)."""
         assert "Only clinician-performed examination findings" in MEDICAL_SUMMARY_PROMPT
         assert (
             "Patient-reported symptoms belong in Subjective" in MEDICAL_SUMMARY_PROMPT
@@ -313,7 +313,7 @@ class TestSummaryEndpoint:
     def test_summary_blocks_over_limit_visits_instead_of_truncating(self):
         """A visit over the note input limit gets no silently shortened draft.
 
-        M02 contract: silent truncation once dropped the end of a long visit's
+        Contract: silent truncation once dropped the end of a long visit's
         note input; the user now sees an explicit note-unavailable state while
         the full transcript stays reviewable.
         """
@@ -369,7 +369,7 @@ class TestSummaryEndpoint:
 
         A generic 502 means "provider problem"; this one must carry
         reason=note_output_limit and a detail that never suggests the model
-        is unavailable (M10; M07 blocker B3).
+        is unavailable (token-cap blocker B3).
         """
         sessions.append_segment(
             TEST_SESSION_ID,
@@ -433,10 +433,10 @@ class TestSummaryEndpoint:
 
 
 class TestSummaryContextSelection:
-    """M08 keeps one whole-row input contract across every summary source."""
+    """The summary keeps one whole-row input contract across every summary source."""
 
     def test_under_budget_selection_preserves_exact_rows_and_text(self) -> None:
-        """Normal consultations keep their pre-M08 ordering and formatting."""
+        """Normal consultations keep their earlier ordering and formatting."""
         rows = _summary_rows(3)
 
         selection = select_summary_segments(rows, transcript_text_from_segments)
@@ -845,7 +845,7 @@ class TestRunSummaryGeneration:
 
 
 class TestCitationDropLogging:
-    """M2 (summary UX): dropped citations are logged PHI-safe, never silently.
+    """Summary UX: dropped citations are logged PHI-safe, never silently.
 
     Selection is already citation-driven (findings Q5); these tests pin the
     payload invariants and the logging contract for unresolvable IDs.
@@ -926,7 +926,7 @@ class TestCitationDropLogging:
         assert getattr(record, "unresolved_ids_sample") == []
 
     def test_same_id_cited_in_two_sections_is_kept_in_both(self) -> None:
-        """Dedup is per section, so per-section provenance (M5) stays complete."""
+        """Dedup is per section, so per-section provenance stays complete."""
         summary = self._summary([["corrected-0001"], ["corrected-0001"]])
 
         validated = summary_with_validated_citations(summary, self._SOURCE_ROWS)
@@ -937,7 +937,7 @@ class TestCitationDropLogging:
 
 
 class TestInlineReferenceStripping:
-    """M1 (summary UX): displayed prose carries no inline reference markers.
+    """Summary UX: displayed prose carries no inline reference markers.
 
     Structured citations are untouched; only the bracket reference TEXT leaves
     the prose. Malformed or non-reference brackets degrade to plain text.
@@ -1047,7 +1047,7 @@ class TestSummaryDisplayTextCleaning:
 
 
 class TestSchemaV2MidImplementationProof:
-    """M06 gate: the model cannot cite rows, and the 5.3 turn is one unit."""
+    """Provenance gate: the model cannot cite rows, and the 5.3 turn is one unit."""
 
     def _palpitation_rows(self) -> list[dict]:
         """The retained 5.3 quote rows plus their real neighbors' shape.
@@ -1223,7 +1223,7 @@ class TestSchemaV2MidImplementationProof:
         """Sections must read as clinical synthesis, not per-utterance extraction.
 
         The 22-sentence "Patient reports..." wall was rejected by the user
-        (M13); the Key Points register - compressed, clinically ordered,
+        ; the Key Points register - compressed, clinically ordered,
         multi-unit citations - is the contract for sections too.
         """
         from agents.summary_agent import MEDICAL_SUMMARY_PROMPT

@@ -1,5 +1,5 @@
 // Unit tests for the temporal-flow classification behind the two-column
-// transcript layout (M11 rework). They pin the silence threshold, the
+// transcript layout (on-demand-note rework). They pin the silence threshold, the
 // overlap tolerance, and the visible marker wording without a browser DOM.
 // Run with: npm run test:js (node --test, no dependencies).
 const { test } = require('node:test');

@@ -28,7 +28,7 @@ Establishes auditable clinical quality through safer SOAP claims, traceable evid
 - **Quality reports repeat byte-for-byte** - Immutable evidence yields byte-identical reports without hiding errors or unsafe omissions.
 - **Ten-case development corpus selected** - One ordered ten-visit manifest verifies hashes and rejects missing, extra, or reordered cases.
 - **Demo picker matches evaluation exactly** - The picker mirrors the selected ten-case manifest.
-- **Provider baseline deferred safely** - M01 stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
+- **Provider baseline deferred safely** - the baseline stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
 - **Anxiety truth fixture versioned** - Seven checks pin source/row identities, allowed states, and an unsafe note for deterministic scoring.
 - **Medication and allergy regression frozen** - Three runs pin Metformin, losartan, amlodipine, and penicillin failures with lane/source metadata without implying rewrites or unseen results.
 - **Cross-lane evidence registered** - Six artifacts bind the left-arm overlap; unobserved confidence, source choice, and SOAP output stay unavailable.

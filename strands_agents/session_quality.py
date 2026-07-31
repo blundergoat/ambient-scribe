@@ -36,7 +36,7 @@ class TranscriptionQualityStats:
         window_seconds: Size of each NeMo window sent for transcription.
         emitted_segment_count: Transcript lines shown to the user.
         held_segment_count: Tail lines delayed so the final text can stabilize.
-        phantom_speaker_merge_count: Speaker merges; currently zero until M16 adds detection.
+        phantom_speaker_merge_count: Speaker merges; currently zero until merge detection is added.
         speaker_anchor_remap_count: Window speaker IDs remapped to preserve visible identity.
     """
 

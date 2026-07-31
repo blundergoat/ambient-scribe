@@ -60,7 +60,7 @@ Important files:
   `EncDecMultiTalkerRNNTBPEModel`.
 - `strands_agents/nemo_session.py` buffers live audio and hands complete windows
   to the pipeline.
-- `strands_agents/nemo_streaming_engine.py` is the M22 session-long streaming
+- `strands_agents/nemo_streaming_engine.py` is the session-long streaming
   engine (`NEMO_SESSION_ENGINE=streaming`): one Sortformer speaker cache owns
   speaker identity for the whole visit instead of per-window re-diarization.
 - `strands_agents/post_visit_correction.py` runs the post-stop second-pass ASR
@@ -82,7 +82,7 @@ Important env vars:
 | `NEMO_MAX_WORKERS` | `2` | Thread pool size for GPU-bound work. Increasing this changes GPU concurrency. |
 | `NEMO_BUFFER_MAX_DURATION` | `900` | Safety cap for live audio buffer duration in seconds. |
 | `NEMO_SPEAKER_CAP` | `2` | Maximum visible speaker IDs before window-local extras merge back into stable IDs; `0` allows all detected speakers. |
-| `NEMO_SESSION_ENGINE` | `streaming` (`.env.example` and `start-dev.sh`); `windowed` is the Compose fallback for env-less checkouts and CI | Live transcription engine. `windowed` re-diarizes each window and stitches speaker IDs; `streaming` keeps one session-long Sortformer speaker cache (M22). |
+| `NEMO_SESSION_ENGINE` | `streaming` (`.env.example` and `start-dev.sh`); `windowed` is the Compose fallback for env-less checkouts and CI | Live transcription engine. `windowed` re-diarizes each window and stitches speaker IDs; `streaming` keeps one session-long Sortformer speaker cache. |
 | `NEMO_STREAMING_MAX_TRANSCRIPT_HOLD_SECONDS` | `0` | Optional bound on how long stable rows may wait behind an old revisable word; `0` keeps strict spoken-order release. |
 | `NEMO_STREAMING_SLOT_EVIDENCE` | `0` | Operator-only QA logging of speaker-slot evidence (IDs, counts, timings - never words). |
 | `NEMO_STREAMING_CROSSTALK_GUARD` | `0` | Rejected QA guard; keep off because guarded corpus attribution regressed. |

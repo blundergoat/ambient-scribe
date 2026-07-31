@@ -1258,7 +1258,7 @@ process_file_contract() {
   # corrupt the JSON if merged in. New-only file/project surfacing via `--diff`
   # is intentionally NOT requested here: a single `--diff` pass also new-only-
   # filters line/symbol findings, hiding pre-existing findings on the very lines
-  # the agent edited (confirmed across all five analyzers). See M02 for the
+  # the agent edited (confirmed across all five analyzers). See the span-fidelity notes for the
   # scope-specific combined-mode fix that re-enables it.
   set +e
   if command -v timeout >/dev/null 2>&1; then

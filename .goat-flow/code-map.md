@@ -33,7 +33,7 @@ ambient-scribe/
 │   ├── tools/assign_roles.py = Pydantic role assignment tool and session role state
 │   ├── nemo_pipeline.py = singleton Sortformer/Parakeet GPU pipeline wrapper
 │   ├── nemo_session.py = per-WebSocket audio buffering and ffmpeg conversion
-│   ├── nemo_streaming_engine.py = M22 session-long streaming engine (NEMO_SESSION_ENGINE=streaming)
+│   ├── nemo_streaming_engine.py = session-long streaming engine (NEMO_SESSION_ENGINE=streaming)
 │   ├── nemo_segment_cleanup.py = server-side segment text/fragment cleanup
 │   ├── post_visit_correction.py = post-stop second-pass ASR into corrected transcript rows
 │   ├── corrected_role_cues.py = Doctor/Patient cue cleanup for corrected rows

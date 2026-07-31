@@ -404,7 +404,7 @@ function endReplay() {
     replayDrainReason = null;
     revealPostVisitActions();
 
-    // The note is generated on demand (M11): finalization starts correction,
+    // The note is generated on demand: finalization starts correction,
     // whose settled outcome unlocks Generate for the clinician's later click.
     updateGenerateSummaryAvailability();
 }
@@ -569,7 +569,7 @@ function correctionHasSettledForVisibleSession() {
 }
 
 /**
- * Points the pending copy at the truthful next step for the note (M11).
+ * Points the pending copy at the truthful next step for the note.
  * Use on every finalize/correction transition: finalization starts transcript
  * improvement, and only its settled outcome invites the user to generate.
  */
@@ -1005,8 +1005,8 @@ function renderSummary(summaryPayload) {
     // The previous note's open evidence disclosure died with its DOM nodes.
     openClaimDisclosure = null;
 
-    // Key points lead as the TL;DR strip, then the SOAP sections (summary UX M4).
-    // A v2 payload renders atomic claims with claim-scoped evidence (M06);
+    // Key points lead as the TL;DR strip, then the SOAP sections (summary UX).
+    // A v2 payload renders atomic claims with claim-scoped evidence (schema v2);
     // v1 keeps the section renderer behind its honest source label.
     const isClaimSchema = summaryPayload.schema_version === 2;
     const renderedBlocks = isClaimSchema
@@ -1098,7 +1098,7 @@ function createSummarySectionBlocks(sections) {
  *
  * @param {string[]} keyPoints - TL;DR lines from the backend; empty hides the strip entirely.
  * @param {string[]} unverifiedKeyPoints - lines the fidelity checks could not support; empty
- *   means every key point renders plain, exactly as before M07.
+ *   means every key point renders plain, exactly as before.
  * @returns {HTMLElement[]} the strip block, or empty when there is nothing to list.
  */
 function createSummaryKeyPointBlocks(keyPoints, unverifiedKeyPoints = []) {
@@ -1111,7 +1111,7 @@ function createSummaryKeyPointBlocks(keyPoints, unverifiedKeyPoints = []) {
 
     // Every model key point is textContent so it cannot inject markup.
     for (const keyPoint of keyPoints) {
-        // A line the transcript could not support carries the visible marker (M07).
+        // A line the transcript could not support carries the visible marker.
         if (unverifiedKeyPoints.includes(keyPoint)) {
             keyPointList.appendChild(createElement('li', {}, [createUnverifiedMarker(keyPoint)]));
         } else {
@@ -1128,7 +1128,7 @@ function createSummaryKeyPointBlocks(keyPoints, unverifiedKeyPoints = []) {
 }
 
 // =========================================================================
-// Claim-level provenance rendering (M06, schema v2).
+// Claim-level provenance rendering (schema v2).
 // Each atomic claim carries its own evidence affordance; activating it opens
 // a non-modal in-flow disclosure showing the complete cited source turns,
 // labelled display context, and the exact quote/review state. The page
@@ -1141,7 +1141,7 @@ let openClaimDisclosure = null;
 // Fallback for disclosure ids when a claim arrives without its server id.
 let claimDisclosureSequence = 0;
 
-// The disclosure's fixed reminder that linkage is not clinical review (M06).
+// The disclosure's fixed reminder that linkage is not clinical review.
 const CLAIM_EVIDENCE_HELP_TEXT =
     'Source links and quote matching are limited automated checks - not clinical review or approval.';
 
@@ -1341,7 +1341,7 @@ function createClaimTextSpan(claim) {
         text: String(claim.text ?? ''),
     });
 
-    // The claim-scoped M03 wording cue keeps its established styling and help.
+    // The claim-scoped wording cue keeps its established styling and help.
     if (claimFlags.wordingReview) {
         claimText.classList.add('summary-low-confidence');
         claimText.tabIndex = 0;

@@ -265,7 +265,7 @@ class TranscriptionSession:
             pipeline: Shared NemoPipeline singleton (loaded at startup)
             input_format: Audio input format ("pcm" or "webm")
             max_buffer_duration: Maximum audio buffer duration in seconds.
-            streaming_engine: Optional session-long streaming engine (M22).
+            streaming_engine: Optional session-long streaming engine.
                 None keeps the windowed emission path unchanged.
         """
         self.session_id = session_id
@@ -280,7 +280,7 @@ class TranscriptionSession:
         self._emitted_until_seconds: float = 0.0
         self._format_validated: bool = False
         self._speaker_cap: int | None = _speaker_cap_from_env()
-        # Per-window continuity evidence for the M20 diagnostics log; holds
+        # Per-window continuity evidence for the continuity diagnostics log; holds
         # only speaker IDs, timings, and counts - never transcript text.
         self._last_window_continuity: dict = {}
         self._window_overlap_votes: list[dict] = []
@@ -324,7 +324,7 @@ class TranscriptionSession:
         """Transcription engine label recorded in quality artifacts.
 
         Returns:
-            `streaming` when the M22 session-long engine drives emission;
+            `streaming` when the session-long engine drives emission;
             `windowed` for the legacy per-window path.
         """
         return "streaming" if self._streaming_engine is not None else "windowed"
@@ -371,7 +371,7 @@ class TranscriptionSession:
         self.buffer.append(pcm_audio)
 
         # The streaming engine owns speaker identity for the whole session;
-        # the windowed path re-derives it per window and stitches (M22 flag).
+        # the windowed path re-derives it per window and stitches (streaming flag).
         if self._streaming_engine is not None:
             self.quality_stats.record_window(len(pcm_audio))
             new_segments = self._emit_engine_rows(
@@ -520,7 +520,7 @@ class TranscriptionSession:
     def _emit_engine_rows(
         self, engine_rows: list, *, is_finalize: bool
     ) -> list[Segment]:
-        """Turn streaming-engine rows into emitted transcript segments (M22).
+        """Turn streaming-engine rows into emitted transcript segments.
 
         Engine rows arrive with session-absolute times and cache-stable
         speaker slots, so window-time shifting and anchor stitching are
@@ -1069,7 +1069,7 @@ class TranscriptionSession:
         if remap_count > 0:
             self.quality_stats.record_speaker_anchor_remaps(remap_count)
 
-        # Phantom merges are the M16 signal that extra visible speakers were contained.
+        # Phantom merges are the signal that extra visible speakers were contained.
         if phantom_merge_count > 0:
             self.quality_stats.record_phantom_speaker_merges(phantom_merge_count)
 

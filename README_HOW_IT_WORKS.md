@@ -181,7 +181,7 @@ Live transcription runs one of two engines, selected process-wide by
 - `windowed` (Compose fallback for env-less checkouts and CI):
   `TranscriptionSession` in `nemo_session.py` re-transcribes each emission
   window past a high-water mark and stitches speaker IDs across window seams.
-- `streaming` (M22; the `.env.example` and `scripts/start-dev.sh` default for
+- `streaming` (the `.env.example` and `scripts/start-dev.sh` default for
   local dev): `StreamingSessionEngine` in `nemo_streaming_engine.py` wraps
   NVIDIA's SpeakerTaggedASR composite so one session-long Sortformer speaker
   cache owns speaker identity for the whole visit, removing the window-seam
@@ -432,7 +432,7 @@ Other high-value env contracts:
 | `MERCURE_HUB_URL` | FastAPI | Internal FastAPI-to-Mercure publish URL. |
 | `MERCURE_JWT_SECRET` / `MERCURE_JWT` | FastAPI and Mercure | Publish auth for browser-visible events. |
 | `NEMO_STREAM_INPUT_FORMAT` | FastAPI | Audio contract, currently `pcm`. |
-| `NEMO_SESSION_ENGINE` | FastAPI | `streaming` (M22; `.env.example` and `start-dev.sh` default) or `windowed` (Compose fallback for env-less checkouts and CI). |
+| `NEMO_SESSION_ENGINE` | FastAPI | `streaming` (`.env.example` and `start-dev.sh` default) or `windowed` (Compose fallback for env-less checkouts and CI). |
 | `NEMO_MAX_WORKERS` | FastAPI | NeMo GPU worker pool size. |
 | `SESSION_STORAGE` / `SESSION_DB_PATH` | FastAPI | Memory versus SQLite transcript storage. |
 | `SESSION_POST_VISIT_AUDIO_RETENTION_SECONDS` | FastAPI | How long finalized-visit audio stays correctable (default 900 seconds). |

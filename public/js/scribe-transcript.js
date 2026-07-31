@@ -942,11 +942,11 @@ function renderAutoRowMarker(rowSpan, rowRole) {
 /**
  * Reports whether the speaker-identity layer is quiet enough to trust labels.
  * A confident role mapping over churning speaker IDs can still label rows
- * wrongly (the M20 consult-03 failure), so the green badge requires this too.
+ * wrongly (the consult-03 failure), so the green badge requires this too.
  */
 function isSpeakerIdentityStable() {
     // No stability report yet (older server or none received) keeps the
-    // pre-M20 behavior where confidence alone drives the badge.
+    // earlier behavior where confidence alone drives the badge.
     if (roleStability === null) {
         return true;
     }

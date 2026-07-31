@@ -236,7 +236,7 @@ class NemoPipeline:
         return self._load_error
 
     def create_streaming_engine(self, session_id: str):
-        """Build one session-long streaming engine over the shared models (M22).
+        """Build one session-long streaming engine over the shared models.
 
         The first call configures the shared Sortformer singleton for
         streaming. That mutation is safe because NEMO_SESSION_ENGINE is

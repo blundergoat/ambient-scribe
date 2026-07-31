@@ -1,4 +1,4 @@
-// Unit coverage for the M03 semantic copy serializers and status axes.
+// Unit coverage for the semantic copy serializers and status axes.
 // These pin the two observed paste-leak specimens (consult 1.2's "11/1/2/6"
 // and consult 5.3's "14/1/1/7" provenance counts) and the contract wording
 // for the three status axes. They run without a DOM via `npm run test:js`.
@@ -230,7 +230,7 @@ test('generated notes always carry all three axes and fallback is review-require
 });
 
 // ---------------------------------------------------------------------------
-// Schema v2 (M06): claim-scoped review counts and the claim-prose export.
+// Schema v2: claim-scoped review counts and the claim-prose export.
 // ---------------------------------------------------------------------------
 
 const {

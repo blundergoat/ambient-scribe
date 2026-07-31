@@ -1,4 +1,4 @@
-"""Tests for the standalone M05 clinical-term identity evaluator."""
+"""Tests for the standalone clinical-term identity evaluator."""
 
 from __future__ import annotations
 

@@ -24,7 +24,7 @@ def _no_summary_provider_calls():
 
     This box carries live AWS credentials for approved replay campaigns, so an
     unpatched generation path in a test would silently make a PAID Bedrock
-    call (it happened on 2026-07-15 during the M06 schema switch). Tests that
+    call (it happened on 2026-07-15 during the schema switch). Tests that
     exercise generation must patch `_generate_validated_v2_draft` or the agent
     itself (their patch simply overrides this stub for their scope); reaching
     this guard is a test bug, never a provider call. Session-scoped with a

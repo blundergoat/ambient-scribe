@@ -250,7 +250,7 @@ class PcmStreamer {
 
     /**
      * Suspends chunk emission without releasing the microphone or socket.
-     * Use for a mid-visit pause (M11): audio captured while paused is
+     * Use for a mid-visit pause: audio captured while paused is
      * dropped entirely - never buffered and never padded with silence - so
      * the server sees one seamless PCM stream when emission resumes.
      */

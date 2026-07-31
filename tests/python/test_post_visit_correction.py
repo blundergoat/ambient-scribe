@@ -1154,7 +1154,7 @@ def test_short_visit_uses_the_original_audio_path_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A normal short visit keeps the exact one-shot model path used before M09."""
+    """A normal short visit keeps the exact one-shot model path used before the one-shot change."""
     audio_path = tmp_path / "short-visit.wav"
     _write_silent_test_wav(audio_path, 0.5)
     asr_model = StubPostVisitAsrModel(["short"])
@@ -1756,7 +1756,7 @@ def test_cached_cuda_memory_is_released_before_model_restore(
 def test_healthy_short_correction_keeps_pre_m09_rows_byte_identical(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A healthy short visit produces the same stored rows users received before M09."""
+    """A healthy short visit produces the same stored rows users received before that change."""
     retained_audio = b"\0\0" * 160
     live_segments = [
         {
@@ -2311,12 +2311,12 @@ def _seed_stopped_session_with_audio(session_id: str = TEST_SESSION_ID) -> None:
 
 
 # =========================================================================
-# M01 source-integrity fixture integrity (0.4.0-improve-prime).
+# source-integrity fixture integrity (0.4.0-improve-prime).
 # The fixture freezes the consult-3.1 race the user experienced: the browser
 # gave up waiting, correction snapshotted a pre-terminal transcript, and the
 # generated note silently omitted the emergency instructions the clinician
 # spoke last. These tests only validate the frozen specimen itself; they do
-# NOT make that unsafe behavior an expected production contract - M02 will
+# NOT make that unsafe behavior an expected production contract - a later milestone will
 # turn the same fixture into red lifecycle tests for the fix.
 # =========================================================================
 
@@ -2460,7 +2460,7 @@ def test_source_integrity_fixture_full_input_can_still_drop_the_reversal_row() -
 
     The dropped row is the patient's "we do" - the moment antihistamines
     become available. Row counts and input identity alone cannot catch this,
-    which is exactly why M02's coverage check must map every meaningful input
+    which is exactly why the coverage check must map every meaningful input
     row to output.
     """
     fixture = _load_source_integrity_fixture()
@@ -2540,7 +2540,7 @@ def test_role_cues_still_join_patient_continuations_that_share_cue_words() -> No
     assert role == "PATIENT"
 
 
-# --- M05: consult 3.1 corrected-lane role no-regression pin ---
+# --- consult 3.1 corrected-lane role no-regression pin ---
 
 _DAY3C01_ROLE_FIXTURE_PATH = (
     Path(__file__).resolve().parents[1]

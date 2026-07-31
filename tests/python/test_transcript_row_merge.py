@@ -2,7 +2,7 @@
 
 Automatic row exceptions (the cue lane) are derived state: a new speaker
 mapping outdates them for re-judgment, and the labels they own must survive
-the browser's summary POST. The merge contract (M21) also guarantees a
+the browser's summary POST. The merge contract also guarantees a
 summary POST never shrinks stored history - in both the in-memory store and
 the SQLite backend.
 """
@@ -64,7 +64,7 @@ class TestAutoRowRolePrecedence:
 
 
 class TestSummaryMergeContract:
-    """A summary POST must never shrink stored history (M21 merge contract)."""
+    """A summary POST must never shrink stored history (merge contract)."""
 
     def seed_with_tail(self, backend) -> None:
         """Store five rows: three the browser will see, one blank, one tail."""

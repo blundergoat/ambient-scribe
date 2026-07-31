@@ -280,7 +280,7 @@ def test_multiword_variant_fragments_do_not_become_link_tokens() -> None:
 def test_review_reasons_are_machine_readable_for_downstream_milestones() -> None:
     """Flagged non-canonical terms expose `source_low_confidence` internally.
 
-    M05/M06 consume this reason lane; the browser payload itself is unchanged.
+    Downstream lanes consume this reason lane; the browser payload itself is unchanged.
     """
     from api.summary_confidence import low_confidence_review_reasons
 
@@ -303,7 +303,7 @@ def test_review_reasons_are_machine_readable_for_downstream_milestones() -> None
     assert reason_row["segment_ids"] == ["corrected-0293"]
 
 
-# --- M05 family 4: manifest specimens executed as frozen classifications ---
+# --- detector family 4: manifest specimens executed as frozen classifications ---
 
 _DETECTOR_SPECIMEN_MANIFEST_PATH = (
     Path(__file__).resolve().parents[1]
@@ -315,7 +315,7 @@ _DETECTOR_SPECIMEN_MANIFEST_PATH = (
 # a17/a18 are the family's pre-declared reason-lane deferral: their correct
 # source rows hold garbled ORDINARY words (carp/back/car), never a lexicon
 # variant, so reaching them needs fuzzy matching the family contract forbids.
-# The deferral is frozen in M05-detector-family-specs.md; the visible-marker
+# The deferral is frozen in the detector family specs; the visible-marker
 # true positives they correspond to (hc12/hc13) are guarded by the baseline
 # re-score, not by this lane.
 _TERM_CONFIDENCE_DEFERRED_IDS = {"a17", "a18"}
@@ -364,7 +364,7 @@ def test_manifest_term_confidence_specimens_classify_as_frozen() -> None:
     """Every shipped term-confidence specimen keeps its frozen flag/no-flag label.
 
     Positives must emit `source_low_confidence`; hard negatives (canonical
-    spelling above threshold, the M04-REJECTED steroid-cream mapping, and
+    spelling above threshold, the REJECTED steroid-cream mapping, and
     ordinary low-confidence wording) must stay silent in the reason lane.
     """
     specimens = _term_confidence_claim_specimens()
@@ -405,7 +405,7 @@ def test_visible_marker_without_clinical_term_emits_no_reason() -> None:
 
 
 def test_note_review_reasons_aggregates_term_and_temporal_families() -> None:
-    """The M05 aggregation point returns both families' reasons for one note."""
+    """The aggregation point returns both families' reasons for one note."""
     from api.summary_confidence import note_review_reasons
 
     note_payload = {

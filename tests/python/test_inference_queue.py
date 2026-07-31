@@ -190,7 +190,7 @@ class _StubAudioSession:
 class TestRoleStabilityPayload:
     """The roles topic must tell the browser when speaker identity is churning.
 
-    M20 Phase 0 measured confident mappings (0.86-0.89) over sessions with
+    An overlap Phase 0 run measured confident mappings (0.86-0.89) over sessions with
     30-53% wrong clean rows; these tests pin the additive `role_stability`
     field that lets the badge refuse a green "Roles identified" in that state.
     """

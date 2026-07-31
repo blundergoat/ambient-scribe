@@ -1,4 +1,4 @@
-"""Tests for the M17 separated-channel ceiling evaluator.
+"""Tests for the separated-channel ceiling evaluator.
 
 The real runner downloads PriMock57 audio and streams it through the live
 WebSocket endpoint. These tests keep that work offline by covering the pure

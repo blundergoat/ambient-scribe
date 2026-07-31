@@ -27,7 +27,7 @@ let roleMapping = {};
 let previousRoleMapping = {};
 let confidence = 0;
 // Latest speaker-identity stability from the roles topic; null until the
-// server reports it, so older servers keep the pre-M20 badge behavior.
+// server reports it, so older servers keep the earlier badge behavior.
 let roleStability = null;
 let streams = null;
 let isRecording = false;

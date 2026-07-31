@@ -19,6 +19,35 @@ each directory before its output, and never transcribe a path from memory of com
 Before presenting doc changes, run a per-path existence check over every file, script, and
 directory the docs newly cite - it is cheap and it caught the session's only error.
 
+## Lesson: A repo-wide sweep is only as good as its blind spots — check the tool, the pattern, and the lanes
+
+**Created:** 2026-07-31
+**Decision changed:** Before trusting a sweep count, prove three things: the tool searched
+everywhere, the pattern matched only what you meant, and the per-lane breakdown sums to the
+total.
+**Trigger phase:** READ
+
+A repo-wide cleanup counted references three separate ways and got three wrong answers before
+getting a right one:
+
+1. **The tool skipped a whole tree.** `rg` does not search hidden directories without
+   `--hidden`, so the entire `.goat-flow/` tree was silently excluded and the first count
+   under-reported by about 40%.
+2. **The pattern matched non-references.** A milestone-identifier regex also matched SVG path
+   geometry (`<path d="M12 20h9M16.5 3.5a2.12">`) and the mangled variable names in a minified
+   vendor bundle. Sampling the first hits per file had "validated" the pattern; the false
+   positives were further down the same files.
+3. **The lane breakdown was not exhaustive.** Work was scoped as a table of eight directories.
+   The total was right, but root-level files, `docker/`, and config outside those directories
+   were never enumerated, so roughly thirty references — including a README citing three
+   deleted files — survived every phase until a final full sweep.
+
+**Prevention:** Pass `--hidden --glob '!.git'` on any repo-wide `rg` audit. Scan *every* hit in
+a file before declaring the pattern clean, not the first few. Make the per-lane numbers add up
+to the repo-wide number before starting work — an unexplained gap is unscoped work, not
+rounding. Finish with the same sweep you opened with, and treat surviving hits as either fixed
+or explicitly exempt, never as noise.
+
 ## Lesson: A `(search: ...)` anchor must sit on one physical line
 
 **Created:** 2026-07-31

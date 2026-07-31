@@ -1,5 +1,5 @@
 // =========================================================================
-// Ambient Scribe per-section provenance popovers (summary UX M5).
+// Ambient Scribe per-section provenance popovers (summary UX).
 // Runs after scribe-summary-tabs.js. Each cited SOAP section gets one
 // superscript affordance that opens a popover of the cited utterances in
 // stitched form - the same block shape as the Transcript tab - plus an
@@ -82,7 +82,7 @@ function sortRowsBySpokenOrder(citationRows) {
  * Use once per cited section. "Open in transcript" deep-links: the tab
  * switches, the first cited block scrolls into view, and cited blocks
  * carry a temporary highlight; a missing citation shows a non-blocking
- * notice instead (M6). A rejected deep link is caught and reported as a
+ * notice instead. A rejected deep link is caught and reported as a
  * console warning, and pages without the tabs script fall back to a plain
  * tab switch - the action never throws.
  */

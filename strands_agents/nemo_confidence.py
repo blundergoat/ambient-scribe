@@ -1,7 +1,7 @@
 """
 Word-confidence extraction shared by every transcript lane.
 
-The transcript UI will style low-confidence rows (summary UX M7), so live
+The transcript UI will style low-confidence rows (summary UX), so live
 streaming rows, windowed rows, and post-visit corrected rows all need one
 consistent per-row confidence value. This module owns the probe-proven NeMo
 decoding settings and the small joins that turn per-word confidence into one
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Probe-proven settings (0.4.0 M06): word+token preservation with max_prob
+# Probe-proven settings (0.4.0 confidence spike): word+token preservation with max_prob
 # scoring and min aggregation gave non-degenerate values on both runtime
 # models with zero CUDA instability, offline AND streaming.
 CONFIDENCE_DECODING_SETTINGS: dict[str, Any] = {

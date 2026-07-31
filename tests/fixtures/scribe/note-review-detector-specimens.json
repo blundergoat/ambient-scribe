@@ -3,10 +3,10 @@
   "frozen": "2026-07-15",
   "purpose": "Labelled development specimens for the note-review detector families (exact quote, risk pair, temporal/action state, term confidence, demographics/exam, hedge, coverage): every entry names its source rows, expected reason, severity, and hard negatives, frozen BEFORE detector code changes. Labels stay frozen; families that miss their gate are deferred, never tuned against relabelled specimens. Frozen under plan 0.4.0-improve-prime milestone 05.",
   "provenance": {
-    "m08_audit": "var/quality/note-fidelity-audit-20260713T234904Z/replays",
-    "m02_replays": "var/quality/m02-acceptance-20260715T044500Z/replays",
-    "baseline": "var/quality/note-fidelity-audit-20260713T234904Z/aggregate.md (21 unsupported claims; fidelity 1TP/7FP 12.5%; low-confidence 3TP/12FP 20.0%)",
-    "role_label_caveat": "Embedded role labels reflect each retained artifact's build at capture time; the M05 role re-score task owns role-label truth, not this manifest."
+    "m08_audit": "local-only note-fidelity-audit: replays",
+    "m02_replays": "local-only m02-acceptance: replays",
+    "baseline": "local-only note-fidelity-audit: aggregate.md (21 unsupported claims; fidelity 1TP/7FP 12.5%; low-confidence 3TP/12FP 20.0%)",
+    "role_label_caveat": "Embedded role labels reflect each retained artifact's build at capture time; the role re-score task owns role-label truth, not this manifest."
   },
   "reason_codes": {
     "quote_not_matched": {
@@ -36,8 +36,8 @@
     },
     "source_low_confidence": {
       "lane": "term_confidence",
-      "status": "frozen-by-M04",
-      "meaning": "Non-canonical clinical wording whose predominant relevant corrected row is below 0.78; names offending terms and segment_ids. Not renamed clinical_term_unresolved (M04 never approved that)."
+      "status": "frozen",
+      "meaning": "Non-canonical clinical wording whose predominant relevant corrected row is below 0.78; names offending terms and segment_ids. Not renamed clinical_term_unresolved (that rename was never approved)."
     },
     "unsupported_demographic": {
       "lane": "demographics_exam",
@@ -97,7 +97,7 @@
   "specimens": [
     {
       "id": "a01",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m08-day5-c03",
       "origin": "retained_note",
       "lane": "demographics_exam",
@@ -162,7 +162,7 @@
     },
     {
       "id": "a02",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "origin": "retained_note",
       "lane": "unowned",
@@ -218,7 +218,7 @@
     },
     {
       "id": "a03",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -330,7 +330,7 @@
     },
     {
       "id": "a04",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "unowned",
@@ -590,7 +590,7 @@
     },
     {
       "id": "a05",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "unowned",
@@ -808,7 +808,7 @@
     },
     {
       "id": "a06",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "demographics_exam",
@@ -885,7 +885,7 @@
     },
     {
       "id": "a07",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -931,7 +931,7 @@
     },
     {
       "id": "a08",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -977,7 +977,7 @@
     },
     {
       "id": "a09",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1095,7 +1095,7 @@
     },
     {
       "id": "a10",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "origin": "retained_note",
       "lane": "unowned",
@@ -1283,7 +1283,7 @@
     },
     {
       "id": "a11",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1437,7 +1437,7 @@
     },
     {
       "id": "a12",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1531,7 +1531,7 @@
     },
     {
       "id": "a13",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1602,7 +1602,7 @@
     },
     {
       "id": "a14",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1673,7 +1673,7 @@
     },
     {
       "id": "a15",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -1713,7 +1713,7 @@
     },
     {
       "id": "a16",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "hedge",
@@ -1771,7 +1771,7 @@
     },
     {
       "id": "a17",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -1805,7 +1805,7 @@
     },
     {
       "id": "a18",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -1839,7 +1839,7 @@
     },
     {
       "id": "a19",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "hedge",
@@ -1879,7 +1879,7 @@
     },
     {
       "id": "a20",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "risk_pair",
@@ -1961,7 +1961,7 @@
     },
     {
       "id": "a21",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -2122,7 +2122,7 @@
     },
     {
       "id": "c01",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "risk_pair",
@@ -2247,7 +2247,7 @@
     },
     {
       "id": "c02",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "risk_pair",
@@ -2368,7 +2368,7 @@
     },
     {
       "id": "c03",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "hedge",
@@ -2401,7 +2401,7 @@
     },
     {
       "id": "c04",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "hedge",
@@ -2432,7 +2432,7 @@
     },
     {
       "id": "c05",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "risk_pair",
@@ -2483,7 +2483,7 @@
     },
     {
       "id": "c06",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "risk_pair",
@@ -2514,7 +2514,7 @@
     },
     {
       "id": "c07",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "exact_quote",
@@ -2570,7 +2570,7 @@
     },
     {
       "id": "c08",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "exact_quote",
@@ -2610,7 +2610,7 @@
     },
     {
       "id": "c09",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "exact_quote",
@@ -2647,7 +2647,7 @@
     },
     {
       "id": "c10",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "exact_quote",
@@ -2684,7 +2684,7 @@
     },
     {
       "id": "c11",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -2721,7 +2721,7 @@
     },
     {
       "id": "c12",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -2770,7 +2770,7 @@
     },
     {
       "id": "c13",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -2873,7 +2873,7 @@
     },
     {
       "id": "c14",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -2978,7 +2978,7 @@
     },
     {
       "id": "c15",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -3048,7 +3048,7 @@
     },
     {
       "id": "c16",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -3130,7 +3130,7 @@
     },
     {
       "id": "c17",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -3173,7 +3173,7 @@
     },
     {
       "id": "c18",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -3228,7 +3228,7 @@
     },
     {
       "id": "c19",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "demographics_exam",
@@ -3259,7 +3259,7 @@
     },
     {
       "id": "c20",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "demographics_exam",
@@ -3323,7 +3323,7 @@
     },
     {
       "id": "c21",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "demographics_exam",
@@ -3354,7 +3354,7 @@
     },
     {
       "id": "c22",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "constructed",
       "lane": "demographics_exam",
@@ -3412,7 +3412,7 @@
     },
     {
       "id": "c23",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "demographics_exam",
@@ -3449,7 +3449,7 @@
     },
     {
       "id": "c24",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "demographics_exam",
@@ -3492,7 +3492,7 @@
     },
     {
       "id": "c25",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -3515,13 +3515,13 @@
         }
       ],
       "notes": "Known variant 'Fexaphenidine' with its row at 0.6478; the reason must name the term and corrected-0293.",
-      "current_behavior": "not flagged in this retained pre-M04 note; M04's clinical-term linkage now links the variant token",
+      "current_behavior": "not flagged in this retained earlier note; the clinical-term linkage now links the variant token",
       "location": "section 'Plan'",
       "claim": "Antihistamine Fexaphenidine prescribed despite patient's prior trial of antihistamines without benefit."
     },
     {
       "id": "c26",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -3558,13 +3558,13 @@
           "text": "the first seven to ten days"
         }
       ],
-      "notes": "Canonical spelling backed by the 0.7956 above-threshold row; no source_low_confidence reason (M04-pinned hard negative).",
+      "notes": "Canonical spelling backed by the 0.7956 above-threshold row; no source_low_confidence reason (pinned hard negative).",
       "location": "section 'Plan'",
       "claim": "Emollients for bath and shower use over 7\u201310 days."
     },
     {
       "id": "c27",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day1-consultation02-i-have-sore-red-skin",
+      "artifact": "local-only m02-acceptance: replays/primock57-day1-consultation02-i-have-sore-red-skin",
       "consult": "m02-day1-c02",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -3601,13 +3601,13 @@
           "text": "you today, as well"
         }
       ],
-      "notes": "steroid-cream mapping was REJECTED by M04 (category ambiguous_product); rejected rows must not produce a resolved-term reason or rewrite.",
+      "notes": "steroid-cream mapping was REJECTED (category ambiguous_product); rejected rows must not produce a resolved-term reason or rewrite.",
       "location": "section 'Plan'",
       "claim": "Prescription steroid cream (stronger than over-the-counter)."
     },
     {
       "id": "c28",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "retained_note",
       "lane": "term_confidence",
@@ -3633,7 +3633,7 @@
     },
     {
       "id": "c29",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "coverage",
@@ -3776,7 +3776,7 @@
     },
     {
       "id": "c30",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "constructed",
       "lane": "coverage",
@@ -3844,7 +3844,7 @@
     },
     {
       "id": "c31",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only m02-acceptance: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m02-day5-c03",
       "origin": "constructed",
       "lane": "coverage",
@@ -3966,7 +3966,7 @@
     },
     {
       "id": "c32",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "temporal_action",
@@ -4057,7 +4057,7 @@
     },
     {
       "id": "c33",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "hedge",
@@ -4112,7 +4112,7 @@
     },
     {
       "id": "c34",
-      "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only m02-acceptance: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m02-day3-c01",
       "origin": "retained_note",
       "lane": "exact_quote",
@@ -4164,7 +4164,7 @@
   "historical_flags": [
     {
       "id": "hf01",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m08-day5-c03",
       "flag_lane": "fidelity",
       "location": "unverified_key_points",
@@ -4327,7 +4327,7 @@
     },
     {
       "id": "hf02",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4394,7 +4394,7 @@
     },
     {
       "id": "hf03",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4581,7 +4581,7 @@
     },
     {
       "id": "hf04",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation07-i-have-a-cough-and-cold",
       "consult": "m08-day1-c07",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4654,7 +4654,7 @@
     },
     {
       "id": "hf05",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4697,7 +4697,7 @@
     },
     {
       "id": "hf06",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4764,7 +4764,7 @@
     },
     {
       "id": "hf07",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4819,7 +4819,7 @@
     },
     {
       "id": "hf08",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "fidelity",
       "location": "section 'Subjective'",
@@ -4888,11 +4888,11 @@
           "text": "Uh no."
         }
       ],
-      "notes": "Composite question rows then an explicit 'no'; split-question M02 precision recurrence."
+      "notes": "Composite question rows then an explicit 'no'; split-question precision recurrence."
     },
     {
       "id": "hc01",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation03-im-feeling-very-anxious",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation03-im-feeling-very-anxious",
       "consult": "m08-day5-c03",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -4911,7 +4911,7 @@
     },
     {
       "id": "hc02",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -4966,7 +4966,7 @@
     },
     {
       "id": "hc03",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation04-i-dont-feel-well-i-have-a-cough-and-runny-nose",
       "consult": "m08-day1-c04",
       "flag_lane": "low_confidence",
       "location": "section 'Plan'",
@@ -4985,7 +4985,7 @@
     },
     {
       "id": "hc04",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation03-i-have-terrible-headache",
       "consult": "m08-day1-c03",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5004,7 +5004,7 @@
     },
     {
       "id": "hc05",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation03-i-have-terrible-headache",
       "consult": "m08-day1-c03",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5119,7 +5119,7 @@
     },
     {
       "id": "hc06",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day1-consultation03-i-have-terrible-headache",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day1-consultation03-i-have-terrible-headache",
       "consult": "m08-day1-c03",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5150,7 +5150,7 @@
     },
     {
       "id": "hc07",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5169,7 +5169,7 @@
     },
     {
       "id": "hc08",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "flag_lane": "low_confidence",
       "location": "section 'Plan'",
@@ -5188,7 +5188,7 @@
     },
     {
       "id": "hc09",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
       "consult": "m08-day3-c01",
       "flag_lane": "low_confidence",
       "location": "section 'Plan'",
@@ -5207,7 +5207,7 @@
     },
     {
       "id": "hc10",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5226,7 +5226,7 @@
     },
     {
       "id": "hc11",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5245,7 +5245,7 @@
     },
     {
       "id": "hc12",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5276,7 +5276,7 @@
     },
     {
       "id": "hc13",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5313,7 +5313,7 @@
     },
     {
       "id": "hc14",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Subjective'",
@@ -5332,7 +5332,7 @@
     },
     {
       "id": "hc15",
-      "artifact": "var/quality/note-fidelity-audit-20260713T234904Z/replays/primock57-day5-consultation09-tired-all-the-time",
+      "artifact": "local-only note-fidelity-audit: replays/primock57-day5-consultation09-tired-all-the-time",
       "consult": "m08-day5-c09",
       "flag_lane": "low_confidence",
       "location": "section 'Plan'",

@@ -1,4 +1,4 @@
-"""Session adapter contract for the M22 streaming engine.
+"""Session adapter contract for the session-long streaming engine.
 
 These tests use a fake engine so the adapter's invariants - emit-once row
 identity, speaker cap, fragment merge, held-tail drain at finalize, and the
@@ -596,7 +596,7 @@ def make_diar_activity_engine(prediction_stream) -> StreamingSessionEngine:
 class TestEnginePairwiseSlotActivity:
     """Count when two cache slots speak together versus alone, bounded and PHI-free.
 
-    These CPU contracts pin the M02 diagnostic counters that later distinguish a
+    These CPU contracts pin the span-fidelity diagnostic counters that later distinguish a
     harmful real-turn fold from a benign duplicate without transcript wording.
     """
 

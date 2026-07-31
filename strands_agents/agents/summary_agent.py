@@ -31,7 +31,7 @@ SUMMARY_AGENT_OLLAMA_MODEL = os.environ.get(
 )
 # 8192 gives the fidelity retry 2x headroom over the largest observed clean
 # draft (3,923 tokens, consult 5.3); the model's output ceiling is 64K, and
-# 4096 truncated that visit's retry in three independent runs (M07 B3).
+# 4096 truncated that visit's retry in three independent runs (token-cap blocker B3).
 SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "8192"))
 
 _SHARED_SUMMARY_RULES = """
