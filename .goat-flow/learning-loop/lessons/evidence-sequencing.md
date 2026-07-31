@@ -1,12 +1,36 @@
 ---
 category: evidence-sequencing
-last_reviewed: 2026-07-25
+last_reviewed: 2026-07-31
 ---
 
 # Evidence Sequencing Lessons
 
 Use this bucket when individually correct build, formatting, verification, and
 sealing steps were performed in an order that invalidated their evidence.
+
+## Lesson: Capture container logs before the cleanup that recreates the container
+
+**Created:** 2026-07-31
+**Decision changed:** In any run wrapper that restores service state afterwards, dump
+volatile evidence into the run folder before the restore step, not after.
+**Trigger phase:** ACT
+
+A baseline run wrapper recreated `nemo-agent` unconditionally as its final step to restore
+`LOG_FORMAT=console`. The corpus run had failed on fixture three, and `docker logs` starts
+empty on a recreated container, so the only record of why the session never finalized was
+destroyed by the wrapper's own cleanup. Diagnosis then cost a second full container
+recreation plus an isolated replay purely to regenerate logs that had already existed once.
+
+The reproduction proved the session had been healthy - still streaming at chunk 116 of 133
+with no error - and that the client's fixed 90-iteration `session.quality` poll had simply
+expired while a `EVAL_PACE=fast` backlog drained. That answer was in the discarded logs.
+
+**Prevention:** Order run wrappers as work, then capture, then restore - and capture
+unconditionally, including on the failure paths, since a failed run is exactly when the
+evidence matters. `docker logs <svc> > "$RUN_DIR/<svc>.log" 2>&1` before any
+`docker compose up --force-recreate`. Cleanup that runs on failure must not be allowed to
+consume the failure's own explanation. Related: [[audit-runners]] on restoring service state
+after a bounded campaign.
 
 ## Lesson: Format self-bound verifier source before sealing its packet
 

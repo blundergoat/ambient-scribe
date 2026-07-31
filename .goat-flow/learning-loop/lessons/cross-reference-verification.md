@@ -25,14 +25,12 @@ directory the docs newly cite - it is cheap and it caught the session's only err
 **Decision changed:** After writing or editing any doc that a `(search: ...)` anchor points
 into, grep the literal anchor string instead of assuming the file's existence is enough.
 **Trigger phase:** VERIFY
-**What happened:** `.goat-flow/plans/0.5.2/M05B-remediate-runtime-approval-entry-gate.md`
-cited `.goat-flow/plans/0.5.2/HANDOFF.md` with search anchor `same sealed runner path
-requires that record both absent and present`. That handoff was a declared M05A and M05B
-deliverable, was listed in the M05B approval record's `writable_paths`, had its task ticked
-in both milestones, and had never been created - a dead anchor that survived two closed
-milestones. Recreating it did not fix the anchor either: prose wrapping at ~88 columns split
-the phrase across two lines, and because `rg` matches per line, the grep still returned
-nothing. Rewrapping so the whole phrase sat on one line resolved it.
+**What happened:** A milestone's Read-first block cited a sibling coordination document with
+a long `(search: ...)` anchor. That document was a declared deliverable of two milestones and
+had its "update it" task ticked in both, yet had never been created - a dead anchor that
+survived two closed milestones. Creating it did not fix the anchor either: prose wrapping at
+~88 columns split the anchor phrase across two lines, and because `rg` matches per line the
+grep still returned nothing. Rewrapping so the whole phrase sat on one line resolved it.
 **Prevention:** Anchors are line-scoped. When authoring a target, keep the anchored phrase
 unbroken on a single line even if that line runs long, or choose a short anchor - a heading
 or a symbol name - that cannot wrap. Existence-checking the cited path proves only half the
