@@ -38,7 +38,7 @@ because it survives into the plan as a target.
 stream, then reject cross-role conflicts; never discard a whole reference interval or physically
 coalesce rows merely because timing makes their global order uncertain.
 **Trigger phase:** VERIFY
-**What happened:** M01's first timestamp-independent evaluator marked every word in any Doctor or
+**What happened:** A first timestamp-independent evaluator marked every word in any Doctor or
 Patient interval touching opposite-role speech as order-ambiguous. That excluded 1,282 of 1,741
 reference words and left only 22.2% display-word coverage. Its structural-null implementation also
 physically merged same-slot/same-start rows; four groups were non-contiguous in display order, so
@@ -77,17 +77,17 @@ dirty worktree diff as an operational rollback.
 **Incident count:** 4
 **Latest occurrence:** 2026-07-27
 
-**What happened:** M02 sealed one full-worktree patch that combined accepted
+**What happened:** A span-fidelity milestone sealed one full-worktree patch that combined accepted
 diagnostic tooling, two successive timing candidates, generated indexes, and
 learning text. After the decoded-state probe was rejected and its lesson was
 updated, the exact reverse check stopped applying. A narrower reversal of only
 the current unstaged behavior was also unsafe because its target was the
-already-rejected raw-frame candidate rather than the accepted pre-M02 runtime.
+already-rejected raw-frame candidate rather than the accepted pre-candidate runtime.
 The preflight caught both conditions and no rollback ran.
 
 The approved replacement validated the prevention:
 `m02-runtime-rollback.patch` covered only eight behavior/direct-contract
-paths, preserved the index receipt and four M01 evaluator hashes, restored
+paths, preserved the index receipt and four evaluator hashes, restored
 every path to its accepted base blob, and recreated a healthy
 host/container-matched service.
 
@@ -100,9 +100,9 @@ applied. The invalid artifact was removed. The real index remained untouched
 until a mode/blob/path receipt recreated the original target receipt in a
 temporary index.
 
-M05 exposed the same identity mistake from the evidence-consumer side. Its
+A later baseline campaign exposed the same identity mistake from the evidence-consumer side. Its
 historical live campaign and all 207 artifact hashes still verified, but the
-campaign's three sealed runtime hashes belonged to the temporary M02
+campaign's three sealed runtime hashes belonged to the temporary diagnostic
 diagnostic implementation that was later rejected and rolled back. Treating
 its 29.509147% clean WER as the current-runtime baseline would have compared
 future candidates across different sources. The Phase A preflight stopped on
@@ -110,7 +110,7 @@ the hash mismatch, retained that campaign only as a historical comparator,
 and required Phase B's same-run live lanes to establish the accepted rollback
 runtime beside their corrected lanes.
 
-The approved M05 Phase B attempt exposed the composed-contract form of the
+The approved Phase B attempt exposed the composed-contract form of the
 same mistake. Phase A added a clinical identity helper to the scorer and froze
 that edited SHA-256 in its metric contract, while the simultaneously pinned
 development manifest still required the scorer's pre-edit size and SHA-256.
@@ -122,19 +122,17 @@ then rejected `scorer_size_drift` before fixture 1, restored all ten stereo
 fixtures, and left zero replay or correction artifacts; the approved contract
 still forbade a retry once the sentinel existed.
 
-**Evidence:** `var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch`
-(search: `diff --git`) includes source, tests, generated indexes, and learning
+**Evidence:** The rollback patch spanned source, tests, generated indexes, and learning
 files. `.goat-flow/learning-loop/lessons/source-semantics.md` (search:
 `corrected decoded-state probe`) records the runtime falsification that made
-the rollback preflight necessary. The completed operational proof is
-`var/quality/0.5.2-span-fidelity/m02-runtime-rollback-receipt.json` (search:
+the rollback preflight necessary. The completed operational proof was local-only (recorded signature:
 `index_preservation`). The index-only course correction is sealed in
-`var/quality/0.5.2-span-fidelity/m02-index-reconciliation-receipt.json`
+a local-only artifact
 (search: `course_correction`). The later baseline reconciliation is sealed in
-`var/quality/0.5.2-asr-accuracy/m05-baseline/metric-contract.json`
+a local-only artifact
 (search: `historical_comparator_source_sha256`) and binds the accepted hashes
 to the same rollback receipt. The terminal composed-contract failure is
-`var/quality/0.5.2-asr-accuracy/m05-baseline/phase-b/phase-b-failure-report.md`
+a local-only artifact
 (search: `The frozen contracts were internally incompatible`).
 
 **Prevention:** Before implementation, record an explicit base tree or base
@@ -166,7 +164,7 @@ spend the attempt.
 **What happened:** A manual-test evidence bundle copied two official TextGrid files through
 `apply_patch`. The visible text survived, but newline normalization changed both byte sizes
 and SHA-256 values. Verification rejected and removed the copies before the manifest was sealed.
-**Evidence:** `var/quality/0.5.0-manual-consult53-20260718T231930Z/verification/truth-copy-normalization-failure.md`.
+**Evidence:** Local-only campaign artifacts; the findings above are the record.
 **Prevention:** When fixture identity is defined by bytes, keep the verified original path and
 hash as the evidence reference. If a duplicate is required, use a byte-preserving approved
 mechanism and verify size plus SHA-256 before any scorer or manifest consumes it.
@@ -178,9 +176,9 @@ mechanism and verify size plus SHA-256 before any scorer or manifest consumes it
 early identity draft briefly contained malformed placeholder hash lines. Both errors were caught and removed
 before the new packet was sealed or any runtime action occurred, but count/hash comparison alone would not
 have rejected every malformed record shape.
-**Evidence:** `var/quality/0.5.0-m02-transcription-accuracy-no-game-20260719T080330Z/identity/`
-`cold-worktree-and-old-seal.txt` records the draft correction, and `commands/m02-campaign-runner.sh` validates
-the exact header, timestamp, SHA-256, byte count, and root-confined relative path before reading artifacts.
+**Evidence:** A local-only `cold-worktree-and-old-seal.txt` recorded the draft correction, and the
+campaign runner validated the exact header, timestamp, SHA-256, byte count, and root-confined
+relative path before reading artifacts.
 **Prevention:** Before counting or hashing a delimited evidence manifest, assert its exact header, skip that
 header explicitly, reject zero or malformed records and path traversal, and reject non-64-hex hashes or
 placeholder tokens. Only then compare duplicates, presence, sizes, hashes, and write-once permissions.
@@ -198,10 +196,8 @@ used the artifact's rounded `duration_seconds=430.1` instead of the frozen input
 boundary; the row ended at 430.13 seconds. A second comparison then reported different scorer findings only
 because each otherwise identical finding embedded its run-specific `artifact_path`. Both failed results
 were preserved, adjudicated, and corrected without another GPU call.
-**Evidence:** `var/quality/rediar-m05-acceptance/diagnostics/2026-07-25_d2c09-d3-recovery-only-replay1/diagnostic-verification-attempt1-adjudication.json`
-(search: `"frozen_input_duration_seconds": 432.24`) and
-`var/quality/rediar-m05-acceptance/diagnostics/2026-07-25_d2c09-d3-recovery-only-replay1/source-chip-findings-adjudication-attempt2.json`
-(search: `"raw_difference_class": "artifact_path_only"`).
+**Evidence:** Local-only campaign artifacts. The recorded signatures were
+`"frozen_input_duration_seconds": 432.24` and `"raw_difference_class": "artifact_path_only"`.
 **Prevention:** Use the frozen input duration for clip-containment gates and artifact-declared duration only
 for the contract it actually owns. Compare semantic payload fields after excluding an explicit allowlist of
 transport metadata such as run-root paths; never normalize row identity, role, timing, text, severity, or
@@ -225,7 +221,7 @@ records the baseline as unavailable: candidate-on truth may clear a false positi
 unscored causality claim without a comparison remains unverified. The failed build stopped before creating
 the evidence root.
 
-On 2026-07-28, the M05 replacement contract froze the raw source-chip finding
+On 2026-07-28, a replacement contract froze the raw source-chip finding
 maximum at zero even though this lesson already recorded truth-aligned lexical
 false positives. The sole approved campaign completed all ten replays and ten
 correction requests, then terminally failed on 28 findings. Of the 28 current
@@ -237,7 +233,7 @@ correctly enforced and must not be waived after results; the mistake was
 freezing absence of heuristic alerts as if it were equivalent to absence of
 adjudicated role errors.
 
-On 2026-07-30, the first M05 disposition evaluator applied the supported
+On 2026-07-30, the first disposition evaluator applied the supported
 Doctor/Patient-role prerequisite to every corrected row before selecting the
 source-chip findings. Historical corpus-off therefore stopped on an unresolved
 non-finding row even though that row was not evidence for any requested
@@ -250,9 +246,9 @@ now includes an aligned unresolved non-finding row.
 `tests/python/test_rediarization_corpus_quality_disposition_verifier.py` (search:
 `test_truth_aligned_alert_does_not_require_historical_off_lane`) pins the known-missing-lane case.
 
-`var/quality/0.5.2-asr-accuracy/m05-baseline/replacement-campaign/terminal-failure-summary.json`
+a local-only artifact
 (search: `diagnostic_cross_map`) records the text-free recurrence evidence, and
-`var/quality/rediar-m05-acceptance/arms/corpus-on/source-chip-findings-adjudication.json`
+a local-only artifact
 (search: `classifications`) records the prior 22/3/4 truth split.
 `scripts/m05-source-chip-disposition.py` (search: `def _validate_aligned_rows`)
 now separates whole-lane identity checks from finding classification, and
@@ -280,7 +276,7 @@ prerequisites only to rows that actually participate in that classification.
 **Trigger phase:** VERIFY
 **Decision changed:** Put decoder-config contracts behind the established CPU framework shim, and exercise the
 real framework only in the pinned runtime.
-**What happened:** The M02 phrase contracts returned only primitive values from their fake
+**What happened:** The phrase contracts returned only primitive values from their fake
 `OmegaConf.to_container`, so 77 CPU tests passed. The pinned NeMo runtime instead retained a nested
 `BlankLMScoreMode` enum in the effective decoder mapping. Slot 1 completed its audio inference, then failed
 while JSON-serializing that required evidence; the nonzero evaluator exit left the slot unscoreable and ended
@@ -315,7 +311,7 @@ explicitly absent before sealing. Prefer structured JSON logs for named QA captu
 ## Lesson: Test the mutation-to-bookkeeping gap in artifact transactions
 
 **Created:** 2026-07-20
-**What happened:** M04C's first fail-closed pass handled ordinary output conflicts and one-case catalog
+**What happened:** A first fail-closed pass handled ordinary output conflicts and one-case catalog
 merges, but review found two negative-space gaps. A valid selector plus a typo still ignored the typo, and an
 interrupt after `os.link` created a final but before the path was appended could evade rollback. Both were
 caught before the milestone gate and frozen in `tests/python/test_development_corpus.py` (search:
@@ -351,10 +347,8 @@ real numeric field, and post-run validation extracted 944 timestamped GPU rows
 and 952 numeric watchdog rows. The raw traced files were retained and sealed
 rather than silently cleaned.
 
-**Evidence:** `var/quality/0.5.2-corpus-validation/fresh-baseline/monitors/`
-(search the GPU and watchdog files for `+ sleep 10`) and
-`var/quality/0.5.2-corpus-validation/fresh-baseline-summary.json` (search:
-`real_sample_count`).
+**Evidence:** Local-only campaign artifacts. The GPU and watchdog files carried `+ sleep 10`,
+and the payload recorded `real_sample_count`.
 
 **Prevention:** Debug launch/preflight separately from the write-once payload.
 If tracing is essential, set `BASH_XTRACEFD` to a dedicated trace file before
@@ -383,7 +377,7 @@ runtime prerequisite. Production engines had the field and the completed
 baseline campaign was unaffected.
 
 **Evidence:** the sealed rejected implementation patch
-`var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch` (search:
+a local-only artifact (search:
 `diagnostic_frame_len_sec`) records the optional diagnostic state with total
 defaults, and `tests/python/test_word_confidence_persistence.py` (search:
 `make_bookkeeping_engine`) preserves the partial-engine contract.
@@ -405,7 +399,7 @@ JSON.
 **Incident count:** 1
 **Latest occurrence:** 2026-07-29
 
-**What happened:** During the M05 post-failure investigation, a read-only search
+**What happened:** During a post-failure investigation, a read-only search
 across a broad quality-artifact root matched a minified corrected-transcript
 JSON record. Because the file was one line, the tool expanded the entire record
 into its output even though only stable identity fields were needed. Nothing
@@ -413,7 +407,7 @@ was written, and the investigation immediately switched to sanitized
 projections and hashes, but the read exceeded the intended evidence boundary.
 
 **Evidence:** `.goat-flow/architecture.md` (search: `Local artifacts contain only`)
-restricts durable evidence to minimal, non-clinical content. The M05 recovery
+restricts durable evidence to minimal, non-clinical content. The recovery
 investigation required only fixture identity, segment identity, role, timing,
 classification, and text hash.
 
@@ -434,16 +428,14 @@ that an adjacent checksum file is relative to its own directory.
 **Incident count:** 1
 **Latest occurrence:** 2026-07-30
 
-**What happened:** The final M05 disposition evidence recheck first ran from
+**What happened:** A final disposition evidence recheck first ran from
 the campaign directory. Both checksum files contain repository-root-relative
 records, so `sha256sum` reported the sealed files as unreadable even though
 their bytes had not changed. Rerunning from the workspace root verified all 83
 manifest records and the terminal summary.
 
-**Evidence:**
-`var/quality/0.5.2-asr-accuracy/m05-baseline/source-chip-disposition-campaign/terminal-evidence-manifest.sha256`
-and the adjacent `terminal-failure-summary.sha256` retain their root-relative
-record paths and pass from the controlling workspace root.
+**Evidence:** The terminal manifest and its adjacent `.sha256` were local-only; they retained
+root-relative record paths and verified only from the controlling workspace root.
 
 **Prevention:** Read one record before verification, resolve its base against
 the artifact contract, and set the command working directory explicitly.

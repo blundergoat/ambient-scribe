@@ -46,8 +46,7 @@ and only the first class gets a code change.
 ## Lesson: Design against consumer-semantic contracts, not producer proxies
 
 **Created:** 2026-07-14
-**What happened:** During the 0.4.0-improve-claude plan cycle, an adversarial review
-(`.goat-flow/plans/0.4.0-improve-claude/REVIEW-2026-07-14-codex.md`) invalidated three
+**What happened:** During the 0.4.0-improve-claude plan cycle, an adversarial review invalidated three
 designs that had each already survived one self-review. (1) A role-update dedup key was
 wrong TWICE: first as byte-identical payload comparison (defeated by per-batch
 `attributed_segments` and free-text `reasoning`), then - after self-correction - by

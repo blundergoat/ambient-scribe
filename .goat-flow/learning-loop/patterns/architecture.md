@@ -36,7 +36,7 @@ last_reviewed: 2026-07-07
 **Created:** 2026-07-07
 
 **Context:** A frontend feature belongs with `public/js/scribe-output.js`, but that file sits
-near gruff-ts's file-length threshold (was 948 lines before M5; the same trap fired earlier
+near gruff-ts's file-length threshold (was 948 lines before the last split; the same trap fired earlier
 for `strands_agents/post_visit_correction.py` at 1023 lines).
 
 **Approach:** Put the feature in a new classic script (`scribe-summary-tabs.js`,
@@ -45,4 +45,4 @@ scripts share globals, so cross-file calls need only a `typeof fn === 'function'
 isolated test pages. Add `if (typeof module !== 'undefined' && module.exports)` at the bottom
 when node-based unit tests need to require the file (`scribe-stitch.js` + `npm run test:js`).
 Deleting superseded legacy code from the old file at the same time (no-backwards-compat rule)
-can shrink it back below the ceiling - M5 took scribe-output.js from 948 to 799 lines.
+can shrink it back below the ceiling - one such split took scribe-output.js from 948 to 799 lines.

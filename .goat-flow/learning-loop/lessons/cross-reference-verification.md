@@ -10,8 +10,8 @@ last_reviewed: 2026-07-31
 **Created:** 2026-07-20
 **What happened:** While refreshing the six README files against the current code, one Bash
 call combined `ls .goat-flow/plans/_done/0.3.0/ | head` with
-`ls .goat-flow/plans/_done/0.3.0/done/ | rg "M11|M12"`; the interleaved output made the
-M11/M12 plan files look like direct children of `_done/0.3.0/`, and that wrong path was
+`ls .goat-flow/plans/_done/0.3.0/done/ | rg "<milestone-ids>"`; the interleaved output made
+those plan files look like direct children of `_done/0.3.0/`, and that wrong path was
 written into `README_CLINICAL_INTELLIGENCE.md`. The final VERIFY sweep (`[ -e "$p" ]` over
 every path the edited READMEs reference) caught both dead links before completion.
 **Prevention:** When several listing commands share one shell call, print a delimiter naming

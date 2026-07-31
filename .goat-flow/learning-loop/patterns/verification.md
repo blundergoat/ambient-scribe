@@ -27,14 +27,14 @@ last_reviewed: 2026-07-09
 
 **Context:** A local quality script needs to score fixture behavior, such as DOCTOR/PATIENT role attribution, without starting FastAPI, importing HTTP clients, or touching NeMo/GPU setup.
 
-**Approach:** Extract the pure decision logic into a small importable helper, keep the CLI stdlib-only, and prove it with both the direct eval command and the log analyzer command. For M08 this means `scripts/eval-role-heuristic.py` loads `strands_agents/api/role_heuristics.py` and `python scripts/eval-role-heuristic.py > /tmp/m08-eval.out && python scripts/analyze-logs.py /tmp/m08-eval.out` renders the report.
+**Approach:** Extract the pure decision logic into a small importable helper, keep the CLI stdlib-only, and prove it with both the direct eval command and the log analyzer command. For the role-heuristic work this means `scripts/eval-role-heuristic.py` loads `strands_agents/api/role_heuristics.py` and `python scripts/eval-role-heuristic.py > /tmp/role-heuristic-eval.out && python scripts/analyze-logs.py /tmp/role-heuristic-eval.out` renders the report.
 
 ## Pattern: Doer-verifier milestone verification with fresh sessions
 
 **Created:** 2026-07-07
 
 **Context:** A phased task where each milestone needs sign-off and the implementing agent
-must never self-assess (scribe summary UX task, milestones M1-M5, 2026-07-07).
+must never self-assess (scribe summary UX task, five phased milestones, 2026-07-07).
 
 **Approach:** After a milestone goes green locally, launch a FRESH agent session whose only
 job is adversarial verification: it re-reads the diffs against the acceptance criteria,
@@ -112,4 +112,4 @@ to a file, then import the module under test directly in the project venv
 `_negative_finding_violation`) against those rows. Confirmed twice in one session: reproduced
 the missed fabricated denial (session `203d1d35`) and the three false-positive flags (session
 `d97a9bde`). Keep the scripts with the milestone that owns the fix so they become regression
-tests (`.goat-flow/plans/0.4.0-slice-1/tools/m10-*.py`).
+tests: promote them into `scripts/` or `tests/` rather than leaving them in the plan directory.

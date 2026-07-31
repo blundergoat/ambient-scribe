@@ -12,7 +12,7 @@ last_reviewed: 2026-07-30
 explicit failure return instead of depending on the caller's `errexit` state.
 **Trigger phase:** VERIFY
 
-The first M05A receipt-hash smoke unexpectedly let the `hash_drift` case pass. The validator
+The first receipt-hash smoke unexpectedly let the `hash_drift` case pass. The validator
 ran `sha256sum --check` as a bare command and relied on the script's top-level `set -e`, but
 the negative-case harness correctly used `set +e` while capturing the validator status.
 Checksum failure therefore continued into later successful checks, and the function returned

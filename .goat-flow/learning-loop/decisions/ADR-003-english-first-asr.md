@@ -3,7 +3,7 @@
 **Date:** 2026-07-04
 **Status:** Accepted
 **Author(s):** Matthew Hansen
-**Context:** Follows the multitalker/multilingual analysis during M09 planning (`.goat-flow/plans/0.3.0/M09-dependency-upgrades.md`, `.goat-flow/plans/0.3.0/backlog.md`).
+**Context:** Follows the multitalker/multilingual analysis done during 0.3.0 dependency-upgrade planning.
 
 ## Context
 
@@ -13,14 +13,14 @@ As of July 2026 that model is **English-only** (built on the `nemotron-speech-st
 
 Additional constraints at decision time:
 
-- 0.3.0 is a deliberate *focusing* release - collapsing 6 modes to **medical-only** (`.goat-flow/plans/0.3.0/ISSUE.md`). Adding languages now reverses that focus.
+- 0.3.0 is a deliberate *focusing* release - collapsing 6 modes to **medical-only**. Adding languages now reverses that focus.
 - Solo-developer PoC, no users, synthetic data. No non-English user or market is currently identified - multilingual demand is speculative.
 - Sortformer diarization is largely **language-agnostic** (it models speaker activity, not words), so it is *not* the multilingual bottleneck; the ASR model is.
 
 ## Decision
 
 - **Ship English-only first.** Keep the overlap-aware multitalker Parakeet + Sortformer pipeline as the product's ASR.
-- **Defer multilingual** to a future milestone, tracked in `.goat-flow/plans/0.3.0/backlog.md`.
+- **Defer multilingual** to a future release, tracked in the release backlog.
 - **Bank one hedge now:** keep the ASR model behind a single narrow seam in `strands_agents/nemo_pipeline.py` - one "audio segment → text" boundary (introduce one if the boundary is not already clean) - so a later swap to diarize-then-multilingual-ASR is a *stage swap*, not a pipeline rewrite. Do not let per-speaker-kernel assumptions leak across the pipeline.
 - Scope: this decision is about **language coverage only**. It does not change the GPU-singleton/executor model (ADR-001) or the Mercure topic layout (ADR-002).
 

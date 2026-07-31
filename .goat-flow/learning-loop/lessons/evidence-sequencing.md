@@ -43,7 +43,7 @@ its supplemental verifier before running `ruff format --check`. The formatter ch
 layout, but that correctly invalidated the first packet's byte count and SHA-256. The
 sealed attempt was preserved and a second packet was built instead of altering evidence.
 **Evidence:**
-`var/quality/rediar-m05-acceptance/hybrid/2026-07-25_d3-flag-off-promotion2-verification/`
+a local-only verification artifact
 (search: `"SUPERSEDED_FORMAT_ONLY"`).
 **Prevention:** For self-hash-bound evidence tooling, use this order: format source ->
 format check -> behavior tests -> build/hash packet -> seal -> post-seal verification.

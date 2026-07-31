@@ -13,7 +13,7 @@ last_reviewed: 2026-07-26
 **Incident count:** 4
 **Latest occurrence:** 2026-07-26
 
-**What happened:** M02 Phase A initially carried forward the claim that
+**What happened:** Span-fidelity Phase A initially carried forward the claim that
 `previous_hypothesis.timestamp` counted per-speaker voiced frames. The probe
 therefore compared raw token values with a cumulative voiced-frame ledger and
 the plan marked native shape inspection complete. The approved full replay
@@ -60,20 +60,12 @@ estimates while strict placement fell from 100% to 82.35%; non-overlap rows 0,
 a long inactive gap. A cumulative count plus a step boundary proves
 cardinality, not the absolute within-step position of each frame.
 
-**Evidence:** the sealed rejected implementation patch
-`var/quality/0.5.2-span-fidelity/m02-active-step-candidate.patch` (search:
-`def _word_timing_candidates`),
-`var/quality/0.5.2-span-fidelity/phase-a-decision.json` (search:
-`accumulated_hypothesis_semantics`),
-`var/quality/0.5.2-corpus-validation/fresh-baseline-summary.json` (search:
-`c03_repeatability`), and
-`var/quality/0.5.2-span-fidelity/phase-b-candidate/candidate-verdict.json`
-(search: `m01_timestamp_placement_regressed`), plus
-`var/quality/0.5.2-span-fidelity/phase-b-active-step-short/` (search:
-`asr_active_step_length_regression`), and
-`var/quality/0.5.2-span-fidelity/phase-b-active-step-decoded-short/` (search:
-`candidate_coordinate_projection_falsified`). The installed NeMo semantic
-anchors are `perform_parallel_streaming_stt_spk`, `active_speakers`,
+**Evidence:** The rejected implementation patch and its decision receipts were local-only
+artifacts. Their findings were `accumulated_hypothesis_semantics`, `c03_repeatability`,
+`timestamp_placement_regressed`, `asr_active_step_length_regression`, and
+`candidate_coordinate_projection_falsified` — recorded here because they cannot be re-read
+from this repository. The durable, re-checkable anchors are in the installed NeMo package;
+its semantic anchors are `perform_parallel_streaming_stt_spk`, `active_speakers`,
 `update_asr_state`, `rnnt_label_looping.py` (search:
 `fix timestamps for iterative decoding`), `Hypothesis.merge_`,
 `pack_hypotheses`, and

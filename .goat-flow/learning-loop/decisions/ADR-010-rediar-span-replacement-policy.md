@@ -61,8 +61,8 @@ without a settled role routes the span to the review lane as UNKNOWN.
   confident wrong anywhere.
 - Decision table pinned by 12 focused tests
   (tests/python/test_rediar_span_comparer.py); policy code in
-  scripts/rediar-span-comparer.py; grading ledger in
-  var/quality/rediar-m03-policy/.
+  scripts/rediar-span-comparer.py. The grading ledger behind the counts above was a
+  local-only artifact.
 
 ## Corpus-quality rejection decision
 
@@ -84,10 +84,10 @@ without a settled role routes the span to the review lane as UNKNOWN.
   `runtime_calls_added=0`. The human approved its rejection disposition on
   2026-07-25.
 
-Evidence, reverifiable with `scripts/verify-rediarization-corpus-quality-disposition.py verify --packet`:
-`var/quality/rediarization-candidate-evaluation/corpus-quality-disposition/2026-07-25_reject-candidate-keep-flag-off/`.
-The superseded original adjudication is preserved byte-for-byte at
-`var/quality/rediar-m05-acceptance/adjudication/2026-07-25_m05d-quality1/`.
+The disposition packet and the superseded original adjudication were retained as local-only
+artifacts. Where a packet still exists locally, it is re-checkable with
+`scripts/verify-rediarization-corpus-quality-disposition.py verify --packet <dir>`; that
+verifier is the committed, durable part of this decision.
 
 ## Consequences
 

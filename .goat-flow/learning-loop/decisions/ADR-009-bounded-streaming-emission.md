@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-07-13
-**Ticket/Context:** 0.4.0-slice-2 M06 long-turn emission starvation
+**Ticket/Context:** 0.4.0-slice-2 long-turn emission starvation
 
 ## Context
 
@@ -18,8 +18,8 @@ many stable rows are clock-ready:
 - PHI-safe evidence shows up to 37 clock-ready c01 rows and 19 c03 rows blocked with zero engine
   release. This rejects decoder finality, a required speaker turn, and browser rendering as causes.
 
-The evidence and threshold projection live under
-`var/quality/m06-emission-starvation-20260712T211015Z/phase0-mechanism-verdict.log`.
+The row counts and threshold projection above came from a local-only replay log and are recorded
+here rather than being re-readable from the repository.
 
 ## Decision
 
@@ -28,7 +28,7 @@ limit is enabled and the stability frontier has lagged the clock horizon by at l
 the engine releases only already-stable, clock-ready rows. It does not emit mutable words, invent
 timestamps, change the five-second browser cadence, or alter speaker identity policy.
 
-Use `10` seconds for the M06 enabled gates. Captured evidence projects maximum c01/c03 batch
+Use `10` seconds for the enabled gates. Captured evidence projects maximum c01/c03 batch
 intervals of 15.0/10.0 seconds at that value. A 15-second stability limit projected a 20.0-second
 c01 batch interval, missing the user-visible target by one browser window.
 
