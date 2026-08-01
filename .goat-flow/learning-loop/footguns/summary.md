@@ -1,9 +1,71 @@
 ---
 category: summary
-last_reviewed: 2026-07-20
+last_reviewed: 2026-08-01
 ---
 
 # Summary / Note-Generation Footguns
+
+## Footgun: The summariser silently repairs garbled drug names and can land on a different drug
+
+**Status:** active | **Created:** 2026-08-01 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: `_NO_MEDICATIONS_CLAIM_PATTERN`)
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: `_medication_scope_reasons`)
+- **Files:** `strands_agents/data/medical_lexicon.txt`
+- **What breaks:** The note generator normalises ASR garbles into plausible clinical
+  vocabulary as a side effect of writing fluent prose. That silently succeeds often enough to
+  look like a feature, and there is **no check that a medication named in the note was ever
+  spoken**. The only medication rule in the fidelity checker is a *scope* rule — it flags
+  "no current medications" when the patient described taking some. Nothing requires a drug
+  *name* to be grounded in the source rows, so an invented one ships unflagged.
+- **Evidence:** 2026-08-01 manual round, consult-1.2 (`primock57-day1-consultation02`),
+  replay complete, 310 segments, roles 98%. Four garbles reached the note; the summariser
+  rewrote all four and got one badly wrong:
+
+  | Spoken | Live lane | Corrected lane (what the summariser read) | Note produced | Correct |
+  | --- | --- | --- | --- | --- |
+  | emollients | `amoleans` / `amolliums` | — | emollients | ✅ |
+  | fexofenadine | `fsapenedine` | — | `fexafenadine` | ❌ misspelt |
+  | loratadine | `Lauratidine` | — | `loratidine` | ❌ misspelt |
+  | Piriton | `Puritan` | **`pyritin`** (`corrected-0271`) | **`pyrithamine`** | ❌ **different drug class** |
+
+  **The corrected row is the sharp part.** `pyritin` is a *registered lexicon variant* of
+  canonical `Piriton` — the lexicon holds the correct mapping and ADR-011's bypass is the only
+  reason it never applied. The summariser was then handed a garble the system already knew how
+  to fix, and guessed a different drug.
+
+  `pyrithamine` appears **nowhere in either transcript lane** — it is generated, not transcribed. The
+  Plan section states it is "available over the counter" as an antihistamine alternative.
+  Piriton is chlorphenamine, a sedating antihistamine genuinely sold OTC in the UK.
+  Pyrimethamine is a prescription-only antiparasitic used in toxoplasmosis and malaria, with
+  bone-marrow toxicity. The generated token sits phonetically between the two and reads as a
+  real drug name, which makes it far more dangerous than the raw ASR garble `Puritan` — a
+  clinician skim-signing the note would catch "Puritan" and might not catch "pyrithamine".
+
+  The two fidelity flags this note *did* raise were both correct (fabricated denials of
+  "purulent discharge" and "temperature changes"). The checker is working; this class is
+  simply outside what it inspects.
+- **Why the lexicon did not save it:** all three drugs are registered canonicals, and all
+  three produced variants missed:
+
+  | Lexicon entry | ASR produced | Matched? |
+  | --- | --- | --- |
+  | `fexofenadine\|Fexaphenidine` | `fsapenedine` | no |
+  | `loratadine\|Luratidine` | `Lauratidine` | no — one letter |
+  | `Piriton\|Pyritin` | `Puritan` | no |
+
+  Exact-variant replacement cannot generalise: `Luratidine` and `Lauratidine` differ by one
+  character and the lexicon treats them as unrelated. But note the two failures are *different*:
+  the live lane missed on coverage, while the corrected lane produced a **registered** variant
+  (`pyritin`) that ADR-011's bypass prevented from being mapped. Widening the variant list would
+  not have saved the note; only reaching the corrected lane would.
+- **Prevention:** Do not read a fluent, correctly-spelled drug name in a note as evidence the
+  drug was said. Ground every medication name against the source rows before trusting it. When
+  scoring a consult, diff the note's clinical nouns against the transcript's — matching
+  *counts* hides substitutions, because a wrong drug and a right drug both count as one drug.
+  Treat a garble the summariser "fixed" as unverified until the audio says otherwise.
+- **Open:** no medication-name grounding rule exists. Adding one is a summary-fidelity change
+  and is Ask First; it is recorded as a finding, not a fix.
 
 ## Footgun: A resumed visit's stale corrected artifact deadlocks the note as stale lineage
 

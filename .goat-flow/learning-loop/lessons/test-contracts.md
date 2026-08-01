@@ -13,6 +13,8 @@ Lessons from executable test metadata and clean-checkout contract gates.
 **Decision changed:** Before editing any file under `scripts/`, `tests/`, or
 `strands_agents/` — even to reword a comment — check whether a manifest pins its bytes.
 **Trigger phase:** ACT
+**Incident count:** 2
+**Latest occurrence:** 2026-08-01
 
 A documentation sweep reworded comments in `scripts/transcript-quality.py`. That file is the
 frozen scorer, byte-bound in `tests/fixtures/audio/development-corpus-0.5.0.json` with an
@@ -37,6 +39,31 @@ A hash-bound file is documentation-frozen as well as behaviour-frozen; leave it 
 record the exemption. For an asserted string, either leave it or change source and test in the
 same commit. Run the full suite after each lane of a sweep, not once at the end — the failure
 tells you which lane introduced it.
+
+**Recurrence 2026-08-01, one day later, via a new route: re-litigating a recorded exemption.**
+The same file was edited again — the same 8 comments, the same broken hash. The trigger was not
+"comments are safe" this time. A verification sweep re-ran the milestone-ID grep, saw
+`scripts/transcript-quality.py` with 8 hits, compared that against the plan's claim that every
+remaining hit was exempt, and concluded the plan was wrong and the file had been missed. The
+plan was right. Its exemption list named "hash-bound files" as a category; the file was simply
+never traced to which category it fell under before the exemption was overridden.
+
+Reversed with 8 explicit inverse edits after `git checkout --` was correctly refused as a
+destructive command. Restored to `sha256 9cf8c3a1…0426` / 100,065 bytes, `git status` clean,
+`test_development_corpus.py` 19 passed / 2 skipped. Nothing reached a commit.
+
+**Prevention, second order:** finding a documented exemption suspicious is fine; acting on that
+suspicion before identifying *which* exemption applies is not. An exemption list that records
+categories but not per-file assignments will be re-litigated by the next reader — including a
+reader who has the lesson in the same repository and does not grep for it. Before overriding any
+recorded exemption, run the manifest check above on the specific file. It costs one command:
+
+```bash
+rg -n -A3 '"path": "<the file>"' tests/fixtures/
+```
+
+Recognising this trap requires reading the learning loop *during* the sweep, not after the
+failure. Both incidents were preventable by the check that was already written down.
 
 ## Lesson: Inventory manifest categories before narrowing a metadata assertion
 

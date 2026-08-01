@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-07-26
+last_reviewed: 2026-08-01
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -188,6 +188,45 @@ A demo replay "stopped by itself" at ~70s and was signed off as the socket-drop 
 While converting demo replay to stream over the live WebSocket, the shared `onclose` handler gained a replay branch (`public/js/scribe-recording.js`, search: "A drop of the replay's own socket"). Self-review before runtime caught a race: starting a replay while a live recording is active closes the OLD socket, and if that close event fires after `isReplayActive` becomes true, the handler would have stopped the brand-new replay. Fixed by requiring `event.target === transcriptionSocket` before treating a close as the replay's own.
 
 **Lesson:** When one event handler serves sockets that are replaced across session transitions, compare `event.target` against the current socket before acting — flags like `isReplayActive` describe the NEW session, not the socket that emitted the event.
+
+## Lesson: A stale service check becomes a false "unrecoverable" verdict
+
+**Created:** 2026-08-01
+**Decision changed:** Before declaring session evidence lost, re-run the liveness check at the
+moment of the claim. A `docker ps` from earlier in the session is not evidence about now.
+**Trigger phase:** VERIFY
+
+Analysing a manual consult capture, the agent checked `docker ps` early in the session — before
+the user had run the consult — and saw `ambient-scribe-nemo-agent-1  Exited (255)`. That reading
+was correct then. The user subsequently started the stack and ran the test. The agent carried the
+earlier reading forward into the post-test analysis and wrote "the container had already exited,
+so `docker logs` returned nothing", then declared the corrected transcript, full history, and
+container logs permanently unrecoverable — building an entire "evidence limits" section on it and
+downgrading the round's central finding to an inference.
+
+None of it was true. The container had run continuously since `22:43:43Z`, before the session
+finalized at `23:07:02Z`. A single read-only GET recovered all 310 corrected rows and confirmed the
+inference exactly. The cost was not just the wasted inference: a whole round of evidence was nearly
+abandoned on a stale fact, and the "what is missing and why" prose was written confidently enough
+that a later reader would not have retried.
+
+**What makes this seductive:** the check *was* run, and its output *was* real. The failure is
+temporal, not procedural — the gap between observation and claim spanned a state change caused by
+the user. Nothing in the transcript flagged it, because the agent never asked "is this still true?"
+
+**Prevention:** Re-verify liveness immediately before any claim that depends on it, especially a
+negative claim. "Unrecoverable", "the service is down", and "the data is gone" are all claims about
+the present tense. Cheap re-check:
+
+```bash
+docker inspect <container> --format '{{.State.Status}} started={{.State.StartedAt}}'
+curl -sf -o /dev/null -w '%{http_code}' "$AGENT/health"
+```
+
+Related: session recovery here worked only because `SESSION_STORAGE=memory` with
+`SESSION_TTL_SECONDS=7200` had not expired. That is a two-hour window, not durability — do not
+generalise this recovery into "late capture is fine". Use
+`scripts/capture-manual-session.sh` inside the window.
 
 ## Lesson: Verify the running container's env, not the compose default (2026-07-04)
 
