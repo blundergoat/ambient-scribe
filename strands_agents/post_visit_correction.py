@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -41,6 +41,11 @@ from nemo_confidence import (
     transcript_row_confidence,
     word_confidences_for_display_words,
 )
+from correction_phrase_inventory import (
+    CorrectionPhraseInventoryError,
+    approved_phrases,
+    inventory_identity,
+)
 from post_visit_word_timing import (
     PostVisitTranscription,
     reconcile_punctuation_only_word_timings,
@@ -62,8 +67,11 @@ DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "nvidia/parakeet-unified-en-0.6b",
 )
 _WORD_CONFIDENCE_RECOVERY_MODEL = "nvidia/parakeet-unified-en-0.6b"
-# Baseline stays inactive until the reviewed phrase proves safer transcript wording.
-DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | None = None
+# Baseline stays inactive until a reviewed phrase proves safer transcript wording.
+DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | Sequence[str] | None = None
+# The historical control phrase. It is semantically empty on purpose: it proves the
+# boosting plumbing moves words without asserting anything clinical. Kept alongside
+# the reviewed inventory so pre-inventory behaviour stays reproducible.
 APPROVED_POST_VISIT_CORRECTION_PHRASE = "brand new sector"
 _POST_VISIT_CORRECTION_PHRASE_ALPHA = 1.0
 # The single-flight evaluator reads this after one decode; null means no auditable run completed.
@@ -447,33 +455,85 @@ def _maybe_run_rediar_leg(
     )
 
 
+def _reviewed_correction_phrases(
+    correction_phrase: str | Sequence[str] | None,
+) -> list[str]:
+    """Resolve a request into the exact phrases the decoder may be biased toward.
+
+    One phrase keeps an arm isolated to a single term; a sequence runs the whole
+    reviewed inventory. Either way every phrase must already be written down and
+    reviewed, so an unlisted term cannot reach the decoder by any route.
+
+    Args:
+        correction_phrase: One reviewed phrase, a sequence of them, or null for none.
+
+    Returns:
+        Phrases to boost, in request order and de-duplicated; empty means boost nothing.
+
+    Raises:
+        PostVisitCorrectionError: When any requested phrase is outside the inventory,
+            or the inventory itself cannot be trusted.
+    """
+    # No requested phrase means the clinician receives the unchanged baseline decode.
+    if correction_phrase is None:
+        return []
+
+    requested = (
+        [correction_phrase]
+        if isinstance(correction_phrase, str)
+        else list(correction_phrase)
+    )
+    # An empty sequence is a caller asking for no boosting, which is not an error.
+    if not requested:
+        return []
+
+    try:
+        approved = set(approved_phrases())
+    except CorrectionPhraseInventoryError as inventory_error:
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase inventory is unusable.",
+            reason_category="invalid_phrase_config",
+        ) from inventory_error
+
+    # The historical control phrase stays valid so pre-inventory behaviour remains provable.
+    approved.add(APPROVED_POST_VISIT_CORRECTION_PHRASE)
+
+    resolved: list[str] = []
+    for phrase in requested:
+        # Any unlisted text could normalize a raw garble or activate an unreviewed hint.
+        if not isinstance(phrase, str) or phrase not in approved:
+            raise PostVisitCorrectionError(
+                "Post-visit correction phrase is not in the reviewed inventory.",
+                reason_category="invalid_phrase_config",
+            )
+        # A repeat would weight one term twice without saying so in the evidence.
+        if phrase not in resolved:
+            resolved.append(phrase)
+    return resolved
+
+
 def _apply_post_visit_correction_phrase(
     asr_model: Any,
-    correction_phrase: str | None,
+    correction_phrase: str | Sequence[str] | None,
 ) -> None:
-    """Apply one reviewed phrase after confidence setup for a stopped visit.
+    """Apply reviewed phrases after confidence setup for a stopped visit.
 
     Use only in the corrected transcript lane; null keeps the current words unchanged.
 
     Args:
         asr_model: Restored Unified model; missing decoder config stops correction before visible wording.
-        correction_phrase: Independently reviewed official wording; null preserves the baseline transcript.
+        correction_phrase: Reviewed phrase or phrases; null preserves the baseline transcript.
 
     Returns:
-        None; the model changes in place, while a null phrase leaves its decoder untouched.
+        None; the model changes in place, while no phrase leaves its decoder untouched.
 
     Raises:
-        PostVisitCorrectionError: When the phrase or decoder is outside the approved experiment.
+        PostVisitCorrectionError: When a phrase or the decoder is outside the approved experiment.
     """
-    # No reviewed phrase means the clinician receives the unchanged baseline decode.
-    if correction_phrase is None:
+    phrases = _reviewed_correction_phrases(correction_phrase)
+    # Nothing reviewed to apply means the decoder keeps the configuration it loaded with.
+    if not phrases:
         return
-    # Any other text could normalize a raw garble or activate multiple unreviewed hints.
-    if correction_phrase != APPROVED_POST_VISIT_CORRECTION_PHRASE:
-        raise PostVisitCorrectionError(
-            "Post-visit correction phrase is not the reviewed canonical phrase.",
-            reason_category="invalid_phrase_config",
-        )
 
     from omegaconf import OmegaConf, open_dict
 
@@ -488,9 +548,9 @@ def _apply_post_visit_correction_phrase(
         )
 
     with open_dict(phrase_decoding_config.greedy):
-        phrase_decoding_config.greedy.boosting_tree = {
-            "key_phrases_list": [correction_phrase]
-        }
+        phrase_decoding_config.greedy.boosting_tree = {"key_phrases_list": phrases}
+        # Alpha and every other boosting knob stay at their observed defaults so the
+        # phrase list is the only variable an arm changes.
         phrase_decoding_config.greedy.boosting_tree_alpha = (
             _POST_VISIT_CORRECTION_PHRASE_ALPHA
         )
@@ -527,17 +587,17 @@ def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
 
 
 def _selected_post_visit_correction_phrase(
-    requested_correction_phrase: str | None,
-) -> str | None:
+    requested_correction_phrase: str | Sequence[str] | None,
+) -> str | Sequence[str] | None:
     """Choose the reviewed phrase for one stopped-visit decode.
 
     Use for normal and evaluator calls; null means the clinician receives the internal default.
 
     Args:
-        requested_correction_phrase: Evaluator override; null uses the inactive production default.
+        requested_correction_phrase: Evaluator override, one phrase or several; null uses the inactive production default.
 
     Returns:
-        Reviewed phrase to apply, or null when the baseline transcript stays unchanged.
+        Reviewed phrase or phrases to apply, or null when the baseline transcript stays unchanged.
     """
     # No evaluator override means the clinician receives the current internal default.
     if requested_correction_phrase is None:
@@ -566,6 +626,12 @@ def _capture_post_visit_decoding_evidence(
         return None
 
     effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
+    # Two phrase arms are only comparable when they used the same reviewed list, so
+    # the evidence records the inventory identity beside the decoder settings.
+    try:
+        effective_decoding_config["phrase_inventory"] = inventory_identity()
+    except CorrectionPhraseInventoryError:
+        effective_decoding_config["phrase_inventory"] = None
     global LAST_POST_VISIT_DECODING_CONFIG
     LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
     return effective_decoding_config
@@ -574,7 +640,7 @@ def _capture_post_visit_decoding_evidence(
 def transcribe_audio_with_nemo(
     model_name: str,
     audio_path: str,
-    correction_phrase: str | None = None,
+    correction_phrase: str | Sequence[str] | None = None,
 ) -> _NemoTranscriptionResult:
     """Transcribe retained visit audio on one restored NeMo model.
 

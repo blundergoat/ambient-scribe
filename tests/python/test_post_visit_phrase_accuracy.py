@@ -172,10 +172,16 @@ def test_candidate_adds_only_the_reviewed_native_phrase_profile() -> None:
     ["", "new section", "brand new sector\nmetformin", "sector, section"],
 )
 def test_unreviewed_or_multiple_phrases_fail_closed(unreviewed_phrase: str) -> None:
-    """Raw garbles and phrase lists never influence the clinician's corrected transcript."""
+    """Raw garbles never influence the clinician's corrected transcript.
+
+    Reviewed phrases may now be applied as a list, but only after each one is
+    matched against the inventory. Text that smuggles several terms through a
+    single string - newline- or comma-joined - is still one unlisted phrase and
+    is refused, so the list form cannot be reached by string manipulation.
+    """
     with pytest.raises(
         correction_module.PostVisitCorrectionError,
-        match="reviewed canonical phrase",
+        match="reviewed inventory",
     ):
         correction_module._apply_post_visit_correction_phrase(
             _fake_unified_model(),

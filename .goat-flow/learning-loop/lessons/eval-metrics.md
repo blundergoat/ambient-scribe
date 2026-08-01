@@ -12,11 +12,23 @@ last_reviewed: 2026-08-01
 from a consult where it happened not to. Aggregate WER hides which *words* moved.
 **Trigger phase:** VERIFY
 
-Consult-1.2 was analysed across seven rounds and correction never rescued a drug name: the live
-lane produced `Lauratidine`, `Puritan`, `fsapenedine`, and the corrected lane carried the same
-garbles through. Corrected non-overlap WER sat at 27.3% against live's 27.6-27.7% — a 0.3-0.4 pp
-gain. It was tempting, and nearly stated, that correction contributes little on clinical
-vocabulary.
+Consult-1.2 was analysed across seven rounds. Corrected non-overlap WER sat at 27.3% against
+live's 27.6-27.7% — a 0.3-0.4 pp gain — and the note still shipped a wrong drug name, so it was
+tempting, and briefly stated in this entry, that correction "never rescued a drug name" and
+"carried the same garbles through". **Both claims were false, and reading the rows instead of the
+aggregate is what disproved them.** Correction improved all four spoken drug terms and fixed one
+outright:
+
+| Spoken | Live lane | Corrected lane |
+| --- | --- | --- |
+| emollients | `amoleans` / `amolliums` | **`emollients`** — correct, both occurrences |
+| Piriton | `Puritan` | `pyritin` — the registered lexicon variant |
+| fexofenadine | `fsapenedine` | `fexafenidine` |
+| loratadine | `Lauratidine` | `loratidine` |
+
+The wrong drug still reached the note, but not because correction did nothing — because ADR-011
+routes corrected rows around the lexicon, so `pyritin` was never mapped to `Piriton` despite
+being a registered variant. A lane can be doing real work and still lose at the next boundary.
 
 Consult-3.1 (2026-08-01, suspected anaphylaxis) shows the opposite on the term that mattered
 most:
