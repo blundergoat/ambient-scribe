@@ -15,7 +15,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVALUATOR_PATH = REPO_ROOT / "scripts/m05-source-chip-disposition.py"
+EVALUATOR_PATH = REPO_ROOT / "scripts/build-source-chip-disposition.py"
 SYNTHETIC_WORDING = (
     "Synthetic non-clinical wording that must never appear in disposition output."
 )

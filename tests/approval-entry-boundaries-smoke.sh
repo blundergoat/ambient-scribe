@@ -2,7 +2,7 @@
 # Prove the M05 successor approval entry and Mercure readiness boundaries.
 #
 # Usage:
-#   bash tests/m05-approval-ready-disposition-entry-smoke.sh
+#   bash tests/approval-entry-boundaries-smoke.sh
 #
 # Every runtime-facing command resolves to a failing shim. The valid synthetic
 # default entry must stop at the first fake Docker boundary with status 97.
@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 M05_ROOT="$REPO_ROOT/var/quality/0.5.2-asr-accuracy/m05-baseline"
 RUNNER="$M05_ROOT/mercure-approval-ready-disposition-campaign-run-once.sh"
 CONTRACT="$M05_ROOT/mercure-approval-ready-disposition-campaign-contract.json"
-READINESS_HELPER="$REPO_ROOT/scripts/m05-mercure-readiness.py"
+READINESS_HELPER="$REPO_ROOT/scripts/probe-mercure-readiness.py"
 SMOKE_ROOT="$(mktemp -d)"
 FAKE_BIN="$SMOKE_ROOT/fake-bin"
 FAKE_COMMAND_LOG="$SMOKE_ROOT/fake-command.log"

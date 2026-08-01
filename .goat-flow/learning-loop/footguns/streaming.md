@@ -1,9 +1,54 @@
 ---
 category: streaming
-last_reviewed: 2026-07-26
+last_reviewed: 2026-08-01
 ---
 
 # Streaming Footguns
+
+## Footgun: Diarization re-identifies a speaker after a silence, and no counter reports it
+
+**Status:** active | **Created:** 2026-08-01 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/session_quality.py` (search: `speaker_anchor_remaps`)
+- **Files:** `strands_agents/nemo_streaming_engine.py` (search: `"masked_asr": True`)
+- **What breaks:** A speaker who stops talking long enough can come back as a **new speaker
+  slot**, and the session's own quality counters stay silent about it. `NEMO_SPEAKER_CAP=2` does
+  not prevent it — the cap bounds concurrent speakers, not distinct identities issued across a
+  visit.
+- **Evidence:** 2026-08-01 manual consult-3.1 (`b09c8d38-f304-428f-9cfe-9a548f7876a7`),
+  278 rows, 510 s, zero errors. Three slots were issued for two people:
+
+  | Slot | Rows | Time span |
+  | --- | ---: | --- |
+  | `speaker_0` (doctor) | 132 | 5-508 s |
+  | `speaker_1` (patient) | 10 | **18-45 s** |
+  | `speaker_2` (patient) | 136 | **68-507 s** |
+
+  The patient went quiet around 45 s, the clinician spoke, and when the patient resumed at 68 s
+  they were issued a fresh identity that persisted for the rest of the visit. `speaker_1` never
+  reappears. That is 136 rows — **49% of the transcript** — under a slot that did not exist for
+  the first minute.
+- **Why it did not reach the clinician:** the role agent's split-voice handling mapped both
+  `speaker_1` and `speaker_2` to PATIENT, so the visible labels were right. The defect was
+  absorbed downstream, which is exactly why it can persist unnoticed.
+- **The counter is blind to it:** `speaker_anchor_remaps` was **0** for this session. That is the
+  metric whose name promises to catch this, and it reported nothing while a re-identification was
+  happening. The only visible signal was `final_confidence` dropping to 0.782 (consult-1.2, two
+  slots, reads 0.984) — an indirect symptom that is easy to read as ordinary variation.
+- **Prevention:** Do not treat `speaker_anchor_remaps: 0` as evidence that speaker identity held.
+  Check the distinct `speaker_id` count against the number of people actually present, and check
+  whether any slot's time span *ends* while the visit continues — a slot that stops early and is
+  replaced is the signature. When a consult reports more slots than speakers, the role mapping
+  may be correct while the diarization underneath it is not, so an attribution score can look
+  healthy over a broken speaker layer.
+- **Reproduces exactly.** A second replay of the same fixture (2026-08-01, session
+  `15603c8f-6b08-4ab5-b046-093b4b7543fb`) produced a byte-identical live lane and the same three
+  slots with the same spans. This is a stable, characterisable defect rather than a sampling
+  artifact, so it can be reproduced on demand for any fix attempt. Only `final_confidence` moved
+  (0.782 to 0.826), because the role agent is an LLM and the layer *above* the defect is the
+  non-deterministic one.
+- **Open:** whether a returning speaker should be re-anchored to the original slot is a diarizer
+  question, not a role-agent one. Recorded as a finding; no fix proposed.
 
 ## Footgun: A minimum-duration floor turns missing word timing into a plausible measurement
 

@@ -64,8 +64,79 @@ last_reviewed: 2026-08-01
   scoring a consult, diff the note's clinical nouns against the transcript's — matching
   *counts* hides substitutions, because a wrong drug and a right drug both count as one drug.
   Treat a garble the summariser "fixed" as unverified until the audio says otherwise.
-- **Open:** no medication-name grounding rule exists. Adding one is a summary-fidelity change
-  and is Ask First; it is recorded as a finding, not a fix.
+- **Correction, 2026-08-01 (consult-3.1):** the original wording here said the checker has no
+  content-grounding at all. That was wrong, and the gap is narrower and more fixable than it
+  claimed. The checker **does** ground content — for *arrangements*. On a suspected-anaphylaxis
+  consult it flagged the Plan claim "arrange epinephrine autoinjector prescription" with
+  `action_not_confirmed_done`, `segment_ids: []`, and the detail *"arrangement content never
+  spoken: autoinjector, epinephrine, further, prescription"*. Verified: `epinephrine`,
+  `adrenaline`, `autoinjector`, `epipen`, and `prescription` appear in **neither** transcript
+  lane. The note invented an entire follow-up plan — clinically correct advice for anaphylaxis,
+  which is what makes it hard to spot — and the checker caught it unaided.
+
+  So the two consults differ by *what shape* the invention took, not by whether grounding
+  exists:
+
+  | Consult | Invented | Shape | Caught |
+  | --- | --- | --- | --- |
+  | 1.2 | `pyrithamine` | medication **name** inside an otherwise-grounded claim | no |
+  | 3.1 | epinephrine autoinjector prescription | **arrangement** | yes |
+
+  The fix is therefore to extend the existing arrangement-grounding to medication names, not to
+  build grounding from nothing. That is a much smaller change than this entry first implied.
+- **Three-replay result, 2026-08-01: the fabrication happens in 2 runs out of 3, and the checker
+  caught it both times.** Consult-3.1 was replayed three times and the note regenerated from a
+  **byte-identical** corrected transcript each time — both lanes hash-identical after stripping
+  role fields, 278 rows, 8 phantom merges, 103 chunks in all three. The transcription did not
+  vary at all. The note varied every time:
+
+  | | Run 1 | Run 2 | Run 3 |
+  | --- | --- | --- | --- |
+  | Claims | 11 | 9 | 10 |
+  | Flags raised | 2 | 0 | 1 |
+  | Role confidence | 0.782 | 0.826 | 0.796 |
+  | Named a drug never spoken | **yes** | no | **yes** |
+  | Caught? | **yes** | n/a | **yes** |
+
+  Run 1: "arrange epinephrine autoinjector prescription". Run 3: "arrange consideration of
+  epinephrine auto-injectors and further management". Run 2 instead said "follow-up regarding
+  **injection medications**", which is *grounded* — the transcript says "use like an injection"
+  (`corrected-0182`), "need an injection like what your" (`0222`), "with your injections and"
+  (`0272`).
+
+  So the underlying arrangement was real and all three runs described it: two by naming a drug
+  and device nobody mentioned, one vaguely and correctly. **Roughly two thirds of notes on this
+  consult name a medication that was never said** — that is not a rare edge case.
+
+  **The checker's record across the three replays is 3 for 3**: it flagged both fabrications with
+  details naming the exact unspoken tokens (`autoinjector, epinephrine, further, prescription`
+  and `auto, consideration, epinephrine, further, injector`), and raised nothing on the clean
+  run. Zero false negatives, zero false positives on this class.
+
+- **The sharper name for this is specification drift, not hallucination.** The model does not
+  invent from nothing; it completes an under-specified but genuine clinical thread with the
+  obvious detail. In an anaphylaxis consult, "an injection" completes to "epinephrine
+  autoinjector" — which is *usually clinically right*, and is still not what anyone said. That is
+  what makes it hard: the failure mode looks like competence.
+
+  The consult-1.2 `pyrithamine` case is a **different** mechanism reaching the same bad place:
+  there the model repaired a garbled name (`pyritin`) into the wrong drug. Two distinct routes to
+  an ungrounded medication name — garble repair, and over-specification — so a fix aimed at only
+  one will not close the class.
+
+- **Credit where due, and the risk this actually leaves.** Across three replays the checker was
+  right every time on the arrangement class. So the danger is not that ungrounded *arrangements*
+  ship — they get flagged. It is that the same generator, at roughly the same rate, also produces
+  ungrounded medication names in shapes the arrangement rule does not cover: consult-1.2's
+  `pyrithamine` sat inside an otherwise-grounded Plan sentence and shipped clean. The generator's
+  willingness to invent is broad; the checker's coverage is narrow. Measuring only the caught
+  class will make this look solved.
+
+- **Open:** medication *names* are still ungrounded. Extending the arrangement rule to cover them
+  is a summary-fidelity change and is Ask First; it is recorded as a finding, not a fix. Note the
+  fix must catch both routes above, and that any single-run acceptance test for it will be
+  unreliable — the generator does not repeat itself, so a candidate needs several replays per
+  arm before a verdict means anything.
 
 ## Footgun: A resumed visit's stale corrected artifact deadlocks the note as stale lineage
 

@@ -15,7 +15,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_PATH = REPO_ROOT / "scripts/m05-mercure-readiness.py"
+HELPER_PATH = REPO_ROOT / "scripts/probe-mercure-readiness.py"
 HEX_A = "a" * 64
 HEX_B = "b" * 64
 HEX_C = "c" * 64

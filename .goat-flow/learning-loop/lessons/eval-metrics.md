@@ -1,9 +1,46 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-26
+last_reviewed: 2026-08-01
 ---
 
 # Eval and Metrics Lessons
+
+## Lesson: One consult's null result on correction says nothing about the next consult
+
+**Created:** 2026-08-01
+**Decision changed:** Do not conclude that post-visit correction adds nothing for clinical terms
+from a consult where it happened not to. Aggregate WER hides which *words* moved.
+**Trigger phase:** VERIFY
+
+Consult-1.2 was analysed across seven rounds and correction never rescued a drug name: the live
+lane produced `Lauratidine`, `Puritan`, `fsapenedine`, and the corrected lane carried the same
+garbles through. Corrected non-overlap WER sat at 27.3% against live's 27.6-27.7% — a 0.3-0.4 pp
+gain. It was tempting, and nearly stated, that correction contributes little on clinical
+vocabulary.
+
+Consult-3.1 (2026-08-01, suspected anaphylaxis) shows the opposite on the term that mattered
+most:
+
+| Row | Live | Corrected |
+| --- | --- | --- |
+| `seg-0218` / `corrected-0219` | `and aphylactic reaction` | `an anaphylactic reaction` |
+| `seg-0241` / `corrected-0242` | **`NFL electric reaction`** | `an anaphylactic reaction` |
+
+The live lane rendered the diagnosis as `NFL electric reaction`. Correction recovered both
+mentions. `salbutamol` also survived intact in all lanes. Same pipeline, same settings
+(`NEMO_CORRECTION_REDIARIZATION=0`), opposite outcome on clinical-term recall.
+
+**Why the aggregate hid it:** WER counts every word equally, so recovering two instances of a
+diagnosis moves the number about as much as fixing two filler words. A 0.3 pp corpus-level gain
+is consistent both with "correction does nothing useful" and with "correction fixes exactly the
+words a clinician cannot afford to lose". The metric cannot tell those apart.
+
+**How to apply:** Before accepting or rejecting a correction-lane candidate, score critical-term
+recall separately from general WER, and read the actual changed rows rather than the delta. When
+a lane comparison shows a small aggregate gain, diff the specific clinical nouns — a single
+recovered diagnosis can matter more than the headline suggests, and a single fabricated one can
+matter more than a headline regression. Evidence for both consults lives under
+`.goat-flow/plans/0.5.2/manual-testing_consult1.2/` and the session-evidence bundles.
 
 ## Lesson: Row-denominated gates cannot judge a row-restructuring change
 

@@ -2,7 +2,7 @@
 # Prove the M05 Mercure gate fails before campaign state, sentinel, or replay.
 #
 # Usage:
-#   bash tests/m05-mercure-ready-disposition-smoke.sh
+#   bash tests/mercure-gate-ordering-smoke.sh
 #
 # Docker, network, GPU, and service commands are replaced with failing shims.
 

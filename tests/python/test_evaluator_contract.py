@@ -13,7 +13,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VERIFIER_PATH = REPO_ROOT / "scripts/m05-evaluator-contract.py"
+VERIFIER_PATH = REPO_ROOT / "scripts/verify-evaluator-contract.py"
 
 
 def load_contract_verifier() -> ModuleType:

@@ -250,9 +250,9 @@ a local-only artifact
 (search: `diagnostic_cross_map`) records the text-free recurrence evidence, and
 a local-only artifact
 (search: `classifications`) records the prior 22/3/4 truth split.
-`scripts/m05-source-chip-disposition.py` (search: `def _validate_aligned_rows`)
+`scripts/build-source-chip-disposition.py` (search: `def _validate_aligned_rows`)
 now separates whole-lane identity checks from finding classification, and
-`tests/python/test_m05_source_chip_disposition.py` (search:
+`tests/python/test_source_chip_disposition.py` (search:
 `"role": "UNRESOLVED"`) pins the non-finding case.
 **Prevention:** Before cross-mapping alerts, identify which fields prove truth status and which prove
 candidate causality. Load only available frozen lanes, encode missing comparison evidence explicitly, and
