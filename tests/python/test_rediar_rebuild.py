@@ -2,7 +2,7 @@
 
 These tests pin the NEMO_CORRECTION_REDIARIZATION flag contract: flag-off
 corrections stay byte-identical to today's artifact, and flag-on runs may only
-change row-level roles that the frozen ADR-010 two-witness policy approves.
+change row-level roles that the frozen ADR-013 two-witness policy approves.
 The decision-table branches themselves are pinned by
 test_rediar_span_comparer.py; here we pin the runtime leg around them.
 """

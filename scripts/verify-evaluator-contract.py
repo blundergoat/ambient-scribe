@@ -71,7 +71,14 @@ def _identity_record(
 
     expected_bytes = record.get("bytes")
     expected_sha256 = record.get("sha256")
-    if not isinstance(expected_bytes, int) or expected_bytes < 0:
+    # `bool` subclasses `int`, so a JSON `true` would otherwise pass as a byte
+    # count of 1 and let a malformed packet through a verifier that exists to
+    # fail closed.
+    if (
+        isinstance(expected_bytes, bool)
+        or not isinstance(expected_bytes, int)
+        or expected_bytes < 0
+    ):
         raise _reject(category, "bytes must be a non-negative integer")
     if (
         not isinstance(expected_sha256, str)
@@ -156,9 +163,10 @@ def verify_m05_evaluator_contract(
         "verification_files",
     )
     verified_verification_files: list[str] = []
-    for verification_path_value, verification_record in (
-        verification_file_records.items()
-    ):
+    for (
+        verification_path_value,
+        verification_record,
+    ) in verification_file_records.items():
         verification_path, resolved_verification_path = _workspace_file(
             workspace_root,
             verification_path_value,

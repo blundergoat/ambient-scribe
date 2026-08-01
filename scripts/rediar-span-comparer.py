@@ -10,7 +10,7 @@ A clean visit whose folds were one voice's cache churn decides keep-live
 everywhere, so the clinician's correct transcript is never touched.
 
 The policy implementation lives in `strands_agents/rediar_rebuild.py` (the
-runtime home since the policy move); this CLI delegates so the frozen ADR-010 decision
+runtime home since the policy move); this CLI delegates so the frozen ADR-013 decision
 table exists in exactly one place.
 """
 

@@ -3,13 +3,13 @@
 After a stopped visit's second ASR pass, this leg rebuilds speaker structure
 from the retained full audio (Sortformer), assigns the correction's own word
 timings to the rebuilt turns, asks the role agent to label the rebuilt voices,
-and decides each fold-suspect span with the frozen ADR-010 two-witness policy.
+and decides each fold-suspect span with the frozen ADR-013 two-witness policy.
 Only row-level roles inside spans both witnesses agree on may change; every
 other outcome leaves the clinician's transcript untouched. The leg is
 default-off, runs inside the correction executor slot, and a failure here can
 never take the corrected transcript with it.
 
-The decision table is the single runtime home of the ADR-010 policy;
+The decision table is the single runtime home of the ADR-013 policy;
 `scripts/rediar-span-comparer.py` delegates here for offline QA runs.
 """
 
@@ -56,7 +56,7 @@ def correction_rediarization_enabled() -> bool:
 
 @dataclass(frozen=True)
 class ComparerThresholds:
-    """Frozen policy numbers ADR-010 owns; code never redefines them.
+    """Frozen policy numbers ADR-013 owns; code never redefines them.
 
     Attributes:
         min_linkage_seconds: Clean-time overlap a rebuilt slot needs before it can

@@ -63,7 +63,7 @@ level (each display word inherits its row's verdict) with total display words co
 and judge row-level movement only against a structural null.
 **Trigger phase:** SCOPE
 **What happened:** The 0.5.2 corpus gate was drafted as "no fixture loses absolute correct rows" —
-the rule that correctly rejected ADR-010, where both arms shared one row structure. The 0.5.2 fix
+the rule that correctly rejected ADR-013, where both arms shared one row structure. The 0.5.2 fix
 itself merges fragment rows, so two correct rows becoming one "loses" a correct row while losing
 nothing real: the drafted gate would have failed a perfect fix on every fixture, and the same
 arithmetic could have inflated the milestone's success cell instead. Rows the merge collapses share

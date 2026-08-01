@@ -1,4 +1,4 @@
-# ADR-009: Time-Local Pairwise Slot Evidence Cannot Separate Harmful From Benign Folds
+# ADR-012: Time-Local Pairwise Slot Evidence Cannot Separate Harmful From Benign Folds
 
 **Status:** Rejected
 **Date:** 2026-07-20

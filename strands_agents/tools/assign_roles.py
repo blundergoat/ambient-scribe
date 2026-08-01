@@ -235,6 +235,10 @@ class RoleMappingState:
         )
 
 
+# The label a consumer shows when no speaker role can be claimed. Storage and the
+# browser both already treat this as "do not say Doctor or Patient".
+UNKNOWN_SPEAKER_ROLE = "UNKNOWN"
+
 # Per-session state store for role mappings.
 _session_states: dict[str, RoleMappingState] = {}
 _states_lock = threading.Lock()
@@ -336,6 +340,10 @@ def apply_role_mapping_result(
     """
     state = get_or_create_state(session_id)
     normalized_mapping = _normalize_mapping(mapping)
+    # Withdraw before overrides so a clinician's confirmed label still wins.
+    normalized_mapping = _withdraw_omitted_speaker_roles(
+        session_id, state, normalized_mapping
+    )
     normalized_mapping = _apply_confirmed_overrides(
         session_id, state, normalized_mapping
     )
@@ -375,6 +383,57 @@ def _normalize_mapping(mapping: dict[str, str]) -> dict[str, str]:
         normalized[str(speaker_id)] = str(role).upper()
 
     return normalized
+
+
+def _withdraw_omitted_speaker_roles(
+    session_id: str,
+    state: RoleMappingState,
+    mapping: dict[str, str],
+) -> dict[str, str]:
+    """Turn a dropped speaker label into an explicit withdrawal.
+
+    The role agent is told to omit a speaker whose utterances give no clear
+    evidence. Server state replaces its mapping wholesale, but the transcript
+    store and the browser both merge only the keys they are given, so an omitted
+    speaker would keep the confident DOCTOR or PATIENT label it had before -
+    showing the clinician certainty the agent had just withdrawn.
+
+    Naming the speaker as UNKNOWN says the same thing in a form every consumer
+    already understands.
+
+    Args:
+        session_id: Browser recording UUID for logs; empty still withdraws.
+        state: Role state holding the labels currently on screen.
+        mapping: Agent-proposed labels; empty withdraws every known speaker.
+
+    Returns:
+        Mapping extended with UNKNOWN for each previously labelled speaker the
+        agent no longer names.
+    """
+    withdrawn_mapping = dict(mapping)
+
+    for speaker_id, previous_role in state.current_mapping.items():
+        # A speaker the agent still names carries its own answer already.
+        if speaker_id in withdrawn_mapping:
+            continue
+        # Re-stating an existing UNKNOWN is not a withdrawal worth logging.
+        if previous_role == UNKNOWN_SPEAKER_ROLE:
+            withdrawn_mapping[speaker_id] = UNKNOWN_SPEAKER_ROLE
+            continue
+
+        withdrawn_mapping[speaker_id] = UNKNOWN_SPEAKER_ROLE
+        logger.info(
+            "role_mapping.label_withdrawn session_id=%s speaker_id=%s",
+            session_id,
+            speaker_id,
+            extra={
+                "session_id": session_id,
+                "speaker_id": speaker_id,
+                "previous_role": previous_role,
+            },
+        )
+
+    return withdrawn_mapping
 
 
 def _apply_confirmed_overrides(
@@ -433,7 +492,7 @@ def _attribute_segments(
         attributed_segments.append(
             {
                 **segment,
-                "role": mapping.get(speaker_id, "UNKNOWN"),
+                "role": mapping.get(speaker_id, UNKNOWN_SPEAKER_ROLE),
             }
         )
 

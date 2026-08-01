@@ -1,4 +1,4 @@
-# ADR-010: Two-Witness Span Replacement for the Corrected Transcript
+# ADR-013: Two-Witness Span Replacement for the Corrected Transcript
 
 **Status:** Rejected (corpus-quality rejection decision; human-approved 2026-07-25)
 **Date:** 2026-07-21
@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR-009 closed time-local fold rules; the fallback plan rebuilds speaker
+ADR-012 closed time-local fold rules; the fallback plan rebuilds speaker
 structure from full retained audio at correction time. Spikes proved the
 rebuild corrects every deterministic harmful fold but wholesale replacement
 regresses clean visits, the plain role agent mislabels a pure slot on one

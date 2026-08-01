@@ -181,3 +181,27 @@ def test_contract_rejects_repository_path_escape(tmp_path: Path) -> None:
         match="evaluator_path",
     ):
         verifier.verify_m05_evaluator_contract(contract, tmp_path)
+
+
+def test_boolean_byte_count_is_rejected(tmp_path: Path) -> None:
+    """`bool` subclasses `int`, so a JSON `true` must not pass as a byte count.
+
+    A verifier that exists to fail closed cannot accept `true` as "1 byte".
+    """
+    verifier = load_contract_verifier()
+    contract, _manifest, _primary_scorer, contract_document = write_contract_fixture(
+        tmp_path
+    )
+    evaluator_records = contract_document["evaluators"]
+    first_path = next(iter(evaluator_records))
+    evaluator_records[first_path]["bytes"] = True
+    contract.write_text(
+        json.dumps(contract_document, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        verifier.M05EvaluatorContractError,
+        match="non-negative integer",
+    ):
+        verifier.verify_m05_evaluator_contract(contract, tmp_path)
