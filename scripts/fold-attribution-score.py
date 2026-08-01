@@ -211,7 +211,7 @@ def classify_fold(expected_role: str | None, visible_roles: list[str]) -> str:
         visible_roles: Confident roles on the target chip; empty means UNKNOWN/absent.
 
     Returns:
-        Stable classification label used by the M04 acceptance gate.
+        Stable classification label used by the fold acceptance gate.
     """
     # Silence, overlap, or an UNKNOWN visible role cannot prove the alias right or wrong.
     if expected_role is None or visible_roles == []:
@@ -313,7 +313,7 @@ def add_attribution_deltas(
 def summarize_attribution_deltas(
     fold_events: list[dict[str, Any]],
 ) -> dict[str, int]:
-    """Count unique same-span attribution changes for the M04 release gate.
+    """Count unique same-span attribution changes for the fold release gate.
 
     Args:
         fold_events: Delta-annotated rows; empty means the candidate made no folds.
@@ -512,7 +512,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Print the grounded fold report consumed by the M04 acceptance evidence.
+    """Print the grounded fold report consumed by the fold acceptance evidence.
 
     Returns:
         Process exit code; zero means a complete JSON report was written to stdout.

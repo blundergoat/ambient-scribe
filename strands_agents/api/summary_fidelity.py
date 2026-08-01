@@ -45,7 +45,7 @@ _NOTE_UNCERTAINTY_MARKERS = (
 
 # A note may attribute uncertainty, memory failure, lack of knowledge, or
 # refusal to the patient only when the patient's own words establish that
-# state for the same clinical topic (M11).
+# state for the same clinical topic.
 _PATIENT_STATE_MARKER_PATTERN = re.compile(
     r"""
     (?P<memory>
@@ -94,7 +94,7 @@ _NON_PATIENT_STATE_ATTRIBUTION_PATTERN = re.compile(
 )
 
 # Words surrounding a state marker that describe grammar rather than its
-# clinical topic. The remaining words reuse M10's stem matcher.
+# clinical topic. The remaining words reuse the denial stem matcher.
 _STATE_TOPIC_STOPWORDS = frozenset(
     "about answer answered answering as being could details develop developed developing "
     "develops did does due had has have he her incomplete insect lack reduced regarding "
@@ -114,7 +114,7 @@ _DOCTOR_QUOTE_ATTRIBUTION_PATTERN = re.compile(
 # Possessive role mentions describe ("the patient's presentation") rather than
 # attribute - unless the possessed noun is the speech itself ("the patient's
 # words"). Reproduced on the retained 3.1 replay note, where the possessive
-# stole a clinician quote and rendered a wrong-role warning (M05).
+# stole a clinician quote and rendered a wrong-role warning.
 _QUOTE_POSSESSIVE_SPEECH_NOUNS = frozenset(
     {"words", "account", "description", "phrase", "phrasing", "report", "statement"}
 )
@@ -122,7 +122,7 @@ _QUOTE_POSSESSIVE_SPEECH_NOUNS = frozenset(
 # because the speaker's own statement continued around it; anything longer, or
 # a second interruption, is a real turn change. Reproduced on the retained
 # day3-c01 note, where a one-token clinician backchannel split the patient's
-# continuous quoted statement into a false warning (M05).
+# continuous quoted statement into a false warning.
 _QUOTE_BACKCHANNEL_MAX_TOKENS = 3
 
 # Clinical characteristics whose value must come from the patient, keyed by the
@@ -155,7 +155,7 @@ _PATIENT_DENIAL_PATTERN = re.compile(
 
 # Phrases that voice uncertainty or a non-answer. They contain negation words
 # ("don't know") but prove the patient could NOT answer - never that they denied
-# the topic - so they are masked out before any denial matching (M10).
+# the topic - so they are masked out before any denial matching.
 _EPISTEMIC_NON_ANSWER_PHRASES = (
     "don't know",
     "dont know",
@@ -181,7 +181,7 @@ _CLAUSE_BOUNDARY_PATTERN = re.compile(
 )
 
 # A note sentence that claims a denial while admitting the question went
-# unanswered contradicts itself; no transcript evidence can rescue it (M10).
+# unanswered contradicts itself; no transcript evidence can rescue it.
 _UNANSWERED_ADMISSION_PATTERN = re.compile(
     r"\b(not (fully |completely )?answered|unanswered|no answer)\b", re.IGNORECASE
 )
@@ -223,7 +223,7 @@ _PATIENT_ROW_QUESTION_TAIL_DENIAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# The M10 locality window is six clinician fragments. Counting clinician rows,
+# The locality window is six clinician fragments. Counting clinician rows,
 # not every ASR card, keeps one split question together for the user's answer.
 _RECENT_DENIAL_QUESTION_ROWS = 6
 
@@ -245,7 +245,7 @@ _EXAM_CLAIM_PATTERNS = (
 # Honest-absence frames stay unflagged - saying no exam happened IS fidelity.
 # Beyond literal negation tokens, scribe-true framings such as "concludes
 # before examination is performed", "prior to examination", and "not yet
-# performed" also assert absence, not findings (M10).
+# performed" also assert absence, not findings.
 _EXAM_ABSENCE_PATTERN = re.compile(
     r"\b(no|not|none|without|absent)\b[^.;]*\b(documented|recorded|performed|"
     r"examined|captured|available|obtained|completed)\b"
@@ -258,7 +258,7 @@ _EXAM_ABSENCE_PATTERN = re.compile(
 )
 
 # Note sentences where the examination is only proposed or planned - the exam
-# noun sits under an intent verb, so no findings are being claimed (M10, from
+# noun sits under an intent verb, so no findings are being claimed (from
 # the 2026-07-10 c03 replay false positive "Doctor proposed ... examination,
 # with discussion to follow regarding findings").
 _EXAM_INTENT_PATTERN = re.compile(
@@ -410,7 +410,7 @@ def summary_with_unverified_flags(
 ) -> dict[str, Any]:
     """Mark sentences that still fail after the user's one note retry.
 
-    The browser keeps each sentence visible with the M07 unverified marker.
+    The browser keeps each sentence visible with the unverified marker.
 
     Args:
         parsed_summary: Dumped summary payload about to be published; mutated copy is returned.
@@ -651,7 +651,7 @@ def _sentence_violations(
         _add_visible_violation("non-verbatim-quote", *unsupported_quote)
 
     # The hedge lane catches only what the other rules missed: an already
-    # flagged sentence keeps its one specific finding (M05).
+    # flagged sentence keeps its one specific finding.
     if not sentence_violations:
         hedge_dropped = _hedged_statement_violation(sentence, normalized_rows)
         # A hedged answer ("Irregular, I think") cannot become a definite claim.
@@ -1646,7 +1646,7 @@ def _recent_denial_question_context(
         if earlier_row["role"] != "DOCTOR":
             continue
         clinician_fragments.append(earlier_row["text"])
-        # Six clinician fragments is the existing M10 question-locality boundary.
+        # Six clinician fragments is the existing question-locality boundary.
         if len(clinician_fragments) == _RECENT_DENIAL_QUESTION_ROWS:
             break
 
@@ -1789,7 +1789,7 @@ def _exam_language_violation(
 
     # "documented on examination" presupposes an examination happened even
     # inside a negative-finding sentence, so the honest-absence exemption
-    # cannot launder it (M05: the day1-c07 fever key point).
+    # cannot launder it (the day1-c07 fever key point).
     if _EXAM_PRESUPPOSITION_PATTERN.search(sentence) is not None and not exam_performed:
         return (
             "this sentence presupposes an examination ('on examination'), but the"
@@ -1819,9 +1819,9 @@ def _exam_language_violation(
     )
 
 
-# --- M05 family 3: temporal-state / action-state review reasons ------------
-# Internal reason lane only (no payload change; M03/M06 own wording/surfacing).
-# Bounded per M05-detector-family-specs.md: note-final lanes (Plan, Assessment,
+# --- Detector family 3: temporal-state / action-state review reasons ------------
+# Internal reason lane only (no payload change; the summary lanes own wording/surfacing).
+# Bounded per the detector family specs: note-final lanes (Plan, Assessment,
 # key points) except the medication-scope check, which is ungated because the
 # reproduced a03 specimen lives in Subjective (recorded spec amendment).
 
@@ -1963,7 +1963,7 @@ def temporal_action_review_reasons(
 ) -> list[dict[str, Any]]:
     """Machine-readable temporal/action-state reasons for one generated note.
 
-    Use downstream (M05/M06 review surfaces): the browser payload is
+    Use downstream (review surfaces): the browser payload is
     unchanged and nothing here retries generation. Empty inputs produce no
     reasons.
 
@@ -2367,8 +2367,8 @@ def _medication_scope_reasons(
     ]
 
 
-# --- M05 family 2: paired mental-health/risk answer review reasons ----------
-# Internal reason lane only. Bounded per M05-detector-family-specs.md: a screen
+# --- Detector family 2: paired mental-health/risk answer review reasons ----------
+# Internal reason lane only. Bounded per the detector family specs: a screen
 # is a DOCTOR question matching the form list; the paired answer is the
 # patient's full uninterrupted turn (spec amendment: the six-row bound was too
 # tight for fragmented ASR - c01's answer spans eleven consecutive rows and
@@ -2435,7 +2435,7 @@ def risk_pair_review_reasons(
 ) -> list[dict[str, Any]]:
     """Machine-readable reasons for risk-screen answers a note misrepresents.
 
-    Use downstream (M05/M06 review surfaces): the browser payload is
+    Use downstream (review surfaces): the browser payload is
     unchanged and nothing here retries generation. Notes and visits without a
     detected risk screen produce no reasons.
 
@@ -2628,7 +2628,7 @@ def _tokens_contain_run(
     return False
 
 
-# --- M05 family 5a: unsupported demographic review reasons -------------------
+# --- Detector family 5a: unsupported demographic review reasons -------------------
 # Internal reason lane only. Exact age needs a SPOKEN age statement (spoken DOB
 # alone cannot derive age - CONTRACTS section 3; 0.4.0 has no trusted encounter
 # metadata); sex needs an explicit statement or a clinician address term.
@@ -2677,7 +2677,7 @@ def unsupported_demographic_review_reasons(
 ) -> list[dict[str, Any]]:
     """Machine-readable reasons for demographics no source statement supports.
 
-    Use downstream (M05/M06 review surfaces): the browser payload is
+    Use downstream (review surfaces): the browser payload is
     unchanged. A DOB restatement without derivation is exempt; only the
     derived descriptor ("NN-year-old woman") is judged.
 
@@ -2776,7 +2776,7 @@ def _sex_is_supported(claimed_sex: str, source_rows: list[dict[str, str]]) -> bo
     return any(evidence_pattern.search(row["text"]) for row in source_rows)
 
 
-# --- M05 hedge lane: hedged patient statements stay hedged in the note ------
+# --- Hedge lane: hedged patient statements stay hedged in the note ------
 # Visible lane (rule uncertainty-resolved, subtype hedge-dropped): a patient
 # statement softened by a bounded hedge cannot verify a definite note claim -
 # the claim needs an uncertainty marker or the verbatim patient quote. Hedges
@@ -2967,7 +2967,7 @@ def _hedge_adjacent_tokens(row_text: str, hedge_match: re.Match[str]) -> set[str
     }
 
 
-# --- M05 coverage lane: note-level critical-coverage reasons -----------------
+# --- Coverage lane: note-level critical-coverage reasons -----------------
 # Note-level reasons (reason lane; they also join the single bounded retry via
 # regeneration feedback in summary_generation): an answered mental-health
 # screen or a spoken emergency-disposition component missing from the whole

@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -36,16 +36,28 @@ from corrected_role_cues import (
     split_source_row_words,
 )
 from nemo_confidence import (
+    disable_word_confidence_decoding,
     enable_word_confidence_decoding,
     transcript_row_confidence,
     word_confidences_for_display_words,
 )
+from correction_phrase_inventory import (
+    CorrectionPhraseInventoryError,
+    approved_phrases,
+    inventory_identity,
+)
 from post_visit_word_timing import (
     PostVisitTranscription,
+    reconcile_punctuation_only_word_timings,
     validated_word_confidences,
     validated_word_timings,
     wav_duration_seconds,
     word_timings_from_hypothesis,
+)
+from rediar_rebuild import (
+    RediarRebuildResult,
+    correction_rediarization_enabled,
+    run_rediar_rebuild_leg,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,8 +66,12 @@ DEFAULT_POST_VISIT_ASR_MODEL = os.environ.get(
     "POST_VISIT_ASR_MODEL",
     "nvidia/parakeet-unified-en-0.6b",
 )
-# Baseline stays inactive until the reviewed phrase proves safer transcript wording.
-DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | None = None
+_WORD_CONFIDENCE_RECOVERY_MODEL = "nvidia/parakeet-unified-en-0.6b"
+# Baseline stays inactive until a reviewed phrase proves safer transcript wording.
+DEFAULT_POST_VISIT_CORRECTION_PHRASE: str | Sequence[str] | None = None
+# The historical control phrase. It is semantically empty on purpose: it proves the
+# boosting plumbing moves words without asserting anything clinical. Kept alongside
+# the reviewed inventory so pre-inventory behaviour stays reproducible.
 APPROVED_POST_VISIT_CORRECTION_PHRASE = "brand new sector"
 _POST_VISIT_CORRECTION_PHRASE_ALPHA = 1.0
 # The single-flight evaluator reads this after one decode; null means no auditable run completed.
@@ -81,6 +97,15 @@ _AUDIO_CHUNK_SECONDS = 180.0
 _MIN_FINAL_CHUNK_SECONDS = 10.0
 _TRANSIENT_RETRY_BACKOFF_SECONDS = 2.0
 _DEVICE_NOT_READY_PATTERN = re.compile(r"\bdevice\s+not\s+ready\b", re.IGNORECASE)
+_WORD_CONFIDENCE_AGGREGATION_ERROR_PREFIX = (
+    "Something went wrong with word-level confidence aggregation."
+)
+_WORD_CONFIDENCE_WORD_COUNT_PATTERN = re.compile(r"len\(words\):\s*(\d+)")
+_WORD_CONFIDENCE_VALUE_COUNT_PATTERN = re.compile(r"len\(word_confidence\):\s*(\d+)")
+_WORD_CONFIDENCE_RECOGNIZED_TEXT_PATTERN = re.compile(
+    r"recognized text: `(.*)`\s*\Z",
+    flags=re.DOTALL,
+)
 _CHECKPOINT_HASH_BLOCK_BYTES = 8 * 1024 * 1024
 
 
@@ -170,6 +195,10 @@ class PostVisitCorrectionResult:
         attempts: Transcribe attempt count; `2` means one allowlisted retry occurred.
         retried: True only when the user waited for that one recovery retry.
         chunk_count: Audio pieces transcribed in order; `1` is the unchanged short-visit path.
+        rediarization: Flag-on rebuild-leg outcome; None means the flag was off
+            and the response carries no rediarization provenance.
+        allocation_diagnostics: Internal PHI-safe word ownership and accounting;
+            None keeps callers that construct test results backward compatible.
     """
 
     segments: list[dict[str, Any]]
@@ -179,6 +208,8 @@ class PostVisitCorrectionResult:
     attempts: int = 1
     retried: bool = False
     chunk_count: int = 1
+    rediarization: RediarRebuildResult | None = None
+    allocation_diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,11 +225,23 @@ class AnchorMatch:
         start_index: First corrected ASR word for this visible row.
         end_index: One-past-last corrected ASR word; equal to start means no visible text.
         score: Match confidence; low scores fall back to row-share allocation.
+        clamped: True when monotonic ordering moved or consumed the proposed span.
     """
 
     start_index: int
     end_index: int
     score: float
+    clamped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ScaffoldAllocationResult:
+    """Keep unchanged row chunks beside internal word-ownership provenance."""
+
+    chunks: list[list[str]]
+    source_runs: list[list[dict[str, Any]]]
+    mode: str
+    anchor_matches: list[AnchorMatch] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,8 +249,9 @@ class _NemoTranscriptionResult:
     """Carry recombined NeMo evidence and recovery metadata into correction.
 
     The user sees its text as corrected rows; attempt and chunk fields explain
-    whether the request used bounded audio or a transient retry. Missing timing
-    or confidence keeps the existing unstyled, unsplit rendering.
+    whether the request used bounded audio or an allowlisted recovery. Missing
+    timing or confidence normally keeps the existing unstyled, unsplit rendering;
+    the word-confidence recovery separately requires complete timing.
 
     Attributes:
         effective_decoding_config: Evaluator-only decoder evidence; null means the clinician used the
@@ -221,6 +265,7 @@ class _NemoTranscriptionResult:
     retried: bool
     chunk_count: int
     effective_decoding_config: dict[str, Any] | None
+    chunk_word_ranges: list[dict[str, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,11 +288,22 @@ class _TranscribeCallResult:
 
     Use after a chunk or short visit transcribes so the correction response can
     distinguish a normal call from the single user-visible recovery attempt.
+    The internal fallback flag makes timing mandatory only for the exact
+    word-confidence path without changing browser metadata.
     """
 
     hypotheses: list[Any]
     attempts: int
     retried: bool
+    used_word_confidence_fallback: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _WordConfidenceAggregationMismatch:
+    """PHI-free proof that one vendor exception matches the approved recovery."""
+
+    word_count: int
+    recognized_text_sha256: str
 
 
 def run_post_visit_correction(
@@ -259,6 +315,8 @@ def run_post_visit_correction(
         [str, str], PostVisitTranscription | _NemoTranscriptionResult | str
     ]
     | None = None,
+    fold_spans: list[dict[str, Any]] | None = None,
+    rediar_leg: Callable[..., RediarRebuildResult] | None = None,
 ) -> PostVisitCorrectionResult:
     """Run second-pass ASR and map corrected text onto stored live rows.
 
@@ -268,6 +326,10 @@ def run_post_visit_correction(
         model_name: ASR model id shown in corrected-row provenance; empty uses the configured default.
         transcribe_audio_file: Optional test seam returning rich or plain-text output; null loads
             the configured NeMo ASR model.
+        fold_spans: The live session's fold-suspect spans; null or empty means
+            the flag-on rebuild leg has nothing to repair.
+        rediar_leg: Optional test seam for the rebuild leg; null runs the real
+            leg only when NEMO_CORRECTION_REDIARIZATION is on.
 
     Returns:
         Corrected rows plus model metadata; empty ASR text raises a correction error.
@@ -289,24 +351,46 @@ def run_post_visit_correction(
         transcript_text, raw_word_timings, raw_word_confidences = (
             coerce_post_visit_transcription(raw_transcription)
         )
+
+        words = split_words(transcript_text)
+        # ASR returning no words means corrected storage would only hide useful live text.
+        if not words:
+            raise PostVisitCorrectionError(
+                "Second-pass ASR returned no transcript text."
+            )
+
+        visit_word_timings = validated_word_timings(raw_word_timings, words)
+        corrected_segments, allocation_diagnostics = (
+            build_corrected_segments_with_diagnostics(
+                corrected_words=words,
+                live_segments=live_segments,
+                model_name=selected_model_name,
+                word_timings=visit_word_timings,
+                word_confidences=validated_word_confidences(
+                    raw_word_confidences,
+                    words,
+                ),
+            )
+        )
+        allocation_diagnostics["chunk_provenance"] = chunk_provenance_for_transcription(
+            raw_transcription, len(words)
+        )
+        # Empty corrected rows mean alignment had no user-visible artifact to store.
+        if corrected_segments == []:
+            raise PostVisitCorrectionError(
+                "Second-pass ASR produced no corrected rows."
+            )
+
+        rediarization = _maybe_run_rediar_leg(
+            audio_path=audio_path,
+            pcm_byte_count=len(pcm_audio),
+            visit_word_timings=visit_word_timings,
+            live_segments=live_segments,
+            fold_spans=fold_spans,
+            rediar_leg=rediar_leg,
+        )
     finally:
         audio_path.unlink(missing_ok=True)
-
-    words = split_words(transcript_text)
-    # ASR returning no words means corrected storage would only hide useful live text.
-    if not words:
-        raise PostVisitCorrectionError("Second-pass ASR returned no transcript text.")
-
-    corrected_segments = build_corrected_segments(
-        corrected_words=words,
-        live_segments=live_segments,
-        model_name=selected_model_name,
-        word_timings=validated_word_timings(raw_word_timings, words),
-        word_confidences=validated_word_confidences(raw_word_confidences, words),
-    )
-    # Empty corrected rows mean alignment had no user-visible artifact to store.
-    if corrected_segments == []:
-        raise PostVisitCorrectionError("Second-pass ASR produced no corrected rows.")
 
     logger.info(
         "post_visit_correction.completed",
@@ -327,36 +411,129 @@ def run_post_visit_correction(
         attempts=int(getattr(raw_transcription, "attempts", 1)),
         retried=bool(getattr(raw_transcription, "retried", False)),
         chunk_count=int(getattr(raw_transcription, "chunk_count", 1)),
+        rediarization=rediarization,
+        allocation_diagnostics=allocation_diagnostics,
     )
+
+
+def _maybe_run_rediar_leg(
+    *,
+    audio_path: Path,
+    pcm_byte_count: int,
+    visit_word_timings: list[dict[str, Any]] | None,
+    live_segments: list[dict[str, Any]],
+    fold_spans: list[dict[str, Any]] | None,
+    rediar_leg: Callable[..., RediarRebuildResult] | None,
+) -> RediarRebuildResult | None:
+    """Run the flag-on rebuild leg against this correction's WAV and timings.
+
+    The leg reuses the retained-audio WAV before its cleanup, on this same
+    executor thread, so the lane adds no new concurrency.
+
+    Args:
+        audio_path: The correction WAV still on disk inside the caller's try.
+        pcm_byte_count: Retained 16-bit PCM byte length for the envelope gate.
+        visit_word_timings: Validated visit-relative timings; None skips inside the leg.
+        live_segments: Settled live rows the clinician saw.
+        fold_spans: The live session's fold-suspect spans; None means none arrived.
+        rediar_leg: Test seam; None runs the production leg.
+
+    Returns:
+        The leg's outcome, or None when the operator flag keeps the lane closed.
+    """
+    # The operator flag alone opens the rebuild lane for stopped visits.
+    if not correction_rediarization_enabled():
+        return None
+
+    rebuild_leg = rediar_leg or run_rediar_rebuild_leg
+    return rebuild_leg(
+        audio_path=str(audio_path),
+        audio_duration_seconds=pcm_byte_count / (2.0 * _AUDIO_SAMPLE_RATE),
+        word_timings=visit_word_timings,
+        live_segments=live_segments,
+        fold_spans=list(fold_spans or []),
+    )
+
+
+def _reviewed_correction_phrases(
+    correction_phrase: str | Sequence[str] | None,
+) -> list[str]:
+    """Resolve a request into the exact phrases the decoder may be biased toward.
+
+    One phrase keeps an arm isolated to a single term; a sequence runs the whole
+    reviewed inventory. Either way every phrase must already be written down and
+    reviewed, so an unlisted term cannot reach the decoder by any route.
+
+    Args:
+        correction_phrase: One reviewed phrase, a sequence of them, or null for none.
+
+    Returns:
+        Phrases to boost, in request order and de-duplicated; empty means boost nothing.
+
+    Raises:
+        PostVisitCorrectionError: When any requested phrase is outside the inventory,
+            or the inventory itself cannot be trusted.
+    """
+    # No requested phrase means the clinician receives the unchanged baseline decode.
+    if correction_phrase is None:
+        return []
+
+    requested = (
+        [correction_phrase]
+        if isinstance(correction_phrase, str)
+        else list(correction_phrase)
+    )
+    # An empty sequence is a caller asking for no boosting, which is not an error.
+    if not requested:
+        return []
+
+    try:
+        approved = set(approved_phrases())
+    except CorrectionPhraseInventoryError as inventory_error:
+        raise PostVisitCorrectionError(
+            "Post-visit correction phrase inventory is unusable.",
+            reason_category="invalid_phrase_config",
+        ) from inventory_error
+
+    # The historical control phrase stays valid so pre-inventory behaviour remains provable.
+    approved.add(APPROVED_POST_VISIT_CORRECTION_PHRASE)
+
+    resolved: list[str] = []
+    for phrase in requested:
+        # Any unlisted text could normalize a raw garble or activate an unreviewed hint.
+        if not isinstance(phrase, str) or phrase not in approved:
+            raise PostVisitCorrectionError(
+                "Post-visit correction phrase is not in the reviewed inventory.",
+                reason_category="invalid_phrase_config",
+            )
+        # A repeat would weight one term twice without saying so in the evidence.
+        if phrase not in resolved:
+            resolved.append(phrase)
+    return resolved
 
 
 def _apply_post_visit_correction_phrase(
     asr_model: Any,
-    correction_phrase: str | None,
+    correction_phrase: str | Sequence[str] | None,
 ) -> None:
-    """Apply one reviewed phrase after confidence setup for a stopped visit.
+    """Apply reviewed phrases after confidence setup for a stopped visit.
 
     Use only in the corrected transcript lane; null keeps the current words unchanged.
 
     Args:
         asr_model: Restored Unified model; missing decoder config stops correction before visible wording.
-        correction_phrase: Independently reviewed official wording; null preserves the baseline transcript.
+        correction_phrase: Reviewed phrase or phrases; null preserves the baseline transcript.
 
     Returns:
-        None; the model changes in place, while a null phrase leaves its decoder untouched.
+        None; the model changes in place, while no phrase leaves its decoder untouched.
 
     Raises:
-        PostVisitCorrectionError: When the phrase or decoder is outside the approved experiment.
+        PostVisitCorrectionError: When a phrase or the decoder is outside the approved experiment.
     """
-    # No reviewed phrase means the clinician receives the unchanged baseline decode.
-    if correction_phrase is None:
+    phrases = _reviewed_correction_phrases(correction_phrase)
+    # Nothing reviewed to apply means the decoder keeps the configuration it loaded with.
+    if not phrases:
         return
-    # Any other text could normalize a raw garble or activate multiple unreviewed hints.
-    if correction_phrase != APPROVED_POST_VISIT_CORRECTION_PHRASE:
-        raise PostVisitCorrectionError(
-            "Post-visit correction phrase is not the reviewed canonical phrase.",
-            reason_category="invalid_phrase_config",
-        )
 
     from omegaconf import OmegaConf, open_dict
 
@@ -371,9 +548,9 @@ def _apply_post_visit_correction_phrase(
         )
 
     with open_dict(phrase_decoding_config.greedy):
-        phrase_decoding_config.greedy.boosting_tree = {
-            "key_phrases_list": [correction_phrase]
-        }
+        phrase_decoding_config.greedy.boosting_tree = {"key_phrases_list": phrases}
+        # Alpha and every other boosting knob stay at their observed defaults so the
+        # phrase list is the only variable an arm changes.
         phrase_decoding_config.greedy.boosting_tree_alpha = (
             _POST_VISIT_CORRECTION_PHRASE_ALPHA
         )
@@ -410,17 +587,17 @@ def _effective_post_visit_decoding_config(asr_model: Any) -> dict[str, Any]:
 
 
 def _selected_post_visit_correction_phrase(
-    requested_correction_phrase: str | None,
-) -> str | None:
+    requested_correction_phrase: str | Sequence[str] | None,
+) -> str | Sequence[str] | None:
     """Choose the reviewed phrase for one stopped-visit decode.
 
     Use for normal and evaluator calls; null means the clinician receives the internal default.
 
     Args:
-        requested_correction_phrase: Evaluator override; null uses the inactive production default.
+        requested_correction_phrase: Evaluator override, one phrase or several; null uses the inactive production default.
 
     Returns:
-        Reviewed phrase to apply, or null when the baseline transcript stays unchanged.
+        Reviewed phrase or phrases to apply, or null when the baseline transcript stays unchanged.
     """
     # No evaluator override means the clinician receives the current internal default.
     if requested_correction_phrase is None:
@@ -449,6 +626,12 @@ def _capture_post_visit_decoding_evidence(
         return None
 
     effective_decoding_config = _effective_post_visit_decoding_config(asr_model)
+    # Two phrase arms are only comparable when they used the same reviewed list, so
+    # the evidence records the inventory identity beside the decoder settings.
+    try:
+        effective_decoding_config["phrase_inventory"] = inventory_identity()
+    except CorrectionPhraseInventoryError:
+        effective_decoding_config["phrase_inventory"] = None
     global LAST_POST_VISIT_DECODING_CONFIG
     LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
     return effective_decoding_config
@@ -457,13 +640,15 @@ def _capture_post_visit_decoding_evidence(
 def transcribe_audio_with_nemo(
     model_name: str,
     audio_path: str,
-    correction_phrase: str | None = None,
+    correction_phrase: str | Sequence[str] | None = None,
 ) -> _NemoTranscriptionResult:
     """Transcribe retained visit audio on one restored NeMo model.
 
     Short visits keep the original one-shot call. Capacity-risk visits use
-    sequential chunks, and only the observed device-not-ready family receives
-    one same-model retry before the browser falls back to live rows.
+    sequential chunks. The observed device-not-ready family receives one
+    same-model retry; the pinned Unified model may instead receive one exact
+    word-confidence-off recovery when NeMo's aggregation count is one too high.
+    Neither recovery can chain into a third model call.
 
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
@@ -499,8 +684,12 @@ def transcribe_audio_with_nemo(
     combined_text_parts: list[str] = []
     combined_word_timings: list[dict[str, Any]] = []
     combined_word_confidences: list[float] = []
+    chunk_word_ranges: list[dict[str, int]] = []
+    combined_word_count = 0
     all_chunks_have_timings = True
     all_chunks_have_confidence = True
+    first_chunk_without_timings: int | None = None
+    word_confidence_fallback_used = False
     attempts = 1
     retried = False
     try:
@@ -510,6 +699,10 @@ def transcribe_audio_with_nemo(
                 transcribe_call = _transcribe_with_loaded_model(
                     asr_model,
                     str(audio_chunk.path),
+                    allow_word_confidence_fallback=(
+                        model_name == _WORD_CONFIDENCE_RECOVERY_MODEL
+                        and not word_confidence_fallback_used
+                    ),
                 )
             except PostVisitCorrectionError as correction_error:
                 # Support needs the exact failed piece without receiving audio or CUDA prose.
@@ -523,6 +716,10 @@ def transcribe_audio_with_nemo(
                 ) from correction_error
             attempts = max(attempts, transcribe_call.attempts)
             retried = retried or transcribe_call.retried
+            word_confidence_fallback_used = (
+                word_confidence_fallback_used
+                or transcribe_call.used_word_confidence_fallback
+            )
             # An empty chunk would silently remove part of the user's consultation.
             if transcribe_call.hypotheses == []:
                 raise PostVisitCorrectionError(
@@ -538,6 +735,9 @@ def transcribe_audio_with_nemo(
                 transcribe_call.hypotheses[0],
                 str(audio_chunk.path),
                 audio_chunk.start_seconds,
+                allow_punctuation_timing_reconciliation=(
+                    transcribe_call.used_word_confidence_fallback
+                ),
             )
             # Empty decoded text is not a complete corrected source for the note.
             if chunk_transcription.text == "":
@@ -550,9 +750,20 @@ def transcribe_audio_with_nemo(
                     chunk_count_planned=len(audio_chunks),
                 )
             combined_text_parts.append(chunk_transcription.text)
+            chunk_words = split_words(chunk_transcription.text)
+            chunk_word_ranges.append(
+                {
+                    "chunk_index": failed_chunk_index,
+                    "start_index": combined_word_count,
+                    "end_index": combined_word_count + len(chunk_words),
+                }
+            )
+            combined_word_count += len(chunk_words)
             # Missing timing on one chunk makes the combined timing stream incomplete.
             if chunk_transcription.word_timings is None:
                 all_chunks_have_timings = False
+                if first_chunk_without_timings is None:
+                    first_chunk_without_timings = failed_chunk_index
             else:
                 combined_word_timings.extend(chunk_transcription.word_timings)
             # Missing confidence on one chunk keeps all recombined rows unmeasured.
@@ -562,6 +773,19 @@ def transcribe_audio_with_nemo(
                 combined_word_confidences.extend(chunk_transcription.word_confidences)
     finally:
         _remove_scratch_audio_chunks(audio_chunks)
+
+    # The confidence fallback is safe only together with application-valid
+    # timings; otherwise the recovered text would silently skip timing-owned
+    # rediarization and echo-boundary behavior.
+    if word_confidence_fallback_used and not all_chunks_have_timings:
+        raise PostVisitCorrectionError(
+            "Word-confidence recovery did not produce aligned word timings.",
+            attempts=attempts,
+            retried=retried,
+            reason_category="transcribe_failed",
+            failed_chunk_index=first_chunk_without_timings,
+            chunk_count_planned=len(audio_chunks),
+        )
 
     effective_decoding_config = _capture_post_visit_decoding_evidence(asr_model)
     return _NemoTranscriptionResult(
@@ -574,6 +798,7 @@ def transcribe_audio_with_nemo(
         retried=retried,
         chunk_count=len(audio_chunks),
         effective_decoding_config=effective_decoding_config,
+        chunk_word_ranges=chunk_word_ranges,
     )
 
 
@@ -857,16 +1082,81 @@ def _remove_scratch_audio_chunks(audio_chunks: list[_AudioChunk]) -> None:
 
 
 def _transcribe_with_loaded_model(
-    asr_model: Any, audio_path: str
+    asr_model: Any,
+    audio_path: str,
+    *,
+    allow_word_confidence_fallback: bool = False,
 ) -> _TranscribeCallResult:
     """Run one audio path with at most one allowlisted same-model retry.
 
-    Use for the original short WAV or each long-visit chunk. Fatal failures
-    return immediately so the user is not kept waiting on a hopeless retry.
+    Use for the original short WAV or each long-visit chunk. The exact pinned
+    Unified confidence mismatch may turn off only word confidence before one
+    strict timestamped call. Otherwise only device-not-ready earns the existing
+    CUDA retry. A recovery call is final and can never enter the other branch.
     """
     try:
         hypotheses = _transcribe_loaded_model_once(asr_model, audio_path)
     except Exception as first_transcribe_error:
+        confidence_mismatch = (
+            _word_confidence_aggregation_mismatch(first_transcribe_error)
+            if allow_word_confidence_fallback
+            else None
+        )
+        if confidence_mismatch is not None:
+            try:
+                disable_word_confidence_decoding(asr_model)
+            except Exception as configuration_error:
+                raise PostVisitCorrectionError(
+                    (
+                        "Second-pass ASR word-confidence recovery could not "
+                        f"configure the decoder: {type(configuration_error).__name__}"
+                    ),
+                    attempts=1,
+                    retried=False,
+                    reason_category="transcribe_failed",
+                ) from configuration_error
+
+            logger.info(
+                "post_visit_correction.word_confidence_fallback",
+                extra={"word_count": confidence_mismatch.word_count},
+            )
+            try:
+                # The first RuntimeError proves this model accepted timestamps.
+                # Calling the strict form prevents a legacy-signature fallback
+                # from turning the approved two-call recovery into three calls.
+                hypotheses = _transcribe_loaded_model_with_timestamps(
+                    asr_model,
+                    audio_path,
+                )
+            except Exception as recovery_error:
+                raise PostVisitCorrectionError(
+                    (
+                        "Second-pass ASR failed after word-confidence recovery: "
+                        f"{type(recovery_error).__name__}"
+                    ),
+                    attempts=2,
+                    retried=True,
+                    reason_category=_transcribe_failure_category(recovery_error),
+                ) from recovery_error
+
+            if not _recovered_hypothesis_matches(
+                hypotheses,
+                confidence_mismatch.recognized_text_sha256,
+            ):
+                raise PostVisitCorrectionError(
+                    "Word-confidence recovery changed the decoded transcript.",
+                    attempts=2,
+                    retried=True,
+                    reason_category="transcribe_failed",
+                )
+
+            return _TranscribeCallResult(
+                hypotheses,
+                attempts=2,
+                retried=True,
+                used_word_confidence_fallback=True,
+            )
+
         # Only the exact field-observed device-not-ready family earns another wait.
         if not _is_device_not_ready_error(first_transcribe_error):
             raise PostVisitCorrectionError(
@@ -915,6 +1205,77 @@ def _transcribe_loaded_model_once(asr_model: Any, audio_path: str) -> list[Any]:
     except TypeError:
         # Example: a local override model predates the timestamp option used by the note UI.
         return asr_model.transcribe([audio_path], return_hypotheses=True)
+
+
+def _transcribe_loaded_model_with_timestamps(
+    asr_model: Any,
+    audio_path: str,
+) -> list[Any]:
+    """Make the confidence recovery's one final timestamped model call."""
+    return asr_model.transcribe(
+        [audio_path],
+        return_hypotheses=True,
+        timestamps=True,
+    )
+
+
+def _word_confidence_aggregation_mismatch(
+    transcribe_error: Exception,
+) -> _WordConfidenceAggregationMismatch | None:
+    """Classify only the measured one-extra-value NeMo aggregation failure.
+
+    The vendor exception contains decoded clinical text. This function keeps
+    that text in memory only long enough to validate its word count and retain
+    a SHA-256 fingerprint for the recovery-call equality check.
+    """
+    if type(transcribe_error) is not RuntimeError:
+        return None
+
+    message = str(transcribe_error)
+    if not message.startswith(_WORD_CONFIDENCE_AGGREGATION_ERROR_PREFIX):
+        return None
+
+    word_count_match = _WORD_CONFIDENCE_WORD_COUNT_PATTERN.search(message)
+    confidence_count_match = _WORD_CONFIDENCE_VALUE_COUNT_PATTERN.search(message)
+    recognized_text_match = _WORD_CONFIDENCE_RECOGNIZED_TEXT_PATTERN.search(message)
+    if (
+        word_count_match is None
+        or confidence_count_match is None
+        or recognized_text_match is None
+    ):
+        return None
+
+    word_count = int(word_count_match.group(1))
+    confidence_count = int(confidence_count_match.group(1))
+    recognized_text = recognized_text_match.group(1)
+    if (
+        word_count <= 0
+        or confidence_count != word_count + 1
+        or len(recognized_text.split()) != word_count
+    ):
+        return None
+
+    return _WordConfidenceAggregationMismatch(
+        word_count=word_count,
+        recognized_text_sha256=hashlib.sha256(
+            recognized_text.encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def _recovered_hypothesis_matches(
+    hypotheses: list[Any],
+    expected_text_sha256: str,
+) -> bool:
+    """Require the confidence-off call to preserve the failed call's text exactly."""
+    if not hypotheses:
+        return False
+
+    recovered_text = normalise_transcript_text(hypotheses[0])
+    return (
+        hashlib.sha256(recovered_text.encode("utf-8")).hexdigest()
+        == expected_text_sha256
+    )
 
 
 def _is_device_not_ready_error(transcribe_error: Exception) -> bool:
@@ -1005,18 +1366,35 @@ def _transcription_from_hypothesis(
     hypothesis: Any,
     audio_path: str,
     start_seconds: float,
+    *,
+    allow_punctuation_timing_reconciliation: bool = False,
 ) -> PostVisitTranscription:
     """Extract one chunk's text and shift evidence onto the full visit timeline.
 
     Use after a successful model call; absent timing/confidence remains honest
-    optional evidence and never blocks the corrected note by itself.
+    optional evidence and never blocks the corrected note by itself. Only the
+    exact confidence-off recovery may reconcile separately timed punctuation;
+    every normal hypothesis keeps the historical one-row-per-display-word gate.
     """
     transcript_text = normalise_transcript_text(hypothesis)
+    display_words = split_words(transcript_text)
     word_timings: list[dict[str, Any]] | None = None
     try:
-        chunk_word_timings = word_timings_from_hypothesis(
+        raw_chunk_word_timings = word_timings_from_hypothesis(
             hypothesis,
             wav_duration_seconds(audio_path),
+        )
+        candidate_chunk_word_timings = raw_chunk_word_timings
+        if allow_punctuation_timing_reconciliation:
+            candidate_chunk_word_timings = reconcile_punctuation_only_word_timings(
+                raw_chunk_word_timings,
+                display_words,
+            )
+        # Recovery reconciliation may change row boundaries only; the existing
+        # exact display-word validator remains the final trust gate for every path.
+        chunk_word_timings = validated_word_timings(
+            candidate_chunk_word_timings,
+            display_words,
         )
         # Each timing row moves from chunk-relative to consultation-relative seconds.
         if chunk_word_timings:
@@ -1039,7 +1417,7 @@ def _transcription_from_hypothesis(
     try:
         word_confidences = word_confidences_for_display_words(
             hypothesis,
-            split_words(transcript_text),
+            display_words,
         )
     except Exception as confidence_error:  # pragma: no cover - hypothesis-specific.
         # Example: the corrected note renders without confidence styling for this model.
@@ -1076,6 +1454,57 @@ def coerce_post_visit_transcription(
         )
 
     return normalise_transcript_text(transcription), None, None
+
+
+def chunk_provenance_for_transcription(
+    transcription: PostVisitTranscription | _NemoTranscriptionResult | str,
+    corrected_word_count: int,
+) -> dict[str, Any]:
+    """Return exact chunk word ranges only when the NeMo producer recorded them.
+
+    Plain strings and injected timing results do not prove chunk ownership, so
+    their diagnostic value stays ``not_observed`` rather than being inferred
+    from corrected-row timestamps.
+    """
+    raw_ranges = getattr(transcription, "chunk_word_ranges", None)
+    if not isinstance(raw_ranges, list) or raw_ranges == []:
+        return {"status": "not_observed", "ranges": [], "seam_indices": []}
+
+    ranges: list[dict[str, int]] = []
+    expected_start = 0
+    for expected_chunk_index, raw_range in enumerate(raw_ranges, start=1):
+        if not isinstance(raw_range, dict):
+            return {"status": "not_observed", "ranges": [], "seam_indices": []}
+        chunk_index = raw_range.get("chunk_index")
+        start_index = raw_range.get("start_index")
+        end_index = raw_range.get("end_index")
+        if (
+            type(chunk_index) is not int
+            or type(start_index) is not int
+            or type(end_index) is not int
+            or chunk_index != expected_chunk_index
+            or start_index != expected_start
+            or end_index <= start_index
+            or end_index > corrected_word_count
+        ):
+            return {"status": "not_observed", "ranges": [], "seam_indices": []}
+        ranges.append(
+            {
+                "chunk_index": chunk_index,
+                "start_index": start_index,
+                "end_index": end_index,
+            }
+        )
+        expected_start = end_index
+
+    if expected_start != corrected_word_count:
+        return {"status": "not_observed", "ranges": [], "seam_indices": []}
+
+    return {
+        "status": "observed",
+        "ranges": ranges,
+        "seam_indices": [item["end_index"] for item in ranges[:-1]],
+    }
 
 
 def _write_pcm_wav(pcm_audio: bytes) -> Path:
@@ -1158,24 +1587,80 @@ def build_corrected_segments(
     Returns:
         Corrected segment rows in chronological order; empty means no artifact exists.
     """
+    segments, _diagnostics = build_corrected_segments_with_diagnostics(
+        corrected_words=corrected_words,
+        live_segments=live_segments,
+        model_name=model_name,
+        word_timings=word_timings,
+        word_confidences=word_confidences,
+    )
+    return segments
+
+
+def build_corrected_segments_with_diagnostics(
+    *,
+    corrected_words: list[str],
+    live_segments: list[dict[str, Any]],
+    model_name: str,
+    word_timings: list[dict[str, Any]] | None = None,
+    word_confidences: list[float] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build unchanged corrected rows plus PHI-safe allocation provenance.
+
+    Diagnostics contain only indices, counts, modes, and score classes. The
+    corrected rows continue through the existing role, timing, and confidence
+    preparation unchanged.
+    """
     # Without words, any corrected artifact would erase the user's useful preview text.
     if corrected_words == []:
-        return []
+        return [], _empty_allocation_diagnostics()
 
     scaffold_rows = normalise_scaffold_rows(live_segments)
     # A missing live transcript still allows text correction, but roles stay unknown.
     if scaffold_rows == []:
-        return stamp_corrected_row_confidence(
+        corrected_segments = stamp_corrected_row_confidence(
             build_unscaffolded_segments(corrected_words, model_name),
             corrected_words,
             word_confidences,
         )
+        chunks = [
+            split_words(str(segment.get("text", ""))) for segment in corrected_segments
+        ]
+        source_runs: list[list[dict[str, Any]]] = []
+        source_cursor = 0
+        for chunk in chunks:
+            source_runs.append(
+                [
+                    _allocation_source_run(
+                        source="corrected_asr",
+                        source_start_index=source_cursor,
+                        source_end_index=source_cursor + len(chunk),
+                    )
+                ]
+                if chunk
+                else []
+            )
+            source_cursor += len(chunk)
+        allocation_result = _ScaffoldAllocationResult(
+            chunks=chunks,
+            source_runs=source_runs,
+            mode="unscaffolded",
+            anchor_matches=None,
+        )
+        return corrected_segments, _finalize_allocation_diagnostics(
+            corrected_words,
+            allocation_result,
+            corrected_segments,
+        )
 
-    allocated_chunks = allocate_words_to_scaffold(corrected_words, scaffold_rows)
+    allocation_result = _allocate_words_to_scaffold_result(
+        corrected_words,
+        scaffold_rows,
+    )
     corrected_segments: list[dict[str, Any]] = []
     # Each live row becomes one corrected row when it receives ASR words.
     for row_index, (scaffold_row, row_words) in enumerate(
-        zip(scaffold_rows, allocated_chunks, strict=False),
+        zip(scaffold_rows, allocation_result.chunks, strict=False),
         start=1,
     ):
         # Rows with no allocated words would clutter the summary source list.
@@ -1196,7 +1681,7 @@ def build_corrected_segments(
             }
         )
 
-    return stamp_corrected_row_confidence(
+    final_segments = stamp_corrected_row_confidence(
         prepare_corrected_source_segments(
             corrected_segments,
             corrected_words=corrected_words,
@@ -1205,6 +1690,177 @@ def build_corrected_segments(
         corrected_words,
         word_confidences,
     )
+    return final_segments, _finalize_allocation_diagnostics(
+        corrected_words,
+        allocation_result,
+        final_segments,
+    )
+
+
+def _empty_allocation_diagnostics() -> dict[str, Any]:
+    """Return a closed zero-word diagnostic for internal defensive callers."""
+    return {
+        "schema_version": 1,
+        "allocation_mode": "empty",
+        "corrected_asr_words": 0,
+        "allocated_asr_words": 0,
+        "retained_live_words": 0,
+        "final_display_words": 0,
+        "rows": [],
+        "accounting": {
+            "source_run_words": 0,
+            "allocation_output_words": 0,
+            "output_word_coverage_complete": True,
+            "final_output_matches_allocation": True,
+            "duplicate_corrected_asr_source_indices": [],
+            "unallocated_corrected_asr_source_indices": [],
+        },
+        "chunk_provenance": {
+            "status": "not_observed",
+            "ranges": [],
+            "seam_indices": [],
+        },
+    }
+
+
+def _allocation_source_run(
+    *,
+    source: str,
+    source_start_index: int,
+    source_end_index: int,
+    source_row_index: int | None = None,
+) -> dict[str, Any]:
+    """Return one text-free source range before output indices are assigned."""
+    source_run: dict[str, Any] = {
+        "source": source,
+        "source_start_index": source_start_index,
+        "source_end_index": source_end_index,
+        "word_count": source_end_index - source_start_index,
+    }
+    if source_row_index is not None:
+        source_run["source_row_index"] = source_row_index
+    return source_run
+
+
+def _anchor_score_class(anchor_match: AnchorMatch | None) -> str:
+    """Return a bounded score label without persisting transcript wording."""
+    if anchor_match is None:
+        return "not_observed"
+    if is_anchor_match_missing(anchor_match):
+        return "missing"
+    if anchor_match.score >= _MIN_SHORT_ANCHOR_SCORE:
+        return "high"
+    return "accepted"
+
+
+def _finalize_allocation_diagnostics(
+    corrected_words: list[str],
+    allocation_result: _ScaffoldAllocationResult,
+    final_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assign output indices and close source accounting without storing text."""
+    rows: list[dict[str, Any]] = []
+    output_cursor = 0
+    corrected_source_counts = [0 for _word in corrected_words]
+    retained_live_words = 0
+    source_run_words = 0
+
+    for row_index, (chunk, raw_runs) in enumerate(
+        zip(
+            allocation_result.chunks,
+            allocation_result.source_runs,
+            strict=True,
+        )
+    ):
+        row_start = output_cursor
+        source_runs: list[dict[str, Any]] = []
+        for source_run_index, raw_run in enumerate(raw_runs):
+            source_run = dict(raw_run)
+            word_count = int(source_run["word_count"])
+            source_run["source_run_index"] = source_run_index
+            source_run["output_start_index"] = output_cursor
+            source_run["output_end_index"] = output_cursor + word_count
+            output_cursor += word_count
+            source_run_words += word_count
+            if source_run["source"] == "corrected_asr":
+                for source_index in range(
+                    int(source_run["source_start_index"]),
+                    int(source_run["source_end_index"]),
+                ):
+                    if 0 <= source_index < len(corrected_source_counts):
+                        corrected_source_counts[source_index] += 1
+            else:
+                retained_live_words += word_count
+            source_runs.append(source_run)
+
+        anchor_match = (
+            allocation_result.anchor_matches[row_index]
+            if allocation_result.anchor_matches is not None
+            else None
+        )
+        rows.append(
+            {
+                "row_index": row_index,
+                "segment_id": f"corrected-{row_index + 1:04d}",
+                "output_start_index": row_start,
+                "output_end_index": row_start + len(chunk),
+                "output_word_count": len(chunk),
+                "anchor_outcome": (
+                    "missing"
+                    if anchor_match is not None
+                    and is_anchor_match_missing(anchor_match)
+                    else "matched"
+                    if anchor_match is not None
+                    else "not_observed"
+                ),
+                "anchor_score_class": _anchor_score_class(anchor_match),
+                "anchor_score": (
+                    round(anchor_match.score, 6) if anchor_match is not None else None
+                ),
+                "anchor_clamped": (
+                    anchor_match.clamped if anchor_match is not None else False
+                ),
+                "source_runs": source_runs,
+            }
+        )
+
+    allocated_words = [word for chunk in allocation_result.chunks for word in chunk]
+    final_words = [
+        word
+        for segment in final_segments
+        for word in split_words(str(segment.get("text", "")))
+    ]
+    duplicate_indices = [
+        index for index, count in enumerate(corrected_source_counts) if count > 1
+    ]
+    unallocated_indices = [
+        index for index, count in enumerate(corrected_source_counts) if count == 0
+    ]
+    allocated_asr_words = sum(corrected_source_counts)
+    return {
+        "schema_version": 1,
+        "allocation_mode": allocation_result.mode,
+        "corrected_asr_words": len(corrected_words),
+        "allocated_asr_words": allocated_asr_words,
+        "retained_live_words": retained_live_words,
+        "final_display_words": len(final_words),
+        "rows": rows,
+        "accounting": {
+            "source_run_words": source_run_words,
+            "allocation_output_words": len(allocated_words),
+            "output_word_coverage_complete": (
+                source_run_words == len(allocated_words) == output_cursor
+            ),
+            "final_output_matches_allocation": final_words == allocated_words,
+            "duplicate_corrected_asr_source_indices": duplicate_indices,
+            "unallocated_corrected_asr_source_indices": unallocated_indices,
+        },
+        "chunk_provenance": {
+            "status": "not_observed",
+            "ranges": [],
+            "seam_indices": [],
+        },
+    }
 
 
 def stamp_corrected_row_confidence(
@@ -1306,20 +1962,35 @@ def allocate_words_to_scaffold(
     Returns:
         Word chunks aligned to scaffold rows; empty chunks mean that row is skipped.
     """
+    return _allocate_words_to_scaffold_result(
+        corrected_words,
+        scaffold_rows,
+    ).chunks
+
+
+def _allocate_words_to_scaffold_result(
+    corrected_words: list[str],
+    scaffold_rows: list[dict[str, Any]],
+) -> _ScaffoldAllocationResult:
+    """Return the existing allocation plus text-free source ownership."""
     # No rows means there is nowhere useful to place corrected words.
     if scaffold_rows == []:
-        return []
+        return _ScaffoldAllocationResult([], [], "unscaffolded", None)
 
-    anchored_chunks = allocate_words_by_text_anchors(corrected_words, scaffold_rows)
+    anchored_result = _allocate_words_by_text_anchors_result(
+        corrected_words,
+        scaffold_rows,
+    )
     # Good anchors preserve user-visible turn boundaries better than row-size shares.
-    if anchored_chunks is not None:
-        return anchored_chunks
+    if anchored_result is not None:
+        return anchored_result
 
     live_word_counts = [
         max(1, len(split_words(str(row["text"])))) for row in scaffold_rows
     ]
     total_live_words = max(1, sum(live_word_counts))
     chunks: list[list[str]] = []
+    source_runs: list[list[dict[str, Any]]] = []
     word_cursor = 0
 
     # Allocate by preview word share so doctor/patient turn boundaries stay familiar.
@@ -1331,10 +2002,27 @@ def allocate_words_to_scaffold(
             share = live_word_count / total_live_words
             row_word_count = max(1, round(len(corrected_words) * share))
             row_words = corrected_words[word_cursor : word_cursor + row_word_count]
+        source_start_index = word_cursor
         word_cursor += len(row_words)
         chunks.append(row_words)
+        source_runs.append(
+            [
+                _allocation_source_run(
+                    source="corrected_asr",
+                    source_start_index=source_start_index,
+                    source_end_index=word_cursor,
+                )
+            ]
+            if row_words
+            else []
+        )
 
-    return chunks
+    return _ScaffoldAllocationResult(
+        chunks=chunks,
+        source_runs=source_runs,
+        mode="global_proportional",
+        anchor_matches=None,
+    )
 
 
 def allocate_words_by_text_anchors(
@@ -1350,6 +2038,18 @@ def allocate_words_by_text_anchors(
     Returns:
         Per-row word chunks, or None when anchors are too weak and row-share fallback is safer.
     """
+    allocation_result = _allocate_words_by_text_anchors_result(
+        corrected_words,
+        scaffold_rows,
+    )
+    return allocation_result.chunks if allocation_result is not None else None
+
+
+def _allocate_words_by_text_anchors_result(
+    corrected_words: list[str],
+    scaffold_rows: list[dict[str, Any]],
+) -> _ScaffoldAllocationResult | None:
+    """Return anchored chunks plus exact corrected/live source ranges."""
     # Empty inputs mean the user has no corrected words or no preview scaffold to align to.
     if corrected_words == [] or scaffold_rows == []:
         return None
@@ -1383,11 +2083,17 @@ def allocate_words_by_text_anchors(
                     word_cursor,
                     max(word_cursor, anchor_match.end_index),
                     anchor_match.score,
+                    clamped=True,
                 )
 
             # If clamping consumed the whole short row, keep the live row and preserve later anchors.
             if anchor_match.end_index <= anchor_match.start_index:
-                anchor_match = AnchorMatch(word_cursor, word_cursor, 0.0)
+                anchor_match = AnchorMatch(
+                    word_cursor,
+                    word_cursor,
+                    0.0,
+                    clamped=True,
+                )
             else:
                 confident_anchor_count += 1
 
@@ -1400,6 +2106,7 @@ def allocate_words_by_text_anchors(
                 word_cursor,
                 word_cursor,
                 0.0,
+                clamped=True,
             )
 
         anchor_matches.append(anchor_match)
@@ -1409,7 +2116,7 @@ def allocate_words_by_text_anchors(
     if confident_anchor_count < max(2, len(scaffold_rows) // 3):
         return None
 
-    return build_chunks_from_anchor_matches(
+    return _build_chunks_from_anchor_matches_result(
         corrected_words,
         scaffold_rows,
         anchor_matches,
@@ -1488,10 +2195,31 @@ def build_chunks_from_anchor_matches(
     Returns:
         Corrected word chunks aligned to each preview row.
     """
+    return _build_chunks_from_anchor_matches_result(
+        corrected_words,
+        scaffold_rows,
+        anchor_matches,
+    ).chunks
+
+
+def _build_chunks_from_anchor_matches_result(
+    corrected_words: list[str],
+    scaffold_rows: list[dict[str, Any]],
+    anchor_matches: list[AnchorMatch],
+) -> _ScaffoldAllocationResult:
+    """Build anchored chunks while recording every corrected/live source run."""
     chunks: list[list[str]] = [[] for _row in scaffold_rows]
+    source_runs: list[list[dict[str, Any]]] = [[] for _row in scaffold_rows]
     # Words before the first anchor are audible opening context for the first row.
     if anchor_matches and anchor_matches[0].start_index > 0:
         chunks[0].extend(corrected_words[: anchor_matches[0].start_index])
+        source_runs[0].append(
+            _allocation_source_run(
+                source="corrected_asr",
+                source_start_index=0,
+                source_end_index=anchor_matches[0].start_index,
+            )
+        )
 
     # Each anchor contributes its matched words, then hands the gap to a neighbor.
     for row_index, anchor_match in enumerate(anchor_matches):
@@ -1502,6 +2230,7 @@ def build_chunks_from_anchor_matches(
             corrected_words,
             scaffold_rows,
             anchor_match,
+            source_runs=source_runs,
         )
         next_match = (
             anchor_matches[row_index + 1]
@@ -1519,7 +2248,14 @@ def build_chunks_from_anchor_matches(
 
         # Missing-anchor rows are live fallbacks; loose corrected words belong to a real anchor.
         if is_missing_anchor:
-            append_gap_after_missing_anchor(chunks, gap_words, row_index, next_match)
+            append_gap_after_missing_anchor(
+                chunks,
+                gap_words,
+                row_index,
+                next_match,
+                corrected_start_index=anchor_match.end_index,
+                source_runs=source_runs,
+            )
             continue
 
         # A final filler starts the next turn; preceding words may complete the current cue.
@@ -1537,6 +2273,21 @@ def build_chunks_from_anchor_matches(
             ):
                 chunks[row_index].extend(gap_words[:-1])
                 chunks[row_index + 1].append(gap_words[-1])
+                gap_start_index = anchor_match.end_index
+                source_runs[row_index].append(
+                    _allocation_source_run(
+                        source="corrected_asr",
+                        source_start_index=gap_start_index,
+                        source_end_index=gap_start_index + len(gap_words) - 1,
+                    )
+                )
+                source_runs[row_index + 1].append(
+                    _allocation_source_run(
+                        source="corrected_asr",
+                        source_start_index=gap_start_index + len(gap_words) - 1,
+                        source_end_index=gap_start_index + len(gap_words),
+                    )
+                )
                 continue
 
         target_index = choose_gap_target_row(
@@ -1546,8 +2297,20 @@ def build_chunks_from_anchor_matches(
             row_index + 1 if next_match else None,
         )
         chunks[target_index].extend(gap_words)
+        source_runs[target_index].append(
+            _allocation_source_run(
+                source="corrected_asr",
+                source_start_index=anchor_match.end_index,
+                source_end_index=anchor_match.end_index + len(gap_words),
+            )
+        )
 
-    return chunks
+    return _ScaffoldAllocationResult(
+        chunks=chunks,
+        source_runs=source_runs,
+        mode="anchored",
+        anchor_matches=anchor_matches,
+    )
 
 
 def append_words_for_anchor_match(
@@ -1556,6 +2319,8 @@ def append_words_for_anchor_match(
     corrected_words: list[str],
     scaffold_rows: list[dict[str, Any]],
     anchor_match: AnchorMatch,
+    *,
+    source_runs: list[list[dict[str, Any]]] | None = None,
 ) -> None:
     """Add words for one corrected row, using live text when ASR dropped it.
 
@@ -1565,18 +2330,37 @@ def append_words_for_anchor_match(
         corrected_words: Second-pass ASR words; empty means only live fallback can render.
         scaffold_rows: Live transcript rows the user already saw; empty is not passed here.
         anchor_match: Text match for this row; empty span means ASR skipped the row.
+        source_runs: Optional internal collector; null preserves the historical helper API.
 
     Returns:
         None; chunks are updated in place for the corrected transcript artifact.
     """
     # If ASR skipped a visible row, keep the live text the clinician already saw.
     if is_anchor_match_missing(anchor_match):
-        chunks[row_index].extend(split_words(str(scaffold_rows[row_index]["text"])))
+        retained_words = split_words(str(scaffold_rows[row_index]["text"]))
+        chunks[row_index].extend(retained_words)
+        if source_runs is not None and retained_words:
+            source_runs[row_index].append(
+                _allocation_source_run(
+                    source="retained_live",
+                    source_start_index=0,
+                    source_end_index=len(retained_words),
+                    source_row_index=row_index,
+                )
+            )
         return
 
     chunks[row_index].extend(
         corrected_words[anchor_match.start_index : anchor_match.end_index]
     )
+    if source_runs is not None and anchor_match.end_index > anchor_match.start_index:
+        source_runs[row_index].append(
+            _allocation_source_run(
+                source="corrected_asr",
+                source_start_index=anchor_match.start_index,
+                source_end_index=anchor_match.end_index,
+            )
+        )
 
 
 def is_anchor_match_missing(anchor_match: AnchorMatch) -> bool:
@@ -1598,6 +2382,9 @@ def append_gap_after_missing_anchor(
     gap_words: list[str],
     row_index: int,
     next_match: AnchorMatch | None,
+    *,
+    corrected_start_index: int | None = None,
+    source_runs: list[list[dict[str, Any]]] | None = None,
 ) -> None:
     """Move loose corrected words away from a live-fallback row.
 
@@ -1606,21 +2393,30 @@ def append_gap_after_missing_anchor(
         gap_words: Corrected words after a missing row; empty means nothing to preserve.
         row_index: Live-fallback row that should not receive unrelated ASR words.
         next_match: Later anchor if one exists; null means this is the final row.
+        corrected_start_index: First corrected-ASR index for the gap, when observed.
+        source_runs: Optional internal collector; null keeps the historical helper API.
 
     Returns:
         None; chunks are updated in place for the corrected transcript artifact.
     """
     # If a later anchor exists, it should own corrected words after the fallback row.
     if next_match is not None:
-        chunks[row_index + 1].extend(gap_words)
-        return
-
+        target_index = row_index + 1
     # Trailing corrected words stay visible by attaching to the previous real row.
-    if row_index > 0:
-        chunks[row_index - 1].extend(gap_words)
-        return
+    elif row_index > 0:
+        target_index = row_index - 1
+    else:
+        target_index = row_index
 
-    chunks[row_index].extend(gap_words)
+    chunks[target_index].extend(gap_words)
+    if source_runs is not None and corrected_start_index is not None and gap_words:
+        source_runs[target_index].append(
+            _allocation_source_run(
+                source="corrected_asr",
+                source_start_index=corrected_start_index,
+                source_end_index=corrected_start_index + len(gap_words),
+            )
+        )
 
 
 def choose_gap_target_row(

@@ -298,7 +298,7 @@ def test_regeneration_and_flagging_pipeline(monkeypatch) -> None:
 
 
 def test_clean_note_ships_without_flag_keys(monkeypatch) -> None:
-    """A fidelity-clean note renders byte-identically to the pre-M07 payload shape."""
+    """A fidelity-clean note renders byte-identically to the earlier payload shape."""
     from api import summary_generation as generation_module
 
     honest = _v2_note(
@@ -648,7 +648,7 @@ def test_fidelity_logs_never_contain_clinical_sentences(monkeypatch, caplog) -> 
         assert fabricated_sentence not in str(getattr(record, "violations", ""))
 
 
-# --- M10 field specimens (sessions 203d1d35 and d97a9dbe, 2026-07-08 manual round) ---
+# --- field specimens (sessions 203d1d35 and d97a9dbe, 2026-07-08 manual round) ---
 
 # The day3 chief-complaint monologue that laundered any lip-related denial: it
 # mentions lips and contains epistemic "don't know"/"don't think" phrases, but
@@ -736,7 +736,7 @@ C03_COMPOSITE_DENIAL_ROWS = [
     {"role": "PATIENT", "text": "stressed. Okay,"},
 ]
 
-# Later c03 answers used by fresh M02 notes: no prior migraine diagnosis,
+# Later c03 answers used by fresh notes: no prior migraine diagnosis,
 # exercise, tobacco, and alcohol. The checker sees these exact corrected rows
 # after the user requests a note from the retained visit.
 C03_LATER_DENIAL_ROWS = [
@@ -1273,7 +1273,7 @@ def test_short_denial_answer_needs_a_doctor_question_naming_the_topic() -> None:
     assert [violation.rule for violation in found] == ["negative-without-denial"]
 
 
-# --- M11 field specimens (sessions 203d1d35 and 0a40e243, 2026-07-08 manual round) ---
+# --- field specimens (sessions 203d1d35 and 0a40e243, 2026-07-08 manual round) ---
 
 DAY5_MEDICATION_ROWS = [
     {"role": "DOCTOR", "text": "Are you taking any other medication?"},
@@ -1897,7 +1897,7 @@ def test_exercise_uncertainty_matches_laziness_to_lazy_patient_words() -> None:
 
 
 def test_m11_prompt_rules_name_record_state_and_verbatim_quotes() -> None:
-    """Prompt prevention stays aligned with both deterministic M11 backstops."""
+    """Prompt prevention stays aligned with both deterministic prompt backstops."""
     from agents.summary_agent import MEDICAL_SUMMARY_PROMPT
 
     lowered = MEDICAL_SUMMARY_PROMPT.lower()
@@ -1907,7 +1907,7 @@ def test_m11_prompt_rules_name_record_state_and_verbatim_quotes() -> None:
     assert "paraphrases and inferred names" in lowered
 
 
-# --- M05 family 1: exact-quote specimens from the frozen detector manifest ---
+# --- detector family 1: exact-quote specimens from the frozen detector manifest ---
 
 _DETECTOR_SPECIMEN_MANIFEST_PATH = (
     Path(__file__).resolve().parents[1]
@@ -2020,9 +2020,9 @@ def test_manifest_quote_negatives_stay_verified() -> None:
         assert violation is None, specimen_id
 
 
-# --- M05 family 3: temporal/action-state manifest specimens ---
+# --- detector family 3: temporal/action-state manifest specimens ---
 
-# Pre-declared 3c deferrals (temporal entailment; M05-detector-family-specs.md).
+# Pre-declared 3c deferrals (temporal entailment; detector family specs).
 _TEMPORAL_ACTION_DEFERRED_IDS = {"a09", "a11"}
 
 _PROSPECTIVE_TEST_AND_FOLLOW_UP_ROWS = [
@@ -2305,10 +2305,10 @@ def test_arranged_to_arrange_with_unspoken_content_is_flagged() -> None:
     assert any(reason["reason"] == "action_not_confirmed_done" for reason in reasons)
 
 
-# --- M05 family 2: risk-pair manifest specimens ---
+# --- detector family 2: risk-pair manifest specimens ---
 
 # Pre-declared deferral: the concentration-or-tiredness branch question is a
-# symptom either/or, not a risk screen (M05-detector-family-specs.md).
+# symptom either/or, not a risk screen (detector family specs).
 _RISK_PAIR_DEFERRED_IDS = {"a20"}
 
 
@@ -2378,7 +2378,7 @@ def test_inverted_risk_denial_is_flagged() -> None:
 
 
 def test_preserved_qualifier_elsewhere_in_note_keeps_claims_silent() -> None:
-    """The M08 day5-c03 shape: the qualifier survives in another sentence.
+    """The day5-c03 shape: the qualifier survives in another sentence.
 
     The denial claim itself may omit the qualifier as long as the note
     carries it - that note is the audited example of the safe form.
@@ -2415,7 +2415,7 @@ def test_preserved_qualifier_elsewhere_in_note_keeps_claims_silent() -> None:
     assert risk_pair_review_reasons(sections, [], rows) == []
 
 
-# --- M05 family 5: demographics/exam manifest specimens ---
+# --- detector family 5: demographics/exam manifest specimens ---
 
 
 def test_manifest_demographics_exam_specimens_classify_as_frozen() -> None:
@@ -2473,7 +2473,7 @@ def test_manifest_demographics_exam_specimens_classify_as_frozen() -> None:
             assert not flagged, specimen["id"]
 
 
-# --- M05 hedge lane: manifest specimens (shipped scope) ---
+# --- hedge lane: manifest specimens (shipped scope) ---
 
 # The general adjacent-hedge sub-pattern missed its 80% precision gate on the
 # development notes (~45% after the spec-prescribed answer scoping) and is
@@ -2513,7 +2513,7 @@ def test_manifest_hedge_specimens_classify_in_shipped_scope() -> None:
             assert found == [], specimen["id"]
 
 
-# --- M05 coverage lane: note-level critical coverage (c29/c30/c31 shapes) ---
+# --- coverage lane: note-level critical coverage (c29/c30/c31 shapes) ---
 
 _EMERGENCY_DISPOSITION_ROWS = [
     {"segment_id": "d-01", "role": "DOCTOR", "text": "I'll call the ambulance."},

@@ -245,6 +245,8 @@ class StreamingSessionEngine:
         self._max_transcript_hold_seconds = configured_max_transcript_hold_seconds()
         # Map each voice's frames to visit time so transcript words show honest timestamps.
         self._slot_frame_ledgers: dict[int, list[tuple[int, float]]] = {}
+        # Cumulative co-active frames per normalized slot pair; bounded by pair count.
+        self._slot_pair_co_active_frames: dict[tuple[int, int], int] = {}
         self._diar_frames_seen: int = 0
         self._slot_token_counts: dict[int, int] = {}
         self._frame_len_sec: float = 0.08
@@ -308,6 +310,7 @@ class StreamingSessionEngine:
         self.diagnostics.emission_decision_evidence.clear()
         self.diagnostics.unstable_slot_evidence.clear()
         self._slot_frame_ledgers.clear()
+        self._slot_pair_co_active_frames.clear()
         self._slot_token_counts.clear()
         self._buffer_iter = None
         self._buffer = None
@@ -373,7 +376,8 @@ class StreamingSessionEngine:
         The diarizer's cumulative prediction stream says which slots were
         speaking in each 80ms frame. One (voiced_frames, wall_seconds) sample
         per active slot per step builds the curve that turns a word's
-        instance-local token timestamp into its true spoken time.
+        instance-local token timestamp into its true spoken time; the same
+        new frames also feed the pairwise co-activity counters.
         """
         diar_states = getattr(self._streamer.instance_manager, "diar_states", None)
         preds = getattr(diar_states, "diar_pred_out_stream", None)
@@ -388,15 +392,17 @@ class StreamingSessionEngine:
         base_frame = self._diar_frames_seen
         self._diar_frames_seen = total_frames
 
+        active_frame_indices_by_slot: dict[int, list[int]] = {}
         for slot_index in range(int(preds.size(2))):
             active = (new_preds[:, slot_index] > 0.5).nonzero()
             if active.numel() == 0:
                 continue
+            active_indices = active.flatten().tolist()
+            active_frame_indices_by_slot[slot_index] = active_indices
             ledger = self._slot_frame_ledgers.setdefault(slot_index, [])
             voiced_before = ledger[-1][0] if ledger else 0
             # One sample per step keeps the ledger compact; the mid-frame of
             # this step's activity anchors the wall time.
-            active_indices = active.flatten().tolist()
             mid_wall = (
                 base_frame + active_indices[len(active_indices) // 2]
             ) * self._frame_len_sec
@@ -404,6 +410,39 @@ class StreamingSessionEngine:
             self._slot_last_burst_end[slot_index] = float(
                 (base_frame + active_indices[-1]) * self._frame_len_sec
             )
+        self._count_pairwise_slot_activity(active_frame_indices_by_slot)
+
+    def _count_pairwise_slot_activity(
+        self, active_frame_indices_by_slot: dict[int, list[int]]
+    ) -> None:
+        """Count when two voices spoke in the same new frames of this step.
+
+        Runs on every streaming step so a wrong-speaker review can later tell
+        two people talking over each other from one person owning the moment,
+        without keeping any transcript wording or raw predictions.
+
+        Args:
+            active_frame_indices_by_slot: New-frame indices where each slot
+                voiced; empty means this step heard silence, so no counter moves.
+        """
+        active_slots = sorted(active_frame_indices_by_slot)
+        # Each voiced slot is compared with every later voiced slot exactly once.
+        for position, first_slot in enumerate(active_slots):
+            first_slot_frames = set(active_frame_indices_by_slot[first_slot])
+            # The pair's count grows by the frames where both voices were heard.
+            for second_slot in active_slots[position + 1 :]:
+                co_active_frames = len(
+                    first_slot_frames.intersection(
+                        active_frame_indices_by_slot[second_slot]
+                    )
+                )
+                # These two voices never overlapped this step, so nothing is recorded.
+                if co_active_frames == 0:
+                    continue
+                pair_key = (first_slot, second_slot)
+                self._slot_pair_co_active_frames[pair_key] = (
+                    self._slot_pair_co_active_frames.get(pair_key, 0) + co_active_frames
+                )
 
     def _wall_time_for_voiced_frame(
         self, slot_index: int, voiced_frame: float
@@ -976,6 +1015,32 @@ class StreamingSessionEngine:
             )
 
         return voiced_frames_by_speaker_slot
+
+    @property
+    def speaker_slot_pair_co_active_frame_counts(self) -> dict[str, int]:
+        """Return PHI-safe co-active frame totals per slot pair for fold review.
+
+        Returns:
+            Normalized `speaker_a|speaker_b` keys (lower slot index first) to
+            cumulative co-active frame counts; empty means no two slots have
+            shared a voiced frame yet.
+        """
+        # A fresh mapping per call keeps callers from mutating engine counters.
+        return {
+            f"speaker_{first_slot}|speaker_{second_slot}": co_active_frames
+            for (first_slot, second_slot), co_active_frames in sorted(
+                self._slot_pair_co_active_frames.items()
+            )
+        }
+
+    @property
+    def diar_sample_frame_total(self) -> int:
+        """Return total diarizer frames sampled so far, voiced or silent.
+
+        Returns:
+            Frame count; zero means the diarizer has not produced predictions yet.
+        """
+        return int(self._diar_frames_seen)
 
     @property
     def pending_row_count(self) -> int:

@@ -1,7 +1,7 @@
 # ADR-007: Assessment Section Is Scribe-True (Clinician-Stated Only)
 
 **Date:** 2026-07-07
-**Status:** Accepted (user decision, 0.4.0-slice-1 M00)
+**Status:** Accepted (user decision, 0.4.0-slice-1)
 
 ## Context
 
@@ -33,7 +33,7 @@ clinician stated"), pinned by prompt-rule unit tests in `tests/python/test_summa
   clinical content. If assistant-style suggestions become a goal, that is a deliberate
   feature (own UI, own review flow), not a prompt default.
 - **Do nothing:** leaves an unlabeled AI diagnosis path in a medical note. Rejected - this is
-  the class of error the product cannot make (M00).
+  the class of error the product cannot make.
 
 ## Consequences
 

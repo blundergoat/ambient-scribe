@@ -1,10 +1,23 @@
 ---
 category: audio
 hallucination-risk: high
-last_reviewed: 2026-07-07
+last_reviewed: 2026-07-25
 ---
 
 # Audio Pipeline Footguns
+
+## Footgun: Stereo browser fixtures overwrite the mono eval WAVs at the same path
+**Status:** active | **Created:** 2026-07-22 | **Evidence:** ACTUAL_MEASURED
+**Incident count:** 5 | **Latest occurrence:** 2026-07-25
+
+- **Files:** `tests/fixtures/audio/README.md` (search: "Generate stereo fixtures")
+- **Files:** `tests/fixtures/audio/development-corpus-0.5.0.json` (search: "58283edfe790ba2d")
+- **Files:** `scripts/eval-fixtures.sh` (search: "16 kHz mono")
+- **What breaks:** The documented stereo-fixture flow copies each stereo WAV over the top-level `tests/fixtures/audio/<name>.wav` so the browser Demo Audio picker plays it (the browser averages channels client-side). But the SAME top-level path is what `scripts/eval-fixtures.sh` and every replay harness stream server-side, and that lane requires 16 kHz MONO signed 16-bit PCM. After a stereo refresh, all replay campaigns fail fast with "fixture must be 16 kHz mono signed 16-bit PCM for the browser PCM path" - and any hash-comparison campaign would be invalid even if it ran, because the input bytes no longer match the frozen corpus manifest.
+- **Evidence:** The 2026-07-22 flag-off comparison trio's first leg failed exactly this way; on-disk c02 WAV was 35,788,878 bytes / 2 channels (stereo copy dated 2026-07-21) vs the corpus-frozen mono 17,894,478 bytes sha256 `58283edf...`. Regenerating with `scripts/generate-demo-consultation-audio.py --force --include-primock57 --case ...` reproduced the frozen mono hashes byte-for-byte and left `generated-manifest.json` at its pinned sha `b1eea405...`. The 2026-07-24 d2c09 confidence-fallback probe then invoked `development-corpus.py` while the operator fixtures were intentionally restored to stereo; it correctly exited 2 on `size_drift` even though the probe's separately frozen mono chunk was exact. The corrected preflight preserved that rejection as non-applicable to the no-replay probe and independently required 10/10 stereo backups plus the isolated chunk hash. The reproducible anchors are the byte sizes and hash above plus `scripts/development-corpus.py` (search: `size_drift`); the probe receipts were local-only.
+- **2026-07-25 recurrence:** The recovery-only replacement replay again ran `development-corpus.py` before `prepare-mono-fixtures.sh`; the validator exited 2 on the restored stereo c02 size before any Docker/GPU action. The failed preflight was preserved, then the documented stereo-backup check → mono preparation → manifest validation order passed. Run that order every time: restore mono fixtures with `scripts/generate-demo-consultation-audio.py --force --include-primock57 --case ...` before `scripts/development-corpus.py` validates them, never the reverse. (A local-only `prepare-mono-fixtures.sh` was used historically; it was never committed, so the generator above is the reproducible path.)
+- **2026-07-25 closure recurrence:** The final closure audit re-ran the frozen-baseline `development-corpus.py --json` gate after the corpus-on evaluation had correctly restored the browser fixtures to stereo. The validator reported c02 `size_drift`: the active 35,788,878-byte stereo file was byte-identical to `tests/fixtures/audio/stereo/`, while the frozen manifest correctly expected the 17,894,478-byte mono evaluation file. All ten active WAVs matched their stereo copies. No fixture was mutated; the historical gate was recorded as non-reproducible in restored operator state rather than forcing an evaluation-only conversion during documentation closure.
+- **Prevention:** After a stereo restore, prepare the mono eval fixtures before running an identity gate that invokes `development-corpus.py`; the gate otherwise correctly stops on `size_drift` before a replay. Then verify the target WAV's sha256 against `development-corpus-0.5.0.json` (or at minimum check channels==1 via `soundfile.info`). To restore the eval lane after a stereo refresh, back the stereo copies into `tests/fixtures/audio/stereo/` and rerun the mono generator for the affected cases; the mono output is deterministic against the frozen hashes. For documentation-only closure after restoration, do not convert fixtures merely to reproduce a historical gate: verify the active set matches the stereo copies and record the gate as a historical receipt gap.
 
 ## Footgun: PCM byte offsets must be sample-aligned or NeMo rejects the buffer
 **Status:** active | **Created:** 2026-07-05 | **Evidence:** ACTUAL_MEASURED

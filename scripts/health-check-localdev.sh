@@ -98,6 +98,11 @@ fi
 OLLAMA_PORT="$(port_from_url "$OLLAMA_HOST")"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 
+# The agent validates session IDs, so probes need a real UUID shape; a literal
+# name like "test" is correctly rejected as a malformed visit and would report
+# a healthy service as down.
+HEALTH_PROBE_SESSION_ID="00000000-0000-4000-8000-000000000001"
+
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -337,9 +342,9 @@ else
     fail "endpoint not responding"
 fi
 
-step "GET /session/test/roles"
+step "GET /session/{uuid}/roles"
 roles_result=$(curl -sf --connect-timeout 3 --max-time 5 \
-    "http://localhost:${AGENT_PORT}/session/test/roles" 2>/dev/null) || true
+    "http://localhost:${AGENT_PORT}/session/${HEALTH_PROBE_SESSION_ID}/roles" 2>/dev/null) || true
 if echo "$roles_result" | grep -q '"session_id"'; then
     pass "endpoint active"
 else
@@ -371,9 +376,9 @@ else
     warn "scribe UI unavailable (HTTP ${PROBE_STATUS:-000})"
 fi
 
-step "GET /scribe/test/roles"
+step "GET /scribe/{uuid}/roles"
 php_roles_result=$(curl -sf --connect-timeout 3 --max-time 5 \
-    "http://localhost:${APP_PORT}/scribe/test/roles" 2>/dev/null) || true
+    "http://localhost:${APP_PORT}/scribe/${HEALTH_PROBE_SESSION_ID}/roles" 2>/dev/null) || true
 if echo "$php_roles_result" | grep -q '"session_id"'; then
     pass "PHP role proxy ok"
 else

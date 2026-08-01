@@ -27,6 +27,8 @@ Ask First checklist: boundary touched; related code read; `.goat-flow/learning-l
 - MUST read every file you change. Cross-boundary work MUST read both sides first.
 - Preserve cross-file consistency for routes, topics, env vars, hook paths, and skill names.
 - Cite file evidence with semantic anchors; do not invent line references.
+- Committed files MUST NOT cite gitignored paths as evidence. `var/`, `.goat-flow/plans/`, and generated fixtures do not exist for anyone else, so a committed claim anchored there is unverifiable and rots silently when the local file is deleted. Anchor durable claims to committed code, tests, docs, or `.goat-flow/learning-loop/`. Naming a gitignored path as an output *destination* is fine; citing one as *proof* is not.
+- Committed files MUST NOT reference milestone identifiers (`M05`, `M05B`, `Phase B`, plan filenames). Milestones are throwaway coordination labels in gitignored plans; once the plan is deleted the reference is unresolvable. In committed code comments, learning-loop entries, tests, and docs, state the *behaviour or reason* instead: "finalization is user-triggered" beats "(M11)". Milestone IDs belong only in `.goat-flow/plans/` and commit messages.
 - Sub-agents get one focused objective and must return paths, evidence, confidence, and next step. Budget: 5 calls.
 - No features, abstractions, dependencies, or error handling beyond the declared scope.
 

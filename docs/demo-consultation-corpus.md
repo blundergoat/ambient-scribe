@@ -10,31 +10,25 @@ picker has realistic medical replay material without using real patient data.
 python3 scripts/generate-demo-consultation-audio.py --force --include-primock57 \
   --case day1_consultation02 \
   --case day1_consultation03 \
-  --case day1_consultation05 \
   --case day1_consultation06 \
   --case day1_consultation07 \
   --case day1_consultation08 \
-  --case day2_consultation02 \
   --case day2_consultation03 \
-  --case day2_consultation07 \
   --case day2_consultation09 \
   --case day3_consultation01 \
-  --case day3_consultation03 \
   --case day5_consultation03 \
-  --case day5_consultation04 \
-  --case day5_consultation08 \
   --case day5_consultation09
 ```
 
 This writes ignored WAV files under `tests/fixtures/audio/`. PriMock57 files are
 generated at full consultation length; `NEMO_BUFFER_MAX_DURATION` (default
-900 seconds) bounds replay GPU memory. The current demo set includes 16 cases;
-`PRIMOCK57_EXCLUDED_CASE_IDS` in the generator is the exclusion source of truth,
-and `scripts/m2-verify.sh` defaults to case 02.
+900 seconds) bounds replay GPU memory. The current demo set is the ten
+consultations listed above. `scripts/m2-verify.sh` defaults to case 02. For now,
+development and manual demos use this set; additional sources can be added later.
 
-## Add A Consultation
+## Validate A Consultation
 
-1. Add or select a PriMock57 case in `scripts/generate-demo-consultation-audio.py`.
+1. Select one of the ten PriMock57 consultations above.
 2. Use Apache-compatible CC-BY source material with attribution.
 3. Regenerate audio and confirm the WAV contract:
 

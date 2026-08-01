@@ -139,7 +139,7 @@ def add_low_confidence_note_flags(
             ):
                 sentences_to_review.append(note_sentence)
 
-        # A fully supported section keeps the pre-M03 payload shape.
+        # A fully supported section keeps the earlier payload shape.
         if sentences_to_review:
             note_section[LOW_CONFIDENCE_NOTE_FIELD] = sentences_to_review
 
@@ -193,7 +193,7 @@ def low_confidence_review_reasons(
 ) -> list[dict[str, Any]]:
     """Return machine-readable reasons for flagged non-canonical clinical wording.
 
-    Use downstream (M05/M06 review surfaces) when a flagged sentence needs a
+    Use downstream (review surfaces) when a flagged sentence needs a
     reason code, the offending terms, and the exact source rows - the browser
     payload stays unchanged; this is an internal reason lane only.
 
@@ -264,10 +264,10 @@ def note_review_reasons(
 ) -> list[dict[str, Any]]:
     """Every machine-readable review reason for one generated note.
 
-    The M05 aggregation point M06 will consume: clinical-term confidence
+    The aggregation point review surfaces consume: clinical-term confidence
     reasons plus the temporal/action-state family, in note reading order per
     family. The browser payload stays unchanged; human wording is owned by
-    M03/M06.
+    the review surfaces.
 
     Args:
         summary_payload: Generated note; empty produces no reasons.

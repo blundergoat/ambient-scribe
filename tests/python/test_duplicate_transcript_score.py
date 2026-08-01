@@ -1,4 +1,4 @@
-"""Test the PHI-safe duplicate transcript scorer used after M05 replays.
+"""Test the PHI-safe duplicate transcript scorer used after baseline replays.
 
 Developers run the scorer against retained live-history artifacts before
 changing speaker identity behavior. These tests pin the user-visible duplicate

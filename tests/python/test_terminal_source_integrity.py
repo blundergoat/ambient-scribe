@@ -1,6 +1,6 @@
 """Prove a note can only be built from an attested whole-visit source.
 
-These are the M02 contract tests for the consult-3.1 incident: the user
+These are the source-integrity contract tests for the consult-3.1 incident: the user
 stopped a visit, the browser's wait timed out, and a note was generated from
 a pre-terminal snapshot that omitted the spoken emergency instructions. Every
 test here holds the server to the terminal-watermark contract - a browser
@@ -523,7 +523,7 @@ def test_role_result_in_flight_at_close_cannot_relabel_the_frozen_visit() -> Non
 
 
 def test_stream_cleanup_grace_prefers_post_visit_retention_after_finalize():
-    """A finalized visit's audio outlives the clinician's reading gap (M12).
+    """A finalized visit's audio outlives the clinician's reading gap.
 
     The on-demand Generate button makes finalize-to-click delay unbounded, so a
     finalized session keeps the long retention window; a socket that ended

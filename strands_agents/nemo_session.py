@@ -265,7 +265,7 @@ class TranscriptionSession:
             pipeline: Shared NemoPipeline singleton (loaded at startup)
             input_format: Audio input format ("pcm" or "webm")
             max_buffer_duration: Maximum audio buffer duration in seconds.
-            streaming_engine: Optional session-long streaming engine (M22).
+            streaming_engine: Optional session-long streaming engine.
                 None keeps the windowed emission path unchanged.
         """
         self.session_id = session_id
@@ -280,7 +280,7 @@ class TranscriptionSession:
         self._emitted_until_seconds: float = 0.0
         self._format_validated: bool = False
         self._speaker_cap: int | None = _speaker_cap_from_env()
-        # Per-window continuity evidence for the M20 diagnostics log; holds
+        # Per-window continuity evidence for the continuity diagnostics log; holds
         # only speaker IDs, timings, and counts - never transcript text.
         self._last_window_continuity: dict = {}
         self._window_overlap_votes: list[dict] = []
@@ -296,8 +296,14 @@ class TranscriptionSession:
         # An operator-enabled replay may retain a sustained real voice under its own source chip.
         self._should_guard_streaming_crosstalk = _streaming_crosstalk_guard_enabled()
         self._previous_speaker_slot_voiced_frames: dict[str, int] = {}
+        self._previous_speaker_slot_pair_frames: dict[str, int] = {}
+        self._previous_diar_sample_frames: int = 0
         self._latest_slot_share_evidence: list[dict] = []
         self._latest_folded_word_spans: list[dict] = []
+        self._latest_slot_pair_evidence: dict | None = None
+        # Every visit retains its fold spans (count/time-only, no transcript
+        # text) so the flag-on correction lane can re-judge them after Stop.
+        self._session_folded_word_spans: list[dict] = []
 
         # Unsupported formats mean the browser and server audio contracts diverged.
         if self.input_format not in {"pcm", "webm"}:
@@ -318,7 +324,7 @@ class TranscriptionSession:
         """Transcription engine label recorded in quality artifacts.
 
         Returns:
-            `streaming` when the M22 session-long engine drives emission;
+            `streaming` when the session-long engine drives emission;
             `windowed` for the legacy per-window path.
         """
         return "streaming" if self._streaming_engine is not None else "windowed"
@@ -365,7 +371,7 @@ class TranscriptionSession:
         self.buffer.append(pcm_audio)
 
         # The streaming engine owns speaker identity for the whole session;
-        # the windowed path re-derives it per window and stitches (M22 flag).
+        # the windowed path re-derives it per window and stitches (streaming flag).
         if self._streaming_engine is not None:
             self.quality_stats.record_window(len(pcm_audio))
             new_segments = self._emit_engine_rows(
@@ -514,7 +520,7 @@ class TranscriptionSession:
     def _emit_engine_rows(
         self, engine_rows: list, *, is_finalize: bool
     ) -> list[Segment]:
-        """Turn streaming-engine rows into emitted transcript segments (M22).
+        """Turn streaming-engine rows into emitted transcript segments.
 
         Engine rows arrive with session-absolute times and cache-stable
         speaker slots, so window-time shifting and anchor stitching are
@@ -586,6 +592,11 @@ class TranscriptionSession:
             self._last_window_continuity["folded_word_spans"] = list(
                 self._latest_folded_word_spans
             )
+            # Pairwise co-activity appears only when the engine can measure it.
+            if self._latest_slot_pair_evidence is not None:
+                self._last_window_continuity["pairwise_slot_evidence"] = dict(
+                    self._latest_slot_pair_evidence
+                )
             # The engine's count/time-only reason explains a named replay's visible pause.
             self._last_window_continuity["emission_decision_evidence"] = dict(
                 getattr(engine, "emission_decision_evidence", {}) or {}
@@ -617,6 +628,7 @@ class TranscriptionSession:
         self._engine_window_phantom_merges = 0
         self._latest_slot_share_evidence = []
         self._latest_folded_word_spans = []
+        self._latest_slot_pair_evidence = None
 
         # Each newly stable row updates the same cumulative duration used by the fold threshold.
         for segment in segments:
@@ -688,6 +700,8 @@ class TranscriptionSession:
             )
             capped_segments.append(replace(segment, speaker_id=dominant_slot))
 
+        # Retained unconditionally: correction-time repair needs every span.
+        self._session_folded_word_spans.extend(folded_word_spans)
         self._capture_streaming_slot_evidence(
             fold_threshold_seconds=marginal_below,
             substantial_speaker_slots=substantial_slots,
@@ -695,6 +709,18 @@ class TranscriptionSession:
             folded_word_spans=folded_word_spans,
         )
         return capped_segments
+
+    @property
+    def folded_word_spans(self) -> list[dict]:
+        """Every fold-suspect span this visit produced, in emission order.
+
+        The correction endpoint hands these to the flag-on rebuild lane.
+
+        Returns:
+            Copies of the retained span records; empty means no visible row
+            was ever folded into another chip.
+        """
+        return list(self._session_folded_word_spans)
 
     def _sustained_voice_speaker_slots(self) -> set[str]:
         """Return cache slots whose acoustic history proves a persistent consultation voice.
@@ -780,7 +806,99 @@ class TranscriptionSession:
             for speaker_slot in evidence_speaker_slots
         ]
         self._latest_folded_word_spans = list(folded_word_spans)
+        # Pairwise deltas read the prior per-slot snapshot, so they compute first.
+        self._latest_slot_pair_evidence = self._pairwise_slot_evidence(
+            engine, current_voiced_frames
+        )
         self._previous_speaker_slot_voiced_frames = current_voiced_frames
+
+    def _pairwise_slot_evidence(
+        self,
+        engine,
+        current_voiced_frames: dict[str, int],
+    ) -> dict | None:
+        """Build count-only pairwise co-activity deltas for one browser audio window.
+
+        Args:
+            engine: Streaming engine under evidence; the windowed path never reaches here.
+            current_voiced_frames: Cumulative per-slot voiced frames; empty means silence so far.
+
+        Returns:
+            Window and cumulative pair counts, or None when the engine cannot report
+            pairwise counters - evidence stays honestly absent instead of fabricated zeros.
+        """
+        # An engine without pairwise counters yields no evidence rather than zeros.
+        if not hasattr(engine, "speaker_slot_pair_co_active_frame_counts"):
+            return None
+
+        current_pair_frames = dict(
+            engine.speaker_slot_pair_co_active_frame_counts or {}
+        )
+        cumulative_sample_frames = max(
+            0, int(getattr(engine, "diar_sample_frame_total", 0) or 0)
+        )
+        window_sample_frames = max(
+            0, cumulative_sample_frames - self._previous_diar_sample_frames
+        )
+
+        # Per-slot window deltas reuse the same prior snapshot the share rows read.
+        window_voiced_frames = {
+            speaker_slot: max(
+                0,
+                int(current_voiced_frames.get(speaker_slot, 0))
+                - int(self._previous_speaker_slot_voiced_frames.get(speaker_slot, 0)),
+            )
+            for speaker_slot in current_voiced_frames
+        }
+
+        known_speaker_slots = sorted(current_voiced_frames)
+        pair_rows: list[dict] = []
+        # Every heard voice is paired with every other so a folded row's origin
+        # and target always have a joinable evidence row for this window.
+        for position, first_slot in enumerate(known_speaker_slots):
+            # Each later voice completes one normalized pair with the first.
+            for second_slot in known_speaker_slots[position + 1 :]:
+                pair_key = f"{first_slot}|{second_slot}"
+                cumulative_co_active = int(current_pair_frames.get(pair_key, 0))
+                window_co_active = max(
+                    0,
+                    cumulative_co_active
+                    - int(self._previous_speaker_slot_pair_frames.get(pair_key, 0)),
+                )
+                # A pair with no voiced member this window carries no new evidence.
+                if (
+                    window_voiced_frames.get(first_slot, 0) == 0
+                    and window_voiced_frames.get(second_slot, 0) == 0
+                    and window_co_active == 0
+                ):
+                    continue
+                pair_rows.append(
+                    {
+                        "speaker_slot_pair": pair_key,
+                        "window_co_active_frames": window_co_active,
+                        "cumulative_co_active_frames": cumulative_co_active,
+                        "window_exclusive_frames": {
+                            first_slot: max(
+                                0,
+                                window_voiced_frames.get(first_slot, 0)
+                                - window_co_active,
+                            ),
+                            second_slot: max(
+                                0,
+                                window_voiced_frames.get(second_slot, 0)
+                                - window_co_active,
+                            ),
+                        },
+                    }
+                )
+
+        self._previous_speaker_slot_pair_frames = current_pair_frames
+        self._previous_diar_sample_frames = cumulative_sample_frames
+        return {
+            "window_sample_frames": window_sample_frames,
+            "cumulative_sample_frames": cumulative_sample_frames,
+            "pairs": pair_rows,
+        }
 
     def _speaker_slot_share_evidence(
         self,
@@ -951,7 +1069,7 @@ class TranscriptionSession:
         if remap_count > 0:
             self.quality_stats.record_speaker_anchor_remaps(remap_count)
 
-        # Phantom merges are the M16 signal that extra visible speakers were contained.
+        # Phantom merges are the signal that extra visible speakers were contained.
         if phantom_merge_count > 0:
             self.quality_stats.record_phantom_speaker_merges(phantom_merge_count)
 
@@ -1097,6 +1215,12 @@ class TranscriptionSession:
                 "folded_word_spans",
                 [],
             )
+            # Absent pairwise evidence stays absent instead of a fabricated zero shape.
+            if "pairwise_slot_evidence" in continuity:
+                continuity_log_fields["pairwise_slot_evidence"] = continuity.get(
+                    "pairwise_slot_evidence",
+                    {},
+                )
             continuity_log_fields["emission_decision_evidence"] = continuity.get(
                 "emission_decision_evidence",
                 {},

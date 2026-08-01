@@ -4,8 +4,8 @@
 #
 # This container runs:
 #   1. NeMo multitalker Parakeet (Sortformer diarization + multi-speaker ASR)
-#   2. FastAPI WebSocket server for real-time audio transcription (M2+)
-#   3. Strands role inference agent (uses Bedrock, NOT local GPU) (M3+)
+#   2. FastAPI WebSocket server for real-time audio transcription
+#   3. Strands role inference agent (uses Bedrock, NOT local GPU)
 #
 # REQUIRES: NVIDIA Container Toolkit + GPU-capable Docker runtime
 #
@@ -37,7 +37,7 @@
 #     -v $(pwd)/tests/fixtures/audio:/app/audio \
 #     ambient-scribe-nemo bash
 #
-# RUN (server mode, for M2+):
+# RUN (server mode):
 #   docker run --rm --gpus all \
 #     -v $(pwd)/strands_agents:/app \
 #     -p 8000:8000 \

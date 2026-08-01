@@ -1,14 +1,14 @@
 # ADR-011: The corrected lane bypasses the medical lexicon; note safety rests on the review-reason lane
 
 **Date:** 2026-07-15
-**Status:** Accepted (M04 lane question, resolved by decisive trace)
+**Status:** Accepted (resolved by decisive trace)
 
 ## Context
 
-M04 (harden clinical-term safety) adds lexicon canonical/variant rows for the consult-1.2
-medication terms. The two parent analyses disputed whether post-visit corrected rows receive the same
+Hardening clinical-term safety added lexicon canonical/variant rows for the consult-1.2
+medication terms. Two parent analyses disputed whether post-visit corrected rows receive the same
 `correct_medical_terms` normalization as live rows — one asserted a bypass, the other treated
-it as unvalidated. M04 required a decisive trace before any lexicon row is added, because the
+it as unvalidated. A decisive trace was required before any lexicon row was added, because the
 answer decides what a new lexicon entry actually fixes.
 
 ## Trace (decisive)
@@ -29,20 +29,20 @@ assertion was correct.
 
 ## Decision
 
-1. New lexicon canonical/variant rows added by M04 fix LIVE transcript text only. That is
+1. New lexicon canonical/variant rows fix LIVE transcript text only. That is
    accepted and documented behavior, not a defect to wire around silently.
 2. Runtime note safety for non-canonical clinical terms in the corrected lane rests entirely on
-   the `source_low_confidence` review-reason route M04 builds (corrected-lane confidence < 0.78
-   plus relevant-row linkage → machine-readable review reason consumed by M05/M06).
+   the `source_low_confidence` review-reason route (corrected-lane confidence < 0.78
+   plus relevant-row linkage → machine-readable review reason consumed by the note-review lane).
 3. Wiring `visible_text`/lexicon normalization into the correction lane is NOT done here: it
    would change corrected-row wording produced from retained audio, touches the
    `nemo_pipeline.py` Ask First boundary, and would need its own approval, fixtures, and
-   regression evidence (corrected-row hashes bind to M02 attestations — silent wording changes
-   would also churn correction-output identity).
+   regression evidence (corrected-row hashes bind to span-fidelity attestations — silent wording
+   changes would also churn correction-output identity).
 
 ## Consequences
 
 - A term like `Fexaphenidine` can appear verbatim in the corrected transcript even after its
   variant row exists; the note-side guarantee is the review reason, never silent rewriting.
-- If a future milestone wants corrected-lane normalization, it must present the wording-change
+- If a future change wants corrected-lane normalization, it must present the wording-change
   blast radius (row identity hashes, stored artifacts, existing fixtures) at the Ask First gate.

@@ -1,12 +1,12 @@
 {
   "fixture": "role-noregression-day3c01",
   "frozen": "2026-07-15",
-  "purpose": "M05 role no-regression/diagnostic pin for consult 3.1 (lip swelling). Preserves the visit's low final role confidence, phantom-speaker/overlap debt, real patient interjections, and emergency-tail ownership. The five phase-1 narrow guards do NOT solve the upstream identity debt documented here; any change that silently relabels the debt rows or the tail anchors must fail the pinned tests.",
+  "purpose": "Role no-regression/diagnostic pin for consult 3.1 (lip swelling). Preserves the visit's low final role confidence, phantom-speaker/overlap debt, real patient interjections, and emergency-tail ownership. The five phase-1 narrow guards do NOT solve the upstream identity debt documented here; any change that silently relabels the debt rows or the tail anchors must fail the pinned tests.",
   "provenance": {
     "artifact": "var/quality/m02-acceptance-20260715T044500Z/replays/primock57-day3-consultation01-lips-swelling-after-eating-a-sandwich",
     "session_id": "0f6309cb-c3ed-4d82-bab3-1786b9fd0796",
-    "lane": "runtime-attested M02-acceptance GPU replay (2026-07-15), whole_visit_corrected source",
-    "original_manual_session": "db519904 - OBSERVED role confidence 0.704 and the 214/278 incident; its row artifacts are UNAVAILABLE (M01), so this fixture pins the retained replay instead"
+    "lane": "runtime-attested acceptance GPU replay (2026-07-15), whole_visit_corrected source",
+    "original_manual_session": "db519904 - OBSERVED role confidence 0.704 and the 214/278 incident; its row artifacts are UNAVAILABLE, so this fixture pins the retained replay instead"
   },
   "quality_pins": {
     "final_confidence": 0.806,
@@ -91,7 +91,7 @@
   },
   "anchor_notes": {
     "identity_overlap_debt": "seg-0237/seg-0238 carry collapsed 426.2s timestamps out of chronological position; seg-0245 holds the patient's 'not alone anymore' on a DOCTOR row; seg-0250 holds the folded 'Yes,' answer on a DOCTOR row. These are upstream phantom-speaker/overlap effects - documented debt, deliberately NOT fixed by cue lanes (all are sub-5-word rows the seam-smear guard must keep leaving alone).",
-    "garbled_low_confidence": "'and aphylactic reaction' (0.7044), 'NFL electric reaction' (0.7033), and corrected 'anticipants around' (unmeasured confidence) pin the visit's honest uncertainty; nothing may rewrite them into confident clinical terms outside M04's reviewed lexicon."
+    "garbled_low_confidence": "'and aphylactic reaction' (0.7044), 'NFL electric reaction' (0.7033), and corrected 'anticipants around' (unmeasured confidence) pin the visit's honest uncertainty; nothing may rewrite them into confident clinical terms outside the reviewed lexicon."
   },
   "live_tail_rows": [
     {

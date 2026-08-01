@@ -41,9 +41,8 @@ consultations (default: the first three discovered cases):
 python3 scripts/generate-demo-consultation-audio.py --force --include-primock57
 ```
 
-Discovery is limited to the ten development-corpus consultations (day1:
-02, 03, 06, 07, 08; day2: 03, 09; day3: 01; day5: 03, 09); sealed holdout
-cases are never listed or downloaded. See
+The current working set is the ten development-corpus consultations (day1:
+02, 03, 06, 07, 08; day2: 03, 09; day3: 01; day5: 03, 09). See
 [docs/demo-consultation-corpus.md](docs/demo-consultation-corpus.md) for the
 corpus rationale and the exact generation commands used for evaluation.
 

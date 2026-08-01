@@ -55,7 +55,7 @@ def write_textgrid(path: Path, intervals: list[tuple[float, float, str]]) -> Non
 def test_transcript_quality_reports_attribution_overlap_and_flip_counts(
     tmp_path: Path,
 ) -> None:
-    """A saved visit prints the attribution metrics M16 uses for baseline decisions."""
+    """A saved visit prints the attribution metrics used for baseline decisions."""
     doctor_grid = tmp_path / "visit.doctor.TextGrid"
     patient_grid = tmp_path / "visit.patient.TextGrid"
     history_path = tmp_path / "history.json"
@@ -377,7 +377,7 @@ def test_transcript_quality_reports_nearby_seam_rereads(tmp_path: Path) -> None:
 def test_strict_metrics_keep_uncertain_rows_in_denominator(tmp_path: Path) -> None:
     """Uncertain/UNKNOWN clean rows stay in the strict denominator as incorrect.
 
-    This pins the M20 anti-gaming rule: a build that hides hard rows behind
+    This pins the anti-gaming rule: a build that hides hard rows behind
     uncertainty must not raise strict attribution, only uncertainty coverage.
     """
     doctor_grid = tmp_path / "visit.doctor.TextGrid"
@@ -497,7 +497,7 @@ def test_strict_metrics_count_confidently_wrong_rows_after_identity_drift(
                         "text": "a",
                     },
                     # Identity drifts: speaker_0 now carries the patient's voice
-                    # but keeps the confident DOCTOR label - the M20 failure mode.
+                    # but keeps the confident DOCTOR label - the failure mode.
                     {
                         "start": 4.1,
                         "end": 5.9,

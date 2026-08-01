@@ -116,7 +116,7 @@ python3 scripts/transcript-quality.py --quality-json var/quality/runs/<run>/<fix
   tests/fixtures/audio/<fixture>.patient.TextGrid
 ```
 
-### Tracing one wrong Doctor/Patient row (M20)
+### Tracing one wrong Doctor/Patient row
 
 Use this when someone reports a specific mislabeled transcript card, e.g. "the
 doctor's question at 01:00 shows as Patient". Each step narrows which layer
@@ -193,12 +193,12 @@ any diarization or role-stability mechanism.
 
 ### Separated-channel ceiling caveat
 
-`scripts/eval-channel-ceiling.py` exists only for targeted M17 diagnosis. It downloads
+`scripts/eval-channel-ceiling.py` exists only for targeted channel-ceiling diagnosis. It downloads
 PriMock57 doctor/patient source channels, normalizes them to browser PCM, streams named
 fixtures through the live WebSocket path, combines role-fixed histories, and scores them
 with `scripts/transcript-quality.py`.
 
-Do not run it as a routine full-corpus gate. During M17, `/transcribe/file` exceeded the
+Do not run it as a routine full-corpus gate. During that work, `/transcribe/file` exceeded the
 16 GB GPU budget on full-length separated channels, while WebSocket streaming of every
 channel destabilized the shared NeMo singleton with Sortformer `KeyError` and ASR
 `unfreeze()` errors. Use named fixtures only, grep `nemo-agent` logs after each run, and

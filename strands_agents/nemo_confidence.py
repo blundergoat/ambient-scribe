@@ -1,7 +1,7 @@
 """
 Word-confidence extraction shared by every transcript lane.
 
-The transcript UI will style low-confidence rows (summary UX M7), so live
+The transcript UI will style low-confidence rows (summary UX), so live
 streaming rows, windowed rows, and post-visit corrected rows all need one
 consistent per-row confidence value. This module owns the probe-proven NeMo
 decoding settings and the small joins that turn per-word confidence into one
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Probe-proven settings (0.4.0 M06): word+token preservation with max_prob
+# Probe-proven settings (0.4.0 confidence spike): word+token preservation with max_prob
 # scoring and min aggregation gave non-degenerate values on both runtime
 # models with zero CUDA instability, offline AND streaming.
 CONFIDENCE_DECODING_SETTINGS: dict[str, Any] = {
@@ -51,6 +51,57 @@ def enable_word_confidence_decoding(asr_model: Any) -> None:
         # NeMo reads exactly this key; a different name is silently ignored.
         decoding_config.confidence_cfg = CONFIDENCE_DECODING_SETTINGS
     asr_model.change_decoding_strategy(decoding_config)
+
+
+def disable_word_confidence_decoding(asr_model: Any) -> None:
+    """Disable only word aggregation while preserving token confidence.
+
+    Use after the exact NeMo word-confidence aggregation mismatch has already
+    aborted one stopped-visit decode. The same loaded model can then make one
+    timestamped recovery call without changing its token confidence, phrase,
+    beam, or other decoder settings.
+
+    Args:
+        asr_model: Loaded post-visit NeMo model whose current decoder preserves
+            word confidence.
+
+    Raises:
+        ValueError: When the model is not in the expected word-confidence-on state.
+        RuntimeError: When NeMo applies any decoder shape other than the requested
+            one-field change.
+    """
+    from omegaconf import OmegaConf, open_dict
+
+    current_config = OmegaConf.to_container(
+        asr_model.cfg.decoding,
+        resolve=True,
+    )
+    if not isinstance(current_config, dict):
+        raise ValueError("NeMo decoding config is not a mapping.")
+
+    confidence_config = current_config.get("confidence_cfg")
+    if (
+        not isinstance(confidence_config, dict)
+        or confidence_config.get("preserve_word_confidence") is not True
+    ):
+        raise ValueError("NeMo word confidence is not enabled.")
+
+    decoding_config = OmegaConf.create(current_config)
+    with open_dict(decoding_config.confidence_cfg):
+        decoding_config.confidence_cfg.preserve_word_confidence = False
+
+    requested_config = OmegaConf.to_container(decoding_config, resolve=True)
+    asr_model.change_decoding_strategy(decoding_config)
+    applied_config = OmegaConf.to_container(
+        asr_model.cfg.decoding,
+        resolve=True,
+    )
+    # The recovery is approved only when NeMo applies exactly the requested
+    # one-field change; any implicit decoder drift keeps the live-row fallback.
+    if applied_config != requested_config:
+        raise RuntimeError(
+            "NeMo changed decoder settings outside the recovery request."
+        )
 
 
 def word_confidences_for_display_words(

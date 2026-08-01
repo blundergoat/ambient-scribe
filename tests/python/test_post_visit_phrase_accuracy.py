@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import post_visit_correction as correction_module
+from nemo_confidence import disable_word_confidence_decoding
 
 TEST_REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_SCRIPTS_DIR = TEST_REPO_ROOT / "scripts"
@@ -126,6 +127,24 @@ def test_baseline_phrase_is_inactive_by_default() -> None:
     assert correction_module.DEFAULT_POST_VISIT_CORRECTION_PHRASE is None
 
 
+def test_word_confidence_recovery_changes_only_the_aggregation_field() -> None:
+    """The recovery preserves phrase, token-confidence, beam, and greedy settings."""
+    model = _fake_unified_model()
+    original_config = _plain_value(model.cfg.decoding)
+
+    disable_word_confidence_decoding(model)
+
+    changed_config = _plain_value(model.changed_configs[0])
+    expected_config = {
+        **original_config,
+        "confidence_cfg": {
+            **original_config["confidence_cfg"],
+            "preserve_word_confidence": False,
+        },
+    }
+    assert changed_config == expected_config
+
+
 def test_candidate_adds_only_the_reviewed_native_phrase_profile() -> None:
     """The approved arm adds one phrase while keeping greedy, beam, and confidence values."""
     model = _fake_unified_model()
@@ -153,10 +172,16 @@ def test_candidate_adds_only_the_reviewed_native_phrase_profile() -> None:
     ["", "new section", "brand new sector\nmetformin", "sector, section"],
 )
 def test_unreviewed_or_multiple_phrases_fail_closed(unreviewed_phrase: str) -> None:
-    """Raw garbles and phrase lists never influence the clinician's corrected transcript."""
+    """Raw garbles never influence the clinician's corrected transcript.
+
+    Reviewed phrases may now be applied as a list, but only after each one is
+    matched against the inventory. Text that smuggles several terms through a
+    single string - newline- or comma-joined - is still one unlisted phrase and
+    is refused, so the list form cannot be reached by string manipulation.
+    """
     with pytest.raises(
         correction_module.PostVisitCorrectionError,
-        match="reviewed canonical phrase",
+        match="reviewed inventory",
     ):
         correction_module._apply_post_visit_correction_phrase(
             _fake_unified_model(),
@@ -242,7 +267,11 @@ def test_evaluator_rejects_phrase_on_legacy_path(tmp_path: Path) -> None:
 
 
 def test_evaluator_rejects_unreviewed_phrase(tmp_path: Path) -> None:
-    """A raw mistaken word cannot become an implicit correction hint."""
+    """A raw mistaken word cannot become an implicit correction hint.
+
+    The gate reads the reviewed inventory rather than one hardcoded phrase, so
+    the refusal message names the inventory. `new section` is in neither.
+    """
     options = _evaluator_options(
         tmp_path,
         application_post_visit=True,
@@ -250,8 +279,19 @@ def test_evaluator_rejects_unreviewed_phrase(tmp_path: Path) -> None:
     )
 
     assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) == (
-        "--correction-phrase is not the approved M02 canonical phrase"
+        "--correction-phrase is not in the reviewed phrase inventory"
     )
+
+
+def test_evaluator_accepts_a_reviewed_inventory_phrase(tmp_path: Path) -> None:
+    """The reviewed list must be usable through the evaluator, not only in tests."""
+    options = _evaluator_options(
+        tmp_path,
+        application_post_visit=True,
+        correction_phrase="loratadine",
+    )
+
+    assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) is None
 
 
 def test_evaluator_dry_run_never_requires_decoder_output(tmp_path: Path) -> None:
@@ -265,3 +305,59 @@ def test_evaluator_dry_run_never_requires_decoder_output(tmp_path: Path) -> None
     options.effective_decoder_output = None
 
     assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) is None
+
+
+def test_evaluator_cli_accepts_every_reviewed_inventory_phrase() -> None:
+    """A reviewed phrase must be reachable through the evaluator, not just in tests.
+
+    The CLI gate previously hardcoded the single historical control phrase, so
+    the reviewed inventory could not be exercised through the only
+    application-shaped path.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    import correction_phrase_inventory as inventory
+
+    allowed = second_pass_asr.reviewed_correction_phrases()
+
+    assert second_pass_asr.M02_APPROVED_CORRECTION_PHRASE in allowed
+    for phrase in inventory.approved_phrases():
+        assert phrase in allowed, f"{phrase} is reviewed but unreachable from the CLI"
+
+
+def test_evaluator_cli_is_never_more_permissive_than_the_decoder() -> None:
+    """The pre-check may refuse more than the decoder; it must never allow more."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    import correction_phrase_inventory as inventory
+
+    decoder_allows = set(inventory.approved_phrases())
+    decoder_allows.add(correction_module.APPROVED_POST_VISIT_CORRECTION_PHRASE)
+
+    assert second_pass_asr.reviewed_correction_phrases() <= decoder_allows
+
+
+def test_evaluator_cli_falls_back_to_the_control_phrase_if_the_inventory_is_unreadable(
+    monkeypatch,
+) -> None:
+    """A missing inventory must narrow what the CLI accepts, never widen it."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    monkeypatch.setattr(
+        second_pass_asr,
+        "CORRECTION_PHRASE_INVENTORY_PATH",
+        Path("/nonexistent/inventory.json"),
+    )
+
+    assert second_pass_asr.reviewed_correction_phrases() == {
+        second_pass_asr.M02_APPROVED_CORRECTION_PHRASE
+    }

@@ -4,7 +4,7 @@ GPU-free role heuristics for visible medical speaker labels.
 The live role agent uses Strands when available, but this module gives the UI a fallback
 that can run in tests, eval scripts, and local demos without loading FastAPI, NeMo, or an LLM.
 Use it when the browser needs DOCTOR/PATIENT labels and model inference is unavailable.
-It also owns the M20 row-exception lane: cheap, explainable text cues that catch single
+It also owns the row-exception lane: cheap, explainable text cues that catch single
 transcript rows whose words contradict their speaker's mapped role (a doctor question
 rendered on a Patient card) and either relabel or explicitly un-label just that row.
 """
@@ -41,10 +41,10 @@ PATIENT_KEYWORDS = {
 }
 
 
-# --- M20 row-exception cue lane ---------------------------------------------
+# --- Row-exception cue lane ---------------------------------------------
 # Thresholds and single-cue flip rules were measured on the Phase 0 baseline
 # corpus (all PriMock fixtures): the shipped policy produced zero wrong flips
-# corpus-wide. See the M20 plan's Phase 3 evidence before tuning.
+# corpus-wide. See the overlap Phase 3 evidence before tuning.
 
 # Rows shorter than this are often seam-smeared fragments whose words do not
 # reliably belong to the labeled time span; the row lane leaves them alone.
@@ -339,14 +339,14 @@ def _add_orphan_speaker_exceptions(
     The streaming engine can mint an extra speaker ID before its voice cache
     settles; role mapping then gives that orphan a role some established
     speaker already holds, and the clinician sees the doctor's opening turns
-    on Patient cards. This M11 lane judges ONLY those orphan rows, joining
+    on Patient cards. This lane judges ONLY those orphan rows, joining
     each with its same-speaker chronological neighbors because live rows
     fragment cue phrases mid-utterance ("...your name and age" / "please?").
 
     Args:
         stored_segments: Visible transcript rows from session storage.
         mapping: Current speaker-to-role mapping.
-        row_exceptions: M20 lane output, updated in place; rows it already
+        row_exceptions: Row-exception lane output, updated in place; rows it already
             judged keep that decision.
 
     Returns:
@@ -369,7 +369,7 @@ def _add_orphan_speaker_exceptions(
     for row_position, segment in enumerate(ordered_rows):
         speaker_id = str(segment.get("speaker_id", ""))
 
-        # Established-speaker rows belong to the measured M20 lane, not this one.
+        # Established-speaker rows belong to the measured row-exception lane, not this one.
         if speaker_id not in orphan_speakers:
             continue
 
@@ -505,7 +505,7 @@ def _same_speaker_neighbor_text(
 
     Returns:
         Neighbor text, or empty when the neighbor belongs to another speaker -
-        joining across a turn is how the M11 gate produced its one false flip.
+        joining across a turn is how the orphan-span gate produced its one false flip.
     """
     neighbor_position = row_position + direction
     # Session edges have no neighbor to complete a fragmented phrase.

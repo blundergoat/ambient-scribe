@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "inventory_id": "corrected-lane-clinical-v1",
+  "locale": "en-GB",
+  "intended_consumer": "post_visit_correction_decoder",
+  "review": {
+    "status": "approved",
+    "reviewer_id": "developer-self-review",
+    "reviewer_role": "developer",
+    "reviewed_at": "2026-08-01",
+    "clinically_reviewed": false,
+    "review_note": "Approved by the operator for a proof-of-concept running on synthetic seed consultations. This is NOT independent clinical review. Every term is already present as a canonical in medical_lexicon.txt, but those records were also developer self-review and declare intended_consumer=live_post_asr_normalizer, so this inventory changes the consumer as well as the mechanism. Do not describe this list as clinically reviewed."
+  },
+  "selection_method": "Each target is a term spoken in a captured consultation that the corrected lane still renders incorrectly. Terms the corrected lane already handles are carried as controls so a regression is visible. No term was added from a drug reference; every one has a measured miss or a measured success behind it.",
+
+  "phrases": [
+    {
+      "phrase": "loratadine",
+      "role": "target",
+      "corrected_lane_produced": "loratidine",
+      "live_lane_produced": "Lauratidine",
+      "evidence": "consult-1.2 (primock57-day1-consultation02), 2026-08-01 capture",
+      "category": "medication",
+      "rationale": "One character from correct in the corrected lane. The registered lexicon variant is `Luratidine`, which also does not match, so string replacement cannot reach it."
+    },
+    {
+      "phrase": "fexofenadine",
+      "role": "target",
+      "corrected_lane_produced": "fexafenidine",
+      "live_lane_produced": "fsapenedine",
+      "evidence": "consult-1.2 (primock57-day1-consultation02), 2026-08-01 capture",
+      "category": "medication",
+      "rationale": "Corrected lane lands close but wrong. Observed misrendered in every captured note wording for this consult."
+    },
+    {
+      "phrase": "Piriton",
+      "role": "target",
+      "corrected_lane_produced": "pyritin",
+      "live_lane_produced": "Puritan",
+      "evidence": "consult-1.2 (primock57-day1-consultation02), 2026-08-01 capture",
+      "category": "medication",
+      "rationale": "The corrected lane produces the registered lexicon variant `Pyritin`. Two candidate fixes exist - decode-time boosting, or lifting the ADR-011 lexicon bypass for a curated subset - so this term is the one that distinguishes the two mechanisms."
+    },
+    {
+      "phrase": "emollients",
+      "role": "control",
+      "corrected_lane_produced": "emollients",
+      "live_lane_produced": "amoleans / amolliums",
+      "evidence": "consult-1.2 (primock57-day1-consultation02), 2026-08-01 capture",
+      "category": "medication",
+      "rationale": "Correction already fixes this outright, both occurrences. Present so the arm proves boosting does not regress a term the lane already gets right."
+    },
+    {
+      "phrase": "salbutamol",
+      "role": "control",
+      "corrected_lane_produced": "salbutamol",
+      "live_lane_produced": "salbutamol",
+      "evidence": "consult-3.1, three replays, 2026-08-01 session-evidence bundles",
+      "category": "medication",
+      "rationale": "Correct in both lanes across three deterministic replays. A regression here would indicate boosting is destabilising already-correct output."
+    },
+    {
+      "phrase": "anaphylaxis",
+      "role": "control",
+      "corrected_lane_produced": "anaphylactic reaction",
+      "live_lane_produced": "NFL electric reaction / and aphylactic reaction",
+      "evidence": "consult-3.1, three replays, 2026-08-01 session-evidence bundles",
+      "category": "diagnosis",
+      "rationale": "The highest-stakes recovery observed: correction rescued the diagnosis from an unrecognisable live rendering. Carried as a control because the lane already succeeds; a regression here would be the most serious possible outcome of this arm."
+    }
+  ],
+
+  "hard_negatives": [
+    {
+      "term": "cetirizine",
+      "class": "related_medicine_not_spoken",
+      "must": "never appear in a corrected transcript for these fixtures",
+      "evidence": "The summariser substituted this real OTC antihistamine unprompted in the 2026-07-21 note for consult-1.2, where it appears in no transcript lane. Boosting must not make the same substitution acoustically."
+    },
+    {
+      "term": "pyrimethamine",
+      "class": "different_drug_class_phonetically_near",
+      "must": "never appear in a corrected transcript",
+      "evidence": "A prescription antiparasitic. Captured notes drifted toward this token from `pyritin`. Phonetic proximity to a boosted term is exactly the failure mode to guard."
+    },
+    {
+      "term": "Puritan",
+      "class": "ordinary_word_homograph",
+      "must": "not be rewritten when used as an ordinary English word",
+      "evidence": "The live lane's rendering of Piriton. Boosting Piriton must not capture legitimate non-clinical uses."
+    },
+    {
+      "term": "brand new sector",
+      "class": "unrelated_control_phrase",
+      "must": "behave exactly as before when the inventory is inactive",
+      "evidence": "The historical single approved phrase. Retained so the pre-inventory behaviour stays provable."
+    }
+  ],
+
+  "not_in_scope": [
+    "Any term not spoken in a captured consultation.",
+    "Proper nouns, patient or clinician names, addresses, and clinic identifiers.",
+    "Dosages, frequencies, and routes - boosting a number is not a recognition fix.",
+    "Terms whose only evidence is a note rendering; the note is downstream of the lane this inventory targets."
+  ]
+}

@@ -53,8 +53,8 @@ Do not answer in prose or JSON outside the tool call.
 
 MEDICAL_ROLE_PROMPT = f"""You are a medical transcription agent.
 
-You receive transcript segments with speaker labels (spk_0, spk_1).
-Your job is to determine which speaker is the DOCTOR and which is the PATIENT.
+You receive transcript segments with speaker labels (spk_0, spk_1, sometimes more).
+Your job is to label each speaker as DOCTOR or PATIENT.
 
 Reasoning signals:
 - Doctors ask clinical questions, use medical terminology, give instructions
@@ -62,6 +62,10 @@ Reasoning signals:
 - First speaker alone is weak evidence; clinician self-introduction and
   consultation-opener wording are stronger signals
 - Medical jargon density is higher for the doctor
+- Diarization can split ONE person's voice across several speaker labels, so a
+  consultation is usually one DOCTOR and one PATIENT even when more labels
+  appear: label each speaker from its own utterances, let several labels share
+  a role, and omit a label whose utterances give no clear evidence.
 {_SHARED_EDGE_CASES}"""
 
 MEDICAL_ROLE_INSTRUCTION = (

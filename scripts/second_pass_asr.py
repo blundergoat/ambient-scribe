@@ -39,6 +39,40 @@ DEFAULT_MODEL = "nvidia/parakeet-unified-en-0.6b"
 DEFAULT_MAX_WORDS_PER_SEGMENT = 18
 M02_UNIFIED_MODEL = "nvidia/parakeet-unified-en-0.6b"
 M02_APPROVED_CORRECTION_PHRASE = "brand new sector"
+# The reviewed inventory the decoder gate itself reads. Loading the same file by
+# path, rather than importing the module, keeps this check working both on the
+# host and inside the container, where the import paths differ.
+CORRECTION_PHRASE_INVENTORY_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "strands_agents"
+    / "data"
+    / "post_visit_correction_phrases.json"
+)
+
+
+def reviewed_correction_phrases() -> set[str]:
+    """Return every phrase an operator may pass to `--correction-phrase`.
+
+    The decoder refuses anything outside its reviewed inventory, so this
+    pre-check reads the same file. An unreadable inventory narrows the allowed
+    set to the historical control phrase rather than widening it.
+
+    Returns:
+        Approved phrases, always including the historical control phrase.
+    """
+    allowed = {M02_APPROVED_CORRECTION_PHRASE}
+    try:
+        inventory = json.loads(
+            CORRECTION_PHRASE_INVENTORY_PATH.read_text(encoding="utf-8")
+        )
+        for entry in inventory.get("phrases", []):
+            phrase = entry.get("phrase") if isinstance(entry, dict) else None
+            if isinstance(phrase, str) and phrase.strip():
+                allowed.add(phrase)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        # A missing or malformed inventory must not widen what the CLI accepts.
+        pass
+    return allowed
 
 
 @dataclass(frozen=True)
@@ -424,7 +458,7 @@ def validate_application_post_visit_options(
 ) -> str | None:
     """Reject an incomplete or unreviewed phrase experiment before source access.
 
-    Use after parsing; null return means the operator selected the frozen M02 lane.
+    Use after parsing; null return means the operator selected the frozen second-pass lane.
 
     Args:
         operator_options: Requested evaluator arm; missing fields make the command invalid.
@@ -439,15 +473,16 @@ def validate_application_post_visit_options(
         if operator_options.effective_decoder_output is not None:
             return "--effective-decoder-output requires --application-post-visit"
         return None
-    # M02 compares only the pinned Unified decoder used after the clinician presses Stop.
+    # The comparison uses only the pinned Unified decoder used after the clinician presses Stop.
     if operator_options.model != M02_UNIFIED_MODEL:
         return f"--application-post-visit requires {M02_UNIFIED_MODEL}"
-    # A raw garble, list, or second phrase has no independent clinical review.
-    if operator_options.correction_phrase not in {
-        None,
-        M02_APPROVED_CORRECTION_PHRASE,
-    }:
-        return "--correction-phrase is not the approved M02 canonical phrase"
+    # A raw garble or unlisted term has no review behind it. The reviewed
+    # inventory is the same file the decoder gate enforces, so this pre-check
+    # can never accept a phrase the decoder would refuse.
+    if operator_options.correction_phrase is not None and (
+        operator_options.correction_phrase not in reviewed_correction_phrases()
+    ):
+        return "--correction-phrase is not in the reviewed phrase inventory"
     # A real arm without effective config evidence cannot prove its one-variable boundary.
     if (
         not operator_options.dry_run

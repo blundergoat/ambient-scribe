@@ -3,7 +3,7 @@
 **Status:** Rejected (revision 2 repeated the c07 spot non-regression failure)
 **Date:** 2026-07-14
 **Updated:** 2026-07-14 (approved isolated c07 retry reproduced the failed gate)
-**Ticket/Context:** 0.4.0-slice-2 M07 role-map bifurcation
+**Ticket/Context:** 0.4.0-slice-2 role-map bifurcation
 
 ## Context
 
@@ -19,8 +19,8 @@ The current 20-fixture corpus contains eight suppressed multi-speaker proposals 
 fixtures. Only one proposal, in c08, combines a majority-truth repair and regression. Aggregate
 cue-count automation is not safe enough to replace the role model: a margin of three is 100%
 precise across current corpus speaker IDs but does not fire for c08 `speaker_1`; lower margins
-produce wrong anchors. Evidence and analyzers are retained under
-`var/quality/m07-role-map-bifurcation-20260713T202336Z/`.
+produce wrong anchors. The supporting replay evidence and analyzers were local-only; the
+margin-of-three finding and the c08 `speaker_1` exception are recorded here.
 
 ## Decision
 
@@ -53,7 +53,7 @@ NeMo keeps sole ownership of the GPU. No browser event or PHP/Python API contrac
 | Automatically trust aggregate cue margins | Safe margins do not identify c08 `speaker_1`; useful lower margins mislabel corpus speaker IDs. | Rejected by threshold mining. |
 | Remove or lower whole-map damping | A confident but wrong complete swap can relabel every existing transcript card immediately. | Rejected; damping is retained unchanged. |
 | Run a second model verification on every multi-speaker update | It doubles model latency/cost and adds another stochastic decision before proving one structured call is insufficient. | Deferred unless the cited single-call design misses acceptance. |
-| Validate per-speaker assessments and accept only a supported subset | Strong repairs can land without carrying a contradicted companion flip, while complete swaps still face existing damping. | Accepted for M07 verification. |
+| Validate per-speaker assessments and accept only a supported subset | Strong repairs can land without carrying a contradicted companion flip, while complete swaps still face existing damping. | Accepted for role-map verification. |
 
 ## Consequences
 

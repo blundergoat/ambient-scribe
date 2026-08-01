@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure the eval-only ceiling from separated PriMock57 speaker channels.
 
-Use this for M17 Phase 2 when the mixed-mono transcript loses words during
+Use this for channel-ceiling Phase 2 when the mixed-mono transcript loses words during
 cross-talk. The script downloads the original doctor/patient channel WAVs into
 a gitignored quality run, normalizes each channel to the browser WAV contract,
 streams each channel through the live WebSocket path, then scores the combined
@@ -62,7 +62,7 @@ class FixtureChannelSource:
 class ChannelCeilingResult:
     """Score summary for one eval-only separated-channel run.
 
-    Each result is written beside the raw score artifacts so M17 can compare
+    Each result is written beside the raw score artifacts so the channel-ceiling work can compare
     mixed-mono WER against the best practical channel-separated transcript.
     Empty metric values mean the scorer output did not include that line.
 
@@ -573,7 +573,7 @@ def length_ratio_metric(score_text: str) -> float | None:
     """
     # Each report line may carry a different metric format.
     for line in score_text.splitlines():
-        # Only the length-ratio line has the exact prefix used for the M17 table.
+        # Only the length-ratio line has the exact prefix used for the channel-ceiling table.
         if line.startswith("length ratio hyp/ref: "):
             return float(line.rsplit(" ", 1)[-1])
 
@@ -664,7 +664,7 @@ def print_results(results: list[ChannelCeilingResult], run_dir: Path) -> None:
         run_dir: Artifact directory where detailed histories and scores were written.
     """
     print("fixture                                      cutoff  wer   clean overlap recall ratio")
-    # Each result row is a fixture the M17 plan can compare against mixed-mono numbers.
+    # Each result row is a fixture the channel-ceiling plan can compare against mixed-mono numbers.
     for result in results:
         print(
             f"{result.fixture_name[:44]:44} "
@@ -720,9 +720,9 @@ def main() -> int:
     if not args.all and not args.fixtures:
         raise SystemExit("error: pass fixture queries, or --all with --allow-unstable-full-run")
 
-    # The current NeMo stack crashed during M17 when all separated channels were streamed.
+    # The current NeMo stack crashed during channel-ceiling work when all separated channels were streamed.
     if args.all and not args.allow_unstable_full_run:
-        raise SystemExit("error: --all is disabled; use --allow-unstable-full-run to reproduce M17 crash evidence")
+        raise SystemExit("error: --all is disabled; use --allow-unstable-full-run to reproduce that crash evidence")
 
     run_dir = args.run_dir or default_run_dir()
     sources = load_fixture_sources()

@@ -1,9 +1,114 @@
 ---
 category: eval-metrics
-last_reviewed: 2026-07-20
+last_reviewed: 2026-08-01
 ---
 
 # Eval and Metrics Lessons
+
+## Lesson: One consult's null result on correction says nothing about the next consult
+
+**Created:** 2026-08-01
+**Decision changed:** Do not conclude that post-visit correction adds nothing for clinical terms
+from a consult where it happened not to. Aggregate WER hides which *words* moved.
+**Trigger phase:** VERIFY
+
+Consult-1.2 was analysed across seven rounds. Corrected non-overlap WER sat at 27.3% against
+live's 27.6-27.7% — a 0.3-0.4 pp gain — and the note still shipped a wrong drug name, so it was
+tempting, and briefly stated in this entry, that correction "never rescued a drug name" and
+"carried the same garbles through". **Both claims were false, and reading the rows instead of the
+aggregate is what disproved them.** Correction improved all four spoken drug terms and fixed one
+outright:
+
+| Spoken | Live lane | Corrected lane |
+| --- | --- | --- |
+| emollients | `amoleans` / `amolliums` | **`emollients`** — correct, both occurrences |
+| Piriton | `Puritan` | `pyritin` — the registered lexicon variant |
+| fexofenadine | `fsapenedine` | `fexafenidine` |
+| loratadine | `Lauratidine` | `loratidine` |
+
+The wrong drug still reached the note, but not because correction did nothing — because ADR-011
+routes corrected rows around the lexicon, so `pyritin` was never mapped to `Piriton` despite
+being a registered variant. A lane can be doing real work and still lose at the next boundary.
+
+Consult-3.1 (2026-08-01, suspected anaphylaxis) shows the opposite on the term that mattered
+most:
+
+| Row | Live | Corrected |
+| --- | --- | --- |
+| `seg-0218` / `corrected-0219` | `and aphylactic reaction` | `an anaphylactic reaction` |
+| `seg-0241` / `corrected-0242` | **`NFL electric reaction`** | `an anaphylactic reaction` |
+
+The live lane rendered the diagnosis as `NFL electric reaction`. Correction recovered both
+mentions. `salbutamol` also survived intact in all lanes. Same pipeline, same settings
+(`NEMO_CORRECTION_REDIARIZATION=0`), opposite outcome on clinical-term recall.
+
+**Why the aggregate hid it:** WER counts every word equally, so recovering two instances of a
+diagnosis moves the number about as much as fixing two filler words. A 0.3 pp corpus-level gain
+is consistent both with "correction does nothing useful" and with "correction fixes exactly the
+words a clinician cannot afford to lose". The metric cannot tell those apart.
+
+**How to apply:** Before accepting or rejecting a correction-lane candidate, score critical-term
+recall separately from general WER, and read the actual changed rows rather than the delta. When
+a lane comparison shows a small aggregate gain, diff the specific clinical nouns — a single
+recovered diagnosis can matter more than the headline suggests, and a single fabricated one can
+matter more than a headline regression. Evidence for both consults lives under
+`.goat-flow/plans/0.5.2/manual-testing_consult1.2/` and the session-evidence bundles.
+
+## Lesson: Row-denominated gates cannot judge a row-restructuring change
+
+**Created:** 2026-07-26
+**Decision changed:** When a candidate change merges, splits, or re-times transcript rows, restate
+every gate that counts rows — correct rows, incorrect-confident rows, per-class cells — at the word
+level (each display word inherits its row's verdict) with total display words conserved between arms,
+and judge row-level movement only against a structural null.
+**Trigger phase:** SCOPE
+**What happened:** The 0.5.2 corpus gate was drafted as "no fixture loses absolute correct rows" —
+the rule that correctly rejected ADR-013, where both arms shared one row structure. The 0.5.2 fix
+itself merges fragment rows, so two correct rows becoming one "loses" a correct row while losing
+nothing real: the drafted gate would have failed a perfect fix on every fixture, and the same
+arithmetic could have inflated the milestone's success cell instead. Rows the merge collapses share
+persisted start, slot, and role, so their start-point verdicts are identical by construction —
+merging moves row-level metrics with zero placement change. A structural spot-check across the five
+captured consult-1.2 runs measured the scale: collapsing same-(slot, start) runs removes ~22 of ~309
+rows per run.
+**Evidence:** `scripts/transcript-quality.py` (search: `def score_strict_attribution`) counts rows
+over clean reference rows, so numerator and denominator both shift with row structure. The probe and
+the reworked gates live in the gitignored 0.5.2 plan tree (`probe-floor-structure.py`); the figures
+are quoted here because that tree is local state.
+**Prevention:** Before adopting a gate, ask what the candidate change does to the metric's
+denominator. If the change can alter row structure, gate word-level with conserved totals — absolute
+word counts stay comparable between arms — and compute the structural null (re-score after applying
+the structure change alone) so cosmetic movement has a measured size. A gate that can fail a perfect
+fix, or pass a cosmetic one, is not a gate.
+
+## Lesson: Prove a class gap is causal before planning a fix on it
+
+**Created:** 2026-07-26
+**Decision changed:** When two row classes differ sharply on a metric, run two cheap eliminations
+before treating the class marker as the cause: re-score through a projection that excludes the
+suspect field, and stratify by the obvious confounder. Only then plan work against it.
+**Trigger phase:** SCOPE
+**What happened:** Consult-1.2 rows split cleanly by span class — 67.3% strict attribution for rows
+carrying a fabricated 0.05-second span against 97.2% for real-span rows. That gap was almost planned
+against directly. Two alternative explanations were untested and each would have invalidated the
+plan. First, a measurement artifact: only the span's `end` is fabricated, so the scorer's span-overlap
+matching could have been failing on rows the product had labelled correctly. Re-scoring at each row's
+`start` alone, which ignores `end` entirely, preserved the gap at 69.0% versus 98.8% and refuted it.
+Second, acoustic difficulty: the fabricated class starts inside overlap 17% of the time against 4.5%
+for real-span rows, so the class could have been a proxy for hard audio. Stratifying start-point
+accuracy by proximity to a true turn boundary refuted it decisively — real-span rows score 94.1-100%
+within 250 ms of a boundary while the fabricated class collapses to 38.7-40.0%. Boundaries are not
+hard; only that path fails there.
+**Evidence:** `scripts/transcript-quality.py` (search: `--row-diagnostics-json`) supplies the per-row
+expected roles both eliminations used; the row class comes from
+`strands_agents/nemo_streaming_engine.py` (search: `def _appended_word_entries`). The five-run
+decomposition itself lives in the gitignored 0.5.2 plan tree, so its figures are quoted above rather
+than linked.
+**Prevention:** A class marker that correlates with a metric is not yet a cause. Score by an
+independent projection that excludes the field under suspicion, and stratify by whichever confounder
+would most embarrass the conclusion. Both eliminations here were pure CPU work on already-captured
+artifacts and together changed the milestone's structure, its success gate, and the size of the
+claimed prize. Run them before any runtime change is scoped, not after a fix disappoints.
 
 Lessons about scoring, fixture evals, oracles, and log-derived counters.
 Split from `verification.md` on 2026-07-07 (bucket-size threshold).
@@ -11,7 +116,7 @@ Split from `verification.md` on 2026-07-07 (bucket-size threshold).
 ## Lesson: Strict attribution excludes cross-talk rows - check overlap-touch before predicting gate flips
 
 **Created:** 2026-07-07
-**What happened:** The M07 handoff predicted the consult-08 echo-split doctor row would swing
+**What happened:** A role-map handoff predicted the consult-08 echo-split doctor row would swing
 strict attribution between 90.9% (pass) and 87.9% (fail). Reading `scripts/transcript-quality.py`
 (search: "touches_any_span") showed rows touching TextGrid doctor∩patient overlap are dropped from
 the strict/clean denominator entirely; the probe-timed row (15.92-16.56) touches the
@@ -28,7 +133,7 @@ attribution, chip findings, and WER buckets instead of expecting strict-attribut
 **Created:** 2026-07-05
 **Evidence:** `scripts/eval-fixtures.sh` (search: "Fetching earlier made attribution depend on a fetch-vs-flip race").
 
-During M20 Phase 1, three c03 @83s runs after a publish-only payload change all scored
+During overlap Phase 1, three c03 @83s runs after a publish-only payload change all scored
 45.0% strict attribution against a 55.0% Phase 0 median, which looked like the kill
 criterion firing on the new code. The run-invariant diagnostics (dyadic ceiling, window
 counts, remaps) were identical, and two runs with byte-identical role-decision timelines
@@ -40,7 +145,7 @@ test. Reordering the eval to fetch history after the role-timeline settle made t
 deterministic (55.0/55.0/55.0). Churn can still straddle any fixed settle window, so
 median-of-3 remains mandatory.
 
-M07 reproduced both sides of this lesson. An 8-second settle sampled c08 3.427 seconds before its
+That work reproduced both sides of this lesson. An 8-second settle sampled c08 3.427 seconds before its
 complete correct tail map; a 20-second settle then produced five identical 84.4% good-mode scores.
 Its later c07 spot score moved -0.4pp, but canonical rows changed and the best-dyadic audio/identity
 ceiling moved -0.5pp while the final role map stayed correct. The non-regression stop was still
@@ -60,7 +165,7 @@ role timeline's final mapping) - a self-contradicting run proves a measurement r
 **Created:** 2026-07-05
 **Evidence:** `scripts/transcript-quality.py` (search: "def score_best_dyadic_mapping").
 
-The M16 "speaker oracle accuracy" gave each emitted speaker ID its majority reference role
+The earlier "speaker oracle accuracy" gave each emitted speaker ID its majority reference role
 independently, so on fixtures where diarization mixed one voice across BOTH IDs the oracle
 assigned DOCTOR to both (c03/c06/c08) or PATIENT to both (c07) - mappings no real
 one-DOCTOR/one-PATIENT product can ship. The derived "role mapping gap" (+35.3pp on c07)
@@ -77,7 +182,7 @@ bound on a different system than the one being tuned.
 **Created:** 2026-07-05
 **Evidence:** `strands_agents/api/role_agent_runtime.py` (search: "establishment_hint_guard"), `strands_agents/api/role_inference_queue.py` (search: "establishment_hint").
 
-During M20 Phase 4, removing the role agent's `current_mapping` echo and adding cue-rich
+During overlap Phase 4, removing the role agent's `current_mapping` echo and adding cue-rich
 representative rows looked mechanically correct, but c03 @83s immediately scored 45/45
 strict on two runs. Adding opener cue counts and a prompt-level `establishment_hint` still
 scored 50/50 on two of three runs because the model accepted the exact inverse mapping
@@ -93,7 +198,7 @@ when it is meant to prevent an exact dyadic inversion.
 **Created:** 2026-07-05
 **Evidence:** `scripts/transcript-quality.py` (search: "def timed_words_for_region").
 
-During M17 Phase 0, the first clean-vs-overlap WER split assigned an entire TextGrid
+During channel-ceiling Phase 0, the first clean-vs-overlap WER split assigned an entire TextGrid
 interval or transcript row to the overlap bucket if it touched cross-talk at all. A full
 fixture run made c07 clean WER print as `298.3%`: long reference intervals that barely
 touched overlap were removed from the clean denominator while nearby transcript rows stayed
@@ -110,7 +215,7 @@ are guaranteed to be bucketed the same way.
 **Created:** 2026-07-05
 **Evidence:** `scripts/role-timeline.py` (search: "Count the state-change log only"), `tests/python/test_role_timeline.py` (search: "role_mapping.flip_detected speakers=speaker_0,speaker_1").
 
-During M16 diagnostics, the first role-timeline summary counted accepted flips whenever a
+During role diagnostics, the first role-timeline summary counted accepted flips whenever a
 timeline row had `decision == "accepted_flip"`. A single visible flip appears twice in the
 logs: once as the state-change row (`role_mapping.flip_detected`) and once as the downstream
 published role-call row (`role_inference.completed` with `flip_detected: true`). The artifact
@@ -144,8 +249,8 @@ still sounds mechanically plausible.
 **Created:** 2026-07-05
 **Evidence:** `strands_agents/nemo_session.py` (search: "_overlap_speaker_map").
 
-During M20 Phase 5, the per-window artifacts made held-tail speaker anchoring look like the
-small seam mechanism M16 had left open: c03 @83s had 18 held rows and wrong rows clustered at
+During overlap Phase 5, the per-window artifacts made held-tail speaker anchoring look like the
+small seam mechanism left open earlier: c03 @83s had 18 held rows and wrong rows clustered at
 window starts, so using the prior window's canonicalized held rows as extra overlap-vote
 references seemed safer than widening the NeMo/ASR window. The focused unit test passed and
 the mechanism changed no audio slicing, no GPU model, and no timestamp mode. Runtime replay
@@ -164,14 +269,14 @@ phase.
 **Created:** 2026-07-05
 **Evidence:** `scripts/eval-channel-ceiling.py` (search: "def channel_session_id"), `strands_agents/api/server.py` (search: "_validate_session_id").
 
-During M17 channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
+During channel-ceiling work, the first eval script posted human-readable session IDs such as `primock57-...-doctor` to `/transcribe/file`; FastAPI rejected them with `400 Bad Request` because the route validates caller-supplied session IDs. The next fix made deterministic UUIDs from fixture/role, but retries reused active in-memory session state during the reconnect grace window.
 
 **Lesson:** Eval tooling that creates server sessions must either omit session IDs and capture the generated one, or generate valid UUIDs with a run-specific salt. After changing session identity behavior, run the server path that validates the ID rather than only testing local helper formatting.
 
 ## Lesson: Persisted fixture commands must use unique slugs (2026-07-10)
 
 **Created:** 2026-07-10
-**What happened:** M02's three-run command used `consultation03`, which had been unique when
+**What happened:** A three-run command used `consultation03`, which had been unique when
 the plan was drafted but matched four WAVs after the local corpus expanded. The resolver
 correctly exited 2, while the outer loop repeated the same failure three times because its
 example omitted `set -e`.
@@ -186,7 +291,7 @@ the resolver once before committing to an expensive GPU batch.
 **What happened:** Role-timeline instrumentation initially inserted an eight-second settle
 before the corrected-fixture runner requested post-visit correction. The request then hung
 past the documented 120-second budget while reconnect grace expired, even though the live
-replay and timeline were already complete. M02 did not need correction to diagnose roles.
+replay and timeline were already complete. That run did not need correction to diagnose roles.
 **Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "request_correction" and
 "write_role_timeline").
 **Prevention:** In a harness with a grace-bound post-stop action, invoke that action before
@@ -196,7 +301,7 @@ for live-lane diagnostics instead of making unrelated correction success a prere
 ## Lesson: Targeted attribution deltas do not replace corpus-wide quality gates
 
 **Created:** 2026-07-12
-**What happened:** M04's stable two-identity alias passed two named same-span gates with nine
+**What happened:** A stable two-identity alias passed two named same-span gates with nine
 improvements, zero worsened spans, and no new identities, then reproduced all three flag-OFF
 hashes. The canonical 20-fixture run still regressed corrected strict by 1.290 points and raised
 incorrect-confident by 1.645 points, with large failures on two non-target c07 fixtures.
@@ -210,7 +315,7 @@ and default-OFF compatibility are exact.
 ## Lesson: A zero target count needs a causal guard event
 
 **Created:** 2026-07-12
-**What happened:** M05's exact guard-ON replay scored zero safe repeats, but logged no withheld row;
+**What happened:** An exact guard-ON replay scored zero safe repeats, but logged no withheld row;
 the retained 67-row/3-phantom target instead became 63 rows/10 phantoms and its original pair was
 not reproduced. The zero could not be attributed to the guard or prove no word loss.
 **Evidence:** `scripts/duplicate-transcript-score.py` (search: "def find_duplicate_pairs") and
@@ -223,10 +328,10 @@ count alone is not improvement when the input behavior or adjacent identity metr
 ## Lesson: Mixed JSONL metrics need exact event and phase filters
 
 **Created:** 2026-07-13
-**What happened:** M06's first delivery aggregation treated every JSONL object's `emitted_rows`
+**What happened:** A first delivery aggregation treated every JSONL object's `emitted_rows`
 as a per-window count. The file also contained `window_continuity.summary`, whose 274-row session
 total was then misreported as the largest browser burst; the real c01 maximum was 25 rows.
-**Evidence:** `var/quality/m06-emission-starvation-20260712T211015Z/retained-delivery-and-density-baseline.log`
+**Evidence:** Local-only evaluation artifacts; the figures above are the record.
 keeps the failed aggregation, while `retained-delivery-baseline-corrected.log` filters exact
 `nemo_session.window_continuity` events with `phase=chunk`.
 **Prevention:** Before reducing a mixed JSONL artifact, inspect its first and last object shapes
@@ -236,7 +341,7 @@ delivery metrics unless the metric explicitly includes them.
 ## Lesson: Cadence-quantized bounds need startup corpus coverage
 
 **Created:** 2026-07-13
-**What happened:** M06 selected a 10-second stability hold from two long-turn fixtures and both
+**What happened:** A 10-second stability hold from two long-turn fixtures and both
 projected at or below a 15-second browser batch interval. The target and browser gates passed,
 but the 20-fixture run found four 20-25-second first-batch intervals. The worst window had five
 stable clock-ready rows yet only 9.8 seconds of measured hold, so a strict 10-second comparison
@@ -251,7 +356,7 @@ the corpus delivery gate; mid-consultation target fixtures do not cover startup 
 ## Lesson: Regional WER interpretation needs cutoff parity and marker sensitivity
 
 **Created:** 2026-07-14
-**What happened:** M09 first recomputed overlap WER with rounded
+**What happened:** An overlap assessment first recomputed overlap WER with rounded
 `corrected-transcript.json.duration_seconds`. Raw parity stopped on day5-c04: the report used the
 row diagnostic's 541.33-second cutoff, while 541.3 moved one final word outside overlap (expected
 hyp=63, recomputed 62). After exact parity, qualitative reading also rejected treating raw WER as
@@ -259,7 +364,7 @@ literal word loss: `tokens()` counts TextGrid `<UNIN/>`, `<UNSURE>` wrappers, an
 `<INAUDIBLE_SPEECH/>` as reference words. They contributed 637/3,611 overlap tokens (17.6%); a
 tag-clean sensitivity still scored corrected overlap at 82.6%, but two simultaneous reference
 channels remain aligned to one mixed-mono stream.
-**Evidence:** `var/quality/overlap-speech-assessment-20260714T021304Z/overlap-sensitivity.json`
+**Evidence:** Local-only evaluation artifacts; the figures above are the record.
 reproduces all 20 accepted raw reports before stripping markers; `specimen-source.json` uses the
 same report-owned cutoffs.
 **Prevention:** Before interpreting a regional scorer as user loss, reproduce every raw S/I/D,
@@ -270,16 +375,16 @@ clinical-word-loss claim.
 ## Lesson: Check role_source before attributing a wrong role label to the scaffold
 
 **Created:** 2026-07-15
-**What happened:** The M05 role-fixture sweep first classified 5.3 `corrected-0216` ("else
+**What happened:** A role-fixture sweep first classified 5.3 `corrected-0216` ("else
 outside work?" duplicated on a PATIENT row) as a scaffold/crosstalk echo the cue lanes never
 touched. The role re-score then read the row's provenance: `role_source=post_visit_alignment`,
 proving the PRE-GUARD cleanup borrow assigned that PATIENT label (the exact phase-1 failure
 class, already fixed at HEAD by `_fragment_shares_patient_cue_words`). Only the row DUPLICATION
 itself is upstream identity debt; the label was cue-lane. The sweep document was corrected the
 same day.
-**Evidence:** `var/quality/m05-role-rescore-20260715T/role-rescore.json` (search:
+**Evidence:** Local-only evaluation artifacts; the figures above are the record.
 "corrected-0216") and the corrected paragraph in
-`var/quality/m05-role-fixture-sweep-20260715T/classification.md` (search:
+a local-only artifact (search:
 "disproved this sweep's first reading").
 **Prevention:** A corrected-row role label has two possible authors: the live scaffold or the
 cleanup lane. `role_source=post_visit_alignment` names the cleanup; its absence names the
@@ -312,3 +417,20 @@ snapshot.
 **Prevention:** Before scoring a generic state word such as increased, reduced, stopped, or
 unchanged, split the visible note into deterministic propositions and require the owning clinical
 topic in the same proposition. Never let one SOAP subject lend state to another.
+
+## Lesson: Grade rediar repairs at row level; runtime span counts exceed offline ledgers
+
+**Created:** 2026-07-22
+**What happened:** A mid-proof verifier hardcoded c02-150's offline grading
+(spans=1). The live run reported spans=5/replacements=4 - not policy drift:
+retention (`strands_agents/nemo_session.py`, search: "_session_folded_word_spans")
+records one entry per folded segment per emission tick, so one region logs as
+several records (c02's 7+3 pair), duplicates dedupe in `row_exceptions`, and a
+second real fold at ~4.96s surfaced that the offline set lacked. TextGrid truth
+confirmed all 3 repaired rows improved.
+**Evidence:** Local-only evaluation artifacts; the figures above are the record.
+`.{doctor,patient}.TextGrid` channels.
+**Prevention:** Gate on WHICH rows changed, where, and in what direction against
+truth - never on span/replacement counts vs offline ledgers. Expect runtime counts
+>= specimen counts everywhere; promotion gates must encode row-level expectations. On a
+count deviation, diff pre/post live history first.

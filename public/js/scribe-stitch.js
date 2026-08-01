@@ -1,5 +1,5 @@
 // =========================================================================
-// Ambient Scribe transcript stitching (display transform, summary UX M3).
+// Ambient Scribe transcript stitching (display transform, summary UX).
 // Merges adjacent same-speaker corrected rows into utterance blocks for the
 // Transcript tab and provenance popovers. Display-only: input rows are never
 // mutated, and every block keeps its constituent segment IDs so section
@@ -8,7 +8,7 @@
 // =========================================================================
 
 // Rows merge when the same speaker continues within this many seconds.
-// 2.0 s is the task default; recorded in .goat-flow/plans/scribe-summary-ux-plan.md.
+// 2.0 s is the chosen default; tests/js/scribe-stitch.test.js pins the behaviour.
 const STITCH_GAP_SECONDS = 2.0;
 
 /**

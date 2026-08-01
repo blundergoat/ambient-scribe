@@ -1,4 +1,4 @@
-// Unit tests for the M3 display-only stitching transform (summary UX plan).
+// Unit tests for the display-only stitching transform (summary UX plan).
 // Run with: npm run test:js (node --test, no dependencies).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

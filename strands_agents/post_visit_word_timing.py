@@ -5,13 +5,16 @@ After the user stops a visit, the correction pass re-runs ASR over retained
 audio. This module turns that pass's NeMo hypothesis into per-word timing rows
 and validates them against the display words, so the corrected lane can split
 echo-boundary rows without changing storage or browser contracts. Timing here
-is best-effort evidence: when anything disagrees, the answer is None and the
-corrected note renders exactly as it did before word timing existed.
+is best-effort evidence: only an exact punctuation-boundary split may be folded;
+every lexical, normalization, count, or monotonic-bound disagreement returns
+None and the corrected note renders exactly as it did before word timing existed.
 """
 
 from __future__ import annotations
 
 import logging
+import math
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +43,136 @@ class PostVisitTranscription:
     text: str
     word_timings: list[dict[str, Any]] | None = None
     word_confidences: list[float] | None = None
+
+
+def reconcile_punctuation_only_word_timings(
+    word_timings: list[dict[str, Any]] | None,
+    words: list[str],
+) -> list[dict[str, Any]] | None:
+    """Fold exact punctuation-only timing splits onto display words.
+
+    NeMo derives display words and native timestamp words through separate
+    token-boundary paths. A punctuation token can therefore receive its own
+    valid timing row even though the same punctuation remains attached to one
+    whitespace-split display word. This helper accepts only that structural
+    difference: raw timing words must concatenate exactly to the display word,
+    and each folded group must contain exactly one alphanumeric component plus
+    one or more punctuation-only components.
+
+    Args:
+        word_timings: Native or estimated timing rows in spoken order.
+        words: Whitespace-split words shown in the corrected transcript.
+
+    Returns:
+        Timing rows aligned one-to-one with `words`, or None when any lexical,
+        normalization, count, or monotonic-bound difference would require a guess.
+    """
+    if not word_timings or not words:
+        return None
+
+    normalized_timings: list[dict[str, Any]] = []
+    previous_start = -math.inf
+    previous_end = -math.inf
+    # Every row must carry finite, ordered bounds before any rows can be folded.
+    for timing in word_timings:
+        if not isinstance(timing, dict):
+            return None
+
+        start = _finite_timing_bound(timing.get("start"))
+        end = _finite_timing_bound(timing.get("end"))
+        if (
+            start is None
+            or end is None
+            or start < 0.0
+            or end < start
+            or start < previous_start
+            or end < previous_end
+        ):
+            return None
+
+        normalized_timings.append(
+            {
+                "word": str(timing.get("word", "")),
+                "start": start,
+                "end": end,
+            }
+        )
+        previous_start = start
+        previous_end = end
+
+    aligned_timings: list[dict[str, Any]] = []
+    timing_index = 0
+    punctuation_folds = 0
+    for display_word in words:
+        if timing_index >= len(normalized_timings):
+            return None
+
+        current_timing = normalized_timings[timing_index]
+        # Already-aligned rows still pass through the numeric/monotonic gate above.
+        if current_timing["word"] == display_word:
+            aligned_timings.append(current_timing)
+            timing_index += 1
+            continue
+
+        timing_group: list[dict[str, Any]] = []
+        concatenated_word = ""
+        # A fold is viable only while the raw concatenation remains an exact prefix.
+        while timing_index < len(normalized_timings):
+            timing_group.append(normalized_timings[timing_index])
+            concatenated_word += str(normalized_timings[timing_index]["word"])
+            timing_index += 1
+
+            if concatenated_word == display_word:
+                break
+            if not display_word.startswith(concatenated_word):
+                return None
+
+        if concatenated_word != display_word or len(timing_group) < 2:
+            return None
+
+        punctuation_components = [
+            timing
+            for timing in timing_group
+            if _is_punctuation_only(str(timing["word"]))
+        ]
+        lexical_components = [
+            timing
+            for timing in timing_group
+            if not _is_punctuation_only(str(timing["word"]))
+        ]
+        # Multiple lexical pieces could represent a real word-boundary change,
+        # so only one lexical token plus punctuation tokens may be combined.
+        if (
+            len(punctuation_components) == 0
+            or len(lexical_components) != 1
+            or not any(
+                character.isalnum() for character in str(lexical_components[0]["word"])
+            )
+        ):
+            return None
+
+        aligned_timings.append(
+            {
+                "word": display_word,
+                "start": timing_group[0]["start"],
+                "end": timing_group[-1]["end"],
+            }
+        )
+        punctuation_folds += 1
+
+    if timing_index != len(normalized_timings):
+        return None
+
+    if punctuation_folds > 0:
+        logger.info(
+            "post_visit_correction.word_timings_punctuation_reconciled",
+            extra={
+                "timing_rows": len(normalized_timings),
+                "words": len(words),
+                "folds": punctuation_folds,
+            },
+        )
+    return aligned_timings
 
 
 def validated_word_timings(
@@ -311,3 +444,23 @@ def _hypothesis_scalar(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _finite_timing_bound(value: Any) -> float | None:
+    """Return one finite numeric timing bound without treating booleans as seconds."""
+    if isinstance(value, bool):
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    return numeric_value if math.isfinite(numeric_value) else None
+
+
+def _is_punctuation_only(value: str) -> bool:
+    """Return whether a non-empty timing token contains Unicode punctuation only."""
+    return value != "" and all(
+        unicodedata.category(character).startswith("P") for character in value
+    )

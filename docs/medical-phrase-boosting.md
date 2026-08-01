@@ -74,9 +74,9 @@ The evaluator prints the before/after table, checks the runtime SHA-256
 binding, and fails when any executable pair lacks an active ledger row or any
 guard sentence gets rewritten. The audit additionally validates provenance,
 review identity, privacy exclusions, and sweeps every executable variant
-against the ten frozen development consultations so a variant can never
+against the ten selected development consultations so a variant can never
 rewrite words a real speaker said.
 
-Decode-time transducer phrase boosting is still a human GPU gate for M11. Prove
+Decode-time transducer phrase boosting is still a human GPU gate. Prove
 the exact NeMo 2.7.x API inside the pinned NeMo container before replacing the
 post-ASR fallback.

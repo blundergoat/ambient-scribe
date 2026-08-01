@@ -1,5 +1,5 @@
 // =========================================================================
-// Ambient Scribe summary panel tabs (summary UX M4).
+// Ambient Scribe summary panel tabs (summary UX).
 // Runs after scribe-output.js; owns the Note/Transcript tab switch and the
 // Transcript tab body. Layout only - no provenance interaction yet.
 // Transcript rows come from the corrected artifact via the same-origin
@@ -13,7 +13,7 @@
 let activeSummaryTabName = 'note';
 let correctedTranscriptRowsCache = null;
 let correctedTranscriptCacheSessionId = null;
-// The deep link (M6) awaits the in-flight tab render before highlighting.
+// The deep link awaits the in-flight tab render before highlighting.
 let transcriptRenderPromise = null;
 const MISSING_CITATION_NOTICE_MILLISECONDS = 4000;
 let missingCitationNoticeTimeout = null;
@@ -72,7 +72,7 @@ function selectSummaryTab(tabName) {
 
 /**
  * Switches to the Transcript tab and highlights the cited utterance blocks.
- * Use from a provenance popover's "Open in transcript" action (M6): the
+ * Use from a provenance popover's "Open in transcript" action: the
  * first cited block scrolls into view and every cited block stays highlighted
  * until the clinician returns to the Note tab.
  * When no cited ID is present in the rendered transcript, a small
@@ -155,7 +155,7 @@ function hideMissingCitationNotice() {
 }
 
 /**
- * Shows the temporary "cited rows not in this view" notice (M6 miss case).
+ * Shows the temporary "cited rows not in this view" notice (deep-link miss case).
  * Use when a deep link resolves zero blocks; the notice self-hides so it
  * never blocks reading the transcript.
  */

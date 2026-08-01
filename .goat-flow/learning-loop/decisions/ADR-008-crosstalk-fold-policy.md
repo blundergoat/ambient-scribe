@@ -3,15 +3,15 @@
 **Status:** Rejected
 **Date:** 2026-07-12
 **Updated:** 2026-07-12 (corpus quality regressed; keep both candidates disabled)
-**Ticket/Context:** 0.4.0-slice-2 M04
+**Ticket/Context:** 0.4.0-slice-2 crosstalk fold policy
 
 ## Context
 
 The streaming speaker cap currently decides whether a cache slot is real from stable emitted
-word duration alone (`strands_agents/nemo_session.py`, search: "marginal_below"). M04 Phase 0
-confirmed that this folds real Patient turns into the visible Doctor stream: day3 window 15
-and day2 windows 98/101 in
-`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase0-verdict.md`.
+word duration alone (`strands_agents/nemo_session.py`, search: "marginal_below"). Phase 0 tracing
+confirmed that this folds real Patient turns into the visible Doctor stream, reproduced at day3
+window 15 and day2 windows 98/101. Those replay artifacts were local-only; the reproducible
+anchor is the `marginal_below` rule cited above.
 
 The engine already measures cumulative voiced frames independently of delayed/stabilized words
 (`strands_agents/nemo_streaming_engine.py`, search: "speaker_slot_voiced_frame_counts"). At the
@@ -51,7 +51,7 @@ fold remains the user-facing path while the flag is off.
 | Keep sustained origin visible | Full-corpus strictness improves, but raw cache identities become extra source chips: 10 -> 18 phantom identities. | Rejected by the first Phase 2 corpus. |
 | Alias sustained marginal origin to the less-spoken canonical identity for the visit | It fixes the named bleed and removes the third chip, but a cache identity later carries minority Doctor spans that the stable Patient alias misroutes. | Rejected by day3 grounded acceptance: 14 harmful folds vs combined target <=6. |
 | Defer every marginal row for another window | Truly short answers may never emit another row, delaying the UI and still folding on timeout. | Rejected for live cadence and the day3 consent span. |
-| Fold with origin metadata for later re-splitting | Requires a new correction/API attribution contract outside M04's approved boundary. | Deferred to a separately approved contract change. |
+| Fold with origin metadata for later re-splitting | Requires a new correction/API attribution contract outside the approved boundary. | Deferred to a separately approved contract change. |
 
 ## Reversibility
 

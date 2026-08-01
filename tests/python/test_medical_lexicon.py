@@ -261,7 +261,7 @@ def test_review_table_classifies_every_active_lexicon_row():
 
 
 def test_medical_boost_eval_script_scores_review_table():
-    """The CPU evaluator prints the before/after table used for M14 evidence."""
+    """The CPU evaluator prints the before/after table used for lexicon evidence."""
     completed = subprocess.run(
         [sys.executable, str(EVALUATOR_PATH)],
         check=True,
@@ -381,7 +381,7 @@ def test_explicit_zero_still_disables_medical_correction(tmp_path, monkeypatch):
     assert segments[0].text == "continue metro pro lol daily"
 
 
-# --- M04: consult-1.2 medication variants (observed in the corrected lane) ---
+# --- consult-1.2 medication variants (observed in the corrected lane) ---
 
 # One observed misspelling per canonical, exactly as the corrected rows stored
 # them (m02-acceptance replay). These are the four clinician-reviewed targets.

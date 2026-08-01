@@ -1,6 +1,6 @@
 # ADR-002: Mercure Topics Per Session (Raw + Roles + Summary + Hints)
 
-**Date:** 2026-03-14 (documented; decision made during M2 design)
+**Date:** 2026-03-14 (documented; decision made during Mercure transport design)
 **Status:** Implemented; role-label wording superseded by 0.3.0 medical-only UI
 **Updated:** 2026-07-05
 

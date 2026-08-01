@@ -1,6 +1,6 @@
 # ADR-001: NeMo as GPU Singleton with ThreadPoolExecutor
 
-**Date:** 2026-03-14 (documented; decision made during M1)
+**Date:** 2026-03-14 (documented; decision made during initial GPU bring-up)
 **Status:** Accepted
 
 ## Context

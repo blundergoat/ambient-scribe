@@ -28,7 +28,7 @@
 #   ROLE_AGENT_MODEL_PROVIDER - Role inference backend: 'ollama' or 'bedrock'
 #   MODEL_PROVIDER            - Legacy alias for ROLE_AGENT_MODEL_PROVIDER
 #   NEMO_SESSION_ENGINE - Transcription engine (default here: 'streaming', the
-#                         M22 session-long identity engine; set 'windowed' to
+#                         session-long identity engine; set 'windowed' to
 #                         compare against the legacy per-window engine)
 #   AGENT_PORT     - NeMo agent starting port (default: 48101)
 #   AGENT_PORT_MAX - Highest NeMo agent port to try (default: 48110)
@@ -257,7 +257,7 @@ if [[ "$HAS_NVIDIA_SMI" != "true" && "$NEMO_MODEL_PROVIDER" == "local" ]]; then
 fi
 
 export NEMO_MODEL_PROVIDER
-# Daily dev runs the session-long streaming engine (M22) so speaker identity
+# Daily dev runs the session-long streaming engine so speaker identity
 # cannot swap mid-visit; compose/CI keep the windowed default until Phase 4
 # flips it. Override with NEMO_SESSION_ENGINE=windowed for A/B comparisons.
 # The mock pipeline cannot construct a streaming engine (it raises at the

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe word confidence through the REAL session-long streaming engine.
 
-Use this developer-only spike (0.4.0 M06 phase 2 pre-wiring) before persisting
+Use this developer-only spike (0.4.0 confidence spike, phase 2 pre-wiring) before persisting
 per-row confidence for live transcript rows. Phase 1 proved confidence in
 OFFLINE transcribe mode only; the live path decodes step-by-step through
 `StreamingSessionEngine`, so this probe runs inside the NeMo container, feeds
@@ -233,7 +233,7 @@ def run_streaming_pass(
 
     try:
         # Uniform chunks mirror the eval harness cadence; the probe tests the
-        # decode mechanism, not cadence shape (that is M02's separate lane).
+        # decode mechanism, not cadence shape (that is a separate lane).
         for chunk_start in range(0, len(pcm_audio), chunk_bytes):
             emitted_rows.extend(
                 engine.feed(pcm_audio[chunk_start : chunk_start + chunk_bytes])

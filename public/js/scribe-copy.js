@@ -1,5 +1,5 @@
 /**
- * Semantic copy for the transcript and the draft note (M03).
+ * Semantic copy for the transcript and the draft note.
  *
  * Clinicians paste transcript and note text into the clinical record, so what
  * lands on the clipboard must be built from application state - never from
@@ -122,9 +122,9 @@ function claimReviewFlags(claim) {
     return {
         // An uncited claim has no transcript evidence at all - review required.
         uncited: (claim?.evidence_basis ?? 'none') === 'none',
-        // Deterministic review reasons (M05 lanes, quote mismatch) travel per claim.
+        // Deterministic review reasons (reason lanes, quote mismatch) travel per claim.
         reasonFlagged: (claim?.review_reasons ?? []).length > 0,
-        // The M03 threshold cue: cited wording is predominantly low-confidence.
+        // The threshold cue: cited wording is predominantly low-confidence.
         wordingReview: claim?.wording_review === true,
     };
 }
@@ -220,7 +220,7 @@ function automatedReviewSummaryFor(statusModel) {
             `${countedNoun(reasonFlaggedClaimCount, 'claim')} flagged by automated review checks`
         );
     }
-    // The claim-scoped M03 cue: cited wording came from uncertain audio.
+    // The claim-scoped cue: cited wording came from uncertain audio.
     if (wordingReviewClaimCount > 0) {
         reviewReasons.push(
             `${countedNoun(wordingReviewClaimCount, 'claim')} from low-confidence wording`
@@ -265,7 +265,7 @@ function countedNoun(itemCount, noun) {
  *
  * @param {object} statusModel - current note state:
  *   phase: 'waiting'|'generating'|'blocked'|'failed'|'generated'; unknown acts like 'failed'.
- *   sourceState: M02 source_state; null before a note exists.
+ *   sourceState: source_state; null before a note exists.
  *   blockedReason: backend blocked reason; null unless phase is 'blocked'.
  *   roleSettlement: 'settled'|'failed_frozen'|null; frozen forces a review flag.
  *   unverifiedCount / lowConfidenceCount: automated flags; missing counts as zero.
@@ -525,7 +525,7 @@ function v2ClaimExportText(claim) {
         // A reason without wording still may not vanish from the paste.
         exportParts.push(`[Review: ${reasonText || 'automated review flag'}]`);
     }
-    // The claim-scoped low-confidence cue keeps the established M03 marker.
+    // The claim-scoped low-confidence cue keeps the established marker.
     if (claimFlags.wordingReview) {
         exportParts.push('[Low confidence]');
     }

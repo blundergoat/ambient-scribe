@@ -516,7 +516,7 @@ class TestTranscriptionEndpoints:
                         "end": 2.4,
                         "is_interim": False,
                         # Every emitted row carries the stable ID clinicians can
-                        # target with a per-row role correction (M20 Phase 2).
+                        # target with a per-row role correction (role-correction phase).
                         "segment_id": "seg-0001",
                         "revision": 1,
                     }

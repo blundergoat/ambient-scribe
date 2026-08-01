@@ -38,7 +38,7 @@ ROLE_EVIDENCE_OPENING_UTTERANCES = 3
 ROLE_EVIDENCE_MAX_TEXT_CHARS = 120
 ROLE_EVIDENCE_MAX_SPEAKERS = 6
 
-# Speaker-identity stability gate for the browser confidence badge. M20 Phase 0
+# Speaker-identity stability gate for the browser confidence badge. An overlap Phase 0 run
 # measured 0.87-1.13 anchor remaps per window on every misleading PriMock
 # session, so any threshold well below that band behaves identically on the
 # corpus; 0.2 leaves headroom for genuinely clean close-mic audio to earn a
@@ -53,7 +53,7 @@ RunRoleInference = Callable[
 role_inference_queues: dict[str, asyncio.Queue[list[dict[str, Any]] | None]] = {}
 role_inference_workers: dict[str, asyncio.Task[None]] = {}
 
-# --- Terminal role settlement (M02 source integrity) -------------------------
+# --- Terminal role settlement (source integrity) -------------------------
 # When the clinician stops a visit, the note source must not change under a
 # late role result. Settlement waits for the queued tail work to drain, then
 # closes the visit's role revision: results after closure are rejected stale.

@@ -24,6 +24,7 @@ ROLE_TIMELINE_SETTLE_SECONDS="${EVAL_ROLE_TIMELINE_SETTLE_SECONDS:-1}"
 REQUIRE_STRUCTURED_LOGS="${EVAL_REQUIRE_STRUCTURED_LOGS:-0}"
 SECONDS_LIMIT="${EVAL_FIXTURE_SECONDS:-}"
 REPORT_ONLY=0
+DEVELOPMENT_CORPUS_REQUESTED=0
 declare -a FIXTURE_QUERIES=()
 declare -a FIXTURE_PATHS=()
 declare -a REPORT_ROWS=()
@@ -33,12 +34,20 @@ usage() {
 Usage:
   scripts/eval-fixtures.sh [--seconds N] <fixture-stem-or-wav> [...]
   scripts/eval-fixtures.sh [--seconds N] --all
+  scripts/eval-fixtures.sh [--seconds N] --development-corpus
   scripts/eval-fixtures.sh --report
 
 Examples:
   scripts/eval-fixtures.sh --seconds 60 consultation03-i-have-terrible-headache
   scripts/eval-fixtures.sh --all
+  scripts/eval-fixtures.sh --development-corpus
   scripts/eval-fixtures.sh --report
+
+Corpus behavior:
+  --development-corpus runs exactly the ten manifest-authorized fixtures in
+  manifest order, validated by scripts/development-corpus.py before any audio
+  is opened. It fails closed on manifest, order, or hash drift and cannot be
+  combined with named fixtures or --all.
 
 Environment:
   AGENT_HTTP_URL              default http://localhost:48101
@@ -68,6 +77,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all)
       FIXTURE_QUERIES+=("__all__")
+      shift
+      ;;
+    --development-corpus)
+      DEVELOPMENT_CORPUS_REQUESTED=1
       shift
       ;;
     --report)
@@ -146,7 +159,7 @@ print(
     "strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err"
 )
 # Each report row is one fixture's latest saved visit. Strict attribution is
-# the M20 headline (uncertain rows count as incorrect); the free oracle stays
+# the overlap headline (uncertain rows count as incorrect); the free oracle stays
 # diagnostic only.
 for fixture, row in sorted(latest_by_fixture.items()):
     metrics = row["metrics"]
@@ -225,6 +238,50 @@ resolve_fixtures() {
     echo "Generate them first: python3 scripts/generate-demo-consultation-audio.py" >&2
     exit 2
   fi
+}
+
+resolve_development_corpus_fixtures() {
+  # The frozen ten-fixture manifest is the only authorization for this mode;
+  # combining it with named fixtures or --all would reintroduce implicit
+  # discovery beside the approved corpus.
+  if [[ ${#FIXTURE_QUERIES[@]} -gt 0 ]]; then
+    echo "error: --development-corpus cannot be combined with fixture names or --all" >&2
+    exit 2
+  fi
+
+  # Authorization, order, and hash checks live in scripts/development-corpus.py;
+  # any rejection there stops this runner before audio access.
+  local corpus_json
+  if ! corpus_json="$("$PYTHON_BIN" scripts/development-corpus.py --json)"; then
+    echo "error: development corpus validation rejected the run; no fixture was opened" >&2
+    exit 2
+  fi
+
+  local corpus_stems
+  if ! corpus_stems="$("$PYTHON_BIN" - "$corpus_json" <<'PY'
+import json
+import sys
+
+corpus = json.loads(sys.argv[1])
+
+# Anything but a fully valid ten-fixture answer keeps the runner closed.
+if corpus.get("status") != "valid" or corpus.get("fixture_count") != 10:
+    raise SystemExit("development corpus response is not a valid ten-fixture set")
+
+for stem in corpus["stems"]:
+    print(stem)
+PY
+  )"; then
+    echo "error: development corpus output failed validation; no fixture was opened" >&2
+    exit 2
+  fi
+
+  # Approved paths are the manifest's exact locations, kept in manifest order;
+  # no find-based discovery runs in this mode.
+  local corpus_stem
+  while IFS= read -r corpus_stem; do
+    FIXTURE_PATHS+=("tests/fixtures/audio/${corpus_stem}.wav")
+  done <<<"$corpus_stems"
 }
 
 require_ready_agent() {
@@ -728,7 +785,7 @@ if previous is not None:
         previous_value = previous.get("metrics", {}).get(key)
         current_value = metrics.get(key)
 
-        # Missing old attribution values are expected until the first M16 run lands.
+        # Missing old attribution values are expected until the first role-diagnostics run lands.
         if isinstance(previous_value, (int, float)) and isinstance(
             current_value, (int, float)
         ):
@@ -839,7 +896,7 @@ PY
   # The role queue keeps applying tail-batch flips for several seconds after
   # disconnect; the timeline step sleeps for that settle window, so history is
   # fetched AFTER it to score the final labels the clinician actually sees.
-  # Fetching earlier made attribution depend on a fetch-vs-flip race (M20).
+  # Fetching earlier made attribution depend on a fetch-vs-flip race.
   write_role_timeline "$session_id" "$timeline_path" "$quality_path"
   fetch_history "$session_id" "$history_path"
   assert_no_websocket_errors "$session_id"
@@ -873,34 +930,48 @@ PY
   )
 }
 
-if [[ "$REPORT_ONLY" -eq 1 ]]; then
-  print_trend_report
-  exit 0
+main() {
+  if [[ "$REPORT_ONLY" -eq 1 ]]; then
+    print_trend_report
+    exit 0
+  fi
+
+  # The frozen development corpus bypasses find-based discovery entirely.
+  if [[ "$DEVELOPMENT_CORPUS_REQUESTED" -eq 1 ]]; then
+    resolve_development_corpus_fixtures
+  else
+    resolve_fixtures
+  fi
+  require_ready_agent
+  require_structured_agent_logs
+  mkdir -p "$RUN_DIR" "$(dirname "$TREND_FILE")"
+
+  local fixture_path
+  for fixture_path in "${FIXTURE_PATHS[@]}"; do
+    run_fixture "$fixture_path"
+  done
+
+  printf '\nAmbient Scribe fixture eval\n'
+  printf '%s%s\n' \
+    'fixture                                      cutoff  recall   dup   wer   frag  seam ' \
+    'strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err'
+  local row
+  for row in "${REPORT_ROWS[@]}"; do
+    IFS=$'\t' read -r \
+      fixture cutoff recall duplication wer fragment seam \
+      strict delta_strict coverage incorrect_confident ceiling oracle \
+      attribution delta_attribution phantoms flips confidence errors \
+      <<<"$row"
+    printf '%-44s %6s %6s %5s %5s %5s %5s %6s %7s %5s %5s %5s %6s %5s %6s %5s %5s %5s %3s\n' \
+      "$fixture" "$cutoff" "$recall" "$duplication" "$wer" "$fragment" "$seam" \
+      "$strict" "$delta_strict" "$coverage" "$incorrect_confident" "$ceiling" \
+      "$oracle" "$attribution" "$delta_attribution" "$phantoms" "$flips" \
+      "$confidence" "$errors"
+  done
+  printf '\ntrend: %s\nrun artifacts: %s\n' "$TREND_FILE" "$RUN_DIR"
+}
+
+# Sourced smokes may exercise corpus selection without starting a real replay.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-resolve_fixtures
-require_ready_agent
-require_structured_agent_logs
-mkdir -p "$RUN_DIR" "$(dirname "$TREND_FILE")"
-
-for fixture_path in "${FIXTURE_PATHS[@]}"; do
-  run_fixture "$fixture_path"
-done
-
-printf '\nAmbient Scribe fixture eval\n'
-printf '%s%s\n' \
-  'fixture                                      cutoff  recall   dup   wer   frag  seam ' \
-  'strict dStrict cover incWr  ceil  oracl attr  dAttr phant flips  conf  err'
-for row in "${REPORT_ROWS[@]}"; do
-  IFS=$'\t' read -r \
-    fixture cutoff recall duplication wer fragment seam \
-    strict delta_strict coverage incorrect_confident ceiling oracle \
-    attribution delta_attribution phantoms flips confidence errors \
-    <<<"$row"
-  printf '%-44s %6s %6s %5s %5s %5s %5s %6s %7s %5s %5s %5s %6s %5s %6s %5s %5s %5s %3s\n' \
-    "$fixture" "$cutoff" "$recall" "$duplication" "$wer" "$fragment" "$seam" \
-    "$strict" "$delta_strict" "$coverage" "$incorrect_confident" "$ceiling" \
-    "$oracle" "$attribution" "$delta_attribution" "$phantoms" "$flips" \
-    "$confidence" "$errors"
-done
-printf '\ntrend: %s\nrun artifacts: %s\n' "$TREND_FILE" "$RUN_DIR"

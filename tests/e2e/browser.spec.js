@@ -32,7 +32,7 @@ async function injectFakeSegments(page, count = 3) {
         text: `Test segment number ${i + 1}`,
         start: i * 2.0,
         end: i * 2.0 + 1.5,
-        // Live segments carry the stable row ID minted at emission (M20).
+        // Live segments carry the stable row ID minted at emission.
         segment_id: `seg-000${i + 1}`,
       });
     }
@@ -194,7 +194,7 @@ test.describe("Transcript controls", () => {
   });
 });
 
-test.describe("Semantic copy separators (M03)", () => {
+test.describe("Semantic copy separators", () => {
   test("selection across adjacent same-speaker rows keeps literal spaces", async ({
     page,
   }) => {
@@ -226,7 +226,7 @@ test.describe("Semantic copy separators (M03)", () => {
   });
 });
 
-test.describe("Semantic copy and status axes (M03)", () => {
+test.describe("Semantic copy and status axes", () => {
   /** A note payload shaped like consult 1.2: cited sections whose count
    *  buttons ("11/1/2/6") once leaked into whole-panel copies. */
   const citedSummaryBody = {
@@ -275,7 +275,7 @@ test.describe("Semantic copy and status axes (M03)", () => {
         ...extraFinalizedFields,
       });
     }, finalizedEvent);
-    // Finalizing settles correction and unlocks the on-demand note (M11).
+    // Finalizing settles correction and unlocks the on-demand note.
     await page.click("#generateSummaryBtn");
     await page.waitForSelector("#summaryContent .summary-section");
   }
@@ -520,7 +520,7 @@ test.describe("Role confidence badge stability gating", () => {
     await expect(badge).toHaveClass(/bg-amber-100/);
   });
 
-  test("servers without stability reporting keep the pre-M20 badge behavior", async ({
+  test("servers without stability reporting keep the earlier badge behavior", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -784,7 +784,7 @@ test.describe("Accessibility", () => {
   });
 });
 
-test.describe("Summary provenance (M5)", () => {
+test.describe("Summary provenance", () => {
   test("cited section shows a superscript affordance whose popover holds the stitched source", async ({
     page,
   }) => {
@@ -897,7 +897,7 @@ test.describe("Summary provenance (M5)", () => {
     );
   });
 
-  test("deep link highlights cited blocks until Note is selected and skips uncited rows (M6)", async ({
+  test("deep link highlights cited blocks until Note is selected and skips uncited rows", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -983,7 +983,7 @@ test.describe("Summary provenance (M5)", () => {
     await expect(citedBlocks).toHaveCount(0);
   });
 
-  test("deep link shows a non-blocking notice when cited rows are missing (M6)", async ({
+  test("deep link shows a non-blocking notice when cited rows are missing", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -1197,7 +1197,7 @@ test.describe("Summary provenance (M5)", () => {
   });
 });
 
-test.describe("Summary input provenance (M08)", () => {
+test.describe("Summary input provenance", () => {
   test("HTTP summary keeps a persistent notice when middle transcript rows were omitted", async ({
     page,
   }) => {
@@ -1222,9 +1222,9 @@ test.describe("Summary input provenance (M08)", () => {
     );
     await injectFakeSegments(page, 2);
 
-    // The M02 gate requires an attested terminal transcript before any note;
+    // The source-integrity gate requires an attested terminal transcript before any note;
     // Finalizing starts correction; its settled outcome unlocks Generate
-    // summary (M11), which the test presses exactly like the clinician would.
+    // summary, which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1369,9 +1369,9 @@ test.describe("Post-visit correction before summary", () => {
     await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 2);
 
-    // The M02 gate requires an attested terminal transcript before any note;
+    // The source-integrity gate requires an attested terminal transcript before any note;
     // Finalizing starts correction; its settled outcome unlocks Generate
-    // summary (M11), which the test presses exactly like the clinician would.
+    // summary, which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1402,9 +1402,9 @@ test.describe("Post-visit correction before summary", () => {
     await stubSummaryRoute(page, summaryCalls, requestOrder);
     await injectFakeSegments(page, 1);
 
-    // The M02 gate requires an attested terminal transcript before any note;
+    // The source-integrity gate requires an attested terminal transcript before any note;
     // Finalizing starts correction; its settled outcome unlocks Generate
-    // summary (M11), which the test presses exactly like the clinician would.
+    // summary, which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1453,9 +1453,9 @@ test.describe("Post-visit correction before summary", () => {
     );
     await injectFakeSegments(page, 1);
 
-    // The M02 gate requires an attested terminal transcript before any note;
+    // The source-integrity gate requires an attested terminal transcript before any note;
     // Finalizing starts correction; its settled outcome unlocks Generate
-    // summary (M11), which the test presses exactly like the clinician would.
+    // summary, which the test presses exactly like the clinician would.
     await page.evaluate(() => {
       handleRawSegment({
         type: "finalized",
@@ -1565,7 +1565,7 @@ test.describe("Post-visit correction before summary", () => {
   });
 });
 
-test.describe("Live-stop finalize drain (M21)", () => {
+test.describe("Live-stop finalize drain", () => {
   /** Puts the page into a live-recording state without a microphone. */
   async function enterLiveRecordingState(page) {
     // The real UI transition hides Start and shows Stop, so drain assertions
@@ -1606,8 +1606,8 @@ test.describe("Live-stop finalize drain (M21)", () => {
     });
 
     // Drain ends: tail row visible, visit closed. The note is on demand
-    // (M11); the click sends exactly one request whose body carries the
-    // tail row the pre-M21 race used to lose.
+    // ; the click sends exactly one request whose body carries the
+    // tail row the earlier race used to lose.
     await expect(page.locator("#status")).toContainText("Session ended");
     await expect(page.locator("#startBtn")).toBeVisible();
     await expect(
@@ -1686,7 +1686,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
       "Waiting for the final transcript",
     );
     // The on-demand button must stay locked too - it can never authorize
-    // a note from a pre-terminal snapshot (M11 preserves the M02 gate).
+    // a note from a pre-terminal snapshot (the on-demand note preserves the source-integrity gate).
     await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
     await page.waitForTimeout(2000);
     expect(summaryCalls.length).toBe(0);
@@ -1711,7 +1711,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
     expect(summaryCalls.length).toBe(0);
 
     // The backend finally finishes (slow finalize/backlog): the attested
-    // terminal source arrives and UNLOCKS the on-demand note (M11) - it
+    // terminal source arrives and UNLOCKS the on-demand note - it
     // never starts one by itself.
     await page.evaluate(() =>
       handleRawSegment({
@@ -1764,7 +1764,7 @@ test.describe("Live-stop finalize drain (M21)", () => {
 
 });
 
-test.describe("Replay on-demand summary (M11)", () => {
+test.describe("Replay on-demand summary", () => {
   test("replay stop settles correction before the button unlocks; clicking starts summary", async ({
     page,
   }) => {
@@ -1791,7 +1791,7 @@ test.describe("Replay on-demand summary (M11)", () => {
   });
 });
 
-test.describe("Chronological transcript insertion (M22 refinements)", () => {
+test.describe("Chronological transcript insertion (refinements)", () => {
   test("a late same-speaker continuation stays in the preceding card", async ({
     page,
   }) => {
@@ -1918,7 +1918,7 @@ test.describe("Chronological transcript insertion (M22 refinements)", () => {
   });
 });
 
-test.describe("Row confidence passthrough (M06)", () => {
+test.describe("Row confidence passthrough", () => {
   test("a measured row keeps its value and summary snapshot without a review cue", async ({
     page,
   }) => {
@@ -1965,7 +1965,7 @@ test.describe("Row confidence passthrough (M06)", () => {
   });
 });
 
-test.describe("Claim-level provenance (schema v2, M06)", () => {
+test.describe("Claim-level provenance (schema v2)", () => {
   /**
    * A hydrated v2 payload in the server's exact shape: a cited claim whose
    * unit carries display context, a second claim citing the same unit, an
@@ -2240,7 +2240,7 @@ test.describe("Claim-level provenance (schema v2, M06)", () => {
   });
 });
 
-test.describe("Summary failure copy (M10)", () => {
+test.describe("Summary failure copy", () => {
   /** Drives the attested stop flow into a stubbed 502 with the given body. */
   async function failSummaryWith(page, failureBody) {
     await stubCorrectionRoute(page, [], []);
@@ -2297,7 +2297,7 @@ test.describe("Summary failure copy (M10)", () => {
   });
 });
 
-test.describe("Two-sided transcript + on-demand summary (M11)", () => {
+test.describe("Two-sided transcript + on-demand summary", () => {
   test("doctor and patient turns sit on opposite sides; unknown stays neutral", async ({
     page,
   }) => {
@@ -2441,7 +2441,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
     await expect(page.locator("#summaryPending")).toHaveClass(/summary-pending--ready/);
 
     // No click, no note - ever. The free correction DOES warm up on finalize
-    // (M12) so a long reading pause cannot cost the corrected lane.
+    // so a long reading pause cannot cost the corrected lane.
     await page.waitForTimeout(1500);
     expect(summaryCalls.length).toBe(0);
     expect(correctionCalls.length).toBe(1);
@@ -2461,7 +2461,7 @@ test.describe("Two-sided transcript + on-demand summary (M11)", () => {
   });
 });
 
-test.describe("Pause and continue (M11)", () => {
+test.describe("Pause and continue", () => {
   test("pause suspends the visit without finalizing; continue and stop still work", async ({
     page,
   }) => {

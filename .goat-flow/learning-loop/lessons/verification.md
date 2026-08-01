@@ -1,15 +1,15 @@
 ---
 category: verification
-last_reviewed: 2026-07-20
+last_reviewed: 2026-08-01
 ---
 
 # READ / SCOPE / VERIFY Lessons
 
 ## Lesson: When a milestone makes timing user-controlled, re-verify every timer it now races
 
-**Added:** 2026-07-16 · **Trigger:** user-reported regression after M11 acceptance testing
+**Added:** 2026-07-16 · **Trigger:** user-reported regression after on-demand-summary acceptance testing
 
-M11 replaced the instant auto-summary with an on-demand button, converting
+The on-demand-summary change replaced the instant auto-summary with an on-demand button, converting
 "time between finalize and summarize" from ~0 ms into an unbounded user decision. The
 milestone's RISKY investigation proved MID-VISIT pause tolerance (WS idle, `SESSION_TTL`,
 audio-time windows) but nobody re-checked POST-FINALIZE timers — and
@@ -29,13 +29,12 @@ every timeout/TTL/grace between the old trigger point and its new latest-possibl
 longest-delay case to the milestone's Manual gate.
 
 **Created:** 2026-07-12
-**What happened:** M04's first guarded replay correctly kept a dominant speaker visible, but
+**What happened:** A first guarded replay correctly kept a dominant speaker visible, but
 reported `keep_sustained_voice` because the diagnostic checked the new acoustic guard before the
 older emitted-duration rule. The behavior was safe; the label falsely credited the new policy,
 so the replay was stopped at 25 seconds and restarted after precedence was pinned.
-**Evidence:**
-`var/quality/m04-crosstalk-bleed-20260711T193941Z/phase1-attempt1-label-abort-agent.log`
-(search: `"window_index": 5`) and `phase1-green-after-label-fix.log`.
+**Evidence:** Local-only run artifacts. The aborted run recorded `"window_index": 5`; a
+`phase1-green-after-label-fix` run followed once precedence was pinned.
 **Prevention:** For policy diagnostics, evaluate and test the ordinary decisive branch before a
 fallback/guard branch. Pin one control that already passes the old rule and one specimen whose
 outcome changes only because of the new rule before spending a full replay.
@@ -43,11 +42,11 @@ outcome changes only because of the new rule before spending a full replay.
 ## Lesson: A detached eval is not running until its sentinel path advances
 
 **Created:** 2026-07-12
-**What happened:** M04 Phase 0's first nested `nohup` launch returned without an active replay or
+**What happened:** A Phase 0 first nested `nohup` launch returned without an active replay or
 log progress. No audio ran, but relying on the launch command alone would have left a silent,
 incomplete evidence directory.
-**Evidence:** `var/quality/m04-crosstalk-bleed-20260711T193941Z/phase0-eval.log` and the later
-managed runner's `M04_PHASE0_EVAL_EXIT=0` sentinel show the difference.
+**Evidence:** Local-only run artifacts. The silent launch produced no progress; the later
+managed runner's own `EVAL_EXIT=0` sentinel showed the difference.
 **Prevention:** Put the exit sentinel inside an evidence-owned runner, keep long commands in a
 managed process/session (or a proven new session), and verify the first fixture line plus live
 process state immediately. A successful shell launch is not an eval start signal.
@@ -55,13 +54,11 @@ process state immediately. A successful shell launch is not an eval start signal
 ## Lesson: CSS pseudo-content does not preserve copied or accessible text
 
 **Created:** 2026-07-11
-**What happened:** M03 split corrected stitched utterances into row-local confidence spans and
+**What happened:** A confidence-styling change split corrected stitched utterances into row-local confidence spans and
 used `::before { content: ' ' }` to separate them visually. The full Playwright lane failed
 two provenance contracts because DOM text concatenated adjacent rows (`twicedaily`,
 `red.Itches`) even though the browser looked spaced correctly.
-**Evidence:**
-`var/quality/m03-confidence-styling-20260711T100804Z/full-playwright-first-failure.log`
-records 46/48 passing and both exact text mismatches.
+**Evidence:** Local-only run artifacts recording 46/48 passing and both exact text mismatches.
 **Prevention:** When a separator belongs to copied, searched, or screen-reader text, insert a
 real text node. Use pseudo-content only for decoration, and keep an assertion over the owning
 component's combined DOM text whenever display rows are split into local spans.
@@ -69,42 +66,41 @@ component's combined DOM text whenever display rows are split into local spans.
 ## Lesson: Register dynamic modules before executing dataclass definitions
 
 **Created:** 2026-07-11
-**What happened:** M03's corpus-mining tool loaded `scripts/transcript-quality.py` through
+**What happened:** A corpus-mining tool loaded `scripts/transcript-quality.py` through
 `importlib`, but executed it before adding the module to `sys.modules`. Python's dataclass
 annotation lookup then dereferenced a missing module and the first evidence run failed.
-**Evidence:** `var/quality/m03-confidence-styling-phase0-20260711T093609Z/mining-run-first-failure.log`
-(search: "AttributeError: 'NoneType' object has no attribute '__dict__'").
+**Evidence:** Local-only run artifacts. The failure signature was
+`AttributeError: 'NoneType' object has no attribute '__dict__'`.
 **Prevention:** After `module_from_spec`, assign the module under `spec.name` in `sys.modules`
 before `exec_module` whenever dynamically loaded code defines dataclasses or resolves annotations.
 
 ## Lesson: Re-run formatting after the last regression pin
 
 **Created:** 2026-07-11
-**What happened:** M02's late same-row denial regression passed focused and full Python tests,
+**What happened:** A late same-row denial regression passed focused and full Python tests,
 but the final Ruff format gate still found one test file requiring mechanical formatting.
-**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/ruff-format-check.log`
-first recorded `Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
+**Evidence:** Local-only run artifacts, which first recorded
+`Would reformat: tests/python/test_summary_fidelity.py` before the clean rerun.
 **Prevention:** Treat formatting as a final-code gate: rerun it after the last test edit, then
 rerun affected tests so the formatted file—not the pre-format version—is the verified artifact.
-**Follow-ups:** M03's final audit and M04B's 83-test scorer checkpoint each left three green Python
+**Follow-ups:** A later final audit and an 83-test scorer checkpoint each left three green Python
 files needing Ruff formatting. In both cases, format/check and affected tests were rerun before the
 broad suite, verifying final bytes. Run the formatter after the last regression patch, not merely
 after the first behavioral green.
 
+**Follow-up (2026-07-26, 0.5.2):** The first final static gate again found three late-edited Python files needing Ruff formatting. The files were formatted, then static, focused, and full-Python gates were rerun against the final bytes.
+
 ## Lesson: Verification wrappers must preserve the producer's exit status
 
 **Created:** 2026-07-11
-**What happened:** M02's first focused pytest run printed `2 failed, 6 passed`, but a trailing
+**What happened:** A first focused pytest run printed `2 failed, 6 passed`, but a trailing
 `sed` made the shell command exit 0. The first clean-campaign resume then crashed after saving
 generation 1, while `python ... | tee ...` again returned 0 because pipefail was absent. The
 final Playwright monitor also kept waiting after all 43 tests passed because its `pgrep -f`
 pattern matched the polling shell itself.
-**Evidence:** `var/quality/m02-fidelity-denial-precision-20260711T083957Z/phase1-focused-first-green.log`
-(search: "2 failed, 6 passed") and
-`var/quality/m02-fidelity-denial-precision-20260711T083957Z/c03-campaign-final-resume.log`
-(search: "requests_remaining=4"), and
-`var/quality/m02-fidelity-denial-precision-20260711T083957Z/playwright.log`
-(search: "43 passed") - literal output and saved responses exposed each masked or stale
+**Evidence:** Local-only run artifacts. The masked run recorded `2 failed, 6 passed`; the
+crashed resume recorded `requests_remaining=4`; the stalled monitor recorded `43 passed`
+while still waiting. Literal output and saved responses exposed each masked or stale
 wrapper status.
 **Prevention:** Capture the producer status before any display command (`status=$?; sed ...;
 exit "$status"`), and use `set -o pipefail` whenever `tee` records a test/eval run. Read the
@@ -147,20 +143,26 @@ the nemo-agent's uvicorn `--reload`, which restarted the process and wiped the i
 `POST /session/{id}/summary` started returning 404 "No transcript found".
 **Prevention:** With `SESSION_STORAGE=memory`, treat ANY edit under `strands_agents/` as a
 session-destroying restart. Capture `/history` and `/corrected-transcript` artifacts to
-`var/quality/` BEFORE editing agent code. If server state is already gone, the summary route
+a local-only artifact BEFORE editing agent code. If server state is already gone, the summary route
 accepts the captured rows directly as `SummaryRequest.segments` under a fresh session UUID -
 that replays the full prompt+model path from on-disk artifacts.
+**Follow-up (2026-07-20, 0.5.1):** the trap also kills LIVE eval replays, not just stored
+sessions - a comment-polish edit to `nemo_session.py` landed while a flag-off compatibility
+replay was streaming, uvicorn reloaded, and the WebSocket died with close code 1012
+(service restart). The run was preserved as failed and re-run. Freeze ALL `strands_agents/`
+edits (including comment-only ones) while any replay is in flight; batch documentation polish
+into the same edit window as the behavioral change it annotates.
 
 ## Lesson: Full-clip proportional word timings drift - timing splits need an internal coherence guard
 
 **Created:** 2026-07-07
-**What happened:** The first runtime M08 eval run split the consult-08 age echo at 14.32-15.12
+**What happened:** A first runtime eval run split the consult-08 age echo at 14.32-15.12
 while the true doctor echo sits at ~16.1-16.6: the token-timestamps-proportional-to-words
 estimate that was ~200ms accurate on the 20s probe drifted ~1.6s on the full 60s correction
 clip (token density varies across pauses, and the proportional word-to-token index mapping
 ignores that). The mis-timed DOCTOR row landed inside patient-only truth and scored
 confidently-wrong: A/B on the same artifact measured 83.3% strict without the split vs 78.9%
-with it - the split itself created the regression the M04 naive split had, just via drift
+with it - the split itself created the regression the earlier naive split had, just via drift
 instead of row-share times.
 **Prevention:** Never trust a full-clip proportional estimate as an absolute time. Gate timing
 splits on internal coherence between independent time sources: the echo tail's timed end must
@@ -187,6 +189,45 @@ While converting demo replay to stream over the live WebSocket, the shared `oncl
 
 **Lesson:** When one event handler serves sockets that are replaced across session transitions, compare `event.target` against the current socket before acting — flags like `isReplayActive` describe the NEW session, not the socket that emitted the event.
 
+## Lesson: A stale service check becomes a false "unrecoverable" verdict
+
+**Created:** 2026-08-01
+**Decision changed:** Before declaring session evidence lost, re-run the liveness check at the
+moment of the claim. A `docker ps` from earlier in the session is not evidence about now.
+**Trigger phase:** VERIFY
+
+Analysing a manual consult capture, the agent checked `docker ps` early in the session — before
+the user had run the consult — and saw `ambient-scribe-nemo-agent-1  Exited (255)`. That reading
+was correct then. The user subsequently started the stack and ran the test. The agent carried the
+earlier reading forward into the post-test analysis and wrote "the container had already exited,
+so `docker logs` returned nothing", then declared the corrected transcript, full history, and
+container logs permanently unrecoverable — building an entire "evidence limits" section on it and
+downgrading the round's central finding to an inference.
+
+None of it was true. The container had run continuously since `22:43:43Z`, before the session
+finalized at `23:07:02Z`. A single read-only GET recovered all 310 corrected rows and confirmed the
+inference exactly. The cost was not just the wasted inference: a whole round of evidence was nearly
+abandoned on a stale fact, and the "what is missing and why" prose was written confidently enough
+that a later reader would not have retried.
+
+**What makes this seductive:** the check *was* run, and its output *was* real. The failure is
+temporal, not procedural — the gap between observation and claim spanned a state change caused by
+the user. Nothing in the transcript flagged it, because the agent never asked "is this still true?"
+
+**Prevention:** Re-verify liveness immediately before any claim that depends on it, especially a
+negative claim. "Unrecoverable", "the service is down", and "the data is gone" are all claims about
+the present tense. Cheap re-check:
+
+```bash
+docker inspect <container> --format '{{.State.Status}} started={{.State.StartedAt}}'
+curl -sf -o /dev/null -w '%{http_code}' "$AGENT/health"
+```
+
+Related: session recovery here worked only because `SESSION_STORAGE=memory` with
+`SESSION_TTL_SECONDS=7200` had not expired. That is a two-hour window, not durability — do not
+generalise this recovery into "late capture is fine". Use
+`scripts/capture-manual-session.sh` inside the window.
+
 ## Lesson: Verify the running container's env, not the compose default (2026-07-04)
 
 After changing the `docker-compose.yml` default to `OLLAMA_HOST=http://ollama:11434`, one `docker compose up -d` showed the agent with the fixed value, so the "agent can't reach Ollama" bug was declared fixed. But the user's own `start-dev.sh` (`dc up -d`) recreated the agent with `OLLAMA_HOST=http://host.docker.internal:11434` - because `.env` sets it and `${OLLAMA_HOST:-…}` lets `.env` override the compose default. Summaries kept returning 502 and role inference kept falling back to the heuristic on every recreate.
@@ -211,7 +252,7 @@ AudioBuffer in `strands_agents/nemo_session.py` assumed 16 kHz 16-bit PCM while 
 **Created:** 2026-07-05
 **Evidence:** `strands_agents/tools/assign_roles.py` (search: "previous_mapping = self.current_mapping"), `tests/python/test_role_inference.py` (search: "test_detects_full_speaker_flip").
 
-During M18 Phase 0, a plain-log message was added to `RoleMappingState.did_update_mapping_detect_flip()` using `changed_speakers`, but that variable existed only inside `_is_role_label_flip()`. The focused observability tests passed, while the full Python suite caught six role-flip failures with `NameError`.
+During a Phase 0 investigation, a plain-log message was added to `RoleMappingState.did_update_mapping_detect_flip()` using `changed_speakers`, but that variable existed only inside `_is_role_label_flip()`. The focused observability tests passed, while the full Python suite caught six role-flip failures with `NameError`.
 
 **Lesson:** Treat observability-only patches as executable code in the hot path. When a log line needs derived values, compute them locally before mutating state and rerun the domain tests for that path, not only the observability tests.
 
@@ -220,7 +261,7 @@ During M18 Phase 0, a plain-log message was added to `RoleMappingState.did_updat
 **Created:** 2026-07-05
 **Evidence:** `strands_agents/nemo_session.py` (search: "_MIN_NEW_AUDIO_SECONDS"), `tests/python/test_nemo_session.py` (search: "test_alternating_speaker_fragments_stay_separate").
 
-During M17 fragment-policy work, a regression test intended to prove alternating-speaker
+During fragment-policy work, a regression test intended to prove alternating-speaker
 fragments stayed separate put the first fragment's end exactly at the
 `_MIN_NEW_AUDIO_SECONDS` boundary. The existing context-replay filter correctly dropped
 that segment before the new merge policy ran, so the failure tested the old emission floor
@@ -235,7 +276,7 @@ exercise replay filtering, not downstream segment cleanup.
 **Created:** 2026-07-05
 **Evidence:** `strands_agents/nemo_session.py` (search: "_MIN_NEW_AUDIO_SECONDS"), `tests/python/test_nemo_session.py` (search: "test_emitted_audio_is_not_transcribed_again").
 
-During M17 seam fallback work, raising the context-replay floor from 0.3s to 0.5s used a
+During seam fallback work, raising the context-replay floor from 0.3s to 0.5s used a
 strict `>` comparison. The existing emit-once regression then hid a segment with exactly
 0.5s of new post-mark audio, contradicting the intended "at least half a second" rule.
 
@@ -248,7 +289,7 @@ strict comparisons can silently drop short user utterances at the acceptance bou
 **Created:** 2026-07-04
 **Evidence:** `strands_agents/clinical_context.py` (search: "except json.JSONDecodeError"), `tests/python/test_clinical_context.py` (search: "test_load_clinical_knowledge_ignores_invalid_json").
 
-During M12, the clinical KB loader handled missing files and invalid shapes but did not handle malformed JSON. A bad PoC knowledge file would have turned an assistive hint/grounding feature into a summary-generation failure for the user.
+During clinical-KB work, the clinical KB loader handled missing files and invalid shapes but did not handle malformed JSON. A bad PoC knowledge file would have turned an assistive hint/grounding feature into a summary-generation failure for the user.
 
 **Lesson:** For optional local JSON/fixture inputs used by a user-facing path, cover malformed JSON as well as missing files and empty data. Optional assistive data should degrade to no context, not block the primary workflow.
 
@@ -300,7 +341,7 @@ Use the FastAPI agent origin for `/session/{id}/history` unless a Symfony proxy 
 Treat JSON parse errors from HTML as route-origin mistakes before treating the product
 flow as failed.
 **Update (2026-07-07):** `/session/{id}/corrected-transcript` now HAS a same-origin
-Symfony proxy (summary UX M4, `src/Controller/ScribeController.php`, search:
+Symfony proxy (summary UX work, `src/Controller/ScribeController.php`, search:
 "public function correctedTranscript"), so the browser fetches it app-origin; `/history`
 remains agent-only.
 
@@ -358,7 +399,7 @@ image fails at startup instead of silently skipping publishes.
 ## Lesson: "Peek instead of create" needs a liveness signal when the call is a write (2026-07-07)
 
 Replacing `get_or_create_state` with `peek_state` in the speaker-scope role override
-(0.4.0-slice-1 M04) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
+(0.4.0-slice-1) silently broke a live-visit contract: a clinician can click a speaker label BEFORE the
 role worker has created any state, and peek-only meant that early override never became a
 confirmed override - the next agent update could undo the clinician. An existing regression
 (`tests/python/test_api.py`, search: "survives_later_agent_update") caught it immediately.
@@ -370,7 +411,7 @@ reads (`roles_snapshot`), but an override is a write.
 
 ## Lesson: Environment-variable checks are not device-liveness checks (2026-07-08)
 
-The M06 phase-2 gate followed the standing rule "verify the RUNNING container env, not
+A later phase-2 gate followed the standing rule "verify the RUNNING container env, not
 compose defaults" - `NEMO_SESSION_ENGINE=streaming` and `MEDICAL_BOOST_ENABLED=1` were
 confirmed in the container before the eval - and the eval STILL ran on the wrong hardware:
 WSL had silently dropped the GPU adapter, a hot-reload had loaded both models on CPU, and
@@ -402,15 +443,15 @@ session's fidelity or correction outcome, grep the agent log for `summary.fideli
 ## Lesson: Field-session fixture replays must preserve the original stop time
 
 **Created:** 2026-07-10
-**What happened:** M11 needed fresh rows for a field note captured 228 seconds into a
+**What happened:** A milestone needed fresh rows for a field note captured 228 seconds into a
 510-second day3 WAV. The first recapture started the full fixture at browser cadence, which
 would have mixed later consultation facts into a replay meant to reproduce the cut-off note;
-it was stopped only after the WAV duration and field cutoff were compared. M05 repeated the
+it was stopped only after the WAV duration and field cutoff were compared. A later run repeated the
 cutoff error through headless UI timing: a 132.8-second target reached 215.6 seconds while tool
 polls lagged the faster audio clock, and the first stale control click hit hidden microphone Start
 instead of replay Stop. The eventual Stop also triggered one automatic 6,401-token summary.
 **Evidence:** `scripts/eval-fixtures.sh` (search: "--seconds") and
-`var/quality/m05-dual-identity-duplicates-20260712T060345Z/instrumented-browser-20260712T081246Z/mechanism-verdict.md`.
+a local-only artifact.
 **Prevention:** Before a real-time fixture recapture, record both the WAV duration and the
 field session's stop time. Pass that stop time explicitly with `--seconds` and verify the
 saved row duration before using the artifact for prompt or fidelity acceptance. For UI-driven
@@ -423,8 +464,8 @@ element index. Count the Stop flow's automatic correction/summary generation in 
 **What happened:** The first 20-fixture full-corpus sweep waited until the end to inspect Docker
 logs, but rotation had already discarded 13 of 15 early `correction.completed` lines. The
 operator's live ledger was the only surviving duration/chunk evidence for those fixtures.
-**Evidence:** `var/quality/full-corpus-20260710T2328Z/run-manifest.md` (search:
-"Correction-health ledger") records the rotation loss and the operator-captured replacement.
+**Evidence:** A local-only correction-health ledger recorded the rotation loss and the
+operator-captured replacement.
 **Prevention:** For long detached evals, append `correction.completed`,
 `correction.unavailable`, and milestone instrumentation lines to the run directory while each
 fixture executes. Do not treat an end-of-run `docker compose logs` read as durable evidence.
@@ -432,7 +473,7 @@ fixture executes. Do not treat an end-of-run `docker compose logs` read as durab
 ## Lesson: Source-based shell smokes need the main guard before the first run
 
 **Created:** 2026-07-11
-**What happened:** M01's first GPU-free corpus smoke sourced the existing eval runner before a
+**What happened:** A first GPU-free corpus smoke sourced the existing eval runner before a
 library guard existed, so sourcing immediately entered the real fixture main path. The run was
 terminated, health/CUDA/error checks stayed clean, and the smoke was rerun only after the guard.
 **Evidence:** `scripts/eval-corrected-fixtures.sh` (search: "fixture_summary_line") and
@@ -445,7 +486,7 @@ assertion. Never assume an executable script is already library-safe.
 ## Lesson: Guard both ends of long-running work, not just its entry
 
 **Created:** 2026-07-15
-**What happened:** M02's stale-role gate checked `_closed_role_revisions` only at the TOP of
+**What happened:** A stale-role gate checked `_closed_role_revisions` only at the TOP of
 `_infer_and_publish_role_update`. A role inference already inside the executor when settlement
 froze the visit (`failed_frozen`) still applied its mapping and published after closure — the
 exact kill-criterion behavior ("a role result silently changes an already rendered/copied
@@ -463,13 +504,13 @@ always add the sibling case where the result is already in flight when the door 
 ## Lesson: Build acceptance specimens from real artifacts before the human gate
 
 **Created:** 2026-07-15
-**What happened:** M03's `Review required (<n>)` badge counted reason CATEGORIES, and the unit
+**What happened:** A `Review required (<n>)` badge counted reason CATEGORIES, and the unit
 test agreed with the implementation ("(2)") because its expectation was written from the code.
-Generating the acceptance specimens from the REAL consult-1.2 note (M02 replay artifacts run
+Generating the acceptance specimens from the REAL consult-1.2 note (replay artifacts run
 through the production serializer) rendered "(2)" directly above a breakdown listing 1 + 3
 flagged items - a contradiction no synthetic fixture had encoded.
-**Evidence:** `var/quality/m03-copy-specimens-20260715T/` (search: "Review required") and
-`M03-design-proposal.md` amendment 4; fix in `public/js/scribe-copy.js` (search:
+**Evidence:** Local-only run artifacts; the figures above are the record.
+the design proposal amendment 4; fix in `public/js/scribe-copy.js` (search:
 "flaggedItemCount").
 **Prevention:** Before any human acceptance gate, run the shipped code over real captured
 artifacts and read the output as the reviewer would. Synthetic fixtures inherit the author's
@@ -495,3 +536,18 @@ directly; at most, the panic response is ambiguous.
 bounded exchange. When consecutive questions compete for one delayed response, record
 "asked; response ambiguous" unless the answer directly identifies the topic; adjacency alone
 must not become a positive or negative clinical fact.
+
+## Lesson: Resolve the published port before reading a 404 as absent state
+
+**Created:** 2026-07-21
+**What happened:** While capturing the 05:50 consult-1.2 manual run, a guessed `localhost:8081`
+probe of the nemo-agent session endpoints returned FastAPI-shaped `{"detail":"Not Found"}` from
+an unrelated service, briefly read as "the in-memory session store is gone." The real published
+port was 48101 (`docker port ambient-scribe-nemo-agent-1`); there, every lane was still served
+and the full capture succeeded.
+**Evidence:** `docker-compose.yml` (search: `AGENT_PORT:-48101`) - container port 8000 publishes
+as host 48101; `.env.example` (search: `AGENT_ENDPOINT`) repeats it. Nothing here maps 8081.
+**Prevention:** A FastAPI 404 proves only that SOME FastAPI answered. Before concluding
+in-memory state is lost, resolve the published port with `docker port <name>` and confirm
+service identity on a known-good route; an in-container healthcheck passing while the host
+probe 404s is the tell that the host port is wrong.

@@ -206,7 +206,7 @@ function showRecordingUi() {
     showRoleIdentificationPending();
 }
 
-// Pause suspends audio streaming mid-visit without finalizing (M11). The
+// Pause suspends audio streaming mid-visit without finalizing. The
 // session, socket, and transcript all stay live; Stop remains terminal.
 let isSessionPaused = false;
 let sessionPausedAt = null;
@@ -389,7 +389,7 @@ function endLiveStop() {
     setElementHidden('startBtn', false);
     setPlainStatus('Session ended');
     revealPostVisitActions();
-    // The note is generated on demand (M11): finalizing only unlocks the
+    // The note is generated on demand: finalizing only unlocks the
     // Generate summary button; the clinician decides when to run it.
     updateGenerateSummaryAvailability();
 }

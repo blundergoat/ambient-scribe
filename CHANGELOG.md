@@ -1,16 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- **A speaker the role agent stops recognising no longer keeps its old label** - The agent is told to leave out any speaker whose words give no clear evidence, but leaving it out changed nothing: the transcript store and the browser both only update the speakers they are handed, so the card kept saying Doctor or Patient with full confidence after the model had withdrawn that judgement. Withdrawal is now said out loud, so the transcript shows an unlabelled speaker instead of a confidently wrong one. A label the clinician confirmed by hand still wins, and a newly appearing third voice no longer blanks the other two.
+- **Architecture decision records have unambiguous numbers again** - Two decisions each shared a number with an older one, so a reference to "ADR-009" or "ADR-010" pointed at either of two documents. The newer pair is renumbered and every reference now resolves to one record.
+- **Corrected-lane phrase boosting can now be evaluated against real clinical terms** - The post-visit decoder previously accepted exactly one semantically empty control phrase, so the mechanism had never been pointed at a word a clinician actually said. It now reads a written-down inventory where every term earns its place from measured evidence: three the corrected lane still renders wrongly, three it already gets right and must not break, and four terms it must never invent - including the real antihistamine the note generator once substituted unprompted. Nothing is boosted during an ordinary consultation; the production default stays off and an unlisted term is refused by every route, including several smuggled through one string. The list is operator-approved for proof-of-concept work on synthetic consultations and explicitly records that it is **not** clinically reviewed.
+- **A finished consultation now records its own evidence** - Finalizing a visit writes the live transcript rows, correction writes the corrected rows and its receipt, and the summary writes the clinical note with its fidelity trace, each into one per-session directory alongside the runtime settings that produced them. Reviewing how a consultation actually went no longer means copying three browser panels out by hand and losing whatever the capped dev panel had already discarded. Storing full wording is the point - it is what an accuracy review reads - so the whole side channel is one switch away from off for any environment that should not keep it.
+- **Superseded NeMo exploration scripts removed** - Six early API-discovery spikes that existed to answer "what does NeMo return?" are gone, along with the stale roadmap that outlived the medical-only pivot. The questions they asked are now answered permanently by the shipped pipeline wrapper and the architecture docs, and one of them demonstrated a per-speaker targeting approach the streaming engine provably never takes. No runtime, evaluation, or QA tooling changed; the offline QA toolkit and the live debug helper are untouched.
+- **Post-visit speaker rebuild not promoted** - The default-off two-witness experiment corrected frozen target folds but failed the broader corpus gate: one consultation gained a new wrong-speaker row and another lost strict attribution while confident errors increased. The candidate was rejected, the rediarization flag remains off, and stopped visits keep existing correction behavior by default; the experimental code and QA evidence remain for analysis only.
+- **Role labels handle split voices honestly** - The role agent's instructions now state that diarization can split one person across several speaker labels: each label is judged from its own utterances, labels may share a role, and unclear labels are omitted instead of forced into a one-doctor-one-patient split. Measured on rebuilt offline transcripts: the three-slot fixture reaches its oracle ceiling in every repetition with no change on the two-slot fixture.
+- **Local health check no longer fails a healthy stack** - The roles probes now use a valid session UUID instead of the literal `test`, which the agent correctly rejects as a malformed visit; a fully healthy stack reads as healthy again and evaluation gates can trust the script's exit code.
+- **Evaluation can run exactly the selected ten-case corpus** - Both fixture evaluators accept `--development-corpus`, which validates the manifest, order, and file hashes before any audio opens and refuses mixed or implicit selections, so a quality baseline can never silently score the wrong consultation set.
+- **Named QA replays can show when two voices talked over each other** - Operator-enabled replays now record count-only pairwise co-activity evidence per speaker-slot pair (co-active and exclusive frames per browser window) beside the existing fold evidence; ordinary visits keep these diagnostics absent, no transcript wording is ever stored, and flag-off replays stay byte-identical (6/6 canonical transcript and continuity hashes across cold pre/post runs).
+
 ## v0.5.0 - 2026-07-20
 
-Establishes auditable clinical quality through safer SOAP claims, traceable evidence, deterministic evaluation, protected holdouts, and manual ASR review.
+Establishes auditable clinical quality through safer SOAP claims, traceable evidence, deterministic evaluation, and manual ASR review.
 
 - **Unsupported completed actions now ask for review** - SOAP notes flag completed/arranged actions lacking transcript evidence; wording and workflow remain unchanged.
 - **Saved-note evidence stays traceable** - Offline checks reject bad sources, validate saved-row citations, and separate unsupported claims.
 - **Clinical truth kept separate** - Checks separate spoken truth, saved evidence, and valid SOAP claims without gold-transcript repair.
 - **Transcript and note gates stay independent** - Independent gates stop lower word error masking unsafe claims, attribution/source errors, or actions.
-- **Clinical assets checked before users see them** - A CPU-only gate blocks unapproved, unsafe, ambiguous, sealed, or reused clinical assets.
+- **Clinical assets checked before users see them** - A CPU-only gate blocks unapproved, unsafe, ambiguous, or reused clinical assets.
 - **Unified post-visit ASR ready for manual review** - Stopped visits use exact `parakeet-unified-en-0.6b` via pinned NeMo and persistent cache, proving setup—not accuracy—without affecting live transcription.
-- **Spoken instructions remain clinical text** - A fixture proves patient instructions cannot alter evaluation or consume model/corpus/holdout resources.
+- **Spoken instructions remain clinical text** - A fixture proves patient instructions cannot alter evaluation or consume model/corpus resources.
 - **Anxiety-consult outcomes made executable** - Seven checks pin therapy/alcohol uncertainty, chest-pain/panic conflict, unsafe drug denial, supported suicidality, and blood-test status.
 - **Medication/allergy scoring cases pinned** - Seven CPU-only cases test term/speaker errors, omissions, insertions, trust, and SOAP abstention.
 - **High-risk note failures pinned first** - Red specimens pin anxiety, lane/overlap handling, deterministic reports, transcript instructions, and missing fixtures.
@@ -18,15 +31,13 @@ Establishes auditable clinical quality through safer SOAP claims, traceable evid
 - **Quality acceptance limits ratified before replay** - Fixed limits cover quality, latency, GPU, review, aggregation, retries, and improvement.
 - **Baseline replay rules frozen first** - Fixed visits, browser pacing, sequential GPU, health evidence, and three runs prevent replacement.
 - **Quality reports repeat byte-for-byte** - Immutable evidence yields byte-identical reports without hiding errors or unsafe omissions.
-- **Ten-case development corpus locked** - One ordered ten-visit manifest verifies hashes and rejects missing, extra, reordered, or sealed cases.
-- **Demo picker matches evaluation exactly** - The picker mirrors the manifest and excludes non-development/sealed cases.
-- **Sealed holdouts protected** - Narrow discovery keeps six holdouts sealed and records prior vocabulary-only exposure.
-- **Holdout identity check completed safely** - Eighteen filename/size/SHA-256 records match the seal; replay, parsing, model work, and content access stay prohibited.
-- **Provider baseline deferred safely** - M01 stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
+- **Ten-case development corpus selected** - One ordered ten-visit manifest verifies hashes and rejects missing, extra, or reordered cases.
+- **Demo picker matches evaluation exactly** - The picker mirrors the selected ten-case manifest.
+- **Provider baseline deferred safely** - the baseline stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
 - **Anxiety truth fixture versioned** - Seven checks pin source/row identities, allowed states, and an unsafe note for deterministic scoring.
 - **Medication and allergy regression frozen** - Three runs pin Metformin, losartan, amlodipine, and penicillin failures with lane/source metadata without implying rewrites or unseen results.
 - **Cross-lane evidence registered** - Six artifacts bind the left-arm overlap; unobserved confidence, source choice, and SOAP output stay unavailable.
-- **Clinical asset safety rules frozen** - A default-off contract, pair ledger, and eight red cases block unreviewed, rewritten, injected, or holdout-derived assets.
+- **Clinical asset safety rules frozen** - A default-off contract, pair ledger, and eight red cases block unreviewed, rewritten, injected, or unapproved assets.
 - **Clinical data contracts separated** - Evidence separates prompt/live/corrected/inactive-decoder lanes; 39 variants lack exact-pair approval.
 - **Clinical-data debt made explicit** - Debt remains: three cards fail review, 39 variants lack approval, and legacy matching affects six of ten cases.
 
@@ -55,7 +66,7 @@ Improves transcript reliability, note safety, confidence cues, long-visit handli
 - **Confidence on every measured row** - Live and corrected transcript rows can carry a stored confidence score that follows them through the interface and summary flow.
 - **Notes checked before display** - Each note is checked for unsupported certainty, denials, and examination claims. Remaining concerns are visibly marked after one retry.
 - **Word confidence validated** - Both supported speech models produced useful word-level confidence without changing transcript output or destabilising the GPU.
-- **Broader full-length evaluation corpus** - The accepted quality baseline covers 20 full-length consultations with day-based labels and matching speaker references; the local demo picker remains a curated 16-case set.
+- **Broader full-length evaluation corpus** - The accepted quality baseline covered full-length consultations with day-based labels and matching speaker references; the local demo picker used a curated subset.
 - **Consistent model defaults** - Production uses Bedrock for roles and summaries in one configured AWS region. Local startup falls back to lightweight Ollama only when no provider is configured, while `.env.example` deliberately selects Bedrock.
 - **Late rows stay in the right card** - Delayed wording is inserted into the correct earlier speaker card without changing spoken order or later turns.
 - **Clearer WSL2 GPU failure** - Startup now detects an empty GPU response and prints the steps needed to restart WSL2 and Docker Desktop.

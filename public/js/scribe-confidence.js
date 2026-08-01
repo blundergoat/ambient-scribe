@@ -72,7 +72,7 @@ function createNoteProseNodes(
     const unverifiedSentenceSet = new Set(unverifiedSentences);
     const lowConfidenceSentenceSet = new Set(lowConfidenceSentences);
 
-    // A fully supported section renders byte-identical plain text, exactly as before M03.
+    // A fully supported section renders byte-identical plain text, exactly as before.
     if (unverifiedSentenceSet.size === 0 && lowConfidenceSentenceSet.size === 0) {
         return [document.createTextNode(content)];
     }
@@ -148,13 +148,13 @@ function createSummarySentenceReviewMarker(
     const markerClasses = [];
     const markerReasons = [];
 
-    // Unsupported clinical claims retain the established M07 marker and wording.
+    // Unsupported clinical claims retain the established unverified marker and wording.
     if (isUnverified) {
         markerClasses.push('summary-unverified');
         markerReasons.push('Unverified against transcript');
     }
 
-    // Predominantly uncertain source rows add the M03 transcription wording cue.
+    // Predominantly uncertain source rows add the transcription wording cue.
     if (hasLowConfidenceSource) {
         markerClasses.push('summary-low-confidence');
         markerReasons.push('Low-confidence transcription');

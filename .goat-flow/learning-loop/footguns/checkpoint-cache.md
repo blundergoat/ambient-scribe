@@ -24,10 +24,11 @@ not persist `/root/.cache/huggingface`. A checkpoint downloaded into the contain
 when `docker compose up --force-recreate` replaces that container. Retagging the prior image restores image
 layers, not the deleted writable cache.
 
-**Evidence:**
-`var/quality/0.5.0-m00b-unified-runtime-compatibility-20260718T072654Z/verification/m00b.5-tdt-preflight.txt`
-(search: `Pinned post-visit ASR checkpoint is unavailable from local cache`) records the candidate failure
-before model load/decode and the same local-only failure after exact old-image rollback.
+**Evidence:** A unified-runtime compatibility preflight failed with
+`Pinned post-visit ASR checkpoint is unavailable from local cache` before model load/decode, and
+reproduced the same local-only failure after an exact old-image rollback. The preflight receipt
+was a local-only artifact; the durable anchor is the checkpoint-load path in
+`strands_agents/post_visit_correction.py` (search: `_load_post_visit_asr_model`).
 
 **Prevention:** Before any NeMo recreate, prove every required local-only checkpoint is in an image layer or
 an explicitly persistent mounted cache. Treat image identity, live-model health, and post-visit checkpoint

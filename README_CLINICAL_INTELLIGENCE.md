@@ -3,11 +3,11 @@
 This file explains the current clinical-intelligence layers that remain after
 the clinical hints UI lane was removed:
 
-- `.goat-flow/plans/_done/0.3.0/done/M11-medical-phrase-boosting.md`
-- `.goat-flow/plans/_done/0.3.0/done/M12-clinical-rag-hints.md` (historical origin for summary grounding)
+- **Medical phrase boosting** — post-ASR clinical term normalisation.
+- **Clinical RAG hints** — the historical origin of summary grounding.
 
-Both plan files are gitignored local workflow state; this README carries the
-durable summary.
+Both originated in local plan files that are gitignored and may no longer exist;
+this README is the durable record.
 
 Last checked: 2026-07-20 against the local repo.
 
@@ -16,11 +16,11 @@ Last checked: 2026-07-20 against the local repo.
 Ambient Scribe has two lightweight clinical assistance layers on top of the
 core transcription flow.
 
-M11 improves the words the clinician sees. It ships an opt-in post-ASR medical
+Phrase boosting improves the words the clinician sees. It ships an opt-in post-ASR medical
 term normaliser that corrects known clinical terms after NeMo transcription and
 before the transcript reaches the UI, summary, or stored session text.
 
-M12 improves what the summary agent can do with the transcript. The remaining
+Summary grounding improves what the summary agent can do with the transcript. The remaining
 current code keeps a tiny CPU-only clinical knowledge helper for SOAP summary
 grounding. The separate rule-based hints lane has been removed.
 
@@ -43,14 +43,14 @@ spoken consultation
   -> grounded SOAP summary
 ```
 
-M11 makes clinical words more likely to be displayed correctly. M12 uses the
+Phrase boosting makes clinical words more likely to be displayed correctly. Summary grounding uses the
 visible transcript to make the generated summary more useful.
 Together they make the app feel less like a generic speech demo and more like a
 medical documentation workspace.
 
 ## Medical Phrase Normalisation
 
-M11's original goal was NeMo decode-time phrase boosting for the multitalker
+The original goal was NeMo decode-time phrase boosting for the multitalker
 transducer model. That exact GPU-container API is still pending proof. The
 post-visit correction lane now carries a decode-phrase hook that stays
 inactive by default (`DEFAULT_POST_VISIT_CORRECTION_PHRASE = None` in
@@ -221,7 +221,7 @@ composer test
 npx playwright test tests/e2e/browser.spec.js
 ```
 
-GPU proof still needed for true M11 decode-time phrase boosting:
+GPU proof still needed for true decode-time phrase boosting:
 
 ```text
 Run a pinned NeMo container spike that proves the exact
@@ -234,7 +234,7 @@ hypotheses on a clinical audio clip.
 - `README_STACK.md` lists these features in the full model and runtime
   inventory.
 - `docs/medical-phrase-boosting.md` explains how to extend the lexicon.
-- `.goat-flow/plans/_done/0.3.0/done/M11-medical-phrase-boosting.md` tracks the
-  phrase boosting milestone and its pending GPU proof (gitignored local plan file).
-- `.goat-flow/plans/_done/0.3.0/done/M12-clinical-rag-hints.md` is the historical
-  plan for summary grounding and the removed hints lane (gitignored local plan file).
+- The phrase-boosting work and its pending GPU proof originated in a local plan
+  file that is gitignored; the pending proof is described above.
+- Summary grounding and the removed hints lane likewise originated in a local plan
+  file; their durable outcome is described above.
