@@ -62,6 +62,7 @@ from post_visit_correction import (
     run_post_visit_correction,
 )
 from session import SessionStore
+from session_evidence import write_session_evidence
 from session_lifecycle import SessionLifecycle
 from storage import StorageBackend
 from tools.assign_roles import get_or_create_state, peek_state
@@ -782,6 +783,26 @@ async def correct_session_transcript(
             },
         )
 
+        # The corrected lane is what the note is drafted from, so an accuracy
+        # question about the note cannot be answered without these exact rows.
+        write_session_evidence(
+            session_id,
+            "corrected-transcript",
+            {
+                "source": correction_result.source,
+                "model": correction_result.model_name,
+                "segment_count": len(correction_result.segments),
+                "word_count": correction_result.word_count,
+                "duration_ms": duration_ms,
+                "attempts": correction_result.attempts,
+                "retried": correction_result.retried,
+                "chunk_count": correction_result.chunk_count,
+                "attestation_id": watermark.attestation_id,
+                "allocation_diagnostics": correction_result.allocation_diagnostics,
+                "segments": correction_result.segments,
+            },
+        )
+
     correction_response = {
         "session_id": session_id,
         "status": "ready",
@@ -1441,6 +1462,23 @@ async def generate_summary(
             "sections": len(summary.get("sections", [])),
             "duration_ms": duration_ms,
             **summary_metric_fields,
+        },
+    )
+
+    # The note is published to the browser and never stored anywhere else, so
+    # without this the only record of what a clinician actually saw is a
+    # screenshot. Scoring whether the note invented a drug needs its wording.
+    write_session_evidence(
+        session_id,
+        "summary",
+        {
+            "source": summary_context.source,
+            "source_state": source_state,
+            "attestation_id": watermark.attestation_id,
+            "duration_ms": duration_ms,
+            "section_count": len(summary.get("sections", [])),
+            "fidelity": summary_metric_fields,
+            "summary": summary,
         },
     )
 

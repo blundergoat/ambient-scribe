@@ -1,25 +1,24 @@
 #!/bin/bash
 # =============================================================================
-# Capture the server-side artifacts for a manual test consultation
+# Collect the extra artifacts a manual test consultation cannot write itself
 # =============================================================================
 # Usage: ./scripts/capture-manual-session.sh SESSION_ID [OUTPUT_DIR]
 #
-# Run this AFTER the visit ends and BEFORE stopping the stack. Everything it
-# collects lives in memory or in the container: the session store answers only
-# while the agent is up, and `docker logs` returns nothing once the container is
-# removed. A capture taken the next morning gets none of it.
+# OPTIONAL. The agent already writes the important material by itself: finalizing
+# a visit saves the live rows, correction saves the corrected rows, and the
+# summary saves the clinical note and its fidelity trace, all under
+# SESSION_EVIDENCE_DIR (default strands_agents/var/session-evidence/<session-id>/).
+# Nothing needs to run alongside the browser and there is no window to miss.
 #
-# Collects, using only endpoints that already exist:
-#   live-history.json        GET /session/{id}/history          (all rows, no eviction)
-#   corrected-transcript.json GET /session/{id}/corrected-transcript
-#   roles.json               GET /session/{id}/roles
-#   streaming-quality.json   the persisted quality record for this session
-#   runtime-identity.json    docker inspect + /health + /agent/model-health
+# This script adds the few things that live outside the application:
 #   nemo-agent-session.log   docker logs, filtered to this session
+#   runtime-identity.json    docker inspect + /health + /agent/model-health
 #   artifact-manifest.md     byte size and SHA-256 of everything written
 #
-# Pair with record-manual-session.sh, which captures the browser-facing event
-# stream (including the clinical note, which has no GET endpoint).
+# It also re-fetches the transcripts from the session store, which is useful as a
+# cross-check that what was served matches what was written to evidence. Those
+# GETs only answer while the agent is up and inside SESSION_TTL_SECONDS; the
+# evidence bundle has no such limit.
 # =============================================================================
 
 set -uo pipefail
@@ -236,10 +235,12 @@ echo ""
             "$f" "$(wc -c < "$path")" "$(sha256sum "$path" | cut -d' ' -f1)"
     done
     echo ""
-    echo "## Not captured here"
+    echo "## The primary evidence is elsewhere"
     echo ""
-    echo "The clinical note has no GET endpoint - it is published to Mercure and"
-    echo "rendered once. \`scripts/record-manual-session.sh\` is what captures it."
+    echo "The agent writes the live rows, corrected rows, and the clinical note plus"
+    echo "its fidelity trace by itself, under \`SESSION_EVIDENCE_DIR\` (default"
+    echo "\`strands_agents/var/session-evidence/${SESSION_ID}/\`). This directory holds"
+    echo "only the container-side extras and a cross-check copy of the transcripts."
 } >"${OUT_DIR}/artifact-manifest.md"
 
 echo "  ${PASS}  artifact-manifest.md"

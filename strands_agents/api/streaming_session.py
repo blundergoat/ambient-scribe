@@ -21,6 +21,7 @@ from api.role_inference_queue import current_role_revision, wait_for_role_settle
 from fastapi import WebSocket, WebSocketDisconnect
 from nemo_session import TranscriptionSession
 from nemo_streaming_engine import streaming_engine_enabled
+from session_evidence import runtime_identity, write_session_evidence
 from session_quality import (
     build_session_quality_record,
     persist_session_quality_record,
@@ -344,9 +345,14 @@ async def _finalize_after_disconnect(
             ),
         )
 
-    await _emit_session_quality_record(
+    quality_record = await _emit_session_quality_record(
         session_id, session, services, state, current_state
     )
+
+    # Finalize is the only moment the whole visit is on record and the rows are
+    # settled. Saving them here is what lets a manual test be analysed later
+    # without anything running alongside the browser.
+    _write_live_evidence(session_id, services, quality_record, current_state)
 
     # Freeze the terminal source identity the note is allowed to use. This is
     # the only moment "the whole visit" is true: final rows are committed and
@@ -417,8 +423,12 @@ async def _emit_session_quality_record(
     services: StreamingServices,
     state: StreamState,
     current_state: Any,
-) -> None:
-    """Log, persist, and publish one final quality record for the recording."""
+) -> dict[str, Any]:
+    """Log, persist, and publish one final quality record for the recording.
+
+    Returns:
+        The record just published, so the caller can save it beside the rows.
+    """
     quality_record = build_session_quality_record(
         session_id=session_id,
         audio_session=session,
@@ -472,6 +482,36 @@ async def _emit_session_quality_record(
         f"scribe/session/{session_id}/raw",
         {"type": "quality", "quality": quality_record},
         event_id=event_id,
+    )
+    return quality_record
+
+
+def _write_live_evidence(
+    session_id: str,
+    services: StreamingServices,
+    quality_record: dict[str, Any],
+    current_state: Any,
+) -> None:
+    """Save the finalized live lane for later accuracy analysis.
+
+    Args:
+        session_id: Browser session UUID; empty skips the write.
+        services: Streaming services holding the session store the rows come from.
+        quality_record: Record already built for this finalize; empty still writes.
+        current_state: Role state whose settled mapping labelled the rows.
+    """
+    segments = services.sessions.get_segments(session_id)
+    write_session_evidence(
+        session_id,
+        "live-history",
+        {
+            "source": "live_segments",
+            "segment_count": len(segments),
+            "role_mapping": dict(current_state.current_mapping or {}),
+            "quality": quality_record,
+            "runtime": runtime_identity(),
+            "segments": segments,
+        },
     )
 
 
