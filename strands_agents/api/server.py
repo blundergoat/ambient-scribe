@@ -783,25 +783,17 @@ async def correct_session_transcript(
             },
         )
 
-        # The corrected lane is what the note is drafted from, so an accuracy
-        # question about the note cannot be answered without these exact rows.
-        write_session_evidence(
-            session_id,
-            "corrected-transcript",
-            {
-                "source": correction_result.source,
-                "model": correction_result.model_name,
-                "segment_count": len(correction_result.segments),
-                "word_count": correction_result.word_count,
-                "duration_ms": duration_ms,
-                "attempts": correction_result.attempts,
-                "retried": correction_result.retried,
-                "chunk_count": correction_result.chunk_count,
-                "attestation_id": watermark.attestation_id,
-                "allocation_diagnostics": correction_result.allocation_diagnostics,
-                "segments": correction_result.segments,
-            },
-        )
+        correction_receipt = {
+            "source": correction_result.source,
+            "model": correction_result.model_name,
+            "word_count": correction_result.word_count,
+            "duration_ms": duration_ms,
+            "attempts": correction_result.attempts,
+            "retried": correction_result.retried,
+            "chunk_count": correction_result.chunk_count,
+            "attestation_id": watermark.attestation_id,
+            "allocation_diagnostics": correction_result.allocation_diagnostics,
+        }
 
     correction_response = {
         "session_id": session_id,
@@ -819,9 +811,45 @@ async def correct_session_transcript(
         "chunk_count": correction_result.chunk_count,
     }
     # Flag-off responses stay byte-identical; provenance appears only flag-on.
+    # Repairs above mutate corrected rows in place, so the snapshot waits for them.
+    # Every path that skips the correction block returns before reaching here, so
+    # the receipt is always bound - same reasoning as `rediar_provenance` below.
+    _snapshot_corrected_evidence(session_id, "correction_completed", correction_receipt)
+
     if rediar_provenance is not None:
         correction_response["rediarization"] = rediar_provenance
     return correction_response
+
+
+def _snapshot_corrected_evidence(
+    session_id: str,
+    reason: str,
+    receipt: dict | None = None,
+) -> None:
+    """Save the corrected rows a later note would actually be drafted from.
+
+    Read back from storage rather than from the correction result, because the
+    rows keep changing after correction returns: rediarization repairs roles in
+    place, and a clinician override rewrites them again. A snapshot taken from
+    the in-memory result would name a version of the visit no summary ever saw,
+    which is precisely the corruption this evidence exists to rule out.
+
+    Args:
+        session_id: Recording UUID whose corrected rows should be captured.
+        reason: What settled the rows, so a reader can order two snapshots.
+        receipt: Correction run detail; null for a later re-snapshot.
+    """
+    corrected_rows = sessions.get_corrected_segments(session_id)
+    write_session_evidence(
+        session_id,
+        "corrected-transcript",
+        {
+            "snapshot_reason": reason,
+            "segment_count": len(corrected_rows),
+            **(receipt or {}),
+            "segments": corrected_rows,
+        },
+    )
 
 
 def _apply_rediarization_repairs(
@@ -1254,6 +1282,8 @@ async def _apply_speaker_role_override(
             if str(corrected_row.get("speaker_id", "")) == speaker_id:
                 corrected_row["role"] = role
         sessions.replace_corrected_segments(session_id, corrected_rows)
+        # The bundle would otherwise keep the role the clinician just corrected.
+        _snapshot_corrected_evidence(session_id, "clinician_role_override")
 
     # Publish the override to Mercure so other clients see it
     _mercure_event_ids.setdefault(session_id, 0)

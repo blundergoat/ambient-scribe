@@ -267,7 +267,11 @@ def test_evaluator_rejects_phrase_on_legacy_path(tmp_path: Path) -> None:
 
 
 def test_evaluator_rejects_unreviewed_phrase(tmp_path: Path) -> None:
-    """A raw mistaken word cannot become an implicit correction hint."""
+    """A raw mistaken word cannot become an implicit correction hint.
+
+    The gate reads the reviewed inventory rather than one hardcoded phrase, so
+    the refusal message names the inventory. `new section` is in neither.
+    """
     options = _evaluator_options(
         tmp_path,
         application_post_visit=True,
@@ -275,8 +279,19 @@ def test_evaluator_rejects_unreviewed_phrase(tmp_path: Path) -> None:
     )
 
     assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) == (
-        "--correction-phrase is not the approved M02 canonical phrase"
+        "--correction-phrase is not in the reviewed phrase inventory"
     )
+
+
+def test_evaluator_accepts_a_reviewed_inventory_phrase(tmp_path: Path) -> None:
+    """The reviewed list must be usable through the evaluator, not only in tests."""
+    options = _evaluator_options(
+        tmp_path,
+        application_post_visit=True,
+        correction_phrase="loratadine",
+    )
+
+    assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) is None
 
 
 def test_evaluator_dry_run_never_requires_decoder_output(tmp_path: Path) -> None:
@@ -290,3 +305,59 @@ def test_evaluator_dry_run_never_requires_decoder_output(tmp_path: Path) -> None
     options.effective_decoder_output = None
 
     assert SECOND_PASS_MODULE.validate_application_post_visit_options(options) is None
+
+
+def test_evaluator_cli_accepts_every_reviewed_inventory_phrase() -> None:
+    """A reviewed phrase must be reachable through the evaluator, not just in tests.
+
+    The CLI gate previously hardcoded the single historical control phrase, so
+    the reviewed inventory could not be exercised through the only
+    application-shaped path.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    import correction_phrase_inventory as inventory
+
+    allowed = second_pass_asr.reviewed_correction_phrases()
+
+    assert second_pass_asr.M02_APPROVED_CORRECTION_PHRASE in allowed
+    for phrase in inventory.approved_phrases():
+        assert phrase in allowed, f"{phrase} is reviewed but unreachable from the CLI"
+
+
+def test_evaluator_cli_is_never_more_permissive_than_the_decoder() -> None:
+    """The pre-check may refuse more than the decoder; it must never allow more."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    import correction_phrase_inventory as inventory
+
+    decoder_allows = set(inventory.approved_phrases())
+    decoder_allows.add(correction_module.APPROVED_POST_VISIT_CORRECTION_PHRASE)
+
+    assert second_pass_asr.reviewed_correction_phrases() <= decoder_allows
+
+
+def test_evaluator_cli_falls_back_to_the_control_phrase_if_the_inventory_is_unreadable(
+    monkeypatch,
+) -> None:
+    """A missing inventory must narrow what the CLI accepts, never widen it."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import second_pass_asr
+
+    monkeypatch.setattr(
+        second_pass_asr,
+        "CORRECTION_PHRASE_INVENTORY_PATH",
+        Path("/nonexistent/inventory.json"),
+    )
+
+    assert second_pass_asr.reviewed_correction_phrases() == {
+        second_pass_asr.M02_APPROVED_CORRECTION_PHRASE
+    }

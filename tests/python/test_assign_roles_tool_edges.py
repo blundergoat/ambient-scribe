@@ -247,6 +247,32 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
     ago - showing certainty the agent had just given up.
     """
 
+    def test_the_keyword_fallback_never_withdraws(self):
+        """A transient provider failure must not blank a speaker it never judged.
+
+        `_run_role_heuristic_fallback` labels one merged batch at a time, so a
+        speaker who simply did not talk in that batch is absent for reasons that
+        have nothing to do with evidence. Withdrawing there would let one failed
+        model call erase a correct label across the whole visit.
+        """
+        session_id = "withdraw-fallback"
+        cleanup_session(session_id)
+        apply_role_mapping_result(
+            session_id,
+            [],
+            {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"},
+            0.9,
+            withdraw_omitted=True,
+        )
+
+        # The queue's fallback call site passes no withdraw flag.
+        result = apply_role_mapping_result(session_id, [], {"speaker_0": "DOCTOR"}, 0.4)
+
+        # Absence is the safe answer here: the merge-only consumers keep the
+        # label they already have. Publishing UNKNOWN is what would erase it.
+        assert result.mapping.get("speaker_1") != UNKNOWN_SPEAKER_ROLE
+        cleanup_session(session_id)
+
     def test_dropped_speaker_becomes_unknown(self):
         """A label the agent stops asserting stops being shown."""
         session_id = "withdraw-basic"
@@ -255,7 +281,9 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
             session_id, [], {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"}, 0.9
         )
 
-        result = apply_role_mapping_result(session_id, [], {"speaker_0": "DOCTOR"}, 0.9)
+        result = apply_role_mapping_result(
+            session_id, [], {"speaker_0": "DOCTOR"}, 0.9, withdraw_omitted=True
+        )
 
         assert result.mapping["speaker_0"] == "DOCTOR"
         assert result.mapping["speaker_1"] == UNKNOWN_SPEAKER_ROLE
@@ -269,7 +297,9 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
             session_id, [], {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"}, 0.9
         )
 
-        result = apply_role_mapping_result(session_id, [], {}, 0.5)
+        result = apply_role_mapping_result(
+            session_id, [], {}, 0.5, withdraw_omitted=True
+        )
 
         # Absent keys are exactly the bug; both speakers must be named.
         assert set(result.mapping) == {"speaker_0", "speaker_1"}
@@ -286,7 +316,9 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
         )
         state.confirmed_overrides = {"speaker_1": "PATIENT"}
 
-        result = apply_role_mapping_result(session_id, [], {"speaker_0": "DOCTOR"}, 0.9)
+        result = apply_role_mapping_result(
+            session_id, [], {"speaker_0": "DOCTOR"}, 0.9, withdraw_omitted=True
+        )
 
         assert result.mapping["speaker_1"] == "PATIENT"
         cleanup_session(session_id)
@@ -299,7 +331,9 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
             session_id, [], {"speaker_0": "DOCTOR", "speaker_1": "PATIENT"}, 0.9
         )
 
-        result = apply_role_mapping_result(session_id, [], {"speaker_0": "DOCTOR"}, 0.9)
+        result = apply_role_mapping_result(
+            session_id, [], {"speaker_0": "DOCTOR"}, 0.9, withdraw_omitted=True
+        )
 
         assert result.flip_detected is False
         cleanup_session(session_id)
@@ -317,6 +351,7 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
             [],
             {"speaker_0": "DOCTOR", "speaker_1": "PATIENT", "speaker_2": "PATIENT"},
             0.9,
+            withdraw_omitted=True,
         )
 
         assert result.mapping == {
@@ -339,7 +374,25 @@ class TestOmittedSpeakerLabelsAreWithdrawn:
             [{"speaker_id": "speaker_1", "text": "it started on Tuesday"}],
             {"speaker_0": "DOCTOR"},
             0.9,
+            withdraw_omitted=True,
         )
 
         assert result.attributed_segments[0]["role"] == UNKNOWN_SPEAKER_ROLE
         cleanup_session(session_id)
+
+
+def test_withdrawal_does_not_open_the_opener_hint_correction_path():
+    """A withdrawn label must not become a hint-correctable "inverse".
+
+    Withdrawal adds the speaker back into `current_mapping`, which makes the
+    hint guard's speaker-set check pass where it previously bailed. The exact
+    role-inverse check is what must still refuse, because UNKNOWN is not the
+    opposite of anything.
+    """
+    from api.role_agent_runtime import _is_exact_role_inverse
+
+    withdrawn = {"speaker_0": "DOCTOR", "speaker_1": UNKNOWN_SPEAKER_ROLE}
+    opener_hint = {"speaker_0": "PATIENT", "speaker_1": "DOCTOR"}
+
+    assert set(withdrawn) == set(opener_hint)
+    assert _is_exact_role_inverse(withdrawn, opener_hint) is False

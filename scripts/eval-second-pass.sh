@@ -225,11 +225,31 @@ if [[ -n "$M02_ONLY_STEM" ]]; then
         echo "error: --m02-only-stem is not the frozen target or guard" >&2
         exit 2
     fi
-    # A different phrase, raw garble, or list has no independent approval.
-    if [[ -n "$CORRECTION_PHRASE" \
-        && "$CORRECTION_PHRASE" != "$M02_APPROVED_CORRECTION_PHRASE" ]]; then
-        echo "error: --correction-phrase is not the approved canonical phrase" >&2
-        exit 2
+    # A raw garble or unlisted term has no review behind it. Ask the same
+    # inventory the decoder enforces instead of keeping a second copy of the
+    # list here, which is how this check drifted out of step with it before.
+    if [[ -n "$CORRECTION_PHRASE" ]]; then
+        if ! "$PYTHON_BIN" -c '
+import json, sys
+from pathlib import Path
+requested = sys.argv[1]
+control = sys.argv[2]
+allowed = {control}
+try:
+    inventory = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+    allowed.update(
+        entry["phrase"]
+        for entry in inventory.get("phrases", [])
+        if isinstance(entry, dict) and isinstance(entry.get("phrase"), str)
+    )
+except Exception:
+    pass
+sys.exit(0 if requested in allowed else 1)
+' "$CORRECTION_PHRASE" "$M02_APPROVED_CORRECTION_PHRASE" \
+            "strands_agents/data/post_visit_correction_phrases.json"; then
+            echo "error: --correction-phrase is not in the reviewed phrase inventory" >&2
+            exit 2
+        fi
     fi
     # A completed run directory cannot be overwritten for a more favorable result.
     if [[ -e "$RUN_DIR" ]]; then

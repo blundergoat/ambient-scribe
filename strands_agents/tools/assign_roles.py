@@ -325,6 +325,8 @@ def apply_role_mapping_result(
     mapping: dict[str, str],
     confidence: float,
     reasoning: str = "",
+    *,
+    withdraw_omitted: bool = False,
 ) -> RoleMapping:
     """Persist a mapping decision and return attributed segment payloads.
 
@@ -334,6 +336,10 @@ def apply_role_mapping_result(
         mapping: Speaker-to-role labels; empty leaves all segment roles UNKNOWN.
         confidence: Agent confidence for this mapping.
         reasoning: Optional explanation shown in logs/dev review; empty means no explanation.
+        withdraw_omitted: True only when the caller reasoned over the whole bounded
+            history, so a missing speaker means "no longer confident". The keyword
+            fallback labels one batch at a time and must never withdraw, or a
+            transient provider failure would blank a speaker no evidence disputed.
 
     Returns:
         RoleMapping ready for Mercure publication and browser relabeling.
@@ -341,9 +347,10 @@ def apply_role_mapping_result(
     state = get_or_create_state(session_id)
     normalized_mapping = _normalize_mapping(mapping)
     # Withdraw before overrides so a clinician's confirmed label still wins.
-    normalized_mapping = _withdraw_omitted_speaker_roles(
-        session_id, state, normalized_mapping
-    )
+    if withdraw_omitted:
+        normalized_mapping = _withdraw_omitted_speaker_roles(
+            session_id, state, normalized_mapping
+        )
     normalized_mapping = _apply_confirmed_overrides(
         session_id, state, normalized_mapping
     )
@@ -533,6 +540,8 @@ def assign_roles(
         mapping=parsed_mapping,
         confidence=confidence,
         reasoning=reasoning,
+        # The agent saw the whole bounded history, so an omission is a judgement.
+        withdraw_omitted=True,
     )
 
     return {

@@ -267,3 +267,24 @@ async def test_finalizing_a_visit_saves_the_live_lane_without_operator_action(
     # The quality record travels with the rows so one file answers "was this run healthy".
     assert record["quality"]["final_confidence"] == 0.98
     assert "settings" in record["runtime"]
+
+
+def test_bundles_are_not_readable_by_other_host_accounts(tmp_path):
+    """Transcript and note wording must not inherit a world-readable umask."""
+    written = write_session_evidence(
+        "perm-check", "live-history", {"a": 1}, base_directory=tmp_path
+    )
+
+    assert written is not None
+    assert written.stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "perm-check").stat().st_mode & 0o777 == 0o700
+
+
+def test_permissions_are_tightened_even_when_the_directory_already_exists(tmp_path):
+    """mkdir ignores its mode for an existing directory, so chmod must still run."""
+    stale = tmp_path / "perm-existing"
+    stale.mkdir(mode=0o755)
+
+    write_session_evidence("perm-existing", "summary", {}, base_directory=tmp_path)
+
+    assert stale.stat().st_mode & 0o777 == 0o700

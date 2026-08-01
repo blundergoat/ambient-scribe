@@ -76,7 +76,13 @@ def _load(path_text: str) -> dict[str, Any]:
 
     seen: set[str] = set()
     for entry in entries:
-        phrase = (entry or {}).get("phrase")
+        # A scalar entry would raise AttributeError on the lookup below, which the
+        # decoder gate does not catch - crashing the request instead of refusing it.
+        if not isinstance(entry, dict):
+            raise CorrectionPhraseInventoryError(
+                "inventory phrase entries must be objects"
+            )
+        phrase = entry.get("phrase")
         if not isinstance(phrase, str) or not phrase.strip():
             raise CorrectionPhraseInventoryError("inventory contains an empty phrase")
         # A duplicate would double a term's weight without saying so anywhere.

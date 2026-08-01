@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 EVIDENCE_SCHEMA_VERSION = 1
 EVIDENCE_DEFAULT_DIR = Path("var/session-evidence")
+# Owner-only: the bundles contain full transcript and clinical-note wording.
+EVIDENCE_DIR_MODE = 0o700
+EVIDENCE_FILE_MODE = 0o600
 
 
 def evidence_enabled() -> bool:
@@ -107,11 +110,20 @@ def write_session_evidence(
     try:
         directory = session_evidence_dir(session_id, base_directory=base_directory)
         directory.mkdir(parents=True, exist_ok=True)
+        # These files hold complete transcript and clinical-note wording. The
+        # default umask would leave them readable by every account on the host,
+        # and the agent runs as root against a bind mount, so the owner is set
+        # explicitly rather than inherited. chmod is applied even when the
+        # directory already existed, because mkdir's mode is ignored then.
+        directory.chmod(EVIDENCE_DIR_MODE)
         destination = directory / f"{name}.json"
         # A temporary file keeps a reader from seeing a half-written bundle if a
         # long visit finalizes while someone is already inspecting the directory.
         staging = destination.with_suffix(".json.tmp")
         staging.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
+        # Tighten before the rename: replace() carries the staging file's mode, so
+        # the bundle is never briefly world-readable under its final name.
+        staging.chmod(EVIDENCE_FILE_MODE)
         staging.replace(destination)
     except Exception as write_error:  # pragma: no cover - filesystem-specific.
         logger.warning(
