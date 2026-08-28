@@ -142,7 +142,7 @@ review. Prefer in-place hunks when a full replacement is unnecessary.
 **What happened:** A milestone retained two Ruff-only line wraps in `TranscriptionSession` after removing
 the rejected behavior. The changed-symbol hook then surfaced the class's pre-existing size debt
 as changed scope even though no behavior remained.
-**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "symbol-aware scope").
+**Evidence:** `.goat-flow/hooks/gruff-code-quality.sh` (search: "expand an edited line to its symbol").
 **Prevention:** Drop unrelated formatter churn when rolling a candidate back. Format new files,
 but do not widen a debt-heavy symbol to chase formatter debt outside scope.
 

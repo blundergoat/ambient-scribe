@@ -31,11 +31,11 @@ Ask First checklist: boundary touched; related code read; `.goat-flow/learning-l
 - No features, abstractions, dependencies, or error handling beyond the declared scope.
 
 ## Commit Messages
-Commit subjects follow `type(scope): subject`; only branches named `feat/<digits>` add that real `#<digits>` prefix. Use imperative mood, stay within 72 characters, and avoid weak verbs such as “improve” or “update.” Full rules live in `docs/coding-standards/git-commit.md`.
+Commit subjects follow `type(scope): subject`; only branches named `feat/<digits>` add that real `#<digits>` prefix. Use imperative mood, stay within 72 characters, and avoid weak verbs such as “improve” or “update.” Full rules live in `docs/coding-standards/git-commit-message.md`.
 
 ## Key Resources
 - Learning loop, grep before changes: `.goat-flow/learning-loop/footguns/`, `.goat-flow/learning-loop/lessons/`, `.goat-flow/learning-loop/patterns/`, `.goat-flow/learning-loop/decisions/`.
-- Tool playbooks: `.goat-flow/skill-docs/playbooks/README.md` is the index; read the relevant playbook before declaring a tool unavailable.
+- Tool playbooks: `.goat-flow/skill-docs/playbooks/README.md` is the index (e.g. `.goat-flow/skill-docs/playbooks/browser-use.md`, `.goat-flow/skill-docs/playbooks/page-capture.md`) - read BEFORE declaring a tool unavailable.
 - Project shape: `.goat-flow/architecture.md`, `.goat-flow/code-map.md`, `.goat-flow/glossary.md`, `docs/domain-reference.md`.
 
 ## Essential Commands
@@ -60,6 +60,8 @@ When a goat-* skill is active, the skill's Step 0 replaces READ and selects mode
 - MUST use `rg`/`rg --files` first for search. Read only matching learning-loop entries first; reword once on zero hits, then note a retrieval miss.
 - MUST read both sides for PHP <-> Python, Twig/public JS <-> WebSocket/Mercure, Docker/env, audio, GPU/NeMo, hooks/settings, or infra <-> runtime work.
 - Before declaring any tool or capability unavailable, read the matching playbook in `.goat-flow/skill-docs/playbooks/` (e.g. `browser-use.md`, `page-capture.md`) and run that doc's "Availability Check" section verbatim - project-local CLI tools at `~/.local/bin/` are valid; do not conflate "no harness/MCP tool" with "no tool".
+- Before creating, changing, reviewing, consolidating, moving, or pruning tests, read `.goat-flow/skill-docs/playbooks/test-selection.md`.
+- Prose surfaces route the same way before writing: `CHANGELOG.md` needs `changelog.md`; release notes need `release-notes.md`; README, `docs/`, PR/issue text, and learning-loop bodies need `writing-style.md` - the trigger is touching the surface, not the request naming it.
 
 ### SCOPE
 - Declare `Mode=<Explain|Plan|Implement|Debug|Review> | Complexity=<Hotfix|Small|Standard|System|Infra> | Boundary=<paths>`.
@@ -77,7 +79,9 @@ When a goat-* skill is active, the skill's Step 0 replaces READ and selects mode
 - Re-read cited evidence before final claims. Do not claim checks passed without the literal pass/fail line from this session.
 **Hallucination red-flags:**
 
-Checks passed without output; Completion without listing changed files; Fix verification without reproduction; Hedged claims (`should`, `probably`, `looks good`) as verification.
+**Checks passed.** claimed without the literal pass/fail line; **Completion.** claimed without listing changed files; **Fix verification.** claimed without rerunning the original reproduction; **Hedged claims.** (`should`, `probably`, `looks good`) offered as verification.
+
+**Stop-the-line:** when tests break, builds fail, or behaviour regresses, stop expanding scope - preserve evidence, return to diagnosis, and re-plan before continuing.
 
 Reject rationalisations listed in `.goat-flow/skill-docs/skill-preamble.md` under "Rationalisations to reject".
 - After renames or contract edits, run `rg <old-pattern>` and confirm old refs are gone or intentionally retained.
@@ -112,6 +116,6 @@ Every hot-path instruction line must be a behavioural rule, scope boundary, exac
 | Infra lane | `docker-compose.yml`, `Dockerfile`, `docker/`, `infra/terraform/` |
 | Scripts and checks | `scripts/`, `composer.json`, `phpunit.xml.dist`, `phpstan.neon` |
 | Shared guidance | `.github/instructions/`, `docs/domain-reference.md`, `docs/guidelines-ownership-split.md` |
-| Commit guidance | `docs/coding-standards/git-commit.md` |
+| Commit guidance | `docs/coding-standards/git-commit-message.md` |
 | Session state | `.goat-flow/logs/sessions/`, `.goat-flow/plans/`, `.goat-flow/scratchpad/` |
 | Peer agent instructions | `AGENTS.md`, `CLAUDE.md`, `public/js/GEMINI.md`, `strands_agents/CLAUDE.md` |

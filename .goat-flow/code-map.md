@@ -62,7 +62,7 @@ ambient-scribe/
 ├── docs/ = domain, infrastructure, deployment, workflow, troubleshooting, and coding standards
 ├── .github/ = Copilot instructions, skills, hooks, and review instructions
 ├── .goat-flow/ = GOAT Flow learning loop, skill docs, hooks, plans, scratchpad, and local logs
-│   └── skill-docs/playbooks/ = browser-use.md, changelog.md, code-comments.md, gruff-code-quality.md, hook-policy-testing.md, observability.md, page-capture.md, release-notes.md, skill-playbook-authoring-sync.md
+│   └── skill-docs/playbooks/ = browser-use.md, changelog.md, code-comments.md, gruff-code-quality.md, hook-policy-testing.md, naming-and-placement.md, observability.md, page-capture.md, release-notes.md, skill-playbook-authoring-sync.md, test-selection.md, writing-sentence-diagnostics.md, writing-structure-diagnostics.md, writing-style.md
 ├── node_modules/@blundergoat/goat-flow/ = generated/vendor package; dashboard views/ HTML view manifest (about.html, home.html, hooks.html, plans.html, projects.html, prompts.html, quality.html, settings.html, setup.html, skills.html, workspace.html)
 ├── vendor/ = Composer dependencies; generated/vendor, do not edit
 ├── node_modules/ = npm dependencies and GOAT Flow package; generated/vendor, do not edit

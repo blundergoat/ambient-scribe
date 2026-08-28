@@ -1,5 +1,5 @@
 ---
-goat-flow-reference-version: "1.14.0"
+goat-flow-reference-version: "1.16.0"
 ---
 # Hook Policy Testing
 
@@ -16,11 +16,18 @@ test -x .goat-flow/hooks/deny-dangerous.sh &&
   bash .goat-flow/hooks/deny-dangerous.sh --self-test=smoke
 ```
 
-Availability is proven only when the command exits `0` and ends with a line like:
+Availability is proven only when the command exits `0` and ends with a `PASS`
+summary for the requested mode:
 
 ```text
-PASS: deny-dangerous self-test (mode=smoke, executed=32, skipped=0)
+PASS: deny-dangerous self-test (mode=smoke, executed=<count>, skipped=0)
 ```
+
+`<count>` tracks the installed policy corpus, so it differs by project and grows
+as cases are added. Record this project's number as its baseline and compare
+later runs against that, not against any figure quoted here. Cases skip only
+when a hook filter narrows the run, so an unfiltered `skipped=0` with a non-zero
+count is the passing shape.
 
 If the installed hook is absent, stop and repair setup or select the correct
 project. Do not substitute the workflow-source hook as proof that a consumer's
@@ -62,6 +69,16 @@ Record the literal summary line and exit status. A failing baseline is an
 existing regression, not evidence caused by the proposed change.
 
 ### 2. Reproduce the policy grammar
+
+When this step runs inside an agent session, provider Bash settings may match guarded text in the
+quoted `--check` operand before this hook starts. A settings-layer denial with no `BLOCKED:` policy
+output is not a hook classifier result. Record that denial separately; do not split or reconstruct
+guarded text to evade it.
+
+Use the sanctioned self-test for corpus coverage. If an exact one-off shape still needs classification,
+write the provider event to a gitignored JSON payload file with a non-Bash file tool, then pass that
+file on stdin using a command line that contains only its path. This keeps the guarded phrase in stdin,
+not provider-matched command text, so the resulting hook output has a truthful attribution boundary.
 
 For each policy behaviour, test a denied shape and a neighbouring allowed
 control. This prevents a broad matcher from making ordinary terminal work
@@ -135,9 +152,36 @@ Every supported agent must call the installed central dispatcher rather than a
 private copy. Confirm current configuration and manifest pointers:
 
 ```bash
-rg -n '\.goat-flow/hooks/deny-dangerous\.sh' \
-  .claude/settings.json .codex/hooks.json .github/hooks/hooks.json \
+registration_files=()
+
+# Check only registration files present in the user's selected project.
+for registration_file in \
+  .claude/settings.json \
+  .codex/hooks.json \
+  .github/hooks/hooks.json \
+  .agents/hooks.json \
   workflow/manifest.json
+do
+  # A present file can prove that the user's agent loads the central dispatcher.
+  if test -f "$registration_file"; then
+    registration_files+=("$registration_file")
+  fi
+done
+
+# No supported file means this project has no registration surface to verify.
+if test "${#registration_files[@]}" -eq 0; then
+  printf '%s\n' 'No supported agent registration files found.' >&2
+  exit 1
+fi
+
+# Ripgrep is not installed on every consumer machine; POSIX grep always is.
+if command -v rg >/dev/null 2>&1; then
+  rg -n --with-filename \
+    '\.goat-flow/hooks/deny-dangerous\.sh' "${registration_files[@]}"
+else
+  grep -nHE \
+    '\.goat-flow/hooks/deny-dangerous\.sh' "${registration_files[@]}"
+fi
 ```
 
 Then run the structural checks that detect packaging or registration drift:
@@ -158,7 +202,7 @@ and classifier behavior. The CLI must be available, and the selected agent must
 have the installed deny hook configured in a trusted checkout.
 
 ```bash
-goat-flow hooks verify . --agent <id> --scenario deny-hook
+goat-flow hooks verify . --agent <id> --scenario deny-hook --trusted-target
 ```
 
 The command passes four fixed inert classifier operands to the managed script as
@@ -167,9 +211,11 @@ exits `0`, reports `pass` for all four scenarios, and records one local
 `hook.verify` event per scenario. `fail`, `unsupported`, `not-configured`,
 `error`, or a missing evidence event means the requested proof is incomplete.
 
-The selected checkout's hook code runs during this command. For an untrusted
-checkout, add `--untrusted-target`; the CLI returns explicit `unsupported`
-results without starting the hook, so that safe result is not classifier proof.
+The selected checkout's hook code runs only with `--trusted-target`. Omit that
+flag until you have inspected and trust the checkout; the CLI then returns
+explicit `unsupported` results without starting the hook, so the safe default
+is not classifier proof. The deprecated `--untrusted-target` flag remains an
+explicit static alias throughout v1.16.x.
 
 This command proves only the selected checkout's managed script, registration
 state, and four fixed decisions. It does not launch the external coding agent

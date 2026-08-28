@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2317,SC2319
 
 # deny-dangerous.sh
-# goat-flow-hook-version: 1.14.0
+# goat-flow-hook-version: 1.16.0
 #
 # Checks an agent's proposed shell command before the developer lets it run.
 # Use this dispatcher from an agent hook to keep safe evidence gathering available
@@ -396,8 +396,27 @@ goat_first_word_is_inert() {
   return 1
 }
 
+goat_flow_cli_consumes_heredoc_as_data() {
+  local command="$1"
+  local word="${command%%[[:space:]]*}"
+  local base="${word##*/}"
+  local arguments=""
+
+  [[ "$base" == "goat-flow" ]] || return 1
+  arguments="${command#"$word"}"
+  arguments="${arguments#"${arguments%%[![:space:]]*}"}"
+
+  # These three CLI surfaces parse stdin as report/prose data. Keep the match
+  # command-shaped: other goat-flow subcommands may mutate projects or launch
+  # runtimes, so the executable itself must never enter the broad inert list.
+  [[ "$arguments" =~ ^quality[[:space:]]+save([[:space:]]|$) ]] && return 0
+  [[ "$arguments" =~ ^review[[:space:]]+validate([[:space:]]|$) ]] && return 0
+  [[ "$arguments" =~ ^redact([[:space:]]|$) ]] && return 0
+  return 1
+}
+
 heredoc_command_list_is_inert() {
-  local scan segment first inner match ps_re substitution_count iterations
+  local scan segment first normalized inner match ps_re substitution_count iterations
   local -a segs=()
 
   # Strip quoted spans first (so a shell NAME used as data is not read as a
@@ -436,8 +455,10 @@ heredoc_command_list_is_inert() {
   for segment in "${segs[@]}"; do
     segment="${segment#"${segment%%[![:space:]]*}"}"
     [[ -z "$segment" ]] && continue
-    first=$(first_word_base "$(normalize_command_candidate "$segment")")
-    goat_first_word_is_inert "$first" || return 1
+    normalized=$(normalize_command_candidate "$segment")
+    first=$(first_word_base "$normalized")
+    goat_first_word_is_inert "$first" ||
+      goat_flow_cli_consumes_heredoc_as_data "$normalized" || return 1
   done
   return 0
 }
@@ -604,16 +625,24 @@ check_command_substitutions() {
   local in_double=0
   local escaped=0
 
+  # `residual_unquoted` is built here rather than re-derived afterwards. A
+  # line-oriented strip cannot see a single-quoted span that crosses a newline
+  # and mis-pairs the '\'' escape idiom, so it reported inert text as
+  # executable. This walk already knows the exact quote state of every
+  # character. Single-quoted content is dropped; double-quoted content is kept,
+  # because backticks and $( still execute inside double quotes.
   for ((i = 0; i < ${#remaining}; i++)); do
     char="${remaining:i:1}"
 
     if [[ "$escaped" -eq 1 ]]; then
       residual+="$char"
+      residual_unquoted+="$char"
       escaped=0
       continue
     fi
     if [[ "$in_single" -eq 0 && "$char" == "\\" ]]; then
       residual+="$char"
+      residual_unquoted+="$char"
       escaped=1
       continue
     fi
@@ -633,6 +662,7 @@ check_command_substitutions() {
         in_double=1
       fi
       residual+="$char"
+      residual_unquoted+="$char"
       continue
     fi
 
@@ -644,6 +674,7 @@ check_command_substitutions() {
           inner="${remaining:i+3:close_index-i-3}"
           check_command_substitutions "$inner" "$depth" || return $?
           residual+="__goat_arith__"
+          residual_unquoted+="__goat_arith__"
           i="$close_index"
           continue
         fi
@@ -654,6 +685,7 @@ check_command_substitutions() {
             check_command_segments "$inner" $((depth + 1)) || return $?
           fi
           residual+="__goat_subst__"
+          residual_unquoted+="__goat_subst__"
           i="$close_index"
           continue
         fi
@@ -664,6 +696,7 @@ check_command_substitutions() {
             check_command_segments "$inner" $((depth + 1)) || return $?
           fi
           residual+="__goat_proc_subst__"
+          residual_unquoted+="__goat_proc_subst__"
           i="$close_index"
           continue
         fi
@@ -671,24 +704,18 @@ check_command_substitutions() {
     fi
 
     residual+="$char"
+    if [[ "$in_single" -eq 0 ]]; then
+      residual_unquoted+="$char"
+    fi
   done
-
-  residual_unquoted="$residual"
-  if [[ "$residual" == *\'* ]]; then
-    # shellcheck disable=SC2001  # ERE pattern; parameter expansion uses globs
-    residual_unquoted=$(sed -E "s/'[^']*'//g" <<<"$residual")
-  fi
 
   if [[ "$residual_unquoted" =~ \$\( || "$residual_unquoted" =~ [\<\>]\( ]]; then
     block "Complex command substitution. Write the expanded command directly." || return $?
   fi
 
-  local remaining_unquoted="$remaining"
-  if [[ "$remaining" == *\'* ]]; then
-    # shellcheck disable=SC2001  # ERE pattern; parameter expansion uses globs
-    remaining_unquoted=$(sed -E "s/'[^']*'//g" <<<"$remaining")
-  fi
-  remaining_unquoted="${remaining_unquoted//\\\`/}"
+  # An escaped backtick is literal text, so drop those pairs before the scan.
+  # Substitution bodies already left as placeholders were checked recursively.
+  local remaining_unquoted="${residual_unquoted//\\\`/}"
 
   if [[ "$remaining_unquoted" == *\`* ]]; then
     block "Backtick command substitution hides nested execution. Use a direct command instead, or for an inline script run it from a file (e.g. node script.js)." || return $?
@@ -898,6 +925,148 @@ join_shell_words_from() {
   printf '%s' "${out% }"
 }
 
+# Return the command xargs will run after its own options and operands.
+# Use this shared parser so delete and repository policies show users the same verdict.
+strip_xargs_payload_command() {
+  local developer_command="$1"
+  local -a xargs_words=()
+  split_shell_words_into xargs_words "$developer_command"
+
+  # An empty command gives xargs nothing for the policy to inspect.
+  [[ "${#xargs_words[@]}" -gt 0 ]] || return 1
+  local xargs_command_name="${xargs_words[0]##*/}"
+  # Only xargs owns this option grammar; other commands stay unchanged.
+  [[ "$xargs_command_name" == "xargs" ]] || return 1
+
+  local xargs_word_index=1
+  local xargs_word=""
+  # Skip xargs options so the first remaining word is what the user would execute.
+  while [[ "$xargs_word_index" -lt "${#xargs_words[@]}" ]]; do
+    xargs_word="${xargs_words[$xargs_word_index]}"
+    case "$xargs_word" in
+      --)
+        xargs_word_index=$((xargs_word_index + 1))
+        break
+        ;;
+      -0|--null|-r|--no-run-if-empty|-t|--verbose|-p|--interactive|-x|--exit|--show-limits|-e|-i|-l|--eof|--replace|--max-lines)
+        xargs_word_index=$((xargs_word_index + 1))
+        continue
+        ;;
+      # A separated value must be skipped with its option; otherwise the value itself looks like
+      # the payload and hides the real command, as `--process-slot-var VAR git push` once did.
+      -a|--arg-file|-I|-L|-n|-P|-s|-E|-d|--max-args|--max-procs|--max-chars|--delimiter|--process-slot-var)
+        xargs_word_index=$((xargs_word_index + 2))
+        continue
+        ;;
+      -a?*|--arg-file=*|-I?*|-i?*|-L?*|-l?*|-n?*|-P?*|-s?*|-E?*|-e?*|-d?*|--replace=*|--max-lines=*|--max-args=*|--max-procs=*|--max-chars=*|--eof=*|--delimiter=*|--process-slot-var=*)
+        xargs_word_index=$((xargs_word_index + 1))
+        continue
+        ;;
+      -*)
+        xargs_word_index=$((xargs_word_index + 1))
+        continue
+        ;;
+    esac
+    break
+  done
+
+  # Missing payload means there is no downstream user command to classify.
+  [[ "$xargs_word_index" -lt "${#xargs_words[@]}" ]] || return 1
+  join_shell_words_from xargs_words "$xargs_word_index"
+}
+
+# Return the repeated command after supported watch display and timing options.
+# Use when a user asks watch to rerun Git or another policy-relevant command.
+strip_watch_payload_command() {
+  local developer_command="$1"
+  local -a watch_words=()
+  split_shell_words_into watch_words "$developer_command"
+
+  # Watch needs both its own command word and a repeated payload.
+  [[ "${#watch_words[@]}" -gt 1 ]] || return 1
+  # A similarly named executable must not inherit watch grammar.
+  [[ "${watch_words[0]##*/}" == "watch" ]] || return 1
+
+  local watch_word_index=1
+  local watch_word=""
+  # Skip only known watch options; unknown grammar remains visible and unmodified.
+  while [[ "$watch_word_index" -lt "${#watch_words[@]}" ]]; do
+    watch_word="${watch_words[$watch_word_index]}"
+    case "$watch_word" in
+      --)
+        watch_word_index=$((watch_word_index + 1))
+        break
+        ;;
+      -n|--interval|-q|--equexit|-s|--shotsdir)
+        watch_word_index=$((watch_word_index + 2))
+        continue
+        ;;
+      -n?*|--interval=*|-q?*|--equexit=*|-s?*|--shotsdir=*)
+        watch_word_index=$((watch_word_index + 1))
+        continue
+        ;;
+      -b|-c|-C|-d|--differences|-e|--errexit|-g|--chgexit|-p|--precise|-r|--no-rerun|-t|--no-title|-w|--no-wrap|-x|--exec)
+        watch_word_index=$((watch_word_index + 1))
+        continue
+        ;;
+      -*)
+        return 1
+        ;;
+    esac
+    break
+  done
+
+  # Missing payload means watch would not run a user command.
+  [[ "$watch_word_index" -lt "${#watch_words[@]}" ]] || return 1
+  join_shell_words_from watch_words "$watch_word_index"
+}
+
+# Return the command GNU parallel will invoke for the supported common option forms.
+# Use when a user feeds repeated inputs into a repository or destructive command.
+strip_parallel_payload_command() {
+  local developer_command="$1"
+  local -a parallel_words=()
+  split_shell_words_into parallel_words "$developer_command"
+
+  # Parallel needs both its own command word and a downstream payload.
+  [[ "${#parallel_words[@]}" -gt 1 ]] || return 1
+  # A similarly named executable must not inherit GNU parallel grammar.
+  [[ "${parallel_words[0]##*/}" == "parallel" ]] || return 1
+
+  local parallel_word_index=1
+  local parallel_word=""
+  # Skip common options while leaving unfamiliar grammar visible to other checks.
+  while [[ "$parallel_word_index" -lt "${#parallel_words[@]}" ]]; do
+    parallel_word="${parallel_words[$parallel_word_index]}"
+    case "$parallel_word" in
+      --)
+        parallel_word_index=$((parallel_word_index + 1))
+        break
+        ;;
+      -j|--jobs|-S|--sshlogin|--sshloginfile|--results|--joblog|--timeout|--delay|--retries|--workdir|--halt)
+        parallel_word_index=$((parallel_word_index + 2))
+        continue
+        ;;
+      -j?*|--jobs=*|-S?*|--sshlogin=*|--sshloginfile=*|--results=*|--joblog=*|--timeout=*|--delay=*|--retries=*|--workdir=*|--halt=*)
+        parallel_word_index=$((parallel_word_index + 1))
+        continue
+        ;;
+      --bar|--eta|--keep-order|-k|--line-buffer|--ungroup|--dry-run)
+        parallel_word_index=$((parallel_word_index + 1))
+        continue
+        ;;
+      -*)
+        return 1
+        ;;
+    esac
+    break
+  done
+
+  # Missing payload means parallel would not invoke a user command.
+  [[ "$parallel_word_index" -lt "${#parallel_words[@]}" ]] || return 1
+  join_shell_words_from parallel_words "$parallel_word_index"
+}
+
 __goat_git_strip_globals() {
   __goat_git_aliased_push=0
   __goat_git_rest=""
@@ -923,7 +1092,7 @@ __goat_git_strip_globals() {
         ;;
       -c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)
         val="${words[$((i + 1))]:-}"
-        if [[ "$opt" == "-c" && "$val" =~ ^alias\.[a-zA-Z0-9_-]+=[\'\"]?(push|!) ]]; then
+        if [[ "$opt" == "-c" ]] && is_git_publication_alias_config "$val"; then
           __goat_git_aliased_push=1
         fi
         i=$((i + 2))
@@ -931,7 +1100,7 @@ __goat_git_strip_globals() {
         ;;
       -c?*)
         val="${opt#-c}"
-        if [[ "$val" =~ ^alias\.[a-zA-Z0-9_-]+=[\'\"]?(push|!) ]]; then
+        if is_git_publication_alias_config "$val"; then
           __goat_git_aliased_push=1
         fi
         i=$((i + 1))
@@ -1472,6 +1641,8 @@ normalize_flock_prefix() {
   join_shell_words_from words "$i"
 }
 
+# Reveal the command a user would actually run after supported wrappers and dispatchers.
+# Use before every policy module so equivalent command shapes receive the same verdict.
 normalize_command_candidate() {
   local c="$1"
   local stripped=""
@@ -1599,6 +1770,20 @@ normalize_command_candidate() {
         ;;
       flock)
         if stripped=$(normalize_flock_prefix "$after_word"); then
+          c="$stripped"
+          continue
+        fi
+        ;;
+      watch)
+        # Reveal the repeated command so users cannot hide a blocked action behind watch.
+        if stripped=$(strip_watch_payload_command "$c"); then
+          c="$stripped"
+          continue
+        fi
+        ;;
+      parallel)
+        # Reveal the repeated command so parallel receives the same policy as a direct call.
+        if stripped=$(strip_parallel_payload_command "$c"); then
           c="$stripped"
           continue
         fi
@@ -1841,6 +2026,8 @@ strip_unquoted_shell_comments() {
   printf '%s' "$out"
 }
 
+# Prepare one shared view of a user-visible command segment for every policy module.
+# Use once per segment so shell, secret, and repository checks classify identical text.
 prepare_segment_context() {
   local cmd="$1"
   local depth="${2:-0}"
@@ -1873,7 +2060,7 @@ prepare_segment_context() {
   local pipe_stripped="${CMD_UNQUOTED//||/}"
   [[ "$pipe_stripped" == *"|"* ]] && HAS_PIPE=1
 
-  local shell_c_re="(^|[[:space:]])(ba)?sh([[:space:]]+-[a-zA-Z]+)*[[:space:]]+-[a-zA-Z]*c[a-zA-Z]*[[:space:]]+(['\"])([^'\"]*)(['\"])"
+  local shell_c_re="(^|[[:space:]])(ba)?sh([[:space:]]+-[a-zA-Z]+)*[[:space:]]+-[a-zA-Z]*c[a-zA-Z]*[[:space:]]+[\$]?(['\"])([^'\"]*)(['\"])"
   if [[ "$policy_cmd" =~ $shell_c_re ]]; then
     local inner_c="${BASH_REMATCH[5]}"
     if [[ -n "$inner_c" ]]; then
@@ -1988,6 +2175,7 @@ main() {
   OUTPUT_MODE="stderr-exit"
   SELF_TEST_MODE=""
   CHECK_COMMAND=""
+  local check_command_source=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1999,14 +2187,17 @@ main() {
         ;;
       --check=*)
         CHECK_COMMAND="${1#--check=}"
+        check_command_source="check-flag"
         ;;
       --check)
         shift
         CHECK_COMMAND="${1:-}"
+        check_command_source="check-flag"
         ;;
       *)
         if [[ -z "$CHECK_COMMAND" ]]; then
           CHECK_COMMAND="$1"
+          check_command_source="positional"
         fi
         ;;
     esac
@@ -2020,6 +2211,15 @@ main() {
   fi
 
   local payload structured_input payload_trimmed tool_name command command_policy extraction_status
+  if [[ "$check_command_source" == "positional" && ! -t 0 ]]; then
+    local competing_payload competing_payload_trimmed
+    competing_payload="$(cat || true)"
+    competing_payload_trimmed="${competing_payload#"${competing_payload%%[![:space:]]*}"}"
+    if [[ -n "$competing_payload_trimmed" ]]; then
+      OUTPUT_MODE="$(detect_output_mode "$competing_payload")"
+      block "Hook received both positional command and stdin payload. Submit exactly one command source."
+    fi
+  fi
   JSON_EXTRACTION_UNSAFE=0
   payload="$(read_payload)"
   structured_input=0
@@ -2115,7 +2315,10 @@ check_segment() {
   local depth="${2:-0}"
   local previous_scope="${GOAT_ACTIVE_GUARD_SCOPE-}"
 
+  # Parse once per segment. Every policy module below consumes the same
+  # CMD_* and HAS_* context; reparsing here would add policy-count latency.
   GOAT_ACTIVE_GUARD_SCOPE="destructive"
+  prepare_segment_context "$cmd" "$depth" || return $?
   check_destructive_segment "$cmd" "$depth" || return $?
   GOAT_ACTIVE_GUARD_SCOPE="secret"
   check_secret_segment "$cmd" "$depth" || return $?
