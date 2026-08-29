@@ -6,56 +6,10 @@ NeMo models are NOT loaded in tests (NEMO_MODEL_PROVIDER=mock).
 
 import logging
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from nemo_pipeline import NemoPipeline, Segment, TranscriptionResult
 from nemo_session import AudioBuffer, TranscriptionSession
-
-
-class TestConvertWebmToWav:
-    """Tests for TranscriptionSession._convert_webm_to_wav static method."""
-
-    @patch("nemo_session.subprocess.run")
-    def test_successful_conversion(self, mock_run):
-        """ffmpeg succeeds → returns path to WAV file."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stderr=b"ffmpeg output",
-        )
-
-        result = TranscriptionSession._convert_webm_to_wav(b"fake-webm-data")
-
-        assert result is not None
-        assert result.endswith(".wav")
-        # Verify ffmpeg was called with correct args
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "ffmpeg"
-        assert "-ar" in call_args
-        assert "16000" in call_args
-        assert "-ac" in call_args
-        assert "1" in call_args
-
-        # Cleanup
-        Path(result).unlink(missing_ok=True)
-
-    @patch("nemo_session.subprocess.run")
-    def test_ffmpeg_failure_returns_none(self, mock_run):
-        """ffmpeg fails → returns None."""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "ffmpeg", stderr=b"error decoding"
-        )
-
-        result = TranscriptionSession._convert_webm_to_wav(b"bad-data")
-        assert result is None
-
-    @patch("nemo_session.subprocess.run")
-    def test_ffmpeg_timeout_returns_none(self, mock_run):
-        """ffmpeg hangs → returns None after timeout."""
-        mock_run.side_effect = subprocess.TimeoutExpired("ffmpeg", 30)
-
-        result = TranscriptionSession._convert_webm_to_wav(b"data")
-        assert result is None
 
 
 class TestAudioBuffer:

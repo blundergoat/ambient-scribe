@@ -1,17 +1,8 @@
-"""Decide, per fold-suspect span, whether the corrected transcript keeps live
-speaker ownership or takes a row-level role exception from the offline rebuild.
+"""Choose whether each suspected fold keeps its live role or uses rebuilt ownership.
 
-Use this after a stopped visit's full-audio rebuild exists and the live session
-recorded which spans were folded into another speaker's chip. The decision is
-structural and truth-free: the rebuild says WHO spoke at the span (its slot's
-clean-time overlap links it to a live chip), and the replacement role is that
-linked chip's own settled role - never a model label and never reference truth.
-A clean visit whose folds were one voice's cache churn decides keep-live
-everywhere, so the clinician's correct transcript is never touched.
-
-The policy implementation lives in `strands_agents/rediar_rebuild.py` (the
-runtime home since the policy move); this CLI delegates so the frozen ADR-013 decision
-table exists in exactly one place.
+Use after a stopped visit has rebuilt audio and recorded fold spans. The CLI links rebuilt slots to settled speaker chips without reference truth.
+Clean visits keep their visible roles; supported folds can add a row-level role exception.
+The policy stays in `strands_agents/rediar_rebuild.py`; this CLI writes the QA ledger without duplicating ADR-013.
 """
 
 from __future__ import annotations
@@ -24,7 +15,7 @@ from pathlib import Path
 # Offline QA runs from the repo root, where the runtime package is a sibling.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "strands_agents"))
 
-from rediar_rebuild import (  # noqa: E402
+from rediar_rebuild import (  # noqa: E402 - runtime module path must precede this offline QA import.
     SUPPORTED_VISIBLE_ROLES,
     ComparerThresholds,
     DEFAULT_THRESHOLDS,

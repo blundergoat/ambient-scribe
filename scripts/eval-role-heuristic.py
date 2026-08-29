@@ -43,14 +43,19 @@ def load_heuristic_role_inference() -> Callable[
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load role heuristic from {ROLE_HEURISTICS_MODULE}")
 
-    # role_heuristics imports sibling runtime modules (corrected_role_cues), so
-    # the strands_agents directory must be importable before exec.
-    strands_agents_dir = str(ROLE_HEURISTICS_MODULE.parent.parent)
-    if strands_agents_dir not in sys.path:
-        sys.path.insert(0, strands_agents_dir)
+    runtime_agents_directory = str(ROLE_HEURISTICS_MODULE.parent.parent)
+    original_module_search_path = sys.path.copy()
+    # A direct fixture run needs sibling role cues only while it loads the same fallback the UI uses.
+    if runtime_agents_directory not in sys.path:
+        sys.path[:0] = [runtime_agents_directory]
 
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        # Restore the caller's import order so this offline report cannot change later application imports.
+        sys.path[:] = original_module_search_path
+
     candidate = getattr(module, "heuristic_role_inference", None)
     # The eval must call the same fallback users hit after the role model cannot classify speakers.
     if not callable(candidate):

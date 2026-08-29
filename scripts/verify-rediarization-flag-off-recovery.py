@@ -79,7 +79,17 @@ REPLAY_STATUS = "pass_with_nonblocking_truth_aligned_scorer_findings"
 
 @dataclass
 class VerificationResult:
-    """Collect a narrow recovery verdict without promoting the full campaign."""
+    """Collect the checks behind the recovery verdict shown to an operator.
+
+    Any failure keeps hybrid rediarization off and leaves the full campaign unevaluated.
+    The CLI serializes this state after every applicable recovery check has run.
+
+    Attributes:
+        failures: Distinct reasons the recovery remains blocked; empty means every applicable check passed.
+        checks: Sanitized counts shown with the verdict; empty means no recovery evidence has been accepted yet.
+        verdict: The narrow flag-off result; ``FAIL_HYBRID_FLAG_OFF`` means the operator cannot rely on recovery.
+        full_campaign_status: Always ``NOT_EVALUATED`` because this verifier does not run the full corpus-on campaign.
+    """
 
     failures: list[str] = field(default_factory=list)
     checks: dict[str, Any] = field(default_factory=dict)
@@ -88,22 +98,34 @@ class VerificationResult:
 
     @property
     def ok(self) -> bool:
-        """Return true only when every fail-closed gate passed."""
+        """Return whether every fail-closed recovery gate passed.
+
+        :returns: True only when the failure list is empty; False keeps hybrid rediarization unavailable to the operator.
+        """
         return not self.failures
 
     def fail(self, reason: str) -> None:
-        """Record one distinct rejection reason for operator review."""
+        """Record one distinct rejection reason for operator review.
+
+        :param reason: Operator-safe explanation. Empty text would still fail the packet but would be unhelpful, so callers supply concrete reasons.
+        """
         if reason not in self.failures:
             self.failures.append(reason)
 
     def finish(self) -> VerificationResult:
-        """Set the only successful verdict this recovery gate may emit."""
+        """Set the only successful verdict this recovery gate may emit.
+
+        :returns: This result after finalization; a non-empty failure list leaves the safe failure verdict unchanged.
+        """
         if self.ok:
             self.verdict = "PASS_HYBRID_FLAG_OFF"
         return self
 
     def as_document(self) -> dict[str, Any]:
-        """Render stable machine-readable CLI output."""
+        """Render the stable recovery result used by operator tooling.
+
+        :returns: A non-empty verdict mapping; failures and checks may be empty when every applicable gate passed.
+        """
         return {
             "checks": self.checks,
             "failures": self.failures,
@@ -114,7 +136,12 @@ class VerificationResult:
 
 
 def file_sha256(path: Path) -> str:
-    """Hash a file in bounded pieces."""
+    """Hash one recovery artifact without loading it all into memory.
+
+    :param path: Evidence path to bind into the packet; a missing or unreadable file stops the check.
+    :returns: Lowercase SHA-256 text; an empty file has the standard empty-content digest rather than an empty identity.
+    :raises OSError: If the selected evidence cannot be opened or read.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -144,6 +171,7 @@ def _root_confined_path(
     resolved_path = (resolved_root / relative_path).resolve()
     try:
         resolved_path.relative_to(resolved_root)
+    # Example: an attestation record points through ``..`` to a file outside the checkout.
     except ValueError:
         result.fail(f"{label} path escapes the workspace root: {raw_path!r}")
         return None
@@ -158,6 +186,7 @@ def _load_json(
     """Load one JSON object and turn malformed input into a gate failure."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+    # Example: a copied attestation is missing or truncated.
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         result.fail(f"{label} is not readable JSON: {error}")
         return None
@@ -221,6 +250,7 @@ def _parse_sha_manifest(
     """Verify a GNU-style SHA manifest and every root-confined record."""
     try:
         lines = manifest_path.read_text(encoding="utf-8").splitlines()
+    # Example: the sealed packet manifest became unreadable after transfer.
     except (OSError, UnicodeDecodeError) as error:
         result.fail(f"{label} cannot be read: {error}")
         return {}
@@ -270,6 +300,7 @@ def _parse_unique_key_values(
     pairs: dict[str, str] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
+    # Example: a replay receipt was removed before the operator ran verification.
     except (OSError, UnicodeDecodeError) as error:
         result.fail(f"{label} cannot be read: {error}")
         return pairs
@@ -382,6 +413,7 @@ def _verify_recovery_source_manifest(
         return {}
     try:
         lines = manifest_path.read_text(encoding="utf-8").splitlines()
+    # Example: the recovery-source manifest is missing or not valid UTF-8.
     except (OSError, UnicodeDecodeError) as error:
         result.fail(f"recovery source manifest cannot be read: {error}")
         return {}
@@ -731,18 +763,22 @@ def _verify_run_identity(
             result.fail(f"replacement replay identity {key} must be {expected_value!r}")
 
 
-def _verify_replacement_replay(
+def _resolve_replacement_replay(
     result: VerificationResult,
     workspace_root: Path,
     attestation: dict[str, Any],
     *,
     require_read_only: bool,
-) -> None:
-    """Verify the sealed replay, its manifest, and exactly four physical calls."""
+) -> tuple[dict[str, Any], Path] | None:
+    """Resolve the one approved replay directory used to support the recovery verdict.
+
+    A ``None`` result leaves recovery blocked because the operator has no safe replay to inspect.
+    """
     replay = attestation.get("replacement_replay")
+    # A missing replay binding means the displayed recovery verdict has no sealed execution behind it.
     if not isinstance(replay, dict):
         result.fail("replacement replay binding must be an object")
-        return
+        return None
     if replay.get("fixture") != REPLACEMENT_FIXTURE:
         result.fail(f"replacement replay fixture must be {REPLACEMENT_FIXTURE}")
     replay_root = _root_confined_path(
@@ -751,14 +787,27 @@ def _verify_replacement_replay(
         replay.get("root"),
         "replacement replay root",
     )
+    # An unsafe path cannot be opened as evidence for the operator.
     if replay_root is None:
-        return
+        return None
     if not replay_root.is_dir():
         result.fail("replacement replay root is missing")
-        return
+        return None
+    # A writable replay could change between verification and UI review.
     if require_read_only and replay_root.stat().st_mode & 0o222:
         result.fail("replacement replay root remains writable")
+    return replay, replay_root
 
+
+def _load_replacement_replay_manifest(
+    result: VerificationResult,
+    workspace_root: Path,
+    replay: dict[str, Any],
+    replay_root: Path,
+    *,
+    require_read_only: bool,
+) -> dict[str, str] | None:
+    """Verify and load the manifest that binds every file in the approved replay."""
     manifest_record = replay.get("artifact_manifest")
     expected_manifest_path = (
         Path(str(replay.get("root"))) / "artifact-manifest.sha256"
@@ -770,18 +819,20 @@ def _verify_replacement_replay(
         "replacement replay artifact manifest",
         expected_path=expected_manifest_path,
     )
+    # A malformed binding cannot provide the declared manifest record count.
     if not isinstance(manifest_record, dict):
-        return
+        return None
     if manifest_record.get("records") != REPLAY_MANIFEST_RECORDS:
         result.fail(
             f"replacement replay manifest record count must be "
             f"{REPLAY_MANIFEST_RECORDS}"
         )
+    # A missing or invalid manifest leaves no trusted file set for later replay checks.
     if manifest_path is None:
-        return
+        return None
     if require_read_only and manifest_path.stat().st_mode & 0o222:
         result.fail("replacement replay artifact manifest remains writable")
-    replay_manifest = _parse_sha_manifest(
+    return _parse_sha_manifest(
         result,
         replay_root,
         manifest_path,
@@ -790,10 +841,20 @@ def _verify_replacement_replay(
         require_read_only=require_read_only,
     )
 
+
+def _bind_replacement_replay_evidence(
+    result: VerificationResult,
+    workspace_root: Path,
+    replay: dict[str, Any],
+    replay_root: Path,
+    replay_manifest: dict[str, str],
+) -> dict[str, Path] | None:
+    """Bind the four operator-facing replay checks to their sealed source files."""
     bindings = replay.get("bindings")
+    # A non-list binding cannot preserve the required evidence order in the displayed result.
     if not isinstance(bindings, list):
         result.fail("replacement replay bindings must be a list")
-        return
+        return None
     labels = [
         binding.get("label") if isinstance(binding, dict) else None
         for binding in bindings
@@ -805,6 +866,7 @@ def _verify_replacement_replay(
         )
 
     bound_paths: dict[str, Path] = {}
+    # Each valid binding connects one replay claim to the exact file the operator can audit.
     for binding in bindings:
         if not isinstance(binding, dict):
             continue
@@ -816,20 +878,28 @@ def _verify_replacement_replay(
             .relative_to(workspace_root.resolve())
             .as_posix()
         )
-        path = _verify_file_record(
+        bound_path = _verify_file_record(
             result,
             workspace_root,
             binding,
             "replay binding",
             expected_path=expected_path,
         )
-        if path is None:
+        # Missing or invalid evidence stays out of later checks and keeps the recovery verdict failed.
+        if bound_path is None:
             continue
-        replay_relative = path.relative_to(replay_root).as_posix()
-        if replay_relative not in replay_manifest:
+        replay_relative_path = bound_path.relative_to(replay_root).as_posix()
+        if replay_relative_path not in replay_manifest:
             result.fail(f"replay binding is absent from artifact manifest: {label}")
-        bound_paths[str(label)] = path
+        bound_paths[str(label)] = bound_path
+    return bound_paths
 
+
+def _verify_bound_replacement_replay(
+    result: VerificationResult,
+    bound_paths: dict[str, Path],
+) -> None:
+    """Run the four replay checks that explain recovery readiness to the operator."""
     summary_path = bound_paths.get("result_summary")
     if summary_path is not None:
         summary = _load_json(result, summary_path, "replacement replay summary")
@@ -850,27 +920,73 @@ def _verify_replacement_replay(
     identity_path = bound_paths.get("run_identity")
     if identity_path is not None:
         _verify_run_identity(result, identity_path)
-    result.checks["replacement_replay_manifest_records"] = len(replay_manifest)
 
 
-def _verify_cap_packet(
+def _verify_replacement_replay(
     result: VerificationResult,
     workspace_root: Path,
     attestation: dict[str, Any],
-    recovery_source_hashes: dict[str, str],
+    *,
+    require_read_only: bool,
 ) -> None:
-    """Verify executable future-arm arithmetic without granting authorization."""
+    """Verify the sealed replay behind the operator's narrow flag-off verdict."""
+    resolved_replay = _resolve_replacement_replay(
+        result,
+        workspace_root,
+        attestation,
+        require_read_only=require_read_only,
+    )
+    # An invalid replay cannot contribute any readiness checks to the user-facing verdict.
+    if resolved_replay is None:
+        return
+    replay, replay_root = resolved_replay
+    replay_manifest = _load_replacement_replay_manifest(
+        result,
+        workspace_root,
+        replay,
+        replay_root,
+        require_read_only=require_read_only,
+    )
+    # Without a trusted manifest, individual replay files cannot support the displayed verdict.
+    if replay_manifest is None:
+        return
+    bound_paths = _bind_replacement_replay_evidence(
+        result,
+        workspace_root,
+        replay,
+        replay_root,
+        replay_manifest,
+    )
+    # Invalid binding structure has already failed closed and cannot be used by later checks.
+    if bound_paths is None:
+        return
+    _verify_bound_replacement_replay(result, bound_paths)
+    result.checks["replacement_replay_manifest_records"] = len(replay_manifest)
+
+
+def _load_future_cap_packet(
+    result: VerificationResult,
+    workspace_root: Path,
+    attestation: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Load the future-call estimate only when its attestation binding is valid."""
     cap_path = _verify_file_record(
         result,
         workspace_root,
         attestation.get("future_cap_packet"),
         "future cap packet",
     )
+    # A missing or mismatched binding cannot provide call estimates to the operator.
     if cap_path is None:
-        return
-    cap_packet = _load_json(result, cap_path, "future cap packet")
-    if cap_packet is None:
-        return
+        return None
+    return _load_json(result, cap_path, "future cap packet")
+
+
+def _verify_future_cap_scope(
+    result: VerificationResult,
+    cap_packet: dict[str, Any],
+) -> None:
+    """Keep the displayed call estimate explicitly unevaluated and unauthorized."""
     if cap_packet.get("schema_version") != CAP_SCHEMA_VERSION:
         result.fail("future cap packet schema version is invalid")
     if cap_packet.get("corpus_on_status") != "NOT_EVALUATED":
@@ -880,6 +996,14 @@ def _verify_cap_packet(
     if cap_packet.get("requires_new_approval") is not True:
         result.fail("future cap packet must require new approval")
 
+
+def _verify_future_cap_sources(
+    result: VerificationResult,
+    workspace_root: Path,
+    cap_packet: dict[str, Any],
+    recovery_source_hashes: dict[str, str],
+) -> None:
+    """Bind future-call estimates to the production chunker and approved corpus list."""
     chunker_path = "strands_agents/post_visit_correction.py"
     production_chunker = _verify_file_record(
         result,
@@ -897,9 +1021,15 @@ def _verify_cap_packet(
         workspace_root,
         cap_packet.get("development_manifest"),
         "future cap development manifest",
-        expected_path=("tests/fixtures/audio/development-corpus-0.5.0.json"),
+        expected_path="tests/fixtures/audio/development-corpus-0.5.0.json",
     )
 
+
+def _verify_future_cap_calculation(
+    result: VerificationResult,
+    cap_packet: dict[str, Any],
+) -> None:
+    """Verify the production settings behind the call estimate shown to an operator."""
     calculation = cap_packet.get("calculation")
     expected_calculation = {
         "engine": "strands_agents.post_visit_correction._build_audio_chunks",
@@ -908,19 +1038,29 @@ def _verify_cap_packet(
         "minimum_final_chunk_seconds": 10.0,
         "synthetic_sample_rate_hz": 100,
     }
+    # Missing calculation details make the displayed future-call estimate unverifiable.
     if not isinstance(calculation, dict):
         result.fail("future cap calculation must be an object")
-    else:
-        for key, expected_value in expected_calculation.items():
-            if calculation.get(key) != expected_value:
-                result.fail(f"future cap calculation {key} must be {expected_value!r}")
+        return
+    # Every production setting must match so the UI does not present a stale estimate.
+    for key, expected_value in expected_calculation.items():
+        if calculation.get(key) != expected_value:
+            result.fail(f"future cap calculation {key} must be {expected_value!r}")
 
+
+def _count_future_cap_base_calls(
+    result: VerificationResult,
+    cap_packet: dict[str, Any],
+) -> int:
+    """Count production chunks for the ten fixtures behind the future-call estimate."""
     fixture_records = cap_packet.get("fixtures")
+    # No fixture list means the UI can show no defensible future-call total.
     if not isinstance(fixture_records, list):
         result.fail("future cap fixtures must be a list")
         fixture_records = []
     observed_fixtures: list[str | None] = []
     base_calls = 0
+    # Each fixture contributes its production chunk count to the operator-visible estimate.
     for fixture_record in fixture_records:
         if not isinstance(fixture_record, dict):
             result.fail("future cap fixture record must be an object")
@@ -944,20 +1084,28 @@ def _verify_cap_packet(
             base_calls += expected_chunks
     if tuple(observed_fixtures) != tuple(CORPUS_CHUNK_VECTOR):
         result.fail("future cap fixtures must match the ten-case manifest order")
+    return base_calls
 
+
+def _verify_future_cap_totals(
+    result: VerificationResult,
+    cap_packet: dict[str, Any],
+    base_calls: int,
+) -> None:
+    """Verify and expose the expected and conservative physical-call totals."""
+    fixture_count = len(CORPUS_CHUNK_VECTOR)
     expected_values = {
         "base_transcribe_calls": base_calls,
         "expected_recovery_calls": 1,
-        "conservative_recovery_calls": len(CORPUS_CHUNK_VECTOR),
+        "conservative_recovery_calls": fixture_count,
         "current_physical_calls": 72,
         "existing_approved_call_cap": 95,
         "expected_future_arm_calls": base_calls + 1,
-        "conservative_future_arm_calls": (base_calls + len(CORPUS_CHUNK_VECTOR)),
+        "conservative_future_arm_calls": base_calls + fixture_count,
         "expected_total_physical_calls": 72 + base_calls + 1,
-        "conservative_total_physical_calls": (
-            72 + base_calls + len(CORPUS_CHUNK_VECTOR)
-        ),
+        "conservative_total_physical_calls": 72 + base_calls + fixture_count,
     }
+    # Each total must agree with the verified fixture count before it is shown to an operator.
     for key, expected_value in expected_values.items():
         if cap_packet.get(key) != expected_value:
             result.fail(
@@ -967,8 +1115,31 @@ def _verify_cap_packet(
     result.checks["future_base_transcribe_calls"] = base_calls
     result.checks["future_expected_total_physical_calls"] = 72 + base_calls + 1
     result.checks["future_conservative_total_physical_calls"] = (
-        72 + base_calls + len(CORPUS_CHUNK_VECTOR)
+        72 + base_calls + fixture_count
     )
+
+
+def _verify_cap_packet(
+    result: VerificationResult,
+    workspace_root: Path,
+    attestation: dict[str, Any],
+    recovery_source_hashes: dict[str, str],
+) -> None:
+    """Verify the future-call estimate without granting the operator authorization."""
+    cap_packet = _load_future_cap_packet(result, workspace_root, attestation)
+    # Missing or unreadable cap evidence cannot produce a usable estimate.
+    if cap_packet is None:
+        return
+    _verify_future_cap_scope(result, cap_packet)
+    _verify_future_cap_sources(
+        result,
+        workspace_root,
+        cap_packet,
+        recovery_source_hashes,
+    )
+    _verify_future_cap_calculation(result, cap_packet)
+    base_calls = _count_future_cap_base_calls(result, cap_packet)
+    _verify_future_cap_totals(result, cap_packet, base_calls)
 
 
 def _verify_bound_tooling_and_decision(
@@ -1021,12 +1192,21 @@ def verify_flag_off_recovery_attestation(
     require_packet_manifest: bool = True,
     require_read_only: bool = True,
 ) -> VerificationResult:
-    """Verify one recovery packet against a workspace without mutation."""
+    """Verify one recovery packet without changing the operator's evidence.
+
+    :param workspace_root: Controlling checkout used to resolve every recorded file; a missing root yields failed checks.
+    :param attestation_path: Saved attestation JSON; a missing, empty, malformed, or escaping path returns a failed result.
+    :param require_packet_manifest: Require the final manifest; False is reserved for the builder's pre-seal check.
+
+    :param require_read_only: Require sealed permissions; False is reserved for checking files before the builder seals them.
+    :returns: Completed pass/fail evidence with all discovered failures; invalid input never becomes an empty or successful result.
+    """
     result = VerificationResult()
     resolved_root = workspace_root.resolve()
     resolved_attestation = attestation_path.resolve()
     try:
         resolved_attestation.relative_to(resolved_root)
+    # Example: the operator selected an attestation from outside this checkout.
     except ValueError:
         result.fail("attestation path escapes the workspace root")
         return result.finish()
@@ -1328,7 +1508,16 @@ def build_flag_off_recovery_packet(
     packet_root: Path,
     replay_root: Path,
 ) -> VerificationResult:
-    """Create, pre-verify, manifest, and seal a recovery evidence packet."""
+    """Create and seal the operator evidence packet for the approved flag-off replay.
+
+    Use after replay artifacts exist; the builder writes a new packet and leaves any partial directory visible if a later build step fails.
+
+    :param workspace_root: Controlling checkout boundary; a missing root cannot supply the frozen source and historical evidence.
+    :param packet_root: New packet directory inside the checkout; an empty, existing, or escaping target returns a failed result.
+    :param replay_root: Completed replacement replay directory; a missing, empty, or escaping target returns a failed result.
+
+    :returns: Final verification result for the sealed packet, or an explicit failed result when construction cannot complete.
+    """
     resolved_root = workspace_root.resolve()
     resolved_packet = (
         packet_root if packet_root.is_absolute() else resolved_root / packet_root
@@ -1339,6 +1528,7 @@ def build_flag_off_recovery_packet(
     try:
         resolved_packet.relative_to(resolved_root)
         resolved_replay.relative_to(resolved_root)
+    # Example: the requested packet or replay directory escapes the controlling workspace.
     except ValueError as error:
         result = VerificationResult()
         result.fail(f"build path escapes workspace root: {error}")
@@ -1463,6 +1653,7 @@ def build_flag_off_recovery_packet(
         for packet_path in resolved_packet.iterdir():
             packet_path.chmod(0o400 if packet_path == manifest_path else 0o444)
         resolved_packet.chmod(0o555)
+    # Example: sealing fails because an artifact vanished or permissions changed.
     except (ImportError, OSError, ValueError) as error:
         result = VerificationResult()
         result.fail(f"flag-off recovery packet build failed: {error}")
@@ -1509,7 +1700,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Run one recovery build or verification without broadening scope."""
+    """Run one recovery build or verification without broadening operator scope.
+
+    :returns: Zero when narrow flag-off recovery passes, or one when evidence remains blocked or invalid.
+    """
     arguments = _parser().parse_args()
     workspace_root = arguments.repo_root.resolve()
     if arguments.command == "build":

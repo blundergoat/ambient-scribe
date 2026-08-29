@@ -72,24 +72,37 @@ _RECEIPT_KEYS = frozenset(
 
 
 class ReadinessProbeError(ValueError):
-    """A fail-closed readiness error represented by a non-sensitive code."""
+    """Represent a readiness failure without returning credentials or payload text.
+
+    The CLI turns this into a fixed code an operator can act on.
+    Callers supply a non-empty allowlisted code so an empty error never reaches the UI.
+    """
 
     def __init__(self, code: str) -> None:
+        """Store the fixed non-secret code shown when readiness cannot be proved."""
         super().__init__(code)
         self.code = code
 
 
 class AsyncHttpClient(Protocol):
-    """The subset of ``httpx.AsyncClient`` used by the existing publisher."""
+    """Describe the HTTP context-manager surface needed by the readiness publish.
 
-    async def __aenter__(self) -> Any: ...
+    The production client and test seam share this boundary.
+    Publish acceptance is returned separately, so this protocol carries no user data.
+    """
+
+    async def __aenter__(self) -> Any:
+        """Open the client for the operator's single authenticated readiness publish."""
+        ...
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: object | None,
-    ) -> bool | None: ...
+    ) -> bool | None:
+        """Close the client after the readiness publish succeeds or fails."""
+        ...
 
 
 ClientFactory = Callable[..., AsyncHttpClient]
@@ -98,6 +111,7 @@ Monotonic = Callable[[], float]
 
 
 def _object(value: object, code: str) -> dict[str, Any]:
+    """Require a JSON object before readiness fields are inspected."""
     if not isinstance(value, dict):
         raise ReadinessProbeError(code)
 
@@ -109,6 +123,7 @@ def _safe_identifier(
     pattern: re.Pattern[str],
     code: str,
 ) -> str:
+    """Require one non-empty allowlisted identifier for secret-free evidence."""
     if not isinstance(value, str) or pattern.fullmatch(value) is None:
         raise ReadinessProbeError(code)
 
@@ -116,6 +131,7 @@ def _safe_identifier(
 
 
 def _exact_bool(value: object, expected: bool, code: str) -> bool:
+    """Require the exact readiness state instead of accepting truthy UI input."""
     if value is not expected:
         raise ReadinessProbeError(code)
 
@@ -123,7 +139,12 @@ def _exact_bool(value: object, expected: bool, code: str) -> bool:
 
 
 def validate_request(value: object) -> dict[str, Any]:
-    """Validate the exact non-secret request accepted by the runtime probe."""
+    """Validate the operator's one-shot readiness request before any publish.
+
+    :param value: Parsed request object. Null, empty, extra, or malformed fields reject the UI readiness attempt before Mercure is contacted.
+    :returns: A normalized, secret-free request containing every required readiness field; it is never empty after validation.
+    :raises ReadinessProbeError: If the request cannot prove the expected containers, DNS state, nonce, schema, or unused-attempt state.
+    """
     request = _object(value, "invalid_request")
     if frozenset(request) != _REQUEST_KEYS:
         raise ReadinessProbeError("invalid_request_fields")
@@ -177,7 +198,12 @@ def validate_request(value: object) -> dict[str, Any]:
 
 
 def validate_receipt(value: object) -> dict[str, Any]:
-    """Validate and normalize the complete readiness receipt allowlist."""
+    """Validate the receipt before an operator treats Mercure as ready.
+
+    :param value: Parsed receipt object. Null, empty, extra, or malformed fields mean the UI publish path has not proved readiness.
+    :returns: The normalized, secret-free receipt allowlist; it is never empty after validation.
+    :raises ReadinessProbeError: If identity, timing, publish, credential, or one-attempt evidence is incomplete or invalid.
+    """
     receipt = _object(value, "invalid_receipt")
     if frozenset(receipt) != _RECEIPT_KEYS:
         raise ReadinessProbeError("invalid_receipt_fields")
@@ -272,7 +298,11 @@ def validate_receipt(value: object) -> dict[str, Any]:
 
 
 def render_document(document: Mapping[str, Any]) -> str:
-    """Render byte-deterministic JSON with no formatting-dependent fields."""
+    """Render deterministic JSON for the shell-to-probe readiness exchange.
+
+    :param document: Validated request or receipt fields; an empty mapping is rendered as an empty JSON object.
+    :returns: One ASCII JSON line ending in a newline; the returned string is never empty.
+    """
     return json.dumps(
         document,
         ensure_ascii=True,
@@ -282,24 +312,39 @@ def render_document(document: Mapping[str, Any]) -> str:
 
 
 def read_document(stream: TextIO) -> dict[str, Any]:
-    """Read one size-bounded JSON object without echoing invalid content."""
+    """Read one size-bounded readiness document without echoing invalid content.
+
+    :param stream: Text input containing one JSON object. Empty input is invalid, and content beyond 16 KiB is rejected before validation.
+    :returns: The parsed object for request or receipt validation; an empty object remains empty and fails the next schema check.
+    :raises ReadinessProbeError: If input is oversized, invalid JSON, or not an object.
+    """
     payload = stream.read(MAX_DOCUMENT_BYTES + 1)
     if len(payload.encode("utf-8")) > MAX_DOCUMENT_BYTES:
         raise ReadinessProbeError("document_too_large")
     try:
         value = json.loads(payload)
-    except (json.JSONDecodeError, UnicodeError) as error:
+    except (json.JSONDecodeError, UnicodeError) as error:  # Example: the shell sent a truncated readiness request after a copy/paste error.
         raise ReadinessProbeError("invalid_json") from error
 
     return _object(value, "invalid_document")
 
 
 def _load_publisher_module() -> ModuleType:
-    repo_agents = Path(__file__).resolve().parents[1] / "strands_agents"
-    if repo_agents.is_dir() and str(repo_agents) not in sys.path:
-        sys.path.insert(0, str(repo_agents))
+    """Load the production publisher for one operator-approved readiness attempt.
 
-    return importlib.import_module("api.mercure_publisher")
+    The temporary app path is removed before later imports can observe it.
+    """
+    runtime_agents_directory = Path(__file__).resolve().parents[1] / "strands_agents"
+    original_module_search_path = sys.path.copy()
+    # A direct script run starts in scripts/, so expose the app package only while loading the publisher being probed.
+    if runtime_agents_directory.is_dir() and str(runtime_agents_directory) not in sys.path:
+        sys.path[:0] = [str(runtime_agents_directory)]
+
+    try:
+        return importlib.import_module("api.mercure_publisher")
+    finally:
+        # Restore the operator process's import order after the production publisher is loaded.
+        sys.path[:] = original_module_search_path
 
 
 async def build_readiness_receipt(
@@ -310,7 +355,21 @@ async def build_readiness_receipt(
     wait_for: WaitFor = asyncio.wait_for,
     monotonic: Monotonic = time.monotonic,
 ) -> dict[str, Any]:
-    """Publish one readiness event and return a validated secret-free receipt."""
+    """Spend one approved publish attempt and return its readiness receipt.
+
+    The runtime path loads the production publisher; injected collaborators are test seams only.
+
+    :param request_value: Parsed readiness request. Null, empty, or invalid evidence stops before the publish attempt.
+    :param publisher_module: Publisher implementation; None loads the production Mercure publisher used by the UI.
+    :param client_factory: HTTP client constructor for the bounded authenticated publish.
+
+    :param wait_for: Awaitable timeout wrapper that limits the single publish attempt to five seconds.
+    :param monotonic: Monotonic clock used only to record the operator-facing duration.
+
+    :returns: A validated, secret-free ready receipt; no partial or empty receipt is returned.
+    :raises ReadinessProbeError: If request validation, the publisher seam, the publish, or receipt validation fails.
+    :raises ImportError: If the production publisher cannot be loaded when no publisher seam is supplied.
+    """
     request = validate_request(request_value)
     publisher = publisher_module or _load_publisher_module()
     publish = getattr(publisher, "did_publish_mercure_event", None)
@@ -339,9 +398,9 @@ async def build_readiness_receipt(
                 publish(topic, payload, client, event_id=None),
                 PUBLISH_TIMEOUT_SECONDS,
             )
-    except TimeoutError as error:
+    except TimeoutError as error:  # Example: Mercure does not answer the UI readiness publish within five seconds.
         raise ReadinessProbeError("publish_timeout") from error
-    except Exception as error:
+    except Exception as error:  # Example: the authenticated publisher cannot connect even though the container checks passed.
         raise ReadinessProbeError("publish_failed") from error
     finally:
         setattr(publisher, "MERCURE_PUBLISH_MAX_RETRIES", original_retries)
@@ -376,6 +435,12 @@ async def build_readiness_receipt(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the operator's offline-validation or live-publish choice.
+
+    :param argv: Explicit arguments for tests; None reads the process command line, while an empty list selects the live readiness publish.
+    :returns: Parsed mode options; the namespace is never empty because ``validate_receipt`` always has a Boolean value.
+    :raises SystemExit: If an unsupported argument is supplied or command-line help is requested.
+    """
     parser = argparse.ArgumentParser(
         description="Run or validate the Mercure readiness probe."
     )
@@ -395,7 +460,18 @@ def main(
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
-    """Run the probe or the offline receipt validator."""
+    """Run the readiness publish or validate a previously saved receipt.
+
+    Use this boundary from the operator shell; it emits either one secret-free receipt or one stable error code.
+
+    :param argv: Explicit CLI arguments; None reads the process arguments, and an empty list performs the live publish path.
+    :param stdin: Request or receipt JSON input; empty input returns the ``invalid_json`` failure.
+    :param stdout: Successful receipt destination; failures leave it empty.
+
+    :param stderr: Failure-code destination; success leaves it empty.
+    :returns: Zero after a valid receipt is written, or one when readiness cannot be proved.
+    :raises SystemExit: If argument parsing rejects the command line or displays help.
+    """
     try:
         args = parse_args(argv)
         document = read_document(stdin)
@@ -405,9 +481,11 @@ def main(
             receipt = asyncio.run(build_readiness_receipt(document))
         stdout.write(render_document(receipt))
     except ReadinessProbeError as error:
+        # Example: stale container evidence yields one safe code instead of a misleading ready receipt.
         stderr.write(f"m05-mercure-readiness: {error.code}\n")
         return 1
     except Exception:
+        # Example: a publisher import failure stays secret-free while telling the operator the probe failed.
         stderr.write("m05-mercure-readiness: internal_error\n")
         return 1
 

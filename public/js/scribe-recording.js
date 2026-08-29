@@ -6,9 +6,8 @@
 // =========================================================================
 
 /**
- * Requests the browser microphone and starts a live consultation stream.
- * Reports microphone or setup errors in the status region for the clinician.
- * Returns whether capture actually started, so a failed reconnect can retry or give up.
+ * Starts a live consultation from the browser microphone and reports setup errors in the clinician's status region.
+ * Use from Start or reconnect; the result tells the caller whether audio capture actually began.
  */
 async function startRecording() {
     // Do not capture audio if roles and the summary would fail - warn and stop.
@@ -216,10 +215,9 @@ let sessionPausedAt = null;
 
 /**
  * Pauses or continues the active session's audio streaming.
- * Use from the Pause/Continue button during live recording or demo replay.
- * A paused microphone drops its audio entirely (never silence-padded), a
- * paused replay simply halts its audio clock, and the elapsed timer freezes
- * so displayed time stays talk-time.
+ *
+ * Use from Pause/Continue; live audio is dropped while paused, and replay returns to the active UI only after browser playback starts.
+ * The browser console reports blocked replay playback while the control and status remain paused.
  */
 function togglePauseSession() {
     // Replay pause rides the audio clock: pausing the element stops chunk
@@ -236,10 +234,14 @@ function togglePauseSession() {
             replayAudio.pause();
             enterPausedSessionUi('Replay paused - press Continue to keep going');
         } else {
-            replayAudio.play().catch((playError) => {
-                console.warn('Replay resume blocked:', playError);
-            });
-            leavePausedSessionUi('Replaying audio');
+            replayAudio.play()
+                .then(() => {
+                    leavePausedSessionUi('Replaying audio');
+                })
+                .catch((playError) => {
+                    // A clinician may press Continue after the browser revokes audio playback; the paused UI stays truthful and can be retried.
+                    console.warn('Replay resume blocked:', playError);
+                });
         }
         return;
     }
@@ -271,6 +273,7 @@ function togglePauseSession() {
 
 /**
  * Applies the visible paused state and flips the button to Continue.
+ * Use after live capture or replay audio has actually paused.
  */
 function enterPausedSessionUi(statusMessage) {
     isSessionPaused = true;
@@ -287,6 +290,7 @@ function enterPausedSessionUi(statusMessage) {
 
 /**
  * Clears the paused state and flips the button back to Pause.
+ * Use only after live capture or replay audio has actually resumed.
  */
 function leavePausedSessionUi(statusMessage) {
     isSessionPaused = false;
@@ -335,11 +339,8 @@ function startRecordingTimerIfNeeded() {
 const LIVE_FINALIZE_TIMEOUT_MS = 15000;
 
 /**
- * Stops the live consultation and waits for the backend `finalized` event.
- * The socket close makes the server run its final NeMo pass; the Mercure
- * stream stays open so the held-back tail still renders, then `endLiveStop`
- * reveals post-visit actions and requests the summary (same drain the demo
- * replay uses). Use when the clinician clicks Stop or presses Space/Escape.
+ * Stops the live consultation but keeps transcript updates open until final words arrive or the drain times out.
+ * Use when the clinician presses Stop or the stop shortcut; note generation remains an explicit post-visit action.
  */
 function stopRecording() {
     didUserStopRecording = true;

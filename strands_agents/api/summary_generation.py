@@ -359,62 +359,6 @@ def _log_fidelity_violations(
     )
 
 
-def _generate_validated_draft(
-    session_id: str,
-    prompt: str,
-    citation_segments: list[dict[str, Any]] | None,
-) -> tuple[SessionSummaryOutput | None, dict[str, Any]]:
-    """Run one summary draft through the agent, citation validation, and text cleanup.
-
-    Use once per fidelity attempt: the first call drafts the note, a second
-    call (with the rejection feedback appended to the prompt) redoes it.
-
-    Args:
-        session_id: Session shown in the UI, for traceable logs.
-        prompt: Full generation prompt, possibly carrying fidelity rejection feedback.
-        citation_segments: Corrected rows whose IDs may be cited; `None` or empty strips
-            any model-made citation IDs so the page never shows dead source chips.
-
-    Returns:
-        Validated summary plus agent metrics; a `None` summary means structured output
-        was missing and the browser should show a retryable generation failure.
-    """
-    from agents import create_summary_agent
-
-    agent = create_summary_agent()
-    agent_result = agent(prompt, structured_output_model=SessionSummaryOutput)
-
-    metric_fields = _agent_metric_fields(agent_result, "summary")
-    structured_summary = getattr(agent_result, "structured_output", None)
-    # Without a validated object, the browser should show a retryable failure.
-    if not isinstance(structured_summary, SessionSummaryOutput):
-        logger.warning(
-            "summary.structured_output_missing session_id=%s output_type=%s",
-            session_id,
-            type(structured_summary).__name__,
-            extra={
-                "session_id": session_id,
-                "output_type": type(structured_summary).__name__,
-                **metric_fields,
-            },
-        )
-        return None, metric_fields
-
-    # No corrected rows were selected, so any model-made citation IDs are stripped before the browser sees them.
-    validated_summary = summary_with_validated_citations(
-        structured_summary,
-        citation_segments or [],
-        session_id=session_id,
-    )
-    # Provenance lives in the structured citations; the prose the clinician
-    # reads must not repeat reference markers as text.
-    validated_summary = summary_with_clean_display_text(
-        validated_summary, session_id=session_id
-    )
-
-    return validated_summary, metric_fields
-
-
 def _generate_validated_v2_draft(
     session_id: str,
     prompt: str,

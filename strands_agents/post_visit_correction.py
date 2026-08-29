@@ -159,9 +159,7 @@ class PostVisitCorrectionError(RuntimeError):
     ) -> None:
         """Keep safe recovery metadata with one unavailable correction.
 
-        Use when the browser must fall back to live rows without seeing raw
-        CUDA details. Zero attempts means ASR never started; a null failed
-        chunk means the request failed before an ordered audio piece ran.
+        Use when the browser falls back to live rows; zero attempts means ASR never started, and a null failed chunk means no audio piece ran.
 
         Args:
             message: Internal diagnostic text; callers must not return it to the browser.
@@ -237,7 +235,10 @@ class AnchorMatch:
 
 @dataclass(frozen=True, slots=True)
 class _ScaffoldAllocationResult:
-    """Keep unchanged row chunks beside internal word-ownership provenance."""
+    """Keep corrected row chunks beside their internal word-ownership proof.
+    Allocation diagnostics use this to explain which source produced each visible row.
+    An empty chunk means the corresponding preview row receives no corrected text.
+    """
 
     chunks: list[list[str]]
     source_runs: list[list[dict[str, Any]]]
@@ -301,7 +302,10 @@ class _TranscribeCallResult:
 
 @dataclass(frozen=True, slots=True)
 class _WordConfidenceAggregationMismatch:
-    """PHI-free proof that one vendor exception matches the approved recovery."""
+    """Record PHI-free proof that one vendor exception matches the approved recovery.
+    The retry path uses its word count and text hash without retaining clinical wording.
+    No instance means the failure is outside the narrow confidence-recovery contract.
+    """
 
     word_count: int
     recognized_text_sha256: str
@@ -461,9 +465,7 @@ def _reviewed_correction_phrases(
 ) -> list[str]:
     """Resolve a request into the exact phrases the decoder may be biased toward.
 
-    One phrase keeps an arm isolated to a single term; a sequence runs the whole
-    reviewed inventory. Either way every phrase must already be written down and
-    reviewed, so an unlisted term cannot reach the decoder by any route.
+    Use one phrase for an isolated arm or a sequence for the inventory; an unreviewed term never reaches the user's corrected transcript.
 
     Args:
         correction_phrase: One reviewed phrase, a sequence of them, or null for none.
@@ -490,7 +492,7 @@ def _reviewed_correction_phrases(
 
     try:
         approved = set(approved_phrases())
-    except CorrectionPhraseInventoryError as inventory_error:
+    except CorrectionPhraseInventoryError as inventory_error:  # Example: an invalid reviewed-phrase file blocks decoder bias before correction.
         raise PostVisitCorrectionError(
             "Post-visit correction phrase inventory is unusable.",
             reason_category="invalid_phrase_config",
@@ -631,7 +633,7 @@ def _capture_post_visit_decoding_evidence(
     # the evidence records the inventory identity beside the decoder settings.
     try:
         effective_decoding_config["phrase_inventory"] = inventory_identity()
-    except CorrectionPhraseInventoryError:
+    except CorrectionPhraseInventoryError:  # Example: missing inventory identity omits eval metadata without changing the user's words.
         effective_decoding_config["phrase_inventory"] = None
     global LAST_POST_VISIT_DECODING_CONFIG
     LAST_POST_VISIT_DECODING_CONFIG = effective_decoding_config
@@ -645,11 +647,7 @@ def transcribe_audio_with_nemo(
 ) -> _NemoTranscriptionResult:
     """Transcribe retained visit audio on one restored NeMo model.
 
-    Short visits keep the original one-shot call. Capacity-risk visits use
-    sequential chunks. The observed device-not-ready family receives one
-    same-model retry; the pinned Unified model may instead receive one exact
-    word-confidence-off recovery when NeMo's aggregation count is one too high.
-    Neither recovery can chain into a third model call.
+    Short visits keep one call, while capacity-risk visits use ordered chunks. Only an allowlisted same-model recovery may add one final call.
 
     Args:
         model_name: NVIDIA/NeMo model id; empty would fail model loading.
@@ -669,7 +667,7 @@ def transcribe_audio_with_nemo(
     # Confidence is a pure observer of the decode and never changes visible words.
     try:
         enable_word_confidence_decoding(asr_model)
-    except Exception as confidence_error:  # pragma: no cover - NeMo-version-specific.
+    except Exception as confidence_error:  # pragma: no cover - requires an older NeMo decoder that rejects confidence settings.
         # Example: the user requests a note with an older override model that lacks this config.
         logger.warning(
             "post_visit_correction.confidence_enable_failed %s",
@@ -706,7 +704,7 @@ def transcribe_audio_with_nemo(
                     ),
                 )
             except PostVisitCorrectionError as correction_error:
-                # Support needs the exact failed piece without receiving audio or CUDA prose.
+                # Example: one long-visit chunk fails, so support receives its index without audio or CUDA prose.
                 raise PostVisitCorrectionError(
                     str(correction_error),
                     attempts=correction_error.attempts,
@@ -824,7 +822,7 @@ def _release_cached_cuda_memory_before_model_restore() -> None:
 
     try:
         torch.cuda.empty_cache()
-    except Exception as cache_release_error:  # pragma: no cover - GPU-state-specific.
+    except Exception as cache_release_error:  # pragma: no cover - requires a live CUDA cache-release failure.
         # Example: a prior visit left the GPU unavailable before this user's model can load.
         logger.warning(
             "post_visit_correction.preload_cache_release_failed %s",
@@ -905,7 +903,7 @@ def _load_post_visit_asr_model(model_name: str) -> Any:
             )
 
         return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name)
-    except PostVisitCorrectionError:
+    except PostVisitCorrectionError:  # Example: a pinned checkpoint failure already carries the clinician-safe correction reason.
         raise
     except Exception as model_load_error:  # pragma: no cover - GPU/model-specific.
         # Example: the clinician clicks Summarise while the configured checkpoint cannot load.
@@ -932,9 +930,7 @@ def _checkpoint_sha256(checkpoint_path: Path) -> str:
 def _resolved_checkpoint_path(model_name: str) -> Path | None:
     """Locate a known correction checkpoint in local cache without reading its bytes.
 
-    Split out of verification so the pre-visit gate can name the file it already holds a verdict for
-    in microseconds instead of re-hashing gigabytes on every Start click; null means an explicit
-    operator override keeps the existing repository-ID loading behavior for the stopped visit.
+    Use before Start readiness and restore; null keeps an explicit operator override on repository-ID loading without rehashing a pinned file.
     """
     pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS.get(model_name)
     # An unknown explicit override retains the pre-existing operator seam.
@@ -1064,8 +1060,7 @@ def ensure_pinned_checkpoint_available(
     try:
         return _verified_checkpoint_path(model_name)
     except PostVisitCorrectionError:
-        # Ordinary correction must never reach the network mid-visit, so only start-time provisioning
-        # is allowed to refill; every other caller gets the original failure unchanged.
+        # Example: a missing pin is re-raised when ordinary correction is forbidden from downloading mid-visit.
         if not allow_download:
             raise
 
@@ -1082,12 +1077,10 @@ def ensure_pinned_checkpoint_available(
     return _verified_checkpoint_path(model_name)
 
 
-# One remembered loadability verdict per checkpoint identity, keyed by resolved path, inode, size, and
-# both timestamps. Verifying bytes proves the file is the approved artifact; only an actual restore
-# proves this NeMo build can instantiate it. Those two facts came apart once already, and the byte
-# check stayed green for weeks while every stopped visit silently fell back to the live transcript.
-# The change timestamp is in the key because no userspace copy can preserve it, so a checkpoint swapped
-# in with its modification time kept still earns a fresh proof instead of inheriting the old verdict.
+# Cache one loadability verdict per file identity so repeat Start clicks avoid a costly CPU restore.
+# File verification proves approved bytes; the restore separately proves this NeMo build can load them.
+
+# Include ctime so a replaced checkpoint earns a fresh proof even when its mtime is preserved.
 _CHECKPOINT_LOAD_PROBE_CACHE: dict[tuple[str, int, int, int, int], tuple[bool, str]] = {}
 
 # Proving a checkpoint costs about twenty seconds and several gigabytes, and every Start click arrives
@@ -1104,11 +1097,9 @@ _CORRECTION_READINESS_PENDING_DETAIL = (
 
 
 def _is_transient_checkpoint_probe_failure(probe_error: Exception) -> bool:
-    """Tell machine pressure from a deterministic checkpoint incompatibility.
+    """Separate temporary machine pressure from a repeatable checkpoint failure.
 
-    PyTorch reports CPU allocator exhaustion as ``RuntimeError`` rather than
-    ``MemoryError``. Only its CPU allocator signatures are treated as transient,
-    so other runtime failures remain safe to memoise against the checkpoint.
+    PyTorch reports CPU exhaustion as ``RuntimeError``; only its allocator signatures earn a fresh proof on the user's next Start click.
     """
     if isinstance(probe_error, (MemoryError, OSError)):
         return True
@@ -1140,10 +1131,7 @@ def correction_readiness(
 ) -> tuple[bool, str]:
     """Report whether finishing a visit right now could really produce a reviewed transcript.
 
-    Called before the clinician starts recording, so a visit that could only ever yield the rough live
-    transcript is refused up front instead of disappointing them after the consultation is over.
-    Answers from a remembered verdict whenever this exact file has already been proven, because the
-    browser asks on every Start click and cannot wait out a hash and a model restore.
+    The Start gate refuses a visit that could only yield rough live text. An unchanged checkpoint reuses its proof so repeat clicks stay responsive.
 
     Args:
         model_name: Correction model to check; an operator override outside the pinned set is treated as
@@ -1206,9 +1194,7 @@ def _probe_checkpoint_loadability(
 ) -> tuple[bool, str]:
     """Prove the bytes are the approved artifact and that this runtime can actually build them.
 
-    Call with `_CHECKPOINT_PROBE_LOCK` held. A verdict is remembered only when it is a fact about this
-    checkpoint and this agent build; a machine-level failure such as a full disk is deliberately
-    forgotten, so the clinician's next click after the operator frees space is allowed to succeed.
+    Call with the probe lock held; checkpoint facts are cached, while machine pressure is forgotten so the user's next Start click can retry.
 
     Args:
         model_name: Correction model being proven, resolved again here so the verifier sees the pin.
@@ -1220,8 +1206,7 @@ def _probe_checkpoint_loadability(
     try:
         verified_checkpoint_path = _verified_checkpoint_path(model_name)
     except PostVisitCorrectionError as checkpoint_error:
-        # An integrity failure costs a hash to re-detect rather than a restore, so it is rechecked on
-        # each click instead of remembered against a file the operator may be part-way through replacing.
+        # Example: a truncated checkpoint is rechecked on the next Start while the operator replaces it.
         return False, str(checkpoint_error)
 
     # An operator switched the correction lane to their own model between the two resolutions.
@@ -1230,7 +1215,7 @@ def _probe_checkpoint_loadability(
 
     try:
         _restore_checkpoint_for_probe(verified_checkpoint_path)
-    except Exception as model_build_error:
+    except Exception as model_build_error:  # Example: a Start click finds exhausted CPU RAM or a checkpoint this NeMo build cannot load.
         if _is_transient_checkpoint_probe_failure(model_build_error):
             # Example: the restore fills local storage or PyTorch's CPU allocator runs out of RAM.
             # Neither says anything about the checkpoint, so the next Start click earns a fresh proof.
@@ -1257,10 +1242,7 @@ def _probe_checkpoint_loadability(
 def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
     """Keep short audio whole or split a capacity-risk visit into bounded WAVs.
 
-    Use after Stop: offsets let recombined word timings still point at the
-    original consultation. Returned scratch chunks are owned by the caller.
-    A trailing remainder under `_MIN_FINAL_CHUNK_SECONDS` joins the final
-    chunk so a silence-length sliver cannot void the corrected transcript.
+    Use after Stop: offsets preserve visit timing, the caller owns scratch chunks, and a short trailing remainder joins the final chunk.
     """
     audio_duration_seconds = wav_duration_seconds(str(audio_path))
     # The measured short-visit envelope preserves the original one-shot call exactly.
@@ -1315,7 +1297,7 @@ def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
                     delete_after_use=True,
                 )
             )
-    except PostVisitCorrectionError:
+    except PostVisitCorrectionError:  # Example: invalid retained audio removes any scratch chunks before the UI receives the safe failure.
         _remove_scratch_audio_chunks(scratch_chunks)
         raise
     except Exception as chunk_error:
@@ -1351,14 +1333,11 @@ def _transcribe_with_loaded_model(
 ) -> _TranscribeCallResult:
     """Run one audio path with at most one allowlisted same-model retry.
 
-    Use for the original short WAV or each long-visit chunk. The exact pinned
-    Unified confidence mismatch may turn off only word confidence before one
-    strict timestamped call. Otherwise only device-not-ready earns the existing
-    CUDA retry. A recovery call is final and can never enter the other branch.
+    Use for a short visit or one chunk; only the exact confidence mismatch or device-not-ready state earns a final recovery call.
     """
     try:
         hypotheses = _transcribe_loaded_model_once(asr_model, audio_path)
-    except Exception as first_transcribe_error:
+    except Exception as first_transcribe_error:  # Example: the first stopped-visit ASR call hits the measured confidence or device failure.
         confidence_mismatch = (
             _word_confidence_aggregation_mismatch(first_transcribe_error)
             if allow_word_confidence_fallback
@@ -1367,7 +1346,7 @@ def _transcribe_with_loaded_model(
         if confidence_mismatch is not None:
             try:
                 disable_word_confidence_decoding(asr_model)
-            except Exception as configuration_error:
+            except Exception as configuration_error:  # Example: the restored decoder rejects switching off word confidence for recovery.
                 raise PostVisitCorrectionError(
                     (
                         "Second-pass ASR word-confidence recovery could not "
@@ -1390,7 +1369,7 @@ def _transcribe_with_loaded_model(
                     asr_model,
                     audio_path,
                 )
-            except Exception as recovery_error:
+            except Exception as recovery_error:  # Example: the one confidence-off ASR call also fails, so no corrected note is claimed.
                 raise PostVisitCorrectionError(
                     (
                         "Second-pass ASR failed after word-confidence recovery: "
@@ -1486,9 +1465,7 @@ def _word_confidence_aggregation_mismatch(
 ) -> _WordConfidenceAggregationMismatch | None:
     """Classify only the measured one-extra-value NeMo aggregation failure.
 
-    The vendor exception contains decoded clinical text. This function keeps
-    that text in memory only long enough to validate its word count and retain
-    a SHA-256 fingerprint for the recovery-call equality check.
+    The vendor error may contain clinical text, which stays in memory only long enough to validate its count and retain a comparison hash.
     """
     if type(transcribe_error) is not RuntimeError:
         return None
@@ -1608,7 +1585,7 @@ def _reclaim_cuda_memory() -> None:
 
     try:
         torch.cuda.synchronize()
-    except Exception as synchronize_error:  # pragma: no cover - GPU-state-specific.
+    except Exception as synchronize_error:  # pragma: no cover - requires a failed live CUDA synchronization.
         # Example: the user's first failed kernel leaves synchronization unavailable.
         logger.warning(
             "post_visit_correction.cuda_synchronize_failed %s",
@@ -1616,7 +1593,7 @@ def _reclaim_cuda_memory() -> None:
         )
     try:
         torch.cuda.empty_cache()
-    except Exception as cache_error:  # pragma: no cover - GPU-state-specific.
+    except Exception as cache_error:  # pragma: no cover - requires a failed live CUDA cache release.
         # Example: cached allocations cannot be released before the user's one retry.
         logger.warning(
             "post_visit_correction.cuda_empty_cache_failed %s",
@@ -1633,10 +1610,7 @@ def _transcription_from_hypothesis(
 ) -> PostVisitTranscription:
     """Extract one chunk's text and shift evidence onto the full visit timeline.
 
-    Use after a successful model call; absent timing/confidence remains honest
-    optional evidence and never blocks the corrected note by itself. Only the
-    exact confidence-off recovery may reconcile separately timed punctuation;
-    every normal hypothesis keeps the historical one-row-per-display-word gate.
+    Missing timing or confidence stays optional. Only confidence-off recovery may reconcile punctuation before the normal display-word gate.
     """
     transcript_text = normalise_transcript_text(hypothesis)
     display_words = split_words(transcript_text)
@@ -1668,7 +1642,7 @@ def _transcription_from_hypothesis(
                 }
                 for timing in chunk_word_timings
             ]
-    except Exception as timing_error:  # pragma: no cover - NeMo-hypothesis-specific.
+    except Exception as timing_error:  # pragma: no cover - requires malformed timing data from a live NeMo hypothesis.
         # Example: the user gets corrected text even when this model omits usable word times.
         logger.warning(
             "post_visit_correction.word_timing_extraction_failed %s",
@@ -1681,7 +1655,7 @@ def _transcription_from_hypothesis(
             hypothesis,
             display_words,
         )
-    except Exception as confidence_error:  # pragma: no cover - hypothesis-specific.
+    except Exception as confidence_error:  # pragma: no cover - requires missing confidence data from a live NeMo hypothesis.
         # Example: the corrected note renders without confidence styling for this model.
         logger.warning(
             "post_visit_correction.word_confidence_extraction_failed %s",
@@ -1722,11 +1696,16 @@ def chunk_provenance_for_transcription(
     transcription: PostVisitTranscription | _NemoTranscriptionResult | str,
     corrected_word_count: int,
 ) -> dict[str, Any]:
-    """Return exact chunk word ranges only when the NeMo producer recorded them.
+    """Expose recorded chunk seams so operators can distinguish ASR repetition from a correction defect.
 
-    Plain strings and injected timing results do not prove chunk ownership, so
-    their diagnostic value stays ``not_observed`` rather than being inferred
-    from corrected-row timestamps.
+    Only producer-recorded ranges count; null, plain-text, empty, or malformed evidence returns ``not_observed`` instead of guessing.
+
+    Args:
+        transcription: NeMo result to inspect; plain strings and timing-only seams carry no chunk ownership proof.
+        corrected_word_count: Number of corrected ASR words the ranges must cover exactly; zero cannot produce an observed range.
+
+    Returns:
+        Exact ranges and seam indices when fully proved, otherwise ``not_observed`` with empty lists.
     """
     raw_ranges = getattr(transcription, "chunk_word_ranges", None)
     if not isinstance(raw_ranges, list) or raw_ranges == []:
@@ -1867,12 +1846,14 @@ def build_corrected_segments_with_diagnostics(
     word_timings: list[dict[str, Any]] | None = None,
     word_confidences: list[float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Build unchanged corrected rows plus PHI-safe allocation provenance.
+    """Build user-visible corrected rows and the PHI-safe provenance behind them.
 
-    Diagnostics contain only indices, counts, modes, and score classes. The
-    corrected rows continue through the existing role, timing, and confidence
-    preparation unchanged.
-    """
+    :param corrected_words: Second-pass ASR words; empty returns no rows plus closed zero-word diagnostics.
+    :param live_segments: Preview timing and roles; empty creates generic rows whose roles remain unknown.
+    :param model_name: ASR identity stored on rows; empty text remains visible for the caller to reject.
+    :param word_timings: Evidence aligned to corrected words; None keeps echo-boundary rows unsplit.
+    :param word_confidences: Evidence aligned to corrected words; None leaves corrected rows unmeasured.
+    :returns: Corrected rows and text-free provenance; empty corrected words return an empty row list and an ``empty`` allocation."""
     # Without words, any corrected artifact would erase the user's useful preview text.
     if corrected_words == []:
         return [], _empty_allocation_diagnostics()
@@ -2132,10 +2113,7 @@ def stamp_corrected_row_confidence(
 ) -> list[dict[str, Any]]:
     """Attach per-row confidence to corrected rows built from ASR words.
 
-    Runs after echo splits and role cleanup so each final visible row is
-    located in the ASR word stream by its own words. Rows that cannot be
-    located (live-text fallbacks, reshuffled rows) stay unmeasured and render
-    exactly as they do today.
+    Run after echo splits and role cleanup; visible rows that cannot be located in the ASR stream stay unmeasured in the UI.
 
     Args:
         segments: Final corrected rows in visible order; empty passes through.
@@ -2758,5 +2736,5 @@ def _float_or_zero(value: Any) -> float:
     """
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Example: an older saved preview has null or non-numeric timing, so its UI row starts at zero.
         return 0.0

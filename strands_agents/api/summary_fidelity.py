@@ -2932,21 +2932,6 @@ def _hedge_row_window(normalized_rows: list[dict[str, str]], row_index: int) -> 
     )
 
 
-def _hedge_adjacent_tokens(row_text: str, hedge_match: re.Match[str]) -> set[str]:
-    """Meaningful tokens immediately around one hedge occurrence."""
-    before_tokens = re.findall(r"[a-z0-9]+", row_text[: hedge_match.start()].lower())
-    after_tokens = re.findall(r"[a-z0-9]+", row_text[hedge_match.end() :].lower())
-    neighborhood = (
-        before_tokens[-_HEDGE_ADJACENT_TOKEN_RADIUS:]
-        + after_tokens[:_HEDGE_ADJACENT_TOKEN_RADIUS]
-    )
-    return {
-        _singular_token(token)
-        for token in neighborhood
-        if len(token) >= 3 and token not in _HEDGE_CONTENT_STOPWORDS
-    }
-
-
 # --- Coverage lane: note-level critical-coverage reasons -----------------
 # Note-level reasons (reason lane; they also join the single bounded retry via
 # regeneration feedback in summary_generation): an answered mental-health

@@ -6,23 +6,22 @@
 
 Restores the reviewed transcript when a visit ends, refuses recording when it cannot, steadies note checks, and fixes more medicine names.
 
-- **Three more misheard medicine names fixed live** - "amoleans" and "amolliums" become emollients, "Lauratidine" loratadine; notes aren't covered.
-- **The PHP quality gate reports on PHP again** - It failed on 301 committed checksums wrongly flagged; the broad check is off, 11 precise ones stay.
+- **Stopped visits produce a reviewed transcript again** - The missing correction model is restored and the GPU container now pins NeMo 3.0.0.
+- **Consultation recordings can no longer be copied into the agent image** - Past transcripts and note wording are excluded from the GPU image build.
+- **A dropped connection can no longer leave a recording that captures nothing** - A refused restart retries or releases the microphone instead of stalling.
+- **Recording is refused when the finished visit can't be delivered** - The pre-visit check covers the correction model, and names which half failed.
 - **An odd character no longer costs you the note** - A superscript digit used to crash note checks; characters it cannot read are now skipped.
 - **Emptying the data volume no longer loses the reviewed transcript** - Startup re-downloads and verifies the 2.5 GB correction model first.
-- **Recording is refused when the finished visit can't be delivered** - The pre-visit check covers the correction model, and names which half failed.
-- **Readiness now proves the correction model opens** - It loads once on the CPU, clear of the GPU, and remembers the result for that exact file.
-- **Starting a visit no longer waits on a 2.4 GB re-check** - The model is proved once as the agent starts, so the check answers in milliseconds.
+- **Three more misheard medicine names fixed live** - "amoleans" and "amolliums" become emollients, "Lauratidine" loratadine; notes aren't covered.
+- **A live-transcript note stops flagging quotes it can support** - Quote checks read the rows the note actually used, so a warning means something.
 - **A disk or memory blip no longer disables corrections until restart** - Only a real checkpoint or runtime fault is remembered; a machine fault retries.
-- **The first-run model download is visible again** - Startup verifies offline first, so the 2.5 GB restore reports progress instead of hanging silently.
+- **Readiness now proves the correction model opens** - It loads once on the CPU, clear of the GPU, and remembers the result for that exact file.
 - **A corrupted model copy is replaced, not re-read** - A cached file failing its size or hash check is refetched instead of blocking startup on the same bytes.
-- **A dropped connection can no longer leave a recording that captures nothing** - A refused restart retries or releases the microphone instead of stalling.
+- **The first-run model download is visible again** - Startup verifies offline first, so the 2.5 GB restore reports progress instead of hanging silently.
+- **Starting a visit no longer waits on a 2.4 GB re-check** - The model is proved once as the agent starts, so the check answers in milliseconds.
 - **Service failures no longer show the agent's internal address** - The banner names the failing service; the address and message go to the app log.
 - **A visit that captured no usable audio now says so** - It showed the generic "correction has not completed" wording instead of the real cause.
 - **A speaker relabel with an unreadable body reports a validation error** - An empty or malformed body returned a server error rather than the documented 400.
-- **Stopped visits produce a reviewed transcript again** - The missing correction model is restored and the GPU container now pins NeMo 3.0.0.
-- **Consultation recordings can no longer be copied into the agent image** - Past transcripts and note wording are excluded from the GPU image build.
-- **A live-transcript note stops flagging quotes it can support** - Quote checks read the rows the note actually used, so a warning means something.
 
 ## v0.5.1 - 2026-08-01
 

@@ -1,11 +1,9 @@
 // =========================================================================
-// Ambient Scribe claim and evidence rendering (summary UX).
-// Runs before scribe-output.js, which calls createClaimSectionBlocks and
-// createClaimKeyPointBlocks while building the note. Owns one claim's text,
-// its evidence toggle, and the disclosure naming what was actually checked:
-// cited source rows, quote-match state, and wording review. That disclosure
-// says plainly that linkage is not clinical approval, because a source link
-// is the easiest thing on a note to over-read.
+// Ambient Scribe claim and evidence rendering for generated notes.
+// Runs before scribe-output.js and builds each section claim and key point.
+//
+// Reviewers use its in-note controls to inspect cited rows, quote state, and wording flags.
+// Every disclosure states that automated source linkage is not clinical approval.
 // =========================================================================
 
 // At most one claim disclosure is open; Escape closes it and focus returns
@@ -18,6 +16,13 @@ let claimDisclosureSequence = 0;
 const CLAIM_EVIDENCE_HELP_TEXT =
     'Source links and quote matching are limited automated checks - not clinical review or approval.';
 
+/**
+ * Builds schema-v2 note sections with claim-level evidence controls.
+ * Use from the summary renderer; missing sections or claims leave those parts of the note empty.
+ *
+ * @param {object} summaryPayload - v2 note payload; missing sections act as an empty list.
+ * @returns {HTMLElement[]} section blocks in note order, or an empty list when no sections exist.
+ */
 function createClaimSectionBlocks(summaryPayload) {
     const unitsById = summaryUnitsById(summaryPayload);
     const sectionBlocks = [];
@@ -43,8 +48,7 @@ function createClaimSectionBlocks(summaryPayload) {
 
 /**
  * Creates the Key Points strip for schema-v2 claim key points.
- * Use from the summary renderer; each point is a claim with its own
- * evidence affordance, exactly like a section claim.
+ * Use from the summary renderer; each point gets the same evidence controls as a section claim.
  *
  * @param {object} summaryPayload - v2 payload; no key points hides the strip.
  * @returns {HTMLElement[]} the strip block, or empty when there is none.
@@ -76,9 +80,7 @@ function createClaimKeyPointBlocks(summaryPayload) {
 
 /**
  * Appends one claim's prose, evidence affordance, and disclosure region.
- * Use for section claims and key points so both share one interaction.
- * The disclosure sits in the document flow directly after its claim - it
- * pushes content down instead of overlaying it, and never traps focus.
+ * Use for section claims and key points; the in-flow disclosure expands below its claim without trapping focus.
  *
  * @param {HTMLElement} claimContainer - section content div or key-point li.
  * @param {object} claim - one v2 claim; flag fields may be absent.
@@ -113,9 +115,7 @@ function appendClaimNodes(claimContainer, claim, unitsById) {
 
 /**
  * Builds the visible prose span for one claim, review cues attached.
- * Use inside the claim body: flagged claims carry a visible style and an
- * explanatory title, and the exact wording lives in the disclosure - a
- * bare unexplained "Unverified" never renders.
+ * Use inside the claim body; flagged wording gets a visible style and an explanatory title instead of a bare "Unverified" label.
  *
  * @param {object} claim - one v2 claim; no flags renders plain text.
  * @returns {HTMLElement} the claim's text span.
@@ -162,9 +162,7 @@ function createClaimTextSpan(claim) {
 
 /**
  * Builds one claim's evidence affordance button.
- * Use beside the claim text: cited claims show their own unit count and
- * uncited/absence claims show an honest wording chip instead - a count of
- * zero or a fabricated link never renders.
+ * Use beside claim text; cited claims expose source turns while uncited or absence-based claims show honest wording instead of a false link.
  *
  * @param {object} claim - one v2 claim.
  * @param {Array<object>} citedUnits - the claim's resolved units.
@@ -208,8 +206,7 @@ function createClaimEvidenceToggle(claim, citedUnits, disclosureId) {
 
 /**
  * States the claim's evidence/quote status in the contract's limiting language.
- * Use as the disclosure's first line so automated linkage can never read as
- * clinical verification.
+ * Use as the disclosure's first line so automated linkage cannot read as clinical verification.
  *
  * @param {object} claim - one v2 claim.
  * @param {boolean} hasCitedEvidence - whether resolved cited units exist.
@@ -238,15 +235,11 @@ function claimEvidenceStateText(claim, hasCitedEvidence) {
 }
 
 /**
- * Builds one claim's non-modal in-flow evidence disclosure.
- * Use once per claim. The region shows the complete cited turns with
- * timestamp and speaker, visibly separated display context, the exact
- * quote/review state, claim-scoped "Open in transcript", an explicit
- * Close, and the fixed automated-check limitation text. It supports
- * Escape and focus return and keeps normal Tab order - never a focus trap.
+ * Builds an in-flow evidence panel with cited turns, review state, and close or transcript-link controls.
+ * Use once per claim; a failed transcript jump leaves the note usable and reports a warning in the browser console.
  *
- * @param {object} claim - one v2 claim.
- * @param {Array<object>} citedUnits - the claim's resolved units.
+ * @param {object} claim - one v2 claim; missing evidence fields render the safe uncited state.
+ * @param {Array<object>} citedUnits - resolved source units; empty means no transcript link is offered.
  * @param {string} disclosureId - id the toggle's aria-controls points at.
  * @returns {HTMLElement} hidden disclosure region, in-flow after the claim.
  */
@@ -309,6 +302,7 @@ function createClaimDisclosure(claim, citedUnits, disclosureId) {
             }
 
             openTranscriptDeepLink(citedSegmentIds).catch((deepLinkError) => {
+                // The corrected transcript can disappear after a note loads; the evidence panel remains available even when the jump fails.
                 console.warn('Transcript deep link failed:', deepLinkError);
             });
         });
@@ -337,9 +331,7 @@ function createClaimDisclosure(claim, citedUnits, disclosureId) {
 
 /**
  * Builds one complete evidence unit inside a claim disclosure.
- * Use per cited unit: the full turn text derives from its hydrated ordered
- * rows, and neighbour rows render visibly separated as display-only context
- * that never joins the evidence or its count.
+ * Use per cited unit; ordered rows form the evidence text while neighbouring rows stay visibly separate and never affect its count.
  *
  * @param {object} sourceUnit - hydrated unit {unit_id, role, start, end,
  *   rows, context_before, context_after}; missing arrays act empty.
@@ -390,8 +382,7 @@ function createEvidenceUnitBlock(sourceUnit) {
 
 /**
  * Builds one visibly labelled display-context row line.
- * Use around a unit's evidence text; rows carry no speaker role, so the
- * line never invents one.
+ * Use around a unit's evidence text; context rows carry no speaker role, so the UI never invents one.
  *
  * @param {object} contextRow - {segment_id, start, end, text}.
  * @returns {HTMLElement} labelled context line.
@@ -407,8 +398,7 @@ function createContextRowLine(contextRow) {
 
 /**
  * Opens or shuts one claim's evidence disclosure from its toggle.
- * Use from the toggle click; opening one closes any other so Escape and
- * the visible expansion stay unambiguous.
+ * Use from the evidence toggle; opening one closes any other so the visible review target stays unambiguous.
  */
 function toggleClaimEvidence(evidenceToggle, disclosureRegion) {
     // A second activation of the open claim's toggle closes it.
@@ -425,9 +415,7 @@ function toggleClaimEvidence(evidenceToggle, disclosureRegion) {
 
 /**
  * Closes one claim disclosure and keeps the reviewer's focus anchored.
- * Use from the Close button, Escape, and toggle re-activation; focus
- * returns to the owning toggle only when it was inside the region, so
- * closing never yanks focus from elsewhere on the page.
+ * Use from Close, Escape, or toggle re-activation; focus returns only when the reviewer was inside that claim's controls.
  */
 function closeClaimEvidence(disclosureRegion) {
     const owningToggle = openClaimDisclosure?.disclosureRegion === disclosureRegion

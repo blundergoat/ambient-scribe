@@ -1,21 +1,8 @@
-"""
-Per-session evidence bundles for offline transcription and note analysis.
+"""Persist per-session evidence for offline transcription and note analysis.
 
-Reconstructing a test consultation used to mean copying three browser views out by hand, and the copy was always incomplete:
-the dev panel is a capped rolling buffer, the clinical note is published once and never stored, and the session store is
-in-memory with a TTL. A capture taken late lost most of the visit and all of the note.
-
-This module writes the same material to disk as the visit produces it, so nothing has to be running alongside the browser:
-
-- the live rows when the visit finalizes,
-- the corrected rows when correction completes, and
-- the clinical note plus its fidelity trace when the summary completes.
-
-Every write is best-effort, because evidence is a diagnostic side channel: a failure here logs and returns rather than
-breaking a clinician-facing request. This is developer evidence for a proof-of-concept driven by synthetic seed consultations,
-and it deliberately stores full transcript and note wording, which is what makes accuracy analysis possible at all.
-Point `SESSION_EVIDENCE_DIR` at a directory you are willing to fill with transcript text, or set `SESSION_EVIDENCE_ENABLED=0`
-to turn the whole thing off.
+Use after a synthetic consultation so live rows, corrected rows, the clinical note, and its fidelity trace survive browser and session expiry.
+Evidence writes are best-effort: a storage failure is logged and never blocks the clinician's request.
+Bundles contain full transcript and note wording, so choose `SESSION_EVIDENCE_DIR` carefully or set `SESSION_EVIDENCE_ENABLED=0`.
 """
 
 from __future__ import annotations
@@ -128,7 +115,7 @@ def write_session_evidence(
         # world-readable under its final name.
         staging.chmod(EVIDENCE_FILE_MODE)
         staging.replace(destination)
-    except Exception as write_error:  # pragma: no cover - filesystem-specific.
+    except Exception as write_error:  # pragma: no cover - requires a real filesystem permission or storage failure.
         # Example: SESSION_EVIDENCE_DIR points at a bind mount the container cannot write to, so the bundle is lost.
         # The clinician sees nothing: their visit finalizes, correction runs, and the note renders exactly as it would have.
         logger.warning(

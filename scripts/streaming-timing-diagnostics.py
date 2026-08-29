@@ -27,7 +27,11 @@ EPSILON = 1e-6
 
 
 def load_alignment_module() -> ModuleType:
-    """Load the sibling helper without mutating ``sys.path``."""
+    """Load the shared transcript alignment rules used by timing reports.
+
+    :returns: The loaded sibling module; a missing module never produces an empty fallback.
+    :raises RuntimeError: If the alignment helper cannot be located or has no executable loader.
+    """
     specification = importlib.util.spec_from_file_location(
         "streaming_timing_transcript_alignment",
         ALIGNMENT_MODULE_PATH,
@@ -587,7 +591,20 @@ def evaluate_history(
     cutoff_seconds: float,
     boundary_milliseconds: Sequence[int],
 ) -> dict[str, Any]:
-    """Evaluate one saved history without modifying it."""
+    """Evaluate one saved visit while keeping timing and ownership separate.
+
+    :param history: Saved history object. Missing or empty segments produce zero-row diagnostics; null or non-list segments are invalid.
+    :param run_id: Label shown in the generated report; an empty label is retained rather than replaced.
+    :param doctor_path: Doctor TextGrid selected as the visit reference; a missing file stops the report.
+
+    :param patient_path: Patient TextGrid selected as the visit reference; a missing file stops the report.
+    :param cutoff_seconds: Reference time boundary; intervals after it do not participate in the displayed comparison.
+    :param boundary_milliseconds: Start-point distances to report; an empty sequence omits those boundary cells.
+
+    :returns: Timing, ownership, and structural diagnostics; unavailable percentages are None when no rows or words can be scored.
+    :raises ValueError: If saved segments are not a list or contain timing values that cannot be interpreted.
+    :raises OSError: If either selected TextGrid cannot be read.
+    """
     raw_rows = history.get("segments", [])
     if not isinstance(raw_rows, list):
         raise ValueError("history segments must be a list")
@@ -655,7 +672,12 @@ def evaluate_history(
 
 
 def build_verdict(findings: dict[str, Any]) -> str:
-    """Return the human-readable separation of timing and ownership results."""
+    """Render the operator report that keeps timing and ownership conclusions separate.
+
+    :param findings: Evaluated runs. An empty runs list produces an interpretation-only report instead of an empty document.
+    :returns: Non-empty Markdown suitable for review beside the machine-readable findings.
+    :raises KeyError: If the findings or a run omits fields required by the report contract.
+    """
     lines = [
         "# Streaming timing characterization",
         "",
@@ -709,7 +731,11 @@ def build_verdict(findings: dict[str, Any]) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse one sealed characterization run."""
+    """Parse the evidence paths for one operator-requested characterization run.
+
+    :returns: Required histories, role references, and output paths; no path collection is empty after successful parsing.
+    :raises SystemExit: If required paths are missing, options are invalid, or help is requested.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--history", action="append", type=Path, required=True)
     parser.add_argument("--doctor", type=Path, required=True)
@@ -728,7 +754,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Evaluate selected histories and write deterministic evidence."""
+    """Evaluate selected histories and write deterministic operator evidence.
+
+    Use after visits are captured; the command always writes JSON and writes Markdown only when a verdict path is supplied.
+
+    :returns: Zero after every selected history and requested report is written.
+    :raises OSError: If an input cannot be read or an output cannot be created.
+    :raises ValueError: If saved JSON, transcript rows, or TextGrid evidence violates the evaluation contract.
+    """
     args = parse_args()
     boundary_milliseconds = tuple(args.boundary_ms or DEFAULT_BOUNDARY_MS)
     runs = []

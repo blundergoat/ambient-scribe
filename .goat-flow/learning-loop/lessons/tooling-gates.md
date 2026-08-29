@@ -1,6 +1,6 @@
 ---
 category: tooling-gates
-last_reviewed: 2026-07-30
+last_reviewed: 2026-08-29
 ---
 
 # Tooling and Quality-Gate Lessons
@@ -378,9 +378,23 @@ record the security correction without copying or printing secret values.
 
 ## Lesson: Gruff context docs need marker vocabulary (2026-07-04)
 
-In one review, comments clearly described user-visible error handling but still failed `docs.missing-error-behavior-doc` because gruff's context-doc rule looks for marker words such as `reports`, `fallback`, `recover`, or `throws`.
+**Created:** 2026-07-04
+**Decision changed:** Read the installed context-doc matcher before choosing concise
+error-contract wording.
+**Trigger phase:** VERIFY
+**Incident count:** 2 | **Latest occurrence:** 2026-08-29
 
-**Lesson:** When fixing gruff context-doc findings, read the rule vocabulary and include the expected marker word in plain English instead of relying on semantically similar prose.
+In one review, comments clearly described user-visible error handling but still
+failed `docs.missing-error-behavior-doc` because Gruff's rule looks for marker
+words such as `reports`, `fallback`, `recover`, or `throws`.
+
+The 2026-08-29 browser clarity pass repeated the trap with `reported` and
+`records`. Both were accurate English, but neither matched the installed 0.5.0
+rule. Saying what the browser console `reports` made the contract explicit and
+cleared the finding.
+
+**Prevention:** Read the installed rule vocabulary and use an accurate matching
+term in plain English instead of relying on a semantically similar word form.
 
 ## Lesson: Gruff env placeholders are exact-token sensitive (2026-07-04)
 
@@ -681,6 +695,10 @@ allowlist, merge, and publication rules into `scripts/demo_audio_catalog.py` (se
 `def merge_picker_catalog`) returned `scripts/generate-demo-consultation-audio.py` to 983 lines. For a file
 already within one small edit of its threshold, allocate the focused sibling before adding the first helper,
 then run the direct line-count/Gruff probe after each substantive slice.
+
+A later source-chip extraction passed 21 behavior tests and cut its targeted findings from 12 to one, but the remaining
+maintainability identity had moved to the new finding helper at 68.7. Splitting row selection from finding validation cleared it.
+After extraction, compare stable identities rather than totals and split again when debt has merely moved to the new helper.
 
 ## Lesson: Repeated JSON blocks need identity-scoped patch anchors
 
