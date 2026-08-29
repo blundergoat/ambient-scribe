@@ -9,6 +9,7 @@ minimumSeverity:
   report: none
   dashboard: none
 minimumPythonVersion: '3.11'
+outputVolumeHintThreshold: 50
 paths:
   ignore:
   - .agents/
@@ -21,6 +22,8 @@ paths:
   - tests/python/**
   - tests/fixtures/**
 allowlists:
+  # acceptedAbbreviations lets naming rules accept project vocabulary.
+  # Configured values replace this seed; they do not merge with it.
   acceptedAbbreviations:
   - age
   - app
@@ -356,6 +359,11 @@ rules:
   # Unsanitized markdown interpolation
   security.unsanitized-markdown-interpolation:
     enabled: true
+    options:
+      labelSanitizers: []
+      urlSanitizers:
+      - urllib.parse.quote
+      - urllib.parse.quote_plus
   # Variable import
   security.variable-import:
     enabled: true
