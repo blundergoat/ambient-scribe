@@ -405,52 +405,6 @@ def regeneration_feedback(violations: list[FidelityViolation]) -> str:
     return "\n".join(lines)
 
 
-def summary_with_unverified_flags(
-    parsed_summary: dict[str, Any], violations: list[FidelityViolation]
-) -> dict[str, Any]:
-    """Mark sentences that still fail after the user's one note retry.
-
-    The browser keeps each sentence visible with the unverified marker.
-
-    Args:
-        parsed_summary: Dumped summary payload about to be published; mutated copy is returned.
-        violations: Surviving violations; empty returns the payload unchanged.
-
-    Returns:
-        Payload where each affected section carries `unverified` sentences and
-        key points carry `unverified_key_points`; absent keys mean a fully
-        verified note that renders exactly as before.
-    """
-    # A clean note ships untouched, so old sessions render byte-identically.
-    if not violations:
-        return parsed_summary
-
-    # Each surviving failure must be placed where the clinician reads it.
-    for violation in violations:
-        placed = False
-        # The sentence is flagged where the clinician will actually read it.
-        for section in parsed_summary.get("sections", []):
-            # A matching section receives the browser's visible warning marker.
-            if violation.sentence in str(section.get("content", "")):
-                section.setdefault("unverified", [])
-                # One flag per sentence keeps repeated rules from stacking markers.
-                if violation.sentence not in section["unverified"]:
-                    section["unverified"].append(violation.sentence)
-                placed = True
-        # Key-point lines live outside sections and carry their own flag list.
-        if not placed:
-            # Each visible key point is another possible location for the sentence.
-            for key_point in parsed_summary.get("key_points", []):
-                # A matching key point needs the same warning as section prose.
-                if violation.sentence in str(key_point):
-                    flagged_points = parsed_summary.setdefault(
-                        "unverified_key_points", []
-                    )
-                    # A duplicate rule must not create duplicate UI markers.
-                    if key_point not in flagged_points:
-                        flagged_points.append(key_point)
-
-    return parsed_summary
 
 
 def find_fidelity_violations(
@@ -2243,6 +2197,31 @@ def _arrangement_content_reasons(
     ]
 
 
+def _spoken_number_value(token: str) -> int | None:
+    """Read one spoken token as a number, or report that it is not one.
+
+    One predicate for the whole parser: whatever this refuses is not treated as part of a quantity
+    anywhere, so the tokens counted and the tokens summed can never disagree.
+
+    Args:
+        token: One lowercased word or digit run split out of the quoted quantity.
+
+    Returns:
+        The token's numeric value, or null when it is not a number this parser can read. `str.isdigit()`
+        is deliberately not used: it accepts forms such as a superscript that `int()` then refuses.
+    """
+    number_word_value = _NUMBER_WORDS.get(token)
+    if number_word_value is not None:
+        return number_word_value
+
+    try:
+        return int(token)
+    except ValueError:
+        # Example: the clinician's "24" was transcribed as the superscript "²", which reads as a digit
+        # to Python's own test but converts to nothing.
+        return None
+
+
 def _word_quantity(quantity_text: str) -> int | None:
     """Parse '24', 'forty', or 'twenty-four'; None when not a quantity.
 
@@ -2250,20 +2229,21 @@ def _word_quantity(quantity_text: str) -> int | None:
     twenty-four"), so the longest all-number suffix is the spoken quantity.
     """
     parts = [part for part in re.split(r"[- ]", quantity_text.strip().lower()) if part]
-    number_start = len(parts)
-    # Walk backward while every part still reads as a number.
-    for part_index in range(len(parts) - 1, -1, -1):
-        if parts[part_index] not in _NUMBER_WORDS and not parts[part_index].isdigit():
-            break
-        number_start = part_index
 
-    number_parts = parts[number_start:]
-    if not number_parts:
+    # Walk backward while every part still reads as a number; the first one that does not ends the
+    # quantity, which is what discards a leading "about" and anything else this parser cannot read.
+    number_values: list[int] = []
+    for part in reversed(parts):
+        part_value = _spoken_number_value(part)
+        if part_value is None:
+            break
+        number_values.append(part_value)
+
+    # Nothing countable at the end of the phrase means this was never a spoken quantity.
+    if not number_values:
         return None
 
-    total = sum(
-        int(part) if part.isdigit() else _NUMBER_WORDS[part] for part in number_parts
-    )
+    total = sum(number_values)
     return total if total > 0 else None
 
 

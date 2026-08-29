@@ -2615,3 +2615,39 @@ def test_answered_screen_missing_from_note_is_reported() -> None:
 
     assert [reason["reason"] for reason in missing] == ["mental_health_screen_missing"]
     assert covered == []
+
+
+class TestUnicodeDigitQuantityParsing:
+    """Quantity parsing over wording that came out of a real transcript.
+
+    `str.isdigit()` accepts characters `int()` refuses, so a superscript or other Unicode digit form in
+    transcribed speech used to raise inside note verification instead of being handled as "not a number".
+    """
+
+    def test_unicode_digit_alone_is_not_a_quantity(self):
+        """A lone superscript is not a spoken quantity, so parsing reports no value rather than raising."""
+        from api.summary_fidelity import _word_quantity
+
+        assert _word_quantity("²") is None
+
+    def test_unicode_digit_leading_filler_parses_like_it_was_absent(self):
+        """A non-convertible token ahead of the quantity behaves like the "about" filler already handled."""
+        from api.summary_fidelity import _word_quantity
+
+        assert _word_quantity("² twenty-four") == _word_quantity("twenty-four") == 24
+
+    def test_unicode_digit_trailing_token_ends_the_quantity(self):
+        """A trailing token this parser cannot read leaves no all-number suffix, so there is no quantity."""
+        from api.summary_fidelity import _word_quantity
+
+        assert _word_quantity("twenty-four ²") is None
+
+    def test_ordinary_quantities_are_unchanged(self):
+        """The digit, word, and mixed forms clinicians actually say keep their existing values."""
+        from api.summary_fidelity import _word_quantity
+
+        assert _word_quantity("24") == 24
+        assert _word_quantity("forty") == 40
+        assert _word_quantity("twenty-four") == 24
+        assert _word_quantity("about twenty-four") == 24
+        assert _word_quantity("zero") is None

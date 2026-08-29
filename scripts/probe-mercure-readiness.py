@@ -130,7 +130,7 @@ def validate_request(value: object) -> dict[str, Any]:
     if request["schema_version"] != REQUEST_SCHEMA:
         raise ReadinessProbeError("invalid_request_schema")
 
-    validated = {
+    return {
         "schema_version": REQUEST_SCHEMA,
         "mercure_container_id": _safe_identifier(
             request["mercure_container_id"],
@@ -174,7 +174,6 @@ def validate_request(value: object) -> dict[str, Any]:
         ),
     }
 
-    return validated
 
 
 def validate_receipt(value: object) -> dict[str, Any]:
@@ -211,7 +210,7 @@ def validate_receipt(value: object) -> dict[str, Any]:
     if receipt["topic_class"] != TOPIC_CLASS:
         raise ReadinessProbeError("invalid_topic_class")
 
-    validated = {
+    return {
         "schema_version": RECEIPT_SCHEMA,
         "status": "ready",
         "mercure_container_id": _safe_identifier(
@@ -270,7 +269,6 @@ def validate_receipt(value: object) -> dict[str, Any]:
         ),
     }
 
-    return validated
 
 
 def render_document(document: Mapping[str, Any]) -> str:

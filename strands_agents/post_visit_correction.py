@@ -2091,23 +2091,6 @@ def normalise_scaffold_rows(
     return rows
 
 
-def allocate_words_to_scaffold(
-    corrected_words: list[str],
-    scaffold_rows: list[dict[str, Any]],
-) -> list[list[str]]:
-    """Split corrected words across existing preview rows.
-
-    Args:
-        corrected_words: Second-pass words; empty returns one empty chunk per row.
-        scaffold_rows: Normalized live rows; empty returns no chunks.
-
-    Returns:
-        Word chunks aligned to scaffold rows; empty chunks mean that row is skipped.
-    """
-    return _allocate_words_to_scaffold_result(
-        corrected_words,
-        scaffold_rows,
-    ).chunks
 
 
 def _allocate_words_to_scaffold_result(
@@ -2167,24 +2150,6 @@ def _allocate_words_to_scaffold_result(
     )
 
 
-def allocate_words_by_text_anchors(
-    corrected_words: list[str],
-    scaffold_rows: list[dict[str, Any]],
-) -> list[list[str]] | None:
-    """Place corrected words by matching each preview row's text.
-
-    Args:
-        corrected_words: Second-pass words in spoken order; empty cannot be anchored.
-        scaffold_rows: Normalized preview rows; empty means there is no row context.
-
-    Returns:
-        Per-row word chunks, or None when anchors are too weak and row-share fallback is safer.
-    """
-    allocation_result = _allocate_words_by_text_anchors_result(
-        corrected_words,
-        scaffold_rows,
-    )
-    return allocation_result.chunks if allocation_result is not None else None
 
 
 def _allocate_words_by_text_anchors_result(
@@ -2322,26 +2287,6 @@ def find_best_anchor_match(
     return best_match
 
 
-def build_chunks_from_anchor_matches(
-    corrected_words: list[str],
-    scaffold_rows: list[dict[str, Any]],
-    anchor_matches: list[AnchorMatch],
-) -> list[list[str]]:
-    """Build per-row corrected chunks from anchor spans and in-between gaps.
-
-    Args:
-        corrected_words: Original ASR display words with punctuation preserved.
-        scaffold_rows: Preview rows whose role/timing scaffold is kept.
-        anchor_matches: Monotonic anchor spans, one for each scaffold row.
-
-    Returns:
-        Corrected word chunks aligned to each preview row.
-    """
-    return _build_chunks_from_anchor_matches_result(
-        corrected_words,
-        scaffold_rows,
-        anchor_matches,
-    ).chunks
 
 
 def _build_chunks_from_anchor_matches_result(

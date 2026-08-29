@@ -91,8 +91,11 @@ if [[ "$DO_PHP" == true ]]; then
         fail "not found - install from https://getcomposer.org"
     else
         step "composer install"
-        install_output=$(cd "$REPO_ROOT" && composer install 2>&1)
-        install_exit=$?
+        # Capture the status with `|| var=$?`. A bare `out=$(cmd)` followed by
+        # `rc=$?` aborts under set -e the moment the command fails, which made
+        # every failure branch below it unreachable and hid failed installs.
+        install_exit=0
+        install_output=$(cd "$REPO_ROOT" && composer install 2>&1) || install_exit=$?
         if [[ $install_exit -eq 0 ]]; then
             pkg_count=$(cd "$REPO_ROOT" && composer show 2>/dev/null | wc -l)
             pass "${pkg_count} packages"
@@ -130,8 +133,8 @@ if [[ "$DO_PYTHON" == true ]]; then
         # Install from requirements.txt
         if [[ -f "$VENV_DIR/bin/pip" ]]; then
             step "pip install -r requirements.txt"
-            pip_output=$("$VENV_DIR/bin/pip" install -r "$PYTHON_AGENT_DIR/requirements.txt" 2>&1)
-            pip_exit=$?
+            pip_exit=0
+            pip_output=$("$VENV_DIR/bin/pip" install -r "$PYTHON_AGENT_DIR/requirements.txt" 2>&1) || pip_exit=$?
             if [[ $pip_exit -eq 0 ]]; then
                 pkg_count=$("$VENV_DIR/bin/pip" list --format=columns 2>/dev/null | tail -n +3 | wc -l)
                 pass "${pkg_count} packages"

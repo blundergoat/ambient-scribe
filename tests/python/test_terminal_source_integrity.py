@@ -393,7 +393,6 @@ def test_over_limit_visits_get_no_shortened_note() -> None:
             transcript="…",
             source="corrected_segments",
             citation_segments=[],
-            citation_source_index=None,
             transcript_truncated=True,
             original_transcript_chars=99999,
             kept_transcript_chars=100,

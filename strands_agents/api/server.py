@@ -1410,7 +1410,6 @@ async def generate_summary(
         summary_context.transcript,
         summary_context.citation_segments,
         summary_context.selected_segments,
-        summary_context.citation_source_index,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 

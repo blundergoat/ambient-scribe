@@ -408,9 +408,12 @@ def _verify_recovery_source_manifest(
         if raw_path in records:
             result.fail(f"recovery source manifest duplicates path: {raw_path}")
             continue
-        if not raw_bytes.isdigit():
+        # A manifest byte count must be plain ASCII decimal. Python's digit test on its own also accepts
+        # forms such as a superscript that int() then refuses, so both checks decide together.
+        if not (raw_bytes.isascii() and raw_bytes.isdigit()):
             result.fail(f"recovery source byte count must be decimal: {raw_path!r}")
             continue
+        expected_source_bytes = int(raw_bytes)
         if SHA256_PATTERN.fullmatch(expected_sha256) is None:
             result.fail(
                 f"recovery source SHA-256 must be 64 lowercase hex: {raw_path!r}"
@@ -427,7 +430,7 @@ def _verify_recovery_source_manifest(
         if not path.is_file():
             result.fail(f"recovery source file is missing: {raw_path}")
             continue
-        if path.stat().st_size != int(raw_bytes):
+        if path.stat().st_size != expected_source_bytes:
             result.fail(f"recovery source byte count mismatch: {raw_path}")
         if file_sha256(path) != expected_sha256:
             result.fail(f"recovery source SHA-256 mismatch: {raw_path}")

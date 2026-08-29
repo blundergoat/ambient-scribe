@@ -20,7 +20,6 @@ from api.summary_generation import (
     SummaryCitationOutput,
     SummarySectionOutput,
     source_index_text,
-    summary_generation_prompt,
     summary_with_validated_citations,
 )
 from api.summary_request import (
@@ -478,18 +477,6 @@ class TestSummaryContextSelection:
         backend.replace_corrected_segments("corrected-under-budget", rows)
 
         context = build_summary_context("corrected-under-budget", None, backend)
-        prompt_with_selection = summary_generation_prompt(
-            context.transcript,
-            [],
-            citation_segments=context.citation_segments,
-            citation_source_index=context.citation_source_index,
-        )
-        legacy_prompt = summary_generation_prompt(
-            context.transcript,
-            [],
-            citation_segments=rows,
-        )
-
         assert context.source == "corrected_segments"
         assert context.complete_segments == rows
         assert context.selected_segments == rows
@@ -497,7 +484,6 @@ class TestSummaryContextSelection:
         assert context.citation_source_index == source_index_text(rows)
         assert context.transcript_truncated is False
         assert context.original_transcript_chars == context.kept_transcript_chars
-        assert prompt_with_selection == legacy_prompt
 
     def test_over_budget_corrected_rows_align_prompt_citations_and_fidelity(
         self,
@@ -636,84 +622,9 @@ class TestRunSummaryGeneration:
 
         assert result is None
 
-    def test_summary_prompt_includes_retrieved_context(self):
-        prompt = summary_generation_prompt(
-            "Doctor: Patient has chest pain.",
-            [
-                {
-                    "id": "chest-pain",
-                    "title": "Chest pain documentation",
-                    "snippet": "Document ECG and vitals.",
-                    "provenance": "test KB",
-                }
-            ],
-        )
 
-        assert "Chest pain documentation" in prompt
-        assert "Document ECG and vitals." in prompt
-        assert "Doctor: Patient has chest pain." in prompt
 
-    def test_summary_prompt_includes_corrected_source_ids_for_citations(self):
-        """Corrected transcript rows are exposed as stable citation sources."""
-        prompt = summary_generation_prompt(
-            "[DOCTOR] Please use the cream.",
-            [],
-            citation_segments=[
-                {
-                    "segment_id": "corrected-0001",
-                    "role": "DOCTOR",
-                    "text": "Please use the cream.",
-                    "start": 65.2,
-                    "end": 67.8,
-                }
-            ],
-        )
 
-        assert "source IDs" in prompt
-        assert '{"segment_id": "seg-0001"}' in prompt
-        assert (
-            "[source:corrected-0001 01:05-01:07 DOCTOR] Please use the cream." in prompt
-        )
-
-    def test_summary_prompt_uses_preselected_corrected_source_index(self):
-        """A bounded source index cannot be replaced by the old uncapped formatter."""
-        rows = _summary_rows(3, id_prefix="corrected")
-        selected_source = "\n".join(
-            (
-                source_index_text([rows[0]]),
-                SUMMARY_TRANSCRIPT_ELISION_MARKER,
-                source_index_text([rows[-1]]),
-            )
-        )
-
-        prompt = summary_generation_prompt(
-            transcript_text_from_segments([rows[0], rows[-1]]),
-            [],
-            citation_segments=[rows[0], rows[-1]],
-            citation_source_index=selected_source,
-        )
-
-        assert selected_source in prompt
-        assert "source:corrected-0002 " not in prompt
-
-    def test_summary_prompt_falls_back_when_corrected_rows_are_not_citable(self):
-        """Unidentified corrected rows still produce an uncited note prompt."""
-        prompt = summary_generation_prompt(
-            "[DOCTOR] Please use the cream.",
-            [],
-            citation_segments=[
-                {
-                    "segment_id": "",
-                    "role": "DOCTOR",
-                    "text": "Please use the cream.",
-                    "start": 65.2,
-                    "end": 67.8,
-                }
-            ],
-        )
-
-        assert "[DOCTOR] Please use the cream." in prompt
-        assert "Use only these source IDs" not in prompt
 
     def test_summary_citation_validation_omits_invalid_and_duplicate_ids(self):
         """Only source IDs that map to corrected rows reach the browser payload."""
@@ -1316,7 +1227,7 @@ def test_run_summary_generation_maps_output_limit_to_named_failure(monkeypatch):
         summary_generation, "_generate_validated_v2_draft", _raise_output_limit
     )
     result = summary_generation.run_summary_generation(
-        "m10-test", "DOCTOR: hello", [], [], None
+        "m10-test", "DOCTOR: hello", [], []
     )
     assert result == {"status": "failed", "reason": "note_output_limit"}
 
@@ -1328,7 +1239,7 @@ def test_run_summary_generation_maps_output_limit_to_named_failure(monkeypatch):
     )
     assert (
         summary_generation.run_summary_generation(
-            "m10-test", "DOCTOR: hello", [], [], None
+            "m10-test", "DOCTOR: hello", [], []
         )
         is None
     )
@@ -1512,3 +1423,98 @@ class TestUncitedFallbackQuoteVerification:
         assert claim["review_reasons"] == []
         assert claim["source_unit_ids"] == []
         assert payload["source_units"] == []
+
+
+V2_PROMPT_DIGEST = "fe4b2452f7744dc058c57e379aa9c7b9c0a5e85626095b354e722c6aebbbc55a"
+
+
+class TestV2PromptCharacterisation:
+    """Byte-level guard on the prompt the model actually receives.
+
+    Deleting the superseded v1 builder must not move a single character of the live prompt, because
+    the note a clinician reads is generated from this exact text.
+    """
+
+    def _fixed_inputs(self):
+        """Deterministic transcript, context, and units so the digest is stable across runs."""
+        from api.summary_generation import build_source_units
+
+        rows = [
+            {
+                "segment_id": "corrected-0001",
+                "role": "DOCTOR",
+                "text": "How long have the headaches been going on for?",
+                "start": 10.0,
+                "end": 13.0,
+            },
+            {
+                "segment_id": "corrected-0002",
+                "role": "PATIENT",
+                "text": "About three weeks now and they are getting worse",
+                "start": 13.0,
+                "end": 17.5,
+            },
+        ]
+        transcript = "DOCTOR: How long have the headaches been going on for?\nPATIENT: About three weeks now and they are getting worse"
+        return transcript, [], build_source_units(rows)
+
+    def test_v2_prompt_text_is_unchanged(self):
+        """The live prompt hashes to a fixed digest, so any edit to it fails here first."""
+        import hashlib
+
+        from api.summary_generation import summary_generation_prompt_v2
+
+        transcript, context_snippets, source_units = self._fixed_inputs()
+        prompt = summary_generation_prompt_v2(transcript, context_snippets, source_units)
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+        # Recorded from the live builder before the v1 path was deleted.
+        assert digest == V2_PROMPT_DIGEST, (
+            "The v2 prompt text changed. If that was intended, update V2_PROMPT_DIGEST; "
+            "otherwise the deletion altered what the model receives."
+        )
+
+    def test_v2_prompt_carries_retrieved_context(self):
+        """Documentation reminders reach the model, so the note can reflect them.
+
+        Migrated from the deleted v1 builder's coverage: the retrieval seam is live on v2 and would
+        otherwise lose its only test.
+        """
+        from api.summary_generation import summary_generation_prompt_v2
+
+        transcript, _, source_units = self._fixed_inputs()
+        prompt = summary_generation_prompt_v2(
+            transcript,
+            [
+                {
+                    "id": "chest-pain",
+                    "title": "Chest pain documentation",
+                    "snippet": "Document ECG and vitals.",
+                    "provenance": "test KB",
+                }
+            ],
+            source_units,
+        )
+
+        assert "Chest pain documentation" in prompt
+        assert "Document ECG and vitals." in prompt
+        # With citable units present the model reads the unit index, not the raw transcript.
+        assert "documentation reminders" in prompt
+
+    def test_v2_prompt_offers_opaque_keys_and_never_row_ids(self):
+        """The model is given server-minted keys, so it cannot cite a transcript row directly.
+
+        A claim can only ever name a unit the server built, which is what makes a citation traceable
+        back to attested rows rather than to whatever id the model felt like writing.
+        """
+        from api.summary_generation import _citation_keys, summary_generation_prompt_v2
+
+        transcript, context_snippets, source_units = self._fixed_inputs()
+        prompt = summary_generation_prompt_v2(transcript, context_snippets, source_units)
+
+        assert source_units
+        for citation_key in _citation_keys(source_units):
+            assert citation_key in prompt
+        # Raw row ids stay server-side; the model never sees one to echo back.
+        assert "corrected-0001" not in prompt
+        assert "corrected-0002" not in prompt

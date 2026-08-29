@@ -51,9 +51,13 @@ CHECKS_WARNED=0
 
 # Helpers
 info()      { echo -e "${BLUE}[INFO]${NC} $*"; }
-success()   { echo -e "${GREEN}[OK]${NC} $*"; ((CHECKS_PASSED++)); }
-warn()      { echo -e "${YELLOW}[WARN]${NC} $*"; ((CHECKS_WARNED++)); }
-error()     { echo -e "${RED}[ERROR]${NC} $*"; ((CHECKS_FAILED++)); }
+# Counters use assignment, not ((VAR++)). Post-increment evaluates to the old
+# value, so the first call on a zero counter returns exit status 1 and set -e
+# killed the run: the script stopped at its first passing check and silently
+# skipped every later one.
+success()   { echo -e "${GREEN}[OK]${NC} $*"; CHECKS_PASSED=$((CHECKS_PASSED + 1)); }
+warn()      { echo -e "${YELLOW}[WARN]${NC} $*"; CHECKS_WARNED=$((CHECKS_WARNED + 1)); }
+error()     { echo -e "${RED}[ERROR]${NC} $*"; CHECKS_FAILED=$((CHECKS_FAILED + 1)); }
 header()    { echo -e "\n${BOLD}${BLUE}--- $* ---${NC}"; }
 subheader() { echo -e "\n${CYAN}> $*${NC}"; }
 

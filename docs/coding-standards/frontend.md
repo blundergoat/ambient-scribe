@@ -11,6 +11,7 @@ Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig templa
 | `public/js/scribe-recording.js` | Live recording lifecycle and session resets |
 | `public/js/scribe-transcript.js` | Transcript card rendering, relabeling, and visible segment snapshots |
 | `public/js/scribe-output.js` | Demo replay, correction-then-summary flow, and summary rendering |
+| `public/js/scribe-claims.js` | Claim text, evidence toggle, and the claim-level evidence disclosure |
 | `public/js/scribe-actions.js` | Post-visit actions, JSON response parsing, summary toggles, and keyboard shortcuts |
 | `public/js/scribe-dev.js` | Dev inspector panel |
 | `public/js/scribe-fixtures.js` | Dev-only generated WAV fixture replay picker |

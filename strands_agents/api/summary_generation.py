@@ -105,7 +105,6 @@ def run_summary_generation(
     transcript: str,
     citation_segments: list[dict[str, Any]] | None = None,
     transcript_segments: list[dict[str, Any]] | None = None,
-    citation_source_index: str | None = None,
     *,
     context_enabled: bool = False,
 ) -> dict | None:
@@ -123,8 +122,6 @@ def run_summary_generation(
             legacy uncited summary path.
         transcript_segments: Visit rows (role/text) the fidelity checks verify against; `None` or
             empty skips fidelity checking, so the note ships exactly as generated.
-        citation_source_index: Preformatted selected citation rows; null preserves legacy
-            formatting, while a truncation marker can separate selected opening/tail runs.
         context_enabled: Internal experiment switch; false keeps documentation cards out of
             the user's prompt, and it is never supplied by an HTTP or browser payload.
 
@@ -473,62 +470,6 @@ def _generate_validated_v2_draft(
     return validated_summary, metric_fields
 
 
-def summary_generation_prompt(
-    transcript: str,
-    context_snippets: list[dict[str, str]],
-    citation_segments: list[dict[str, Any]] | None = None,
-    citation_source_index: str | None = None,
-) -> str:
-    """Build the prompt used for the clinician's post-visit summary.
-
-    Use when FastAPI has selected either live rows or corrected rows for the
-    note; corrected rows add source IDs so the browser can show citations.
-
-    Args:
-        transcript: Role-attributed consultation text; empty means the note would have no useful content.
-        context_snippets: Retrieved KB snippets; empty means the prompt has no extra documentation reminders.
-        citation_segments: Corrected transcript rows available for source citations; `None` or empty means the
-            prompt uses the plain transcript and returns no source chips.
-        citation_source_index: Optional preformatted source rows selected by the request layer;
-            null derives the unchanged source index from `citation_segments`.
-
-    Returns:
-        Prompt text sent to the off-GPU summary model for the clinician's note.
-    """
-    prompt_parts = ["Generate a medical summary for this session transcript:"]
-    # Matched documentation reminders can improve the draft, but the clinician still reviews the note.
-    if context_snippets:
-        prompt_parts.append(
-            "Use these non-exhaustive clinical context notes only as documentation reminders:"
-        )
-        # One short reminder per match keeps the note grounded without crowding out the transcript.
-        for snippet in context_snippets:
-            prompt_parts.append(
-                f"- {snippet['title']}: {snippet['snippet']} ({snippet['provenance']})"
-            )
-
-    # Corrected rows are available, so the model gets stable IDs for source-linked note chips.
-    if citation_segments:
-        source_index = (
-            citation_source_index
-            if citation_source_index is not None
-            else source_index_text(citation_segments)
-        )
-        # No corrected row had both text and ID, so the clinician still gets an uncited note.
-        if source_index == "":
-            prompt_parts.append(transcript)
-        else:
-            # At least one corrected row is citable, so the model can attach source chips.
-            prompt_parts.append(
-                "Use only these source IDs in section citations. Put citations in each "
-                'section\'s `citations` array as objects like {"segment_id": "seg-0001"}. '
-                "Do not cite IDs that are not listed here."
-            )
-            prompt_parts.append(source_index)
-    else:
-        # No corrected source rows exist yet, so the browser keeps the familiar uncited summary.
-        prompt_parts.append(transcript)
-    return "\n\n".join(prompt_parts)
 
 
 def source_index_text(citation_segments: list[dict[str, Any]]) -> str:
