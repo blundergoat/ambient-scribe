@@ -223,7 +223,14 @@ if [[ -x vendor/bin/gruff-php ]]; then
     if [[ $complexity_exit -eq 0 ]]; then
         pass "$(elapsed_since "$t")"
     else
-        violation_count=$(echo "$complexity_output" | grep -c "^[[:space:]]*[0-9][0-9]*\\." || true)
+        # gruff-php prints its own total; the bracketed severity lines are the
+        # fallback if a later format drops that sentence. The previous pattern
+        # matched a numbered list this analyzer no longer emits, so a failing
+        # gate reported "0 findings" while hundreds were waiting to be read.
+        violation_count=$(echo "$complexity_output" | grep -oE 'Failed: [0-9]+' | grep -oE '[0-9]+' | head -1)
+        if [[ -z "$violation_count" ]]; then
+            violation_count=$(echo "$complexity_output" | grep -cE '^[[:space:]]*\[(advisory|warning|error)\]' || true)
+        fi
         fail "gruff-php (${violation_count} findings)"
         echo "$complexity_output" | head -20 | while read -r line; do
             echo -e "    ${DIM}${line}${RESET}"

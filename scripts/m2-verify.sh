@@ -14,7 +14,7 @@
 #   2. ./scripts/start-dev.sh -b    (services running and healthy)
 #   3. ./scripts/health-checks.sh   (all green)
 #
-# What this tests (M2 exit criteria from .goat-flow/plans/):
+# What this tests:
 #   1. NeMo models loaded at startup (structlog marker in logs)
 #   2. POST /transcribe/file - upload WAV, get speaker-attributed segments
 #   3. /health responds during active transcription (event loop not blocked)
@@ -35,7 +35,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 # ── Defaults ──────────────────────────────────────────────────────
 WAV_FILE="$REPO_ROOT/tests/fixtures/audio/primock57-day1-consultation02-i-have-sore-red-skin.wav"
 SKIP_WS=false
-NEMO_URL="http://localhost:8001"
+NEMO_URL="http://localhost:${AGENT_PORT:-48101}"
 
 TOTAL=0
 PASSED=0
@@ -262,7 +262,7 @@ else
     # We send raw bytes - NeMo expects WebM/Opus, but this tests the lifecycle
     # (connect → receive bytes → disconnect → finalize)
     WS_OUTPUT=$(timeout 15 bash -c "
-        head -c 8192 '$WAV_FILE' | websocat -b --no-close 'ws://localhost:8001/ws/transcribe/$WS_SID' 2>&1
+        head -c 8192 '$WAV_FILE' | websocat -b --no-close 'ws://localhost:${AGENT_PORT:-48101}/ws/transcribe/$WS_SID' 2>&1
     " 2>&1) || true
 
     # Check logs for the WebSocket lifecycle events
@@ -362,8 +362,7 @@ else
 fi
 
 echo ""
-echo -e "  ${DIM}M2 exit criteria: .goat-flow/plans/${RESET}"
-echo -e "  ${DIM}Next: open http://localhost:8082/scribe and test live mic recording${RESET}"
+echo -e "  ${DIM}Next: open http://localhost:${APP_PORT:-48082}/scribe and test live mic recording${RESET}"
 echo ""
 
 [[ $FAILED -gt 0 ]] && exit 1

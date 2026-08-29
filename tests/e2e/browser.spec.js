@@ -2173,6 +2173,36 @@ test.describe("Claim-level provenance (schema v2)", () => {
     await expect(absenceDisclosure.locator(".summary-claim__open")).toHaveCount(0);
   });
 
+  test("a live-fallback note offers no source link at all", async ({ page }) => {
+    // The clinician finished a visit whose correction could not run, so the note was written from the
+    // raw live rows. Those rows have ids and would render as links, and a link beside a claim reads as
+    // confirmation. Unreviewed wording must never be able to look confirmed, so no link is offered.
+    await loadScribePage(page);
+    const fallbackPayload = v2SummaryPayload();
+    fallbackPayload.source_state = "whole_visit_live_fallback";
+    fallbackPayload.source_units = [];
+    for (const section of fallbackPayload.sections) {
+      for (const claim of section.claims) {
+        claim.source_unit_ids = [];
+        claim.evidence_basis = "none";
+      }
+    }
+    for (const keyPoint of fallbackPayload.key_points) {
+      keyPoint.source_unit_ids = [];
+    }
+    await renderNoteDirectly(page, fallbackPayload);
+
+    // Not one claim anywhere in the note exposes a transcript jump.
+    await expect(page.locator(".summary-claim__open")).toHaveCount(0);
+
+    await page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle').click();
+    const disclosure = page.locator("#claimEvidence-subjective-01");
+    await expect(disclosure.locator(".summary-claim__state")).toContainText(
+      "No transcript evidence was cited"
+    );
+    await expect(disclosure.locator(".summary-claim__open")).toHaveCount(0);
+  });
+
   test("a v1 payload keeps the section renderer behind its honest label", async ({ page }) => {
     await loadScribePage(page);
     await renderNoteDirectly(page, {
