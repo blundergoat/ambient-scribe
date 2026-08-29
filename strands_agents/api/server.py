@@ -316,7 +316,7 @@ async def _periodic_cleanup() -> None:
 # APPLICATION
 # =============================================================================
 
-app = FastAPI(title="Ambient Scribe Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Ambient Scribe Agent", version="0.6.0", lifespan=lifespan)
 app.add_middleware(CorrelationIdMiddleware)
 
 # Correlation must be attached at the handler: Python runs logger-level
