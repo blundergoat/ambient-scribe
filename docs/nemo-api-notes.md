@@ -3,7 +3,7 @@
 **Status:** Superseded runtime target; API notes retained for implementation context.
 **Date:** 2026-02-19
 **Hardware:** RTX 5080 Laptop GPU (16GB VRAM, Blackwell sm_120)
-**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3`.
+**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==3.0.0`.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Component | Version |
 |---|---|
-| NeMo Framework | 2.7.3 pinned runtime target |
+| NeMo Framework | 3.0.0 pinned runtime target |
 | PyTorch | 2.8.0a0+5228986c39.nv25.06 |
 | CUDA (container) | 13.x-class NVIDIA NeMo release |
 | CUDA (host driver) | 13.1, Driver 591.74 |
@@ -367,7 +367,7 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ### Container Version Matrix
 
-| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 2.7.3 target |
+| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 3.0.0 target |
 |---|---|---|---|
 | RTX 5080 (sm_120) CUDA | Fails | Works | Works |
 | Streaming Sortformer v2.1 | Fails (`spkcache_len`) | Works | Works |

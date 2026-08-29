@@ -1,6 +1,6 @@
 ---
 category: summary
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-29
 ---
 
 # Summary / Note-Generation Footguns
@@ -235,6 +235,44 @@ claim (see the absence-mislabel entry in this file's backlog reference,
   then require claim and source completion evidence to share the same proposition and clinical object.
 
 ## Resolved Entries
+
+## Footgun: An uncited note's quotes were checked against an empty citation set
+
+**Status:** resolved | **Created:** 2026-08-29 | **Evidence:** OBSERVED
+
+- **Files:** `strands_agents/api/summary_generation.py` (search: "def _claim_quote_state")
+- **Files:** `strands_agents/api/summary_generation.py` (search: "def hydrated_v2_payload")
+- **Files:** `strands_agents/api/summary_fidelity.py` (search: "_non_verbatim_quote_violation")
+- **What broke:** Quote verification has two possible row sources and only one was wired up.
+  The fidelity loop checks a note's quotes against the selected visit rows, so a note built
+  from the live transcript could pass with every quote accepted. Payload hydration then
+  re-checked those same quotes against the rows inside each claim's cited source units - and
+  the lanes that build a note from live rows deliberately emit no source units. Every quoted
+  claim was therefore matched against nothing, failed, and shipped a `quote_not_matched`
+  review reason. The clinician was sent to verify wording the selected transcript already
+  supported, by the same run that had just confirmed it.
+- **Why it hid:** the two checks disagree only when `source_units` is empty, which is exactly
+  the degraded path that goes unexercised while the correction checkpoint is present. Both
+  halves read as correct in isolation: the fidelity loop verifies against visit rows because
+  those are the whole evidence base, and hydration scopes to cited units because a quote found
+  elsewhere in the visit must not launder a wrong citation.
+- **The two row sources:** quote checking now selects its rows from the note's lane, and only
+  the row source changes. With non-empty `source_units`, a claim is checked against the rows of
+  the units it cites; a quote present elsewhere in the visit but absent from those units is
+  still a mismatch. With `source_units` empty for the whole note, claims are checked against
+  the same selected transcript rows the fidelity loop used. Empty selected rows fail closed as
+  a mismatch - nothing to check against never becomes verified. The fallback path creates no
+  `source_units`, no `source_unit_ids`, and no citation chips, and its review reasons name no
+  segment ids, because that lane cites nothing.
+- **Prevention:** when one verdict is computed twice over the same input, the two computations
+  need either the same evidence base or a stated reason to differ. Before layering a second
+  check over an existing one, name which rows each sees and what each does when its set is
+  empty. A duplicated check that silently disagrees is worse than no second check: it spends
+  the reviewer's attention on precisely the cases the first check already cleared.
+- **Retained coverage:** `tests/python/test_summary.py` (search:
+  "TestUncitedFallbackQuoteVerification") pins the present, absent, wrong-role, no-rows, and
+  citation-scoped cases, plus the payload-level guarantee that verifying a fallback quote
+  invents no sources.
 
 ## Footgun: Summary context was head-truncated at 8000 chars - long consults silently lost Assessment and Plan
 

@@ -76,7 +76,7 @@ Examples:
   scripts/eval-second-pass.sh --seconds 60 day1-consultation02
 
 The default model is nvidia/parakeet-unified-en-0.6b in the pinned NeMo 26.02 /
-Toolkit 2.7.3 runtime - the same checkpoint a stopped visit uses. Pass --model
+Toolkit 3.0.0 runtime - the same checkpoint a stopped visit uses. Pass --model
 to evaluate a different checkpoint.
 
 Artifacts are written under var/quality/second-pass/<run-id>/. Real inference

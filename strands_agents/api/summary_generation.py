@@ -162,10 +162,8 @@ def run_summary_generation(
                     session_id, prompt, source_units
                 )
             except MaxTokensReachedException:
-                # Example: a long visit's first draft fit the output budget but
-                # carried flags, and the feedback-laden redo overflowed it
-                # (consult 5.3 lost a 3-flag note this way). The clinician
-                # still gets the flagged first draft instead of an error.
+                # Example: a long consultation's first draft fits the output budget but comes back flagged, and the feedback-laden redo overflows it.
+                # The clinician still receives that flagged first draft rather than an error screen.
                 if not drafts:
                     raise
                 logger.warning(
@@ -186,11 +184,10 @@ def run_summary_generation(
                 key_point_texts,
                 transcript_segments or [],
             )
-            # Note-level critical-coverage misses (an answered mental-health
-            # screen or a spoken emergency-disposition component absent from
-            # the whole note) join the same single bounded retry; their
-            # synthetic sentences match no note text, so the payload itself
-            # never carries them (the reason lane surfaces survivors).
+            # A critical-coverage miss is note-level: an answered mental-health screen, or a spoken emergency disposition, absent from the whole note.
+            #
+            # These join the same single bounded retry. Their synthetic sentences match no note text, so the payload never carries them
+            # and only the reason lane shows the ones that survive.
             violations.extend(
                 FidelityViolation(
                     location="note",
@@ -266,10 +263,8 @@ def run_summary_generation(
             )
             if lane_reason.get("section") != "note"
         ]
-        # Note-level coverage verifies against the same rows the fidelity loop
-        # used, never the citation rows: an uncited live-fallback note has no
-        # citation rows, and a surviving critical miss (an answered risk screen
-        # absent from the whole note) must still reach the clinician as a cue.
+        # Coverage checks the same rows the fidelity loop used, never the citation rows.
+        # A note built from the live transcript has no citation rows at all, and a missed risk screen still has to reach the clinician as a cue.
         coverage_reasons = note_coverage_review_reasons(
             detector_sections,
             key_point_texts,
@@ -292,14 +287,13 @@ def run_summary_generation(
             violations,
             coverage_reasons,
             sentence_reasons,
+            transcript_segments or [],
         )
         parsed_summary["_agent_metrics"] = metric_fields
         return parsed_summary
     except MaxTokensReachedException as exc:
-        # The provider was reachable and generating - the visit's draft (or
-        # its feedback-laden retry) simply exceeded the output budget. This
-        # is its own honest failure, so the browser never blames an
-        # unavailable model for it.
+        # Example: the clinician presses Generate on a very long visit, and the draft or its flag-driven retry runs past the output budget.
+        # The provider was reachable and generating, so this gets its own honest failure instead of the browser blaming an unavailable model.
         logger.error(
             "summary.output_limit session_id=%s %s: %s",
             session_id,
@@ -571,10 +565,13 @@ def source_index_text(citation_segments: list[dict[str, Any]]) -> str:
     return "\n".join(source_lines)
 
 
-# One bracketed reference marker as the model writes them into prose: a time
-# or time range (legacy invalid seconds included), a segment ID with optional
-# "to" range or trailing time range, or comma-joined lists of those. Anything
-# else inside brackets is clinical text and must stay untouched.
+# One bracketed reference marker, as the model writes them into prose:
+#
+# - a time or time range, legacy invalid seconds included
+# - a segment ID, optionally with a "to" range or a trailing time range
+# - comma-joined lists of either
+#
+# Anything else inside brackets is clinical text the clinician must still read, so it stays untouched.
 _REFERENCE_TIME = r"\d{1,3}:\d{2,3}(?:-\d{1,3}:\d{2,3})?"
 _REFERENCE_ID = r"(?:corrected|seg)-\d{1,6}(?:-\d{1,3})*"
 _REFERENCE_UNIT = (
@@ -807,11 +804,15 @@ def _format_seconds(value: Any) -> str:
 
 
 # --- Schema v2: atomic claims citing complete source units ---------------
-# The model receives complete, server-defined UNIT ids (never row ids) and
-# returns atomic claims; the server validates ids, hydrates units from the
-# attested selected rows, assigns artifact-local claim ids, and attaches the
-# Review reasons per claim. Summaries stay ephemeral; the browser keeps a
-# v1 renderer as the adapter for old payloads.
+#
+# The model is given complete, server-defined UNIT ids, never row ids, and returns atomic claims. The server then:
+#
+# - validates the ids so a claim cannot cite a row the model invented
+# - hydrates units from the attested selected rows
+# - assigns artifact-local claim ids
+# - attaches each claim's review reasons
+#
+# Summaries stay ephemeral, and the browser keeps a v1 renderer as the adapter for older payloads.
 
 SUMMARY_SCHEMA_VERSION = 2
 # A turn longer than this subdivides at row boundaries that end a sentence;
@@ -1077,7 +1078,17 @@ def _subdivided_turn_rows(
 
 
 def unit_index_text(source_units: list[dict[str, Any]]) -> str:
-    """Format units with opaque keys as the model's only citation targets."""
+    """Render the citable units as the only source labels the model is allowed to cite back.
+
+    Built before generation, so a claim can only ever point at a unit the server created and never at a row the model invented.
+
+    Args:
+        source_units: Citable units for this visit, in reading order. Empty means this note is being written from a lane with no
+            source links, so the model is handed no citation targets and the clinician ends up with an uncited note.
+
+    Returns:
+        One bracketed line per unit carrying its opaque key, time range, speaker, and joined wording. Empty string when no units exist.
+    """
     unit_lines: list[str] = []
     for citation_key, source_unit in zip(
         _citation_keys(source_units), source_units, strict=True
@@ -1156,6 +1167,16 @@ def validated_v2_summary(
     basis `none` (review-required), and `derived_metadata` always downgrades
     because 0.4.0 has no trusted encounter metadata. The note is never
     rejected wholesale here - source-level rejection belongs to the source-integrity gates.
+
+    Args:
+        structured_summary: The model's parsed note, before any of its citations have been trusted.
+        source_units: The units the server built for this visit; only these ids may be cited. Empty drops every citation, so each
+            claim downgrades to review-required and the clinician reads a note with no working source links.
+        session_id: Visit id used only to tag the dropped-citation log line; empty just leaves that line without a session.
+
+    Returns:
+        The same note with untraceable citations removed and their claims downgraded. Never null, because a bad citation costs the
+        claim its link rather than costing the clinician the whole note.
     """
     known_unit_ids = {source_unit["unit_id"] for source_unit in source_units}
     dropped_ids: list[str] = []
@@ -1234,7 +1255,17 @@ def v2_summary_with_clean_display_text(
     structured_summary: SessionSummaryV2Output,
     session_id: str = "",
 ) -> SessionSummaryV2Output:
-    """Strip inline reference markers from every claim's visible prose."""
+    """Strip the model's inline reference markers out of the prose the clinician actually reads.
+
+    Runs after citation validation, so markers the model typed into the sentence never reach the screen as clinical wording.
+
+    Args:
+        structured_summary: The note as generated, whose claim text may still carry bracketed markers written inline by the model.
+        session_id: Visit id used only to tag the strip-count log line; empty just leaves that line without a session.
+
+    Returns:
+        The same note with claim text cleaned for display. Citations are untouched, because they travel as ids rather than as prose.
+    """
     stripped_count = 0
 
     def _cleaned(claim: ClaimOutput) -> ClaimOutput:
@@ -1319,24 +1350,56 @@ def _claim_review_reasons(
 def _claim_quote_state(
     claim: ClaimOutput,
     source_units: list[dict[str, Any]],
+    transcript_segments: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Deterministic exact-quote state for one claim against its cited units.
+    """Decide whether one claim's quoted wording really was said in this visit.
+
+    Runs while the finished note is assembled. The verdict sets the quote badge the clinician reads on that claim,
+    and decides whether the claim adds an item to their review list.
+
+    Args:
+        claim: One sentence of the generated note. A claim carrying no quotation marks is a paraphrase and is never quote-checked.
+        source_units: The citable units built for this note. Empty means this note shows no source links anywhere, which is what
+            the clinician gets whenever the corrected transcript was unavailable and the note was built from the live rows.
+        transcript_segments: The visit rows the note was already checked against. Empty means nothing is left to check a quote
+            against, so quotes fail closed instead of being presented to the clinician as verified.
 
     Returns:
-        (quote_state, extra review reasons). `no_quote` means the claim is a
-        paraphrase: source-linked at most, never quote-verified.
+        (quote_state, extra review reasons). `verified` shows a matched badge, `not_matched` and `wrong_role` each add a review
+        item, and `no_quote` means the claim quoted nothing so there was never any wording to check.
     """
+    # The model wrote this claim as a paraphrase, so there is no quoted wording to stand behind and no badge to show.
     if not _extract_quoted_spans(claim.text):
         return "no_quote", []
 
     units_by_id = {source_unit["unit_id"]: source_unit for source_unit in source_units}
-    cited_rows = [
-        {"role": str(units_by_id[unit_id]["role"]).upper(), "text": row["text"].lower()}
-        for unit_id in claim.source_unit_ids
-        if unit_id in units_by_id
-        for row in units_by_id[unit_id]["rows"]
-    ]
-    violation = _quote_violation_for_rows(claim.text, cited_rows)
+
+    # Which rows count as evidence depends on what this note can cite, and only the row source changes between the two.
+    if source_units:
+        # The note carries source links, so a quote must appear in the rows this claim itself cites.
+        # Wording found elsewhere in the visit does not count, or a wrong citation would look confirmed.
+        evidence_rows = [
+            {
+                "role": str(units_by_id[unit_id]["role"]).upper(),
+                "text": row["text"].lower(),
+            }
+            for unit_id in claim.source_unit_ids
+            if unit_id in units_by_id
+            for row in units_by_id[unit_id]["rows"]
+        ]
+    else:
+        # Correction was unavailable, so this note cites nothing and the whole selected visit is its evidence.
+        # These are the rows that already accepted the quote, so checking the empty citation set instead would
+        # send the clinician to re-read wording the transcript plainly supports.
+        evidence_rows = [
+            {
+                "role": str(row.get("role", "")).upper(),
+                "text": str(row.get("text", "") or "").lower(),
+            }
+            for row in transcript_segments
+        ]
+
+    violation = _quote_violation_for_rows(claim.text, evidence_rows)
     if violation is None:
         return "verified", []
 
@@ -1379,6 +1442,7 @@ def hydrated_v2_payload(
     violations: list[FidelityViolation],
     coverage_reasons: list[dict[str, Any]],
     lane_reasons: list[dict[str, Any]],
+    transcript_segments: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Assemble the browser payload: claims, deduplicated units, reasons.
 
@@ -1389,6 +1453,8 @@ def hydrated_v2_payload(
         violations: Surviving fidelity-rule findings (visible-lane rules).
         coverage_reasons: Note-level coverage findings.
         lane_reasons: Per-sentence reason-lane findings.
+        transcript_segments: The visit rows this note was checked against. They become the quote evidence when the note has no
+            source links, so a live-transcript note still gets truthful quote badges. Empty makes every quote fail closed.
 
     Returns:
         schema_version-2 payload dict; the route adds attestation fields.
@@ -1418,7 +1484,9 @@ def hydrated_v2_payload(
     cited_unit_ids: list[str] = []
 
     def _payload_claim(claim: ClaimOutput, claim_id: str) -> dict[str, Any]:
-        quote_state, quote_reasons = _claim_quote_state(claim, source_units)
+        quote_state, quote_reasons = _claim_quote_state(
+            claim, source_units, transcript_segments
+        )
         review_reasons = _claim_review_reasons(claim.text, sentence_reasons)
         review_reasons.extend(quote_reasons)
         for unit_id in claim.source_unit_ids:

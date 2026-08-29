@@ -1286,10 +1286,10 @@ class TestSchemaV2MidImplementationProof:
         )
 
         verified_state, verified_reasons = _claim_quote_state(
-            verified_claim, source_units
+            verified_claim, source_units, self._palpitation_rows()
         )
         mismatch_state, mismatch_reasons = _claim_quote_state(
-            mismatched_claim, source_units
+            mismatched_claim, source_units, self._palpitation_rows()
         )
 
         assert (verified_state, verified_reasons) == ("verified", [])
@@ -1332,3 +1332,183 @@ def test_run_summary_generation_maps_output_limit_to_named_failure(monkeypatch):
         )
         is None
     )
+
+
+class TestUncitedFallbackQuoteVerification:
+    """Quote checks for a note whose lane is not allowed to emit citations.
+
+    The fidelity loop already verifies a fallback note's quotes against the
+    selected visit rows and accepts them. Hydration must reach the same
+    verdict from the same rows instead of checking an empty citation set and
+    sending the clinician to review wording the transcript already supports.
+    """
+
+    def _visit_rows(self) -> list[dict]:
+        """Two-speaker live rows, the shape a fallback note is built from."""
+        return [
+            {
+                "segment_id": "live-0001",
+                "role": "DOCTOR",
+                "text": "How long have the headaches been going on for?",
+                "start": 10.0,
+                "end": 13.0,
+            },
+            {
+                "segment_id": "live-0002",
+                "role": "PATIENT",
+                "text": "About three weeks now and they are getting worse",
+                "start": 13.0,
+                "end": 17.5,
+            },
+        ]
+
+    def _uncited_claim(self, text: str):
+        """One claim from a lane that produced no source units to cite."""
+        from api.summary_generation import ClaimOutput
+
+        return ClaimOutput(text=text, evidence_basis="transcript", source_unit_ids=[])
+
+    def test_uncited_fallback_quote_present_in_visit_rows_verifies(self):
+        """Wording the selected rows contain is verified, not flagged.
+
+        This is the incident shape: fidelity accepted the quote against these
+        same rows, then hydration contradicted it with a review reason.
+        """
+        from api.summary_generation import _claim_quote_state
+
+        state, reasons = _claim_quote_state(
+            self._uncited_claim(
+                "The patient said the headaches are 'getting worse'."
+            ),
+            [],
+            self._visit_rows(),
+        )
+
+        assert (state, reasons) == ("verified", [])
+
+    def test_uncited_fallback_quote_absent_from_visit_rows_flags(self):
+        """A real quote problem still reaches the clinician on the fallback lane."""
+        from api.summary_generation import _claim_quote_state
+
+        state, reasons = _claim_quote_state(
+            self._uncited_claim(
+                "The patient said the headaches are 'completely unbearable'."
+            ),
+            [],
+            self._visit_rows(),
+        )
+
+        assert state == "not_matched"
+        assert reasons[0]["reason"] == "quote_not_matched"
+
+    def test_uncited_fallback_quote_under_wrong_role_flags(self):
+        """Patient words attributed to the clinician stay a wrong-role warning."""
+        from api.summary_generation import _claim_quote_state
+
+        state, _ = _claim_quote_state(
+            self._uncited_claim(
+                "The clinician said the headaches are 'getting worse'."
+            ),
+            [],
+            self._visit_rows(),
+        )
+
+        assert state == "wrong_role"
+
+    def test_uncited_fallback_quote_without_visit_rows_fails_closed(self):
+        """No rows to check against is a mismatch, never a free verification."""
+        from api.summary_generation import _claim_quote_state
+
+        state, reasons = _claim_quote_state(
+            self._uncited_claim(
+                "The patient said the headaches are 'getting worse'."
+            ),
+            [],
+            [],
+        )
+
+        assert state == "not_matched"
+        assert reasons[0]["reason"] == "quote_not_matched"
+
+    def test_uncited_fallback_quote_reason_cites_no_segment_ids(self):
+        """A fallback warning names no rows, because the lane cites none.
+
+        Populating segment_ids here would put row links in a payload whose
+        source_units are empty, which is the citation the lane refuses.
+        """
+        from api.summary_generation import _claim_quote_state
+
+        _, reasons = _claim_quote_state(
+            self._uncited_claim(
+                "The patient said the headaches are 'completely unbearable'."
+            ),
+            [],
+            self._visit_rows(),
+        )
+
+        assert reasons[0]["segment_ids"] == []
+
+    def test_cited_claim_quote_outside_its_units_still_flags(self):
+        """The citable lane stays citation-scoped, not widened to all rows.
+
+        The quote is patient wording while the claim cites only the clinician
+        unit, and the whole visit is passed as fallback rows. `not_matched` is
+        the proof the fallback rows stayed out: reaching them would have found
+        the wording under the other speaker and downgraded this to wrong_role.
+        """
+        from api.summary_generation import build_source_units, _claim_quote_state
+        from api.summary_generation import ClaimOutput
+
+        visit_rows = self._visit_rows()
+        source_units = build_source_units(visit_rows)
+        doctor_unit_id = next(
+            unit["unit_id"] for unit in source_units if unit["role"] == "DOCTOR"
+        )
+        claim = ClaimOutput(
+            text="The patient said the headaches are 'getting worse'.",
+            evidence_basis="source_unit",
+            source_unit_ids=[doctor_unit_id],
+        )
+
+        state, _ = _claim_quote_state(claim, source_units, visit_rows)
+
+        assert state == "not_matched"
+
+    def test_fallback_payload_verifies_quotes_without_inventing_citations(self):
+        """End to end: the note keeps empty sources while the quote verifies."""
+        from api.summary_generation import (
+            ClaimSectionOutput,
+            SessionSummaryV2Output,
+            build_source_units,
+            hydrated_v2_payload,
+        )
+
+        structured_summary = SessionSummaryV2Output(
+            sections=[
+                ClaimSectionOutput(
+                    heading="Subjective",
+                    claims=[
+                        self._uncited_claim(
+                            "The patient said the headaches are 'getting worse'."
+                        )
+                    ],
+                )
+            ],
+            key_points=[],
+        )
+
+        payload = hydrated_v2_payload(
+            structured_summary,
+            build_source_units([]),
+            [],
+            [],
+            [],
+            [],
+            self._visit_rows(),
+        )
+
+        claim = payload["sections"][0]["claims"][0]
+        assert claim["quote_state"] == "verified"
+        assert claim["review_reasons"] == []
+        assert claim["source_unit_ids"] == []
+        assert payload["source_units"] == []

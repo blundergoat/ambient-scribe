@@ -70,7 +70,8 @@ Important files:
   storage lane. Long audio is corrected in ordered ~180-second chunks with one
   transient-failure retry.
 - `docker/nemo/Dockerfile` uses `nvcr.io/nvidia/nemo:26.02` and installs
-  `nemo_toolkit[asr]==2.7.3`.
+  `nemo_toolkit[asr]==3.0.0`. The post-visit correction checkpoint needs this
+  version: 2.7.x cannot instantiate it.
 - `docker-compose.yml` reserves one NVIDIA GPU for `nemo-agent`.
 
 Important env vars:
@@ -220,7 +221,7 @@ runtime `.txt` bytes. `python3 scripts/evaluate-medical-boost.py` prints the
 CPU-only before/after table and verifies the binding without loading NeMo;
 `scripts/clinical-data-audit.py` is the full governance gate.
 
-This is not NeMo decode-time phrase boosting. The NeMo 2.7.x multitalker
+This is not NeMo decode-time phrase boosting. The NeMo 3.0.x multitalker
 decode-time API still needs a GPU-container proof before this fallback should be
 replaced.
 
@@ -250,7 +251,7 @@ correction pass writes corrected rows beside (never over) the live rows, and
 | Symfony | `^6.4` | `composer.json` |
 | Strands PHP client | `dev-dev` (locked at `a4e30ff`) | `composer.json` / `composer.lock` |
 | NeMo base image | `nvcr.io/nvidia/nemo:26.02` | `docker/nemo/Dockerfile` |
-| NeMo toolkit | `nemo_toolkit[asr]==2.7.3` | `docker/nemo/Dockerfile` |
+| NeMo toolkit | `nemo_toolkit[asr]==3.0.0` | `docker/nemo/Dockerfile` |
 | Strands Agents Python | `strands-agents[ollama]>=1.45.0` | `strands_agents/requirements.txt` |
 | FastAPI | `>=0.139.0` | `strands_agents/requirements.txt` |
 | Uvicorn | `uvicorn[standard]>=0.49.0` | `strands_agents/requirements.txt` |

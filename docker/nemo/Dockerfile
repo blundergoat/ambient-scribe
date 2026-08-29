@@ -52,10 +52,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin NeMo to the released multitalker line instead of rebuilding from main.
-# The browser still uses the same overlap-aware checkpoints; this only makes
-# the GPU container reproducible for live transcription sessions.
-RUN pip install --no-cache-dir "nemo_toolkit[asr]==2.7.3"
+# Pin NeMo to the released form of the line this project has always run.
+# The development branch once installed here as "2.8.0rc0+" was released as
+# 3.0.0; there is no 2.8.x or 2.9.x. Pinning back to the newest 2.7.x moved the
+# container onto an older branch whose ConformerEncoder has no
+# att_chunk_context_size, which the post-visit parakeet-unified checkpoint's
+# config requires - stopped visits then failed model load and silently fell
+# back to the live transcript while live streaming stayed healthy.
+# Any bump here must keep loading the pinned post-visit checkpoint AND the
+# streaming Sortformer/multitalker pair below.
+RUN pip install --no-cache-dir "nemo_toolkit[asr]==3.0.0"
 
 WORKDIR /app
 

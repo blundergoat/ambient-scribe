@@ -11,7 +11,7 @@ The RTX 5080 is a Blackwell GPU (compute capability sm_120). Two compatibility c
 
 **Result:** `nvcr.io/nvidia/nemo:24.12` fails on both counts.
 
-**Solution:** Use the pinned project image base, `nvcr.io/nvidia/nemo:26.02`, with `nemo_toolkit[asr]==2.7.3`. Earlier 25.09 testing proved the minimum Blackwell direction, but the maintained Dockerfile now targets the released multitalker line instead of a moving NeMo main checkout.
+**Solution:** Use the pinned project image base, `nvcr.io/nvidia/nemo:26.02`, with `nemo_toolkit[asr]==3.0.0`. Earlier 25.09 testing proved the minimum Blackwell direction. 3.0.0 is the released form of the branch this project has always run: there is no 2.8.x or 2.9.x, so a 2.7.x pin is an older branch, not a safer one.
 
 **Symptoms with 24.12:**
 - `SortformerModules.__init__() got an unexpected keyword argument 'spkcache_len'`

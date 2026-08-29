@@ -78,5 +78,5 @@ against the ten selected development consultations so a variant can never
 rewrite words a real speaker said.
 
 Decode-time transducer phrase boosting is still a human GPU gate. Prove
-the exact NeMo 2.7.x API inside the pinned NeMo container before replacing the
+the exact NeMo 3.0.x API inside the pinned NeMo container before replacing the
 post-ASR fallback.
