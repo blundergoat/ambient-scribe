@@ -141,7 +141,7 @@ echo -e "  ${BOLD}Services${RESET}"
 echo ""
 
 # nemo-agent /health
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:8001/health" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${AGENT_PORT:-48101}/health" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" == "200" ]]; then
     check "nemo-agent /health" "pass" "HTTP ${HTTP_CODE}"
 elif [[ "$HTTP_CODE" != "000" ]]; then
@@ -151,7 +151,7 @@ else
 fi
 
 # app /scribe
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:8082/scribe" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${APP_PORT:-48082}/scribe" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" == "200" ]]; then
     check "app /scribe" "pass" "HTTP ${HTTP_CODE}"
 elif [[ "$HTTP_CODE" != "000" ]]; then
@@ -161,7 +161,7 @@ else
 fi
 
 # Mercure hub (no -f: Mercure returns 400 when no topic is provided, which is valid)
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:3701/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${MERCURE_PORT:-48137}/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" =~ ^(200|401|400)$ ]]; then
     check "Mercure hub" "pass" "HTTP ${HTTP_CODE}"
 elif [[ "$HTTP_CODE" != "000" ]]; then
@@ -271,9 +271,9 @@ fi
 
 echo ""
 echo -e "  ${DIM}Services:${RESET}"
-echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:8082/scribe${RESET}"
-echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:8001${RESET}"
-echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:3701${RESET}"
+echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:${APP_PORT:-48082}/scribe${RESET}"
+echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT:-48101}${RESET}"
+echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT:-48137}${RESET}"
 echo ""
 
 [[ $FAILED -gt 0 ]] && exit 1

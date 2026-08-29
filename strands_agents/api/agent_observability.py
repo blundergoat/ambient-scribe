@@ -1,9 +1,10 @@
 """
 Observability helpers for role and summary agent calls.
 
-`server.py` uses these helpers to keep SDK metrics, Mercure topics, and optional
-OTEL setup out of the route file. They emit only bounded process fields that help
-operators understand a user's `/scribe` session without logging transcript text.
+`server.py` uses these to keep SDK metrics, Mercure topic parsing, and optional OTEL setup out of the route file.
+
+The reader here is the operator, not the clinician. Everything these helpers emit is a bounded process fact:
+counts, durations, and IDs that explain how one `/scribe` recording behaved. Transcript wording never reaches a log line.
 """
 
 from __future__ import annotations
@@ -21,12 +22,15 @@ _strands_telemetry_configured = False
 def agent_metric_fields(agent_result: Any, agent_name: str) -> dict[str, Any]:
     """Extract bounded Strands SDK metrics for one role or summary run.
 
+    Use after an agent call returns, so the log line for that clinician's recording carries the cost and latency of the model work.
+
     Args:
         agent_result: Result returned by `Agent(...)`; missing metrics means the local mock reported none.
         agent_name: Stable agent name shown in log reports.
 
     Returns:
-        Log fields for token, latency, cycle, and tool success metrics; zeros mean no SDK data was emitted.
+        Log fields for token, latency, cycle, and tool success metrics. Zeros mean the SDK emitted no data for this run,
+        and a null `tool_success_rate` means no tool ran at all rather than a tool that ran and failed.
     """
     metrics = getattr(agent_result, "metrics", None)
     summary = (
@@ -42,6 +46,7 @@ def agent_metric_fields(agent_result: Any, agent_name: str) -> dict[str, Any]:
 
     tool_success_rates = _tool_success_rates(tool_usage)
 
+    # Every count falls back to zero rather than null, so a mocked run and a real run produce the same log shape.
     return {
         "agent": agent_name,
         "tokens_in": int(usage.get("inputTokens", 0)) if isinstance(usage, dict) else 0,
@@ -68,6 +73,8 @@ def agent_metric_fields(agent_result: Any, agent_name: str) -> dict[str, Any]:
 def session_id_from_topic(topic: str) -> str | None:
     """Pull the browser session ID from a Mercure topic.
 
+    Use when a publish log line needs to join to the clinician's recording rather than float free in the process log.
+
     Args:
         topic: Mercure topic such as `scribe/session/{id}/raw`; empty means no session can be joined.
 
@@ -84,12 +91,12 @@ def session_id_from_topic(topic: str) -> str | None:
 def configure_strands_telemetry() -> None:
     """Enable optional Strands OTEL exporters when env vars ask for them.
 
-    With no OTEL env set, agent metrics are still captured into JSON logs.
-    Console/OTLP exporters are local-development extras and never required for tests.
+    Called once at app startup. With no OTEL env set, agent metrics still land in the JSON logs, so this is purely additive:
+    console and OTLP exporters are local-development and collector extras that no test or clinician workflow depends on.
     """
     global _strands_telemetry_configured
 
-    # Telemetry setup is process-wide; repeated lifespan starts should not duplicate exporters.
+    # Telemetry setup is process-wide; repeated lifespan starts must not stack duplicate exporters onto one process.
     if _strands_telemetry_configured:
         return
 
@@ -120,6 +127,10 @@ def configure_strands_telemetry() -> None:
             },
         )
     except Exception as error:
+        # Example: an operator sets OTEL_EXPORTER_OTLP_ENDPOINT in an image whose Strands install has no telemetry extra,
+        # so the import above fails.
+        #
+        # Startup deliberately continues, so clinicians keep recording and every metric this module captures still reaches the JSON logs.
         logger.warning(
             "otel.configure_failed %s: %s",
             type(error).__name__,
@@ -135,18 +146,20 @@ def configure_strands_telemetry() -> None:
 def _tool_success_rates(tool_usage: Any) -> list[float]:
     """Return tool success rates from a Strands metric summary.
 
+    Use to average the `assign_roles` tool's health over one agent call, so an operator can see whether role labels are landing.
+
     Args:
         tool_usage: SDK `tool_usage` object; empty or malformed means no tool ran for the user.
 
     Returns:
-        Tool success rates for averaging; empty means no tool metric was emitted.
+        Tool success rates for averaging; empty means no tool metric was emitted, not that a tool ran and failed.
     """
     rates: list[float] = []
-    # Tool metrics are aggregated by tool name; only rates are safe and useful in logs.
+    # A malformed summary counts as no data rather than a failure, because only the rates are safe and useful in logs.
     if not isinstance(tool_usage, dict):
         return rates
 
-    # Each tool entry can show whether the role agent's tool path worked.
+    # Each tool entry can show whether the role agent's tool path worked during this call.
     for tool_metrics in tool_usage.values():
         execution_stats = (
             tool_metrics.get("execution_stats", {})
@@ -158,7 +171,7 @@ def _tool_success_rates(tool_usage: Any) -> list[float]:
             if isinstance(execution_stats, dict)
             else None
         )
-        # Missing success rate means the tool did not run during this agent call.
+        # A missing success rate means the tool never ran in this call, so it must not drag the average down.
         if isinstance(success_rate, int | float):
             rates.append(float(success_rate))
 

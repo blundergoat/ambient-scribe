@@ -1,6 +1,6 @@
 ---
 category: test-contracts
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-29
 ---
 
 # Test Contract Lessons
@@ -81,3 +81,27 @@ the test name or the first records inspected.
 **Follow-up (2026-07-26, 0.5.2 allocation diagnostics):** A classifier golden expected one duplicate-allocation insertion while its reference omitted both repeated novel words, so standard S/I/D correctly produced two insertions. Before freezing a class count, derive the expected edit path from the exact reference/hypothesis pair (or make one copy reference-owned), then assert the classifier result.
 
 **Follow-up (2026-07-26, 0.5.2 insertion classification):** Preflight assumed the selected fixture manifest record declared `duration_seconds`; it did not, and the read-only probe failed before any replay. Enumerate the selected record's keys before field assertions, and derive duration from the byte-bound WAV only when the manifest does not declare an authoritative duration.
+
+## Lesson: Assertion shape decides which call site a behaviour change breaks
+
+**Status:** active | **Created:** 2026-08-29 | **Evidence:** ACTUAL_MEASURED
+**Decision changed:** before extending an edit to a call site found late, read that site's assertions;
+coverage that survived the earlier sites says nothing about the one just added.
+**Trigger phase:** VERIFY
+
+**What happened:** removing the raw transport message from browser-facing replies in
+`src/Controller/ScribeController.php` was applied to five `TransportExceptionInterface` catches, each
+covered by `assertStringContainsString` on the message prefix, so the whole suite stayed green. A sixth
+equivalent leak in the history route was found afterwards and changed the same way. That one is covered
+by `assertSame` over the entire response array (search:
+`testHistoryMapsTransportFailureToServiceUnavailable`), which failed immediately.
+
+**Why it matters:** a green suite after the first five edits read as evidence that this class of change
+was safe, and it was not - the five simply had looser assertions than the sixth. Extending an edit to a
+newly discovered site is a new change with new coverage, not a continuation of a verified one.
+
+**Prevention:** when a change lands on several sites of the same shape, grep the tests for each site
+before editing, and expect exact-match assertions to fail where substring assertions did not. The
+resulting update belongs in the test's expectation, not in its strictness: the history assertion now
+pins the sanitised reply against a message that really does carry the agent URL, which is a stronger
+contract than the string it replaced.

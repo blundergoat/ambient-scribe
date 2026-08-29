@@ -24,7 +24,10 @@ _EDIT_INSERTION = 4
 
 @dataclass(frozen=True)
 class ReferenceInterval:
-    """One non-empty role-owned TextGrid interval."""
+    """Represent one non-empty role-owned TextGrid interval.
+    Timing reports use it to decide which role owns a displayed span.
+    An empty TextGrid produces no instance, so no placeholder reaches operator metrics.
+    """
 
     role: str
     interval_ordinal: int
@@ -35,7 +38,10 @@ class ReferenceInterval:
 
 @dataclass(frozen=True)
 class ReferenceWord:
-    """One normalized reference word with a stable source identity."""
+    """Represent one normalized reference word with a stable source identity.
+    Ownership reports use it to explain a matched display word without trusting emitted time.
+    An interval with no comparable text produces no instance.
+    """
 
     token: str
     role: str
@@ -46,11 +52,17 @@ class ReferenceWord:
 
     @property
     def identity(self) -> tuple[str, int, int]:
-        """Return the stable role/interval/word identity."""
+        """Return the stable role/interval/word identity used in operator evidence.
+
+        :returns: Three non-null identity fields; the tuple is never empty for a parsed reference word.
+        """
         return self.role, self.interval_ordinal, self.word_ordinal
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-ready reference record."""
+        """Return the reference fields attached to an explainable ownership match.
+
+        :returns: A JSON-ready record with identity and interval bounds; the mapping is never empty.
+        """
         return {
             "token": self.token,
             "role": self.role,
@@ -62,7 +74,10 @@ class ReferenceWord:
 
 @dataclass(frozen=True)
 class HypothesisWord:
-    """One normalized display word with its timestamp-independent row identity."""
+    """Represent one user-visible word with its timestamp-independent row identity.
+    Quality reports use it to preserve display order while comparing role ownership.
+    A saved row with empty text produces no instance.
+    """
 
     token: str
     speaker_id: str
@@ -75,11 +90,17 @@ class HypothesisWord:
 
     @property
     def identity(self) -> tuple[int, int]:
-        """Return the stable history row/word identity."""
+        """Return the display row/word identity used to trace a visible match.
+
+        :returns: Zero-based row and word indices; the tuple is never empty for a flattened display word.
+        """
         return self.row_index, self.word_index
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-ready record with no emitted timestamp dependency."""
+        """Return the display identity and role shown beside an ownership match.
+
+        :returns: A JSON-ready record with no emitted timestamp dependency; the mapping is never empty.
+        """
         return {
             "token": self.token,
             "speaker_id": self.speaker_id,
@@ -90,7 +111,10 @@ class HypothesisWord:
 
 @dataclass(frozen=True)
 class ReferenceCorpus:
-    """Reference words split by whether cross-channel order is knowable."""
+    """Group reference words by whether cross-channel order is knowable.
+    Ownership reports use its role streams without fabricating Doctor/Patient ordering.
+    Every view may be empty when the selected TextGrids contain no usable speech.
+    """
 
     alignable_words: tuple[ReferenceWord, ...]
     overlap_ambiguous_words: tuple[ReferenceWord, ...]
@@ -100,7 +124,10 @@ class ReferenceCorpus:
 
     @property
     def words_by_role(self) -> dict[str, tuple[ReferenceWord, ...]]:
-        """Return independent within-role streams for ownership alignment."""
+        """Return independent role streams for the operator's ownership report.
+
+        :returns: Doctor and Patient keys are always present; either word tuple may be empty when its TextGrid has no usable speech.
+        """
         return {
             "DOCTOR": self.doctor_words,
             "PATIENT": self.patient_words,
@@ -108,7 +135,11 @@ class ReferenceCorpus:
 
 
 def normalize_words(text: str) -> list[str]:
-    """Return the exact token vocabulary used by transcript-quality.py."""
+    """Normalize displayed or reference text for the shared quality reports.
+
+    :param text: Transcript wording to compare; empty text or text without word characters produces no tokens.
+    :returns: Lowercase word and apostrophe tokens in display order; the list is empty when the caller supplied no comparable wording.
+    """
     return TOKEN_PATTERN.findall(text.lower())
 
 
@@ -116,11 +147,16 @@ def word_error_alignment(
     reference_tokens: Sequence[str],
     hypothesis_tokens: Sequence[str],
 ) -> dict[str, Any]:
-    """Return standard deterministic WER counts plus indexed operations.
+    """Compare reference and displayed words with the scorer's deterministic S/I/D tie-break.
 
-    The candidate ordering and sort key match
-    ``scripts/transcript-quality.py::word_error_score``: minimum edit distance,
-    then fewer deletions, substitutions, and insertions.
+    Use this content-error diagnostic beside ownership evidence; empty streams remain valid zero, insertion-only, or deletion-only cases.
+
+    :param reference_tokens: Expected visit words in reference order; an empty sequence means no reference wording was available.
+    :param hypothesis_tokens: User-visible transcript words in display order; an empty sequence means no comparable transcript wording was saved.
+
+    :returns: Standard error counts and indexed operations; operations are empty only when both input streams are empty.
+    :raises ValueError: If either stream exceeds the compact 65,535-word alignment limit.
+    :raises RuntimeError: If internal backtracking cannot close a complete word-error alignment.
     """
     if (
         len(reference_tokens) > _MAX_COMPACT_SEQUENCE_LENGTH
@@ -275,7 +311,16 @@ def parse_textgrid_intervals(
     *,
     cutoff_seconds: float,
 ) -> list[ReferenceInterval]:
-    """Read non-empty TextGrid intervals with stable file ordinals."""
+    """Read one role's TextGrid intervals for timing and ownership reports.
+
+    :param path: Selected reference TextGrid; a missing or unreadable file prevents the report.
+    :param role: Doctor or Patient channel label; null, empty, or another role is invalid.
+    :param cutoff_seconds: Visit boundary applied to interval ends; no accepted intervals produces an empty list.
+
+    :returns: Non-empty intervals in file order; empty means the channel had no usable speech before the cutoff.
+    :raises ValueError: If the role is unsupported or a matched interval contains an invalid numeric boundary.
+    :raises OSError: If the selected TextGrid cannot be read.
+    """
     normalized_role = role.upper()
     if normalized_role not in SUPPORTED_ROLES:
         raise ValueError(f"unsupported reference role: {role}")
@@ -335,7 +380,16 @@ def build_reference_corpus(
     *,
     cutoff_seconds: float,
 ) -> ReferenceCorpus:
-    """Build an ordered clean reference and isolate cross-channel ambiguity."""
+    """Build the visit reference while isolating overlapping speaker channels.
+
+    :param doctor_path: Doctor TextGrid selected for the visit; an empty file contributes no Doctor words.
+    :param patient_path: Patient TextGrid selected for the visit; an empty file contributes no Patient words.
+    :param cutoff_seconds: Visit boundary shared by both channels; no accepted intervals yields an empty corpus.
+
+    :returns: Separate role streams plus alignable, overlap-ambiguous, and time-linearized views; each view may be empty.
+    :raises ValueError: If a matched TextGrid interval contains an invalid numeric boundary.
+    :raises OSError: If either selected TextGrid cannot be read.
+    """
     doctor_intervals = parse_textgrid_intervals(
         doctor_path,
         "DOCTOR",
@@ -404,7 +458,16 @@ def flatten_hypothesis_rows(
     floor_seconds: float = 0.05,
     epsilon: float = 1e-6,
 ) -> list[HypothesisWord]:
-    """Flatten history rows in display order without sorting by timestamp."""
+    """Flatten saved transcript rows into the word order the user saw.
+
+    :param rows: Display rows to compare; empty rows or rows with empty text contribute no words.
+    :param floor_seconds: Synthetic row duration used to mark timing-floor words; it does not reorder or remove them.
+    :param epsilon: Numeric tolerance for recognizing the timing floor.
+
+    :returns: Display words with row identity, role, and timing context; empty means no row contained comparable text.
+    :raises ValueError: If a saved start or end value cannot be converted to a number.
+    :raises TypeError: If a row or timing value has an unsupported shape.
+    """
     words: list[HypothesisWord] = []
     for row_index, row in enumerate(rows):
         start = float(row.get("start", 0.0) or 0.0)
@@ -585,7 +648,15 @@ def align_transcript_words(
     reference_words: Sequence[ReferenceWord],
     hypothesis_words: Sequence[HypothesisWord],
 ) -> dict[str, Any]:
-    """Align words and expose only exact pairs forced by every optimal LCS."""
+    """Align one reference stream to displayed words without guessing ambiguous ownership.
+
+    :param reference_words: Expected words for one comparison stream; empty means no reference wording can own a displayed word.
+    :param hypothesis_words: User-visible words in display order; empty means the saved transcript contained no comparable wording.
+
+    :returns: Exact forced matches plus complete word-accounting classes; empty inputs produce zero counts and empty match lists.
+    :raises ValueError: If either word stream exceeds the compact 65,535-word alignment limit.
+    :raises RuntimeError: If the selected alignment cannot account for every reference and displayed word.
+    """
     reference_tokens = [word.token for word in reference_words]
     hypothesis_tokens = [word.token for word in hypothesis_words]
     forward, suffix = _lcs_tables(reference_tokens, hypothesis_tokens)
@@ -690,12 +761,16 @@ def align_role_channels(
     reference_words_by_role: Mapping[str, Sequence[ReferenceWord]],
     hypothesis_words: Sequence[HypothesisWord],
 ) -> dict[str, Any]:
-    """Align each role channel independently and reject cross-role conflicts.
+    """Align each role independently so overlapping speakers remain unscored.
 
-    TextGrid channels define word order within one role but cannot define the
-    order of simultaneous Doctor and Patient words. Independent alignment
-    avoids fabricating that order. A display word remains unscored whenever it
-    can belong to both channels.
+    Use this for ownership reports where separate TextGrid channels cannot prove one shared spoken order.
+
+    :param reference_words_by_role: Expected words grouped by role; an empty mapping means no role has reference ownership evidence.
+    :param hypothesis_words: User-visible words in display order; empty means there is no transcript wording to attribute.
+
+    :returns: Per-role alignments and conflict-safe matches; empty inputs produce zero counts and empty ownership lists.
+    :raises ValueError: If any role or displayed word stream exceeds the compact alignment limit.
+    :raises RuntimeError: If an underlying alignment cannot close its word accounting.
     """
     role_alignments = {
         role: align_transcript_words(reference_words, hypothesis_words)

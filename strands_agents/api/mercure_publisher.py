@@ -1,9 +1,11 @@
 """
 Mercure publishing helper for browser transcript events.
 
-FastAPI routes call this when raw transcript text, role labels, or summaries
-need to reach the browser through Mercure. Keeping retry and JWT handling here
-keeps the route module focused on user workflows instead of transport details.
+FastAPI routes call this whenever raw transcript text, role labels, or a finished summary needs to reach the clinician's browser.
+
+Everything the clinician watches appear live during a consultation arrives through this one function, so a failure here is
+visible as a transcript that stops updating rather than as an error dialog. Retry, backoff, and JWT handling live here to keep
+the route module about user workflows instead of transport details.
 """
 
 from __future__ import annotations
@@ -16,9 +18,9 @@ import time
 from typing import Any
 
 import httpx
-# Declared in strands_agents/requirements.txt; importing at module load makes a
-# broken image fail at startup (caught by the container healthcheck) instead of
-# silently skipping every browser-visible publish at runtime.
+
+# Declared in strands_agents/requirements.txt. Importing at module load makes a broken image fail at startup, where the
+# container healthcheck catches it, instead of silently skipping every browser-visible publish once clinicians are recording.
 import jwt as pyjwt
 
 from api.agent_observability import session_id_from_topic
@@ -37,11 +39,13 @@ _mercure_jwt_cache: str | None = None
 def _resolve_mercure_jwt() -> str:
     """Return the publisher JWT used to deliver browser-visible Mercure events.
 
+    Resolved once and cached, because every transcript row published during a consultation needs the same token.
+
     Returns:
-        JWT string; empty means transcript, role, and summary events cannot be published.
+        JWT string; empty means transcript, role, and summary events cannot be published, so the browser stays silent.
     """
     global _mercure_jwt_cache
-    # Cached JWT avoids recomputing the token for every visible transcript event.
+    # A cached token avoids re-signing on every visible transcript event during a long consultation.
     if _mercure_jwt_cache is not None:
         return _mercure_jwt_cache
 
@@ -52,13 +56,12 @@ def _resolve_mercure_jwt() -> str:
         return _mercure_jwt_cache
 
     secret = MERCURE_JWT_SECRET
-    # No secret means the browser cannot receive live transcript updates.
+    # No secret means the browser cannot receive live transcript updates at all, so publishing is disabled rather than attempted.
     if not secret:
         _mercure_jwt_cache = ""
         return _mercure_jwt_cache
 
-    # The documented contract is >= 32 chars for HS256; minting a token from a
-    # weaker secret would silently weaken the publish channel.
+    # The documented contract is at least 32 characters for HS256; minting a token from a weaker secret would quietly weaken the channel.
     if len(secret) < 32:
         logger.error(
             "mercure.jwt_secret_too_short length=%s required=32; publishes disabled",
@@ -75,8 +78,8 @@ def _resolve_mercure_jwt() -> str:
         )
         _mercure_jwt_cache = token if isinstance(token, str) else token.decode("utf-8")
     except Exception:
-        # Without this log, a malformed secret is later indistinguishable
-        # from a deliberately unset MERCURE_JWT_SECRET.
+        # Example: MERCURE_JWT_SECRET is set to a value PyJWT cannot sign with, so no clinician sees live transcript text this run.
+        # The log is what separates that from a deliberately unset secret, which fails the same way but is an intentional configuration.
         logger.exception("mercure.jwt_encode_failed; publishes disabled")
         _mercure_jwt_cache = ""
 
@@ -91,19 +94,23 @@ async def did_publish_mercure_event(
 ) -> bool:
     """Publish one browser-visible Mercure event with bounded retry.
 
+    Use for every update the clinician should see mid-consultation: a new transcript row, a role label change, or a finished note.
+
     Args:
         topic: Mercure topic for a transcript, role, or summary event; empty prevents routing.
         data: JSON payload shown to the browser; empty still publishes an event shell.
         http_client: Shared FastAPI HTTP client; null is never expected after app startup.
-        event_id: Monotonic event ID for reconnect resume; null means Mercure assigns no replay ID.
+        event_id: Monotonic event ID for reconnect resume; null means Mercure assigns no replay ID, so a reconnecting browser
+            cannot resume from this event and will only see updates published after it reconnects.
 
     Returns:
-        True when Mercure accepted the event; false means the browser did not receive this update.
+        True when Mercure accepted the event; false means the browser did not receive this update and the caller decides
+        whether that is worth surfacing to the clinician.
     """
     publish_started_at = time.time()
     session_id = session_id_from_topic(topic)
     token = _resolve_mercure_jwt()
-    # Without a publisher token, the browser cannot receive transcript or role events.
+    # Without a publisher token the browser cannot receive transcript or role events, so the attempt is skipped and logged loudly.
     if token == "":
         logger.error(
             "mercure.publish.skipped session_id=%s reason=%s topic=%s",
@@ -122,12 +129,12 @@ async def did_publish_mercure_event(
         "topic": topic,
         "data": json.dumps(data),
     }
-    # Event IDs let a reconnecting browser resume from the last delivered transcript update.
+    # Event IDs let a browser that dropped its connection resume from the last transcript row it actually rendered.
     if event_id is not None:
         payload["id"] = str(event_id)
 
     last_error: Exception | None = None
-    # Each retry attempts to deliver the same browser-visible Mercure event.
+    # Each attempt re-sends the same event, so a brief hub restart costs the clinician a pause rather than a missing row.
     for attempt in range(MERCURE_PUBLISH_MAX_RETRIES):
         try:
             response = await http_client.post(
@@ -148,7 +155,8 @@ async def did_publish_mercure_event(
             return True
         except Exception as error:
             last_error = error
-            # Intermediate failures are warnings because a later retry may still reach the browser.
+            # Example: the Mercure container restarts mid-consultation, so this row's POST is refused while the clinician keeps talking.
+            # Intermediate failures stay warnings because a later retry may still deliver the row before anyone notices a gap.
             if attempt < MERCURE_PUBLISH_MAX_RETRIES - 1:
                 backoff = MERCURE_PUBLISH_BACKOFF_SECONDS * (2**attempt)
                 logger.warning(
@@ -171,6 +179,7 @@ async def did_publish_mercure_event(
 
     last_error_type = type(last_error).__name__ if last_error is not None else "None"
     last_error_text = str(last_error)[:200] if last_error is not None else "no error"
+    # Every retry is spent, so this row never reaches the browser and the clinician's transcript is now missing it permanently.
     logger.error(
         "mercure.publish.failed session_id=%s attempts=%s %s: %s",
         session_id,

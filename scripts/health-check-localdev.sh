@@ -270,24 +270,32 @@ if [[ "$ROLE_AGENT_MODEL_PROVIDER" == "ollama" ]]; then
 
     if [[ "$PROBE_STATUS" == "200" ]]; then
         step "Model: ${OLLAMA_MODEL}"
-        model_info=$(echo "$PROBE_BODY" | python3 -c "
+        # The model name is passed as an argument rather than spliced into the
+        # program text, so a name containing a quote cannot break the parse.
+        # A list that cannot be read now says so instead of being reported as a
+        # missing model, which sent operators to pull a model they already had.
+        if model_info=$(printf '%s' "$PROBE_BODY" | python3 -c '
 import json, sys
+wanted = sys.argv[1]
 try:
     data = json.load(sys.stdin)
-    for m in data.get('models', []):
-        name = m.get('name', '')
-        if name == '${OLLAMA_MODEL}' or name.startswith('${OLLAMA_MODEL}:'):
-            gb = m.get('size', 0) / 1e9
-            print(f'{name}|{gb:.1f}GB')
-            break
-except: pass
-" 2>/dev/null)
-        if [[ -n "$model_info" ]]; then
-            model_name="${model_info%%|*}"
-            model_size="${model_info#*|}"
-            pass "${model_size:-available}"
+except json.JSONDecodeError as error:
+    sys.exit("unreadable /api/tags response: %s" % error)
+for entry in data.get("models", []):
+    name = entry.get("name", "")
+    if name == wanted or name.startswith(wanted + ":"):
+        print("%s|%.1fGB" % (name, entry.get("size", 0) / 1e9))
+        break
+' "$OLLAMA_MODEL" 2>&1); then
+            if [[ -n "$model_info" ]]; then
+                model_name="${model_info%%|*}"
+                model_size="${model_info#*|}"
+                pass "${model_size:-available}"
+            else
+                fail "not pulled - run: ollama pull ${OLLAMA_MODEL}"
+            fi
         else
-            fail "not pulled - run: ollama pull ${OLLAMA_MODEL}"
+            fail "could not read the model list: ${model_info}"
         fi
 
         step "Model responds"
@@ -320,6 +328,18 @@ if [[ "$PROBE_STATUS" == "200" ]]; then
     else
         warn "responded ${PROBE_STATUS} but unexpected body"
     fi
+else
+    fail "not reachable - is start-dev.sh running?"
+fi
+
+# The same pre-flight the browser calls before recording, so an operator diagnosing a
+# "why is my note unreviewed" report sees the correction lane separately from live health.
+step "Pre-visit readiness"
+probe "http://localhost:${AGENT_PORT}/agent/model-health"
+if [[ "$PROBE_STATUS" == "200" ]] && echo "$PROBE_BODY" | grep -q '"available":true'; then
+    pass "${PROBE_TIME_MS}ms"
+elif [[ "$PROBE_STATUS" == "200" ]]; then
+    fail "$(echo "$PROBE_BODY" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')"
 else
     fail "not reachable - is start-dev.sh running?"
 fi

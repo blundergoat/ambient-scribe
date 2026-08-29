@@ -6,7 +6,7 @@ Rules and patterns for the Python layer. This service owns the GPU, runs NeMo in
 
 1. **NeMo owns the GPU exclusively.** No other GPU workload may run in the same container or on the same card.
 2. **Role inference uses Bedrock (cloud) or Ollama (CPU).** Never a local GPU model. See `.goat-flow/learning-loop/footguns/runtime.md`.
-3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous - without `run_in_executor`, the async event loop freezes. See `api/server.py:131-134` for the executor and `:243-250`, `:307-311` for usage.
+3. **All NeMo inference runs in ThreadPoolExecutor.** GPU-bound work is synchronous - without `run_in_executor`, the async event loop freezes. See `api/server.py` (search: "nemo_executor = ThreadPoolExecutor") for the pool and its `run_in_executor(nemo_executor, ...)` call sites for usage.
 4. **CUDA graph workaround is required.** After loading Parakeet, disable CUDA graphs. See `.goat-flow/learning-loop/footguns/runtime.md`.
 
 ## NeMo Models
@@ -20,7 +20,7 @@ Both loaded once at startup as a singleton (`NemoPipeline` in `nemo_pipeline.py`
 
 ## Audio Processing
 
-1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `public/js/scribe.js`
+1. **Browser sends raw PCM** chunks over WebSocket via `PcmStreamer` in `public/js/scribe-streaming.js`
 2. **Server expects `input_format="pcm"` by default** and appends the bytes directly to `AudioBuffer`
 3. **Growing buffer strategy:** re-process full buffered audio on each chunk via `TranscriptionSession.process_chunk()`
 4. **AudioBuffer** (`nemo_session.py`) has a 15-minute safety cap to prevent unbounded memory growth
@@ -40,22 +40,30 @@ No server-to-client WebSocket messages - segments are delivered via Mercure SSE.
 
 ### HTTP
 
-| Method | Path | Request | Response |
-|---|---|---|---|
-| POST | `/transcribe/file` | Multipart file upload | `{segments: [...], duration_ms: int}` |
-| GET | `/session/{id}/history` | - | `{segments: [...]}` |
-| GET | `/session/{id}/roles` | - | `{mapping: {spk_0: "DOCTOR", ...}}` |
-| GET | `/health` | - | `{status: "ok"}` |
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/transcribe/file` | Batch multipart upload; returns `{segments: [...], duration_ms: int}` |
+| GET, POST | `/session/{id}/history` | Stored live transcript rows |
+| GET, POST | `/session/{id}/roles` | Current mapping, e.g. `{mapping: {spk_0: "DOCTOR", ...}}` |
+| POST | `/session/{id}/roles/override` | Persist a clinician's speaker-level role correction |
+| POST | `/session/{id}/correction` | Run the post-stop second-pass ASR over retained audio |
+| GET | `/session/{id}/corrected-transcript` | Corrected rows for QA scoring; same `segments` shape |
+| POST | `/session/{id}/summary` | Generate the SOAP note |
+| GET | `/health` | `{status: "ok"}`, or 503 with `{status: "degraded", ...}` when model loading failed |
+| GET | `/agent/model-health` | Pre-flight check the browser uses before starting a visit |
+
+Symfony proxies these from the browser origin under `/scribe/...` and `/session/...`; see
+`docs/domain-php-symfony.md`.
 
 ### Pydantic Models
 
 Defined in `api/server.py`. Key models:
 - `Segment`: `{speaker: str, start_time: float, end_time: float, words: str}`
-- `TranscribeResponse`: `{segments: list[Segment], duration_ms: int}`
+- `TranscribeFileResponse`: `{segments: list[Segment], duration_ms: int}` - the `/transcribe/file` response model
 
 ## Mercure Publishing
 
-Published from `api/server.py` via `publish_to_mercure()` (`server.py:187-213`):
+Published from `api/server.py` via `publish_to_mercure()` (search: "async def publish_to_mercure"):
 
 | Topic | Event | When |
 |---|---|---|

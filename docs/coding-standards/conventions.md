@@ -36,7 +36,7 @@ composer test                  # PHPUnit tests
 composer analyse               # PHPStan level 10
 composer cs:check              # PHP-CS-Fixer dry-run
 composer cs:fix                # PHP-CS-Fixer auto-fix
-composer preflight             # All checks (test + analyse + cs:check)
+composer preflight             # All quality gates in sequence
 composer preflight:coverage    # Preflight with 80% coverage gate
 composer mutate                # Infection mutation testing
 
@@ -68,7 +68,7 @@ Don't:
 - Don't hardcode WebSocket or Mercure URLs; use container parameters from `config/packages/`
 - Don't create new StrandsClient instances; use the DI-wired service
 - Don't run NeMo and role inference on the same GPU
-- Don't change the PHP<->Python API contract without updating both sides (footgun #4)
+- Don't change the PHP<->Python API contract without updating both sides (see `.goat-flow/learning-loop/footguns/runtime.md`)
 
 ## Cross-Layer Awareness
 
@@ -83,5 +83,5 @@ Before editing any layer, check:
 
 - **GPU exclusivity:** NeMo owns the GPU. Role inference must use Bedrock or CPU Ollama.
 - **Session ID coupling:** UUID flows through PHP -> Twig -> JS -> WS -> Mercure. All layers must match.
-- **Local dependency:** `blundergoat/strands-php-client` is a path dependency at `../strands-php-client`.
+- **Pinned dependency:** `blundergoat/strands-php-client` installs from GitHub at the `dev-dev` commit pinned in `composer.lock`; `composer install` fetches it and no sibling checkout is needed. Building the app *image* is the exception - `scripts/deploy.sh` passes `--build-context strands-php-client=../strands-php-client`.
 - **PHPStan level 10:** No suppressions without justification in the commit message.

@@ -1,8 +1,8 @@
 # Deployment Guide
 
-> **Note:** This doc is inherited from the-summit-chatroom and will be rewritten as part of Milestone 0 (shared infrastructure). References to Summit resources below are from the original project.
-
-This document covers the deployment scripts used to provision and deploy to AWS.
+This document covers `scripts/terraform.sh` and `scripts/deploy.sh`, the two scripts used to
+provision AWS infrastructure and ship new images to it. For what those modules build, see
+`docs/infrastructure.md`; for Terraform variables and troubleshooting, see `docs/terraform.md`.
 
 ## Prerequisites
 
@@ -34,6 +34,7 @@ infra/terraform/
     ecs/                  # ECS cluster + task definition
     ecs-service/          # ECS Fargate service
     iam/                  # Task roles + GitHub OIDC
+    network/              # VPC + subnets, created only when vpc_id is empty
     observability/        # CloudWatch log groups
     secrets/              # Secrets Manager (API key)
     security/             # Security groups (ALB + ECS)
@@ -48,11 +49,11 @@ graph TB
         Browser[Browser]
     end
 
-    subgraph AWS["AWS (us-east-1)"]
-        R53["Route 53<br/>summit.blundergoat.com"]
+    subgraph AWS["AWS (ap-southeast-2)"]
+        R53["Route 53<br/>scribe.blundergoat.com"]
         WAF["WAF<br/>Rate limiting"]
 
-        subgraph VPC["Shared VPC"]
+        subgraph VPC["VPC (created here, or brought in)"]
             subgraph Public["Public Subnets"]
                 ALB["ALB<br/>HTTPS :443"]
             end
@@ -166,6 +167,9 @@ The script hardcodes these defaults (edit at the top of the file if needed):
 | `AWS_PROFILE_NAME` | `aws_devgoat`  |
 | `AWS_REGION`       | `us-east-1`    |
 
+`AWS_REGION` here reaches the S3 state backend. The resources themselves land in `var.aws_region`,
+which the prod AWS provider defaults to `ap-southeast-2`.
+
 It also sources `.env` from the project root if present.
 
 ---
@@ -200,7 +204,7 @@ graph LR
    - **Agent**: built from `strands_agents/Dockerfile` with context `strands_agents/`
    - **App**: built from the project root `Dockerfile`, with `--build-context strands-php-client=../strands-php-client` to include the local path dependency
 5. **Pushes images to ECR** with the configured tag
-6. **Forces ECS redeployment** - calls `aws ecs update-service --force-new-deployment` on the `the-summit-app` service to roll out the new images
+6. **Forces ECS redeployment** - calls `aws ecs update-service --force-new-deployment` on the `ambient-scribe-app` service, in the cluster named by the `ecs_cluster_name` Terraform output, to roll out the new images
 
 ### Image Tag
 
@@ -222,8 +226,8 @@ IMAGE_TAG=v1.2.3 ./scripts/deploy.sh
 
 # 3. Monitor the rollout
 aws ecs describe-services \
-  --cluster the-summit-cluster \
-  --services the-summit-app \
+  --cluster "$(./scripts/terraform.sh output -raw ecs_cluster_name)" \
+  --services ambient-scribe-app \
   --query 'services[0].deployments' \
   --no-cli-pager
 ```

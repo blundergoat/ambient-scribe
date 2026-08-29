@@ -260,6 +260,33 @@ def test_correction_rejects_a_transcript_that_no_longer_matches_terminal() -> No
         _cleanup(session_id)
 
 
+def test_a_visit_with_no_usable_audio_is_reported_as_blocked() -> None:
+    """An empty visit reaches the browser as blocked, so it can name the real reason.
+
+    The panel picks its blocked wording off `status`; leaving that as `unavailable` sent the clinician
+    the generic correction-pending message for a visit that captured no usable audio at all.
+    """
+    session_id = "00000000-0000-4000-8000-0000000000b7"
+    try:
+        _visit_rows(session_id)
+        live_segments = sessions.get_segments(session_id)
+        watermark = _attest_terminal(session_id)
+
+        payload = api_server._correction_unavailable_response(
+            session_id,
+            "No retained audio is available for correction.",
+            live_segments,
+            reason_category="empty_audio",
+            watermark=watermark,
+        )
+
+        assert payload["status"] == "blocked"
+        assert payload["source_state"] == "blocked"
+        assert payload["reason"] == "empty_visit"
+    finally:
+        _cleanup(session_id)
+
+
 def test_correction_that_loses_a_meaningful_row_is_blocked_and_not_stored() -> None:
     """Coverage failure discards the artifact: whole-visit-true or absent."""
     session_id = "00000000-0000-4000-8000-0000000000a3"
@@ -393,7 +420,6 @@ def test_over_limit_visits_get_no_shortened_note() -> None:
             transcript="…",
             source="corrected_segments",
             citation_segments=[],
-            citation_source_index=None,
             transcript_truncated=True,
             original_transcript_chars=99999,
             kept_transcript_chars=100,

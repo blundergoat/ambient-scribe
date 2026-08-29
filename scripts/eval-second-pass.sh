@@ -76,7 +76,7 @@ Examples:
   scripts/eval-second-pass.sh --seconds 60 day1-consultation02
 
 The default model is nvidia/parakeet-unified-en-0.6b in the pinned NeMo 26.02 /
-Toolkit 2.7.3 runtime - the same checkpoint a stopped visit uses. Pass --model
+Toolkit 3.0.0 runtime - the same checkpoint a stopped visit uses. Pass --model
 to evaluate a different checkpoint.
 
 Artifacts are written under var/quality/second-pass/<run-id>/. Real inference
@@ -607,8 +607,13 @@ run_container_asr() {
         fi
     fi
 
+    # Paths go in as arguments rather than being spliced into the shell text.
+    # RUN_ID comes from SECOND_PASS_RUN_ID, so an apostrophe in an operator's run
+    # id would otherwise close the quoting and hand the rest of the path to sh.
     docker compose exec -T nemo-agent sh -c \
-        "rm -f '$container_script' '$container_production_helper' '$container_audio' '$container_history' '$container_metadata' '$container_effective_decoder'" \
+        'rm -f "$1" "$2" "$3" "$4" "$5" "$6"' _ \
+        "$container_script" "$container_production_helper" "$container_audio" \
+        "$container_history" "$container_metadata" "$container_effective_decoder" \
         >/dev/null || true
     docker compose exec -T nemo-agent rmdir "$container_runner_dir" >/dev/null || true
 

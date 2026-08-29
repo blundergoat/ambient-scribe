@@ -380,6 +380,25 @@ class TestSessionHistory:
         )
         assert response.status_code == 400
 
+    def test_role_override_rejects_a_body_it_cannot_read(self, client):
+        """An unusable body is a validation failure, not a server error.
+
+        The browser proxy forwards whatever the page sent, so a dropped or malformed body must come
+        back as the same 400 an empty selection gets rather than as an unhandled exception.
+        """
+        # Nothing sent at all: the request names no speaker and no role.
+        response = client.post(f"/session/{TEST_SESSION_ID}/roles/override", content=b"")
+        assert response.status_code == 400
+
+        # Valid JSON, but not an object, so it carries no fields to read.
+        for unusable_body in ('"DOCTOR"', "5", "[]", "null"):
+            response = client.post(
+                f"/session/{TEST_SESSION_ID}/roles/override",
+                content=unusable_body,
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status_code == 400, unusable_body
+
 
 class TestTranscriptionEndpoints:
     """Tests for batch and streaming transcription routes."""
@@ -891,3 +910,98 @@ class TestSummaryModelPreflight:
 
         monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "phi4")
         assert api_server._probe_summary_model() == (True, "ollama:phi4")
+
+
+class TestAgentModelHealthGate:
+    """Pre-flight gate the browser calls before a consultation starts.
+
+    Recording is refused unless both halves of the visit's promise are ready: the off-GPU model behind
+    roles and the note, and the correction model behind the reviewed transcript. Core `/health` stays a
+    separate question about live NeMo, so this gate never changes container health.
+    """
+
+    def test_unreachable_note_provider_blocks_recording(self, client, monkeypatch):
+        """A known provider failure returns before the slower correction proof starts."""
+        correction_readiness_calls = []
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(False, "bedrock region is not configured"),
+        )
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: correction_readiness_calls.append(True) or (True, ""),
+        )
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload["available"] is False
+        assert payload["detail"] == "bedrock region is not configured"
+        assert correction_readiness_calls == []
+
+    def test_missing_correction_model_blocks_recording(self, client, monkeypatch):
+        """A healthy note provider is not enough when the reviewed transcript cannot be produced.
+
+        This is the case live health cannot see: streaming stays perfect while every stopped visit
+        would fall back to unreviewed wording.
+        """
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(True, ""),
+        )
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: (False, "the correction model cannot be loaded by this agent runtime (TypeError)"),
+        )
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload["available"] is False
+        assert "correction model" in payload["detail"]
+        assert "/" not in payload["detail"]
+
+    def test_both_halves_ready_allows_recording(self, client, monkeypatch):
+        """With roles, note, and correction all ready, the clinician can start recording."""
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(True, ""),
+        )
+        monkeypatch.setattr(api_server, "correction_readiness", lambda: (True, ""))
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload == {"available": True, "detail": ""}
+
+    def test_startup_proves_correction_readiness_off_the_request_path(self, monkeypatch):
+        """The agent pays the correction proof at boot, not on a clinician's first Start click.
+
+        The proof costs a full model restore, which is longer than the browser proxy waits, so leaving
+        it on the request path reported a healthy correction model as an unreachable agent.
+        """
+        readiness_calls = []
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: readiness_calls.append(True) or (True, ""),
+        )
+
+        asyncio.run(api_server._prove_correction_readiness())
+
+        assert readiness_calls == [True]
+
+    def test_core_health_ignores_correction_readiness(self, client, monkeypatch):
+        """Container health stays about live NeMo, so a dead correction lane never restarts the agent."""
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: (False, "the correction model cannot be loaded by this agent runtime (TypeError)"),
+        )
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"

@@ -1,10 +1,12 @@
 """
 Strands role inference agent for browser-visible DOCTOR/PATIENT labels.
 
-Raw transcript rows reach the UI first; this off-loop agent later reads bounded
-speaker evidence and commits role labels through `assign_roles`. NeMo keeps the
-GPU, so this agent must use Bedrock or CPU-only Ollama. Tool calls stay compact
-so long visits keep receiving role updates instead of raw speaker labels.
+Raw transcript rows reach the clinician's screen first, still labelled spk_0 and spk_1. This agent runs off that loop:
+it reads bounded speaker evidence and commits real role labels through `assign_roles`, which is what turns those raw
+speaker IDs into Doctor and Patient in the browser.
+
+NeMo keeps the GPU, so this agent must run on Bedrock or CPU-only Ollama. Tool calls stay compact so a long consultation
+keeps receiving role updates rather than stalling on an oversized prompt.
 """
 
 from __future__ import annotations
@@ -14,8 +16,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Model configuration for the role inference agent
-# NeMo owns the GPU - this agent uses Bedrock or CPU-only Ollama
+# NeMo owns the GPU, so this agent runs on Bedrock or CPU-only Ollama.
 ROLE_AGENT_MODEL_PROVIDER = os.environ.get("ROLE_AGENT_MODEL_PROVIDER", "bedrock")
 ROLE_AGENT_MODEL_ID = os.environ.get(
     "ROLE_AGENT_MODEL_ID",
@@ -76,11 +77,13 @@ MEDICAL_ROLE_INSTRUCTION = (
 def create_role_inference_agent():
     """Create the Strands agent that relabels transcript speakers.
 
+    Build one per inference pass, so an earlier visit's speakers can never influence the labels this clinician sees.
+
     Returns:
         Fresh Agent configured for off-GPU role inference and isolated session state.
 
     Raises:
-        RuntimeError: When the configured Bedrock or Ollama model cannot be created.
+        RuntimeError: When the configured Bedrock or Ollama model cannot be created, leaving rows labelled spk_0 and spk_1.
     """
     try:
         from strands import Agent
@@ -97,8 +100,15 @@ def create_role_inference_agent():
             agent_id="ambient-scribe-role-inference",
             trace_attributes={"scribe.specialty": "medical"},
         )
-    except Exception as e:
-        raise RuntimeError(f"Failed to create role inference agent: {e}") from e
+    except Exception as agent_build_error:
+        # Example: the clinician starts recording in an image where `strands.models.bedrock` cannot import boto3,
+        # so the agent cannot be built at all.
+        #
+        # The caller catches this and decides whether it counts as the provider being unreachable.
+        # Either way no mapping is produced, so the browser keeps showing raw speaker labels rather than guessed roles.
+        raise RuntimeError(
+            f"Failed to create role inference agent: {agent_build_error}"
+        ) from agent_build_error
 
 
 def _create_role_agent_model():

@@ -41,7 +41,11 @@ MAX_SEAM_PHRASE_WORDS = 8
 
 
 def load_alignment_module() -> ModuleType:
-    """Load the sealed sibling alignment helper without changing ``sys.path``."""
+    """Load the sealed alignment helper used to compare saved visit transcripts.
+
+    :returns: Imported helper module; never null when diagnostics can run.
+    :raises RuntimeError: If the helper is unavailable, such as after an incomplete checkout.
+    """
     specification = importlib.util.spec_from_file_location(
         "corrected_insertion_transcript_alignment",
         ALIGNMENT_MODULE_PATH,
@@ -70,6 +74,7 @@ def _load_json(path: Path) -> Any:
     """Load one JSON input without echoing its content on failure."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
+    # Example: an interrupted capture left a selected transcript missing or partial.
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read valid JSON from {path.name}") from error
 
@@ -130,11 +135,15 @@ def _allocation_payload(artifact: Any) -> dict[str, Any]:
     )
 
 
-def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
-    """Validate allocation accounting and return an output-index source map."""
+def _validated_allocation_header(
+    artifact: Any,
+) -> tuple[dict[str, Any], int, int, int, int]:
+    """Validate the saved allocation schema and the counts shown in its summary."""
     allocation = _allocation_payload(artifact)
+    # An unknown schema cannot be interpreted safely for the operator's insertion report.
     if allocation["schema_version"] != 1:
         raise ValueError("unsupported allocation schema version")
+    # Only allocation modes emitted by the correction workflow can support source attribution.
     if allocation["allocation_mode"] not in {
         "empty",
         "anchored",
@@ -159,154 +168,273 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
         allocation["retained_live_words"],
         "retained live word count",
     )
+    return (
+        allocation,
+        corrected_asr_words,
+        final_display_words,
+        allocated_asr_words,
+        retained_live_words,
+    )
 
-    rows = allocation["rows"]
-    if not isinstance(rows, list):
-        raise ValueError("allocation rows must be a list")
-    output_sources: list[dict[str, Any] | None] = [None] * final_display_words
-    corrected_source_counts = [0] * corrected_asr_words
-    output_cursor = 0
+
+def _validated_allocation_row(
+    raw_row: Any,
+    expected_row_index: int,
+    expected_output_start: int,
+    final_display_words: int,
+) -> tuple[int, int, list[Any]]:
+    """Validate one corrected row and return its display bounds and source runs."""
+    row = _exact_keys(
+        raw_row,
+        {
+            "row_index",
+            "segment_id",
+            "output_start_index",
+            "output_end_index",
+            "output_word_count",
+            "anchor_outcome",
+            "anchor_score_class",
+            "anchor_score",
+            "anchor_clamped",
+            "source_runs",
+        },
+        "allocation row",
+    )
+    # Non-contiguous rows could send a reviewer to the wrong corrected segment.
+    if row["row_index"] != expected_row_index:
+        raise ValueError("allocation row indices are not contiguous")
+    if re.fullmatch(r"corrected-\d{4}", str(row["segment_id"])) is None:
+        raise ValueError("allocation segment ID is invalid")
+
+    row_start = _integer(row["output_start_index"], "row output start")
+    row_end = _integer(row["output_end_index"], "row output end")
+    row_word_count = _integer(
+        row["output_word_count"],
+        "row output word count",
+    )
+    # A gap, overlap, or overflow would misattribute at least one displayed transcript word.
+    if (
+        row_start != expected_output_start
+        or row_end != row_start + row_word_count
+        or row_end > final_display_words
+    ):
+        raise ValueError("allocation row output accounting is inconsistent")
+    if row["anchor_outcome"] not in {"matched", "missing", "not_observed"}:
+        raise ValueError("allocation row has an invalid anchor outcome")
+    if row["anchor_score_class"] not in {
+        "high",
+        "accepted",
+        "missing",
+        "not_observed",
+    }:
+        raise ValueError("allocation row has an invalid anchor score class")
+
+    anchor_score = row["anchor_score"]
+    # A null score is valid when no anchor was observed; any recorded score must remain a 0-1 number.
+    if anchor_score is not None and (
+        isinstance(anchor_score, bool)
+        or not isinstance(anchor_score, int | float)
+        or not 0.0 <= anchor_score <= 1.0
+    ):
+        raise ValueError("allocation row has an invalid anchor score")
+    if type(row["anchor_clamped"]) is not bool:
+        raise ValueError("allocation row has an invalid clamped flag")
+
+    source_runs = row["source_runs"]
+    # Missing runs would leave the row's displayed words without a proven source.
+    if not isinstance(source_runs, list):
+        raise ValueError("allocation source runs must be a list")
+    return row_start, row_end, source_runs
+
+
+def _validated_source_run(
+    raw_source_run: Any,
+    expected_run_index: int,
+    expected_output_start: int,
+    row_end: int,
+) -> tuple[str, int, int, int]:
+    """Validate one contiguous source run used to explain displayed correction words."""
+    source_run = _exact_keys(
+        raw_source_run,
+        {
+            "source",
+            "source_start_index",
+            "source_end_index",
+            "word_count",
+            "source_run_index",
+            "output_start_index",
+            "output_end_index",
+        },
+        "allocation source run",
+        optional={"source_row_index"},
+    )
+    source = source_run["source"]
+    # The report distinguishes only second-pass ASR words from retained live-preview words.
+    if source not in {"corrected_asr", "retained_live"}:
+        raise ValueError("allocation source is invalid")
+    if source_run["source_run_index"] != expected_run_index:
+        raise ValueError("source run indices are not contiguous")
+
+    source_start = _integer(
+        source_run["source_start_index"],
+        "source run start",
+    )
+    source_end = _integer(source_run["source_end_index"], "source run end")
+    word_count = _integer(source_run["word_count"], "source run word count")
+    output_start = _integer(
+        source_run["output_start_index"],
+        "source run output start",
+    )
+    output_end = _integer(
+        source_run["output_end_index"],
+        "source run output end",
+    )
+    # Source and display ranges must advance together so each visible word keeps one exact origin.
+    if (
+        source_end != source_start + word_count
+        or output_start != expected_output_start
+        or output_end != output_start + word_count
+        or output_end > row_end
+    ):
+        raise ValueError("allocation source run accounting is inconsistent")
+    # A retained live source may identify its original row; malformed indices cannot be shown as evidence.
+    if "source_row_index" in source_run:
+        _integer(source_run["source_row_index"], "source row index")
+    return source, source_start, output_start, output_end
+
+
+def _record_source_run(
+    *,
+    source: str,
+    source_start: int,
+    output_start: int,
+    output_end: int,
+    row_index: int,
+    source_run_index: int,
+    display_word_sources: list[dict[str, Any] | None],
+    corrected_source_use_counts: list[int],
+    corrected_asr_words: int,
+) -> tuple[int, int]:
+    """Record one proven source per display word and return its ASR/live totals."""
     observed_asr_words = 0
     observed_retained_words = 0
+    # Each output word in the run receives the matching source offset shown in diagnostics.
+    for offset, output_index in enumerate(range(output_start, output_end)):
+        source_index = source_start + offset
+        # Two sources for one visible word would make its insertion class ambiguous.
+        if display_word_sources[output_index] is not None:
+            raise ValueError("one display word has multiple allocation sources")
+        if source == "corrected_asr":
+            # An out-of-range ASR index cannot identify a word from the second-pass transcript.
+            if source_index >= corrected_asr_words:
+                raise ValueError("corrected ASR source index is out of range")
+            corrected_source_use_counts[source_index] += 1
+            observed_asr_words += 1
+        else:
+            observed_retained_words += 1
+        display_word_sources[output_index] = {
+            "source": source,
+            "source_index": source_index,
+            "row_index": row_index,
+            "source_run_index": source_run_index,
+        }
+    return observed_asr_words, observed_retained_words
+
+
+def _validated_allocation_rows(
+    allocation: dict[str, Any],
+    corrected_asr_words: int,
+    final_display_words: int,
+) -> tuple[list[dict[str, Any] | None], list[int], int, int]:
+    """Validate every row and return display sources plus observed source totals."""
+    rows = allocation["rows"]
+    # The UI may show no corrected rows for an empty visit, but any supplied row container must be a list.
+    if not isinstance(rows, list):
+        raise ValueError("allocation rows must be a list")
+    display_word_sources: list[dict[str, Any] | None] = [None] * final_display_words
+    corrected_source_use_counts = [0] * corrected_asr_words
+    next_output_index = 0
+    observed_asr_words = 0
+    observed_retained_words = 0
+
+    # Rows must cover the displayed corrected transcript in the same order the user reads it.
     for expected_row_index, raw_row in enumerate(rows):
-        row = _exact_keys(
+        row_start, row_end, source_runs = _validated_allocation_row(
             raw_row,
-            {
-                "row_index",
-                "segment_id",
-                "output_start_index",
-                "output_end_index",
-                "output_word_count",
-                "anchor_outcome",
-                "anchor_score_class",
-                "anchor_score",
-                "anchor_clamped",
-                "source_runs",
-            },
-            "allocation row",
+            expected_row_index,
+            next_output_index,
+            final_display_words,
         )
-        if row["row_index"] != expected_row_index:
-            raise ValueError("allocation row indices are not contiguous")
-        if re.fullmatch(r"corrected-\d{4}", str(row["segment_id"])) is None:
-            raise ValueError("allocation segment ID is invalid")
-        row_start = _integer(row["output_start_index"], "row output start")
-        row_end = _integer(row["output_end_index"], "row output end")
-        row_word_count = _integer(
-            row["output_word_count"],
-            "row output word count",
-        )
-        if (
-            row_start != output_cursor
-            or row_end != row_start + row_word_count
-            or row_end > final_display_words
-        ):
-            raise ValueError("allocation row output accounting is inconsistent")
-        if row["anchor_outcome"] not in {"matched", "missing", "not_observed"}:
-            raise ValueError("allocation row has an invalid anchor outcome")
-        if row["anchor_score_class"] not in {
-            "high",
-            "accepted",
-            "missing",
-            "not_observed",
-        }:
-            raise ValueError("allocation row has an invalid anchor score class")
-        score = row["anchor_score"]
-        if score is not None and (
-            isinstance(score, bool)
-            or not isinstance(score, int | float)
-            or not 0.0 <= score <= 1.0
-        ):
-            raise ValueError("allocation row has an invalid anchor score")
-        if type(row["anchor_clamped"]) is not bool:
-            raise ValueError("allocation row has an invalid clamped flag")
-
-        source_runs = row["source_runs"]
-        if not isinstance(source_runs, list):
-            raise ValueError("allocation source runs must be a list")
-        run_cursor = row_start
+        next_run_output_index = row_start
+        # Runs explain which saved source produced each consecutive word in this corrected row.
         for expected_run_index, raw_source_run in enumerate(source_runs):
-            source_run = _exact_keys(
+            source, source_start, output_start, output_end = _validated_source_run(
                 raw_source_run,
-                {
-                    "source",
-                    "source_start_index",
-                    "source_end_index",
-                    "word_count",
-                    "source_run_index",
-                    "output_start_index",
-                    "output_end_index",
-                },
-                "allocation source run",
-                optional={"source_row_index"},
+                expected_run_index,
+                next_run_output_index,
+                row_end,
             )
-            source = source_run["source"]
-            if source not in {"corrected_asr", "retained_live"}:
-                raise ValueError("allocation source is invalid")
-            if source_run["source_run_index"] != expected_run_index:
-                raise ValueError("source run indices are not contiguous")
-            source_start = _integer(
-                source_run["source_start_index"],
-                "source run start",
+            run_asr_words, run_retained_words = _record_source_run(
+                source=source,
+                source_start=source_start,
+                output_start=output_start,
+                output_end=output_end,
+                row_index=expected_row_index,
+                source_run_index=expected_run_index,
+                display_word_sources=display_word_sources,
+                corrected_source_use_counts=corrected_source_use_counts,
+                corrected_asr_words=corrected_asr_words,
             )
-            source_end = _integer(source_run["source_end_index"], "source run end")
-            word_count = _integer(source_run["word_count"], "source run word count")
-            output_start = _integer(
-                source_run["output_start_index"],
-                "source run output start",
-            )
-            output_end = _integer(
-                source_run["output_end_index"],
-                "source run output end",
-            )
-            if (
-                source_end != source_start + word_count
-                or output_start != run_cursor
-                or output_end != output_start + word_count
-                or output_end > row_end
-            ):
-                raise ValueError("allocation source run accounting is inconsistent")
-            if "source_row_index" in source_run:
-                _integer(source_run["source_row_index"], "source row index")
-
-            for offset, output_index in enumerate(
-                range(output_start, output_end),
-            ):
-                source_index = source_start + offset
-                if output_sources[output_index] is not None:
-                    raise ValueError("one display word has multiple allocation sources")
-                if source == "corrected_asr":
-                    if source_index >= corrected_asr_words:
-                        raise ValueError("corrected ASR source index is out of range")
-                    corrected_source_counts[source_index] += 1
-                    observed_asr_words += 1
-                else:
-                    observed_retained_words += 1
-                output_sources[output_index] = {
-                    "source": source,
-                    "source_index": source_index,
-                    "row_index": expected_row_index,
-                    "source_run_index": expected_run_index,
-                }
-            run_cursor = output_end
-        if run_cursor != row_end:
+            observed_asr_words += run_asr_words
+            observed_retained_words += run_retained_words
+            next_run_output_index = output_end
+        # A partially sourced row would leave visible transcript words unexplained.
+        if next_run_output_index != row_end:
             raise ValueError("allocation source runs do not cover their row")
-        output_cursor = row_end
+        next_output_index = row_end
 
-    if output_cursor != final_display_words or any(
-        source is None for source in output_sources
+    # Complete coverage is required before any corrected insertion can be classified for the reviewer.
+    if next_output_index != final_display_words or any(
+        source is None for source in display_word_sources
     ):
         raise ValueError("allocation does not cover every display word")
+    return (
+        display_word_sources,
+        corrected_source_use_counts,
+        observed_asr_words,
+        observed_retained_words,
+    )
+
+
+def _validated_corrected_source_accounting(
+    corrected_source_use_counts: list[int],
+    observed_asr_words: int,
+    observed_retained_words: int,
+    allocated_asr_words: int,
+    retained_live_words: int,
+) -> tuple[list[int], list[int]]:
+    """Close saved source totals and identify repeated or unused corrected ASR words."""
+    # Saved source totals must match the words actually joined to the user's corrected transcript.
     if observed_asr_words != allocated_asr_words:
         raise ValueError("allocated ASR total is inconsistent")
     if observed_retained_words != retained_live_words:
         raise ValueError("retained live total is inconsistent")
-
     duplicate_indices = [
-        index for index, count in enumerate(corrected_source_counts) if count > 1
+        index for index, count in enumerate(corrected_source_use_counts) if count > 1
     ]
     unallocated_indices = [
-        index for index, count in enumerate(corrected_source_counts) if count == 0
+        index for index, count in enumerate(corrected_source_use_counts) if count == 0
     ]
+    return duplicate_indices, unallocated_indices
+
+
+def _validate_output_accounting(
+    allocation: dict[str, Any],
+    final_display_words: int,
+    duplicate_indices: list[int],
+    unallocated_indices: list[int],
+) -> None:
+    """Confirm the producer's saved totals describe the validated display-word map."""
     accounting = _exact_keys(
         allocation["accounting"],
         {
@@ -319,6 +447,7 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
         },
         "allocation accounting",
     )
+    # The producer must explicitly report complete coverage of the words visible to the user.
     if (
         _integer(accounting["source_run_words"], "source run total")
         != final_display_words
@@ -331,11 +460,18 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
         or accounting["final_output_matches_allocation"] is not True
     ):
         raise ValueError("allocation output accounting did not close")
+    # Repeated and unused ASR indices affect insertion classes, so their saved lists must match the reconstructed map.
     if accounting["duplicate_corrected_asr_source_indices"] != duplicate_indices:
         raise ValueError("duplicate corrected ASR accounting is inconsistent")
     if accounting["unallocated_corrected_asr_source_indices"] != unallocated_indices:
         raise ValueError("unallocated corrected ASR accounting is inconsistent")
 
+
+def _validated_chunk_provenance(
+    allocation: dict[str, Any],
+    corrected_asr_words: int,
+) -> tuple[str, list[Any]]:
+    """Validate chunk ranges and return the seam evidence used for insertion classes."""
     chunk_provenance = _exact_keys(
         allocation["chunk_provenance"],
         {"status", "ranges", "seam_indices"},
@@ -344,16 +480,19 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
     status = chunk_provenance["status"]
     ranges = chunk_provenance["ranges"]
     seam_indices = chunk_provenance["seam_indices"]
+    # Only observed provenance can support a seam-duplicate explanation in the report.
     if status not in {"observed", "not_observed"}:
         raise ValueError("chunk provenance status is invalid")
     if not isinstance(ranges, list) or not isinstance(seam_indices, list):
         raise ValueError("chunk provenance ranges must be lists")
+    # When the producer did not observe chunks, it must not invent ranges or seams for the reviewer.
     if status == "not_observed":
         if ranges or seam_indices:
             raise ValueError("unobserved chunk provenance must be empty")
     else:
         expected_start = 0
         observed_ranges = []
+        # Observed chunks must cover the ASR words once, in the order the model produced them.
         for expected_chunk_index, raw_range in enumerate(ranges, start=1):
             chunk_range = _exact_keys(
                 raw_range,
@@ -371,6 +510,7 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
                 "chunk end",
                 minimum=1,
             )
+            # A gap, overlap, or reordered chunk would make the reported seam positions unreliable.
             if (
                 chunk_index != expected_chunk_index
                 or start_index != expected_start
@@ -386,19 +526,64 @@ def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
                 }
             )
             expected_start = end_index
+        # Partial chunk coverage cannot explain duplicates elsewhere in the corrected transcript.
         if expected_start != corrected_asr_words:
             raise ValueError("chunk ranges do not cover corrected ASR output")
         expected_seams = [item["end_index"] for item in observed_ranges[:-1]]
         if seam_indices != expected_seams:
             raise ValueError("chunk seam indices disagree with chunk ranges")
+    return status, list(seam_indices)
+
+
+def validate_allocation_artifact(artifact: Any) -> dict[str, Any]:
+    """Validate saved allocation evidence before classifying corrected insertions.
+
+    :param artifact: Runner artifact or direct allocation object; null and unsupported shapes fail closed.
+    :returns: Validated source map and provenance; an empty source map means the corrected visit has no display words.
+    :raises ValueError: If schema, identity, coverage, accounting, or chunk provenance is incomplete or inconsistent.
+    """
+    (
+        allocation,
+        corrected_asr_words,
+        final_display_words,
+        allocated_asr_words,
+        retained_live_words,
+    ) = _validated_allocation_header(artifact)
+    (
+        display_word_sources,
+        corrected_source_use_counts,
+        observed_asr_words,
+        observed_retained_words,
+    ) = _validated_allocation_rows(
+        allocation,
+        corrected_asr_words,
+        final_display_words,
+    )
+    duplicate_indices, unallocated_indices = _validated_corrected_source_accounting(
+        corrected_source_use_counts,
+        observed_asr_words,
+        observed_retained_words,
+        allocated_asr_words,
+        retained_live_words,
+    )
+    _validate_output_accounting(
+        allocation,
+        final_display_words,
+        duplicate_indices,
+        unallocated_indices,
+    )
+    chunk_status, seam_indices = _validated_chunk_provenance(
+        allocation,
+        corrected_asr_words,
+    )
 
     return {
         "allocation": allocation,
-        "output_sources": output_sources,
+        "output_sources": display_word_sources,
         "duplicate_source_indices": set(duplicate_indices),
         "corrected_asr_words": corrected_asr_words,
-        "chunk_status": status,
-        "seam_indices": list(seam_indices),
+        "chunk_status": chunk_status,
+        "seam_indices": seam_indices,
     }
 
 
@@ -535,7 +720,21 @@ def evaluate_artifacts(
     patient_path: Path,
     cutoff_seconds: float,
 ) -> dict[str, Any]:
-    """Return timestamp-independent S/I/D and corrected insertion classes."""
+    """Build the PHI-safe insertion report used to explain a saved correction run.
+
+    :param live_payload: Saved live transcript; null or missing segments stop the report.
+    :param corrected_payload: Saved corrected transcript; empty segments produce no insertion rows.
+    :param allocation_artifact: Source allocation for corrected display words; null or incomplete evidence fails closed.
+    :param doctor_path: Doctor reference TextGrid selected for this visit.
+    :param patient_path: Patient reference TextGrid selected for this visit.
+    :param cutoff_seconds: Positive reference window; infinity includes the complete visit.
+
+    :returns: Timestamp-independent S/I/D and insertion classes; the insertion list may be empty when correction adds no words.
+    :raises ValueError: If transcripts, allocation evidence, normalization, or the cutoff is inconsistent.
+    :raises OSError: If a selected reference file cannot be read.
+    :raises RuntimeError: If classified insertions do not close against the corrected S/I/D total.
+    """
+    # A non-positive visit window cannot represent a meaningful user transcript comparison.
     if cutoff_seconds <= 0.0:
         raise ValueError("cutoff seconds must be positive")
     live_rows = _segments(live_payload, "live")
@@ -559,8 +758,10 @@ def evaluate_artifacts(
 
     allocation = validate_allocation_artifact(allocation_artifact)
     display_words, normalized_mapping = _display_word_mapping(corrected_rows)
+    # A transcript edited after allocation would show words whose saved source no longer matches.
     if len(display_words) != allocation["allocation"]["final_display_words"]:
         raise ValueError("corrected transcript display words disagree with allocation")
+    # Normalization must preserve the same hypothesis sequence used for the displayed S/I/D result.
     if [item["token"] for item in normalized_mapping] != [
         word.token for word in corrected_hypothesis_words
     ]:
@@ -591,11 +792,13 @@ def evaluate_artifacts(
         normalized_word = normalized_mapping[hypothesis_index]
         output_word_index = int(normalized_word["output_word_index"])
         source = allocation["output_sources"][output_word_index]
+        # Every reported insertion must point back to one source the operator can audit.
         if source is None:
             raise ValueError("corrected insertion has no allocation source")
         source_name = str(source["source"])
         source_index = int(source["source_index"])
 
+        # The first matching cause wins so the report keeps its documented classification priority.
         if source_name == "retained_live":
             classification = "retained_live_fallback"
         elif source_index in allocation["duplicate_source_indices"]:
@@ -623,10 +826,12 @@ def evaluate_artifacts(
             "source_run_index": int(source["source_run_index"]),
             "classification": classification,
         }
+        # Cross-speaker overlap stays visibly inconclusive instead of being presented as a correction defect.
         if classification == "ambiguous_unclassified":
             insertion["ambiguity_reason"] = "reference_overlap_order"
         insertions.append(insertion)
 
+    # A count mismatch would make the displayed class totals disagree with standard S/I/D.
     if len(insertions) != corrected_alignment["insertions"]:
         raise RuntimeError("corrected insertion accounting did not close")
 
@@ -692,7 +897,20 @@ def build_report_from_paths(
     patient_path: Path,
     cutoff_seconds: float,
 ) -> dict[str, Any]:
-    """Evaluate sealed paths and attach content hashes without exposing wording."""
+    """Evaluate selected evidence paths and attach hashes without exposing visit wording.
+
+    :param live_path: Saved live transcript path; a missing or malformed file produces no report.
+    :param corrected_path: Saved corrected transcript path from the same visit.
+    :param allocation_path: Saved allocation path that explains the corrected display words.
+    :param doctor_path: Doctor reference TextGrid selected for the visit.
+    :param patient_path: Patient reference TextGrid selected for the visit.
+    :param cutoff_seconds: Positive reference window; infinity includes the complete visit.
+
+    :returns: PHI-safe diagnostic report with input hashes; classification lists may be empty when no insertions exist.
+    :raises ValueError: If selected JSON or cross-artifact evidence is malformed or inconsistent.
+    :raises OSError: If a selected input cannot be read or hashed.
+    :raises RuntimeError: If insertion accounting cannot be closed.
+    """
     report = evaluate_artifacts(
         _load_json(live_path),
         _load_json(corrected_path),
@@ -736,7 +954,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Classify one saved run and print JSON or a compact count summary."""
+    """Classify one saved run and print JSON or a compact count summary.
+
+    :returns: Zero after a complete report, or two when the selected evidence cannot be validated.
+    """
     arguments = _parser().parse_args()
     try:
         report = build_report_from_paths(
@@ -748,9 +969,11 @@ def main() -> int:
             cutoff_seconds=arguments.cutoff_seconds,
         )
     except (OSError, ValueError, RuntimeError) as error:
+        # Example: selecting another visit's allocation prints one error instead of a misleading partial report.
         print(f"error: {error}", file=sys.stderr)
         return 2
 
+    # Operators can request the full machine-readable report; the default keeps terminal output compact.
     if arguments.json:
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0

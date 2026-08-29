@@ -41,7 +41,7 @@ doxycycline|doxy cycline|doxicycline
 ECG|e c g
 eczema|ex zema|egzema
 eGFR|e g f r
-emollients|emolons
+emollients|emolons|amoleans|amolliums
 empagliflozin|empa glyph lozin|empa gliflozin
 endometriosis|endo metriosis|endometreosis
 fexofenadine|Fexaphenidine
@@ -63,7 +63,7 @@ ibuprofen|i buprofen|eye buprofen
 INR|i n r
 levothyroxine|levo thyroxine|levothyroxin
 lisinopril|lisin april
-loratadine|Luratidine
+loratadine|Luratidine|Lauratidine
 metformin|met formin|metforman
 methotrexate|metho trexate|methotrexat
 metoprolol|metro pro lol|meto prolol

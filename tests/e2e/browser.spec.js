@@ -1,15 +1,9 @@
 /**
- * Browser-based E2E tests for the Ambient Scribe frontend.
+ * Browser E2E coverage for the Ambient Scribe consultation screen.
+ * It verifies clinician-visible recording, transcript, note, source-link, and accessibility behaviour in headless Chromium.
  *
- * Tests reconnect logic, transcript rendering, and accessibility
- * using Playwright with headless Chromium.
- *
- * Services must be running (use scripts/e2e-test.sh --no-start to skip service startup):
- *   - Python agent on AGENT_PORT (default 48101)
- *   - PHP app on APP_PORT (default 48082)
- *   - Mercure on MERCURE_PORT (default 48137)
- *
- * Run: npx playwright test tests/e2e/browser.spec.js
+ * Use scripts/e2e-test.sh --browser so the PHP app, Python agent, and Mercure run on their configured test ports.
+ * Add --no-start only when those services are already running.
  */
 
 const { test, expect } = require("@playwright/test");
@@ -19,8 +13,7 @@ const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
  * Injects fake segments through the same browser function Mercure uses.
- * The loop alternates speakers because tests must cover grouping and reconnect
- * preservation without needing live Mercure or microphone services.
+ * Use when a UI test needs alternating speakers without live Mercure or microphone services.
  */
 async function injectFakeSegments(page, count = 3) {
   await page.evaluate((n) => {
@@ -40,9 +33,8 @@ async function injectFakeSegments(page, count = 3) {
 }
 
 /**
- * Injects rows shaped like the consult-03 failure: two consecutive rows from
- * one speaker (coalesced into one card) followed by the other speaker, so
- * row-level exceptions inside a multi-row card are testable.
+ * Injects the consult-03 row pattern that combines two same-speaker rows before the other speaker responds.
+ * Use when a UI test needs to verify row-level exceptions inside one combined transcript card.
  */
 async function injectCoalescedCardSegments(page) {
   await page.evaluate(() => {
@@ -62,7 +54,7 @@ async function injectCoalescedCardSegments(page) {
   });
 }
 
-// Helper: wait for the page to be fully loaded with CONFIG available
+/** Opens the consultation screen and waits until the clinician can see Start. */
 async function loadScribePage(page) {
   await page.goto(`${APP_URL}/scribe`, { waitUntil: "networkidle" });
   await page.waitForSelector("#startBtn");
@@ -70,8 +62,7 @@ async function loadScribePage(page) {
 
 /**
  * Stubs the correction route so summary tests can verify request order.
- * The response can be success or failure; either way the UI should continue
- * to the summary request unless the summary itself fails.
+ * Use for success or fallback flows where the clinician should still be able to request a note.
  */
 async function stubCorrectionRoute(page, calls, order, responseOptions = {}) {
   await page.route("**/session/*/correction", async (route) => {
@@ -87,8 +78,7 @@ async function stubCorrectionRoute(page, calls, order, responseOptions = {}) {
 
 /**
  * Stubs the summary route so tests count generated note requests locally.
- * Use when a stop, retry, or manual click should prove request order because the model
- * response is not what this browser flow is testing.
+ * Use when Stop, Retry, or Generate should prove request order without depending on a model response.
  */
 async function stubSummaryRoute(page, calls, order = []) {
   await page.route("**/session/*/summary", async (route) => {
@@ -227,8 +217,7 @@ test.describe("Semantic copy separators", () => {
 });
 
 test.describe("Semantic copy and status axes", () => {
-  /** A note payload shaped like consult 1.2: cited sections whose count
-   *  buttons ("11/1/2/6") once leaked into whole-panel copies. */
+  /** Supplies the consult-1.2 note shape when copy tests need several source controls around the clinical text. */
   const citedSummaryBody = {
     title: "Session Summary",
     key_points: ["Sore red skin on both forearms."],
@@ -253,7 +242,7 @@ test.describe("Semantic copy and status axes", () => {
     ],
   };
 
-  /** Runs the real stop flow until the stubbed note renders. */
+  /** Renders a stubbed note through the clinician's Stop then Generate flow. */
   async function renderNoteThroughStopFlow(page, summaryBody, finalizedEvent = {}) {
     const requestOrder = [];
     await stubCorrectionRoute(page, [], requestOrder);
@@ -429,7 +418,7 @@ test.describe("Semantic copy and status axes", () => {
 test.describe("Role confidence badge stability gating", () => {
   /**
    * Sends one role update through the same browser function Mercure uses.
-   * Tests drive it directly so badge policy is verifiable without live NeMo.
+   * Use when a badge test needs a known role state without live NeMo.
    */
   async function injectRoleUpdate(page, roleUpdateEvent) {
     await page.evaluate((event) => {
@@ -1566,7 +1555,7 @@ test.describe("Post-visit correction before summary", () => {
 });
 
 test.describe("Live-stop finalize drain", () => {
-  /** Puts the page into a live-recording state without a microphone. */
+  /** Shows live recording controls without a microphone when a test begins after Start. */
   async function enterLiveRecordingState(page) {
     // The real UI transition hides Start and shows Stop, so drain assertions
     // observe the same control states a clinician would.
@@ -1967,10 +1956,8 @@ test.describe("Row confidence passthrough", () => {
 
 test.describe("Claim-level provenance (schema v2)", () => {
   /**
-   * A hydrated v2 payload in the server's exact shape: a cited claim whose
-   * unit carries display context, a second claim citing the same unit, an
-   * uncited claim, and an absence-based key point. Context rows exist
-   * precisely so the count-inflation assertion means something.
+   * Supplies a hydrated v2 note with cited, uncited, absence-based, and display-context cases.
+   * Use when source-review tests need the server's exact payload shape without generating a note.
    */
   function v2SummaryPayload() {
     return {
@@ -2035,7 +2022,7 @@ test.describe("Claim-level provenance (schema v2)", () => {
     };
   }
 
-  /** Renders a note payload through the same function Mercure delivery uses. */
+  /** Renders a note through the same browser function used after Mercure delivery. */
   async function renderNoteDirectly(page, summaryPayload) {
     await page.evaluate((notePayload) => renderSummary(notePayload), summaryPayload);
   }
@@ -2173,6 +2160,36 @@ test.describe("Claim-level provenance (schema v2)", () => {
     await expect(absenceDisclosure.locator(".summary-claim__open")).toHaveCount(0);
   });
 
+  test("a live-fallback note offers no source link at all", async ({ page }) => {
+    // The clinician finished a visit whose correction could not run, so the note was written from the
+    // raw live rows. Those rows have ids and would render as links, and a link beside a claim reads as
+    // confirmation. Unreviewed wording must never be able to look confirmed, so no link is offered.
+    await loadScribePage(page);
+    const fallbackPayload = v2SummaryPayload();
+    fallbackPayload.source_state = "whole_visit_live_fallback";
+    fallbackPayload.source_units = [];
+    for (const section of fallbackPayload.sections) {
+      for (const claim of section.claims) {
+        claim.source_unit_ids = [];
+        claim.evidence_basis = "none";
+      }
+    }
+    for (const keyPoint of fallbackPayload.key_points) {
+      keyPoint.source_unit_ids = [];
+    }
+    await renderNoteDirectly(page, fallbackPayload);
+
+    // Not one claim anywhere in the note exposes a transcript jump.
+    await expect(page.locator(".summary-claim__open")).toHaveCount(0);
+
+    await page.locator('[data-claim-id="subjective-01"] .summary-claim__toggle').click();
+    const disclosure = page.locator("#claimEvidence-subjective-01");
+    await expect(disclosure.locator(".summary-claim__state")).toContainText(
+      "No transcript evidence was cited"
+    );
+    await expect(disclosure.locator(".summary-claim__open")).toHaveCount(0);
+  });
+
   test("a v1 payload keeps the section renderer behind its honest label", async ({ page }) => {
     await loadScribePage(page);
     await renderNoteDirectly(page, {
@@ -2241,7 +2258,7 @@ test.describe("Claim-level provenance (schema v2)", () => {
 });
 
 test.describe("Summary failure copy", () => {
-  /** Drives the attested stop flow into a stubbed 502 with the given body. */
+  /** Drives Stop then Generate into a stubbed 502 when a test needs clinician-facing failure copy. */
   async function failSummaryWith(page, failureBody) {
     await stubCorrectionRoute(page, [], []);
     await page.route("**/session/*/summary", (route) =>
@@ -2462,7 +2479,7 @@ test.describe("Two-sided transcript + on-demand summary", () => {
 });
 
 test.describe("Pause and continue", () => {
-  test("pause suspends the visit without finalizing; continue and stop still work", async ({
+  test("pause keeps live and replay sessions open; Continue resumes only after audio starts", async ({
     page,
   }) => {
     await loadScribePage(page);
@@ -2477,7 +2494,6 @@ test.describe("Pause and continue", () => {
     await page.click("#pauseBtn");
     await expect(page.locator("#status")).toContainText("Paused");
     await expect(page.locator("#pauseBtn")).toHaveText("Continue");
-    await page.waitForTimeout(800);
     await expect(page.locator("#startBtn")).toBeHidden();
     await expect(page.locator("#generateSummaryBtn")).toBeDisabled();
 
@@ -2489,5 +2505,58 @@ test.describe("Pause and continue", () => {
     // Stop stays terminal and takes the pause control with it.
     await page.evaluate(() => stopRecording());
     await expect(page.locator("#pauseBtn")).toBeHidden();
+
+    // The clinician retries Continue after the browser blocks replay once; only audible playback may switch the control back to Pause.
+    await page.evaluate(() => {
+      isReplayActive = true; setElementHidden("pauseBtn", false); enterPausedSessionUi("Replay paused - press Continue to keep going");
+      let playbackAttempt = 0; const replayAudio = document.getElementById("replayAudio");
+      replayAudio.play = () => ++playbackAttempt === 1 ? Promise.reject(new DOMException("Playback blocked")) : Promise.resolve();
+    });
+    await page.click("#pauseBtn"); await expect(page.locator("#pauseBtn")).toHaveText("Continue");
+    await page.click("#pauseBtn"); await expect(page.locator("#pauseBtn")).toHaveText("Pause");
+  });
+});
+
+test.describe("Pre-visit readiness gate", () => {
+  test("blocks recording when correction checkpoint is unavailable", async ({ page }) => {
+    // The clinician opens the page after the correction model stopped loading. Live streaming is fine,
+    // so nothing else on screen would warn them before they recorded an entire consultation.
+    await page.route("**/agent/model-health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ available: false, detail: "the correction model cannot be loaded by this agent runtime (TypeError)" }),
+      });
+    });
+
+    let didTranscriptionSocketOpen = false;
+    page.on("websocket", () => { didTranscriptionSocketOpen = true; });
+
+    await loadScribePage(page);
+    await page.click("#startBtn");
+    await expect(page.locator("#status")).toContainText("Consultation not started");
+
+    const status = await page.textContent("#status");
+    // The banner names the failing half, because a missing note provider needs a different fix.
+    expect(status).toContain("Consultation not started"); expect(status).toContain("correction model");
+    // Nothing was recorded and no audio stream was opened, so no consultation exists to lose.
+    expect(didTranscriptionSocketOpen).toBe(false);
+  });
+
+  test("allows recording when both halves are ready", async ({ page }) => {
+    await page.route("**/agent/model-health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ available: true, detail: "" }),
+      });
+    });
+
+    await loadScribePage(page);
+    await page.click("#startBtn");
+    await expect(page.locator("#pauseBtn")).toBeVisible();
+
+    const status = await page.textContent("#status");
+    expect(status).not.toContain("Consultation not started");
   });
 });

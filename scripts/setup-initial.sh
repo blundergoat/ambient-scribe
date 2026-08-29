@@ -90,11 +90,20 @@ wait_healthy() {
     while [[ $elapsed -lt $timeout ]]; do
         local remaining=$(( timeout - elapsed ))
         local status
-        status=$(docker inspect "$container" --format '{{.State.Health.Status}}' 2>/dev/null || echo "missing")
+        status=$(docker inspect "$container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null || echo "missing")
 
         if [[ "$status" == "healthy" ]]; then
             echo -ne "\r\033[K"
             echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}healthy${RESET}"
+            return 0
+        fi
+
+        # The app image declares no HEALTHCHECK, so running is as ready as it
+        # gets. Without this the unguarded template errored, the status never
+        # matched any branch, and a working stack timed out as a failure.
+        if [[ "$status" == "no-healthcheck" || "$status" == "none" ]]; then
+            echo -ne "\r\033[K"
+            echo -e "  ${ARROW} ${padded} ${PASS}  ${DIM}running (no healthcheck)${RESET}"
             return 0
         fi
 
@@ -378,7 +387,7 @@ echo -e "  ${BOLD}Verifying endpoints${RESET}"
 echo ""
 
 step "/health (nemo-agent)"
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:8001/health" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${AGENT_PORT:-48101}/health" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" == "200" ]]; then
     pass
 else
@@ -386,7 +395,7 @@ else
 fi
 
 step "/scribe (app)"
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:8082/scribe" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${APP_PORT:-48082}/scribe" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" == "200" ]]; then
     pass
 else
@@ -394,7 +403,7 @@ else
 fi
 
 step "Mercure hub"
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:3701/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
+HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://localhost:${MERCURE_PORT:-48137}/.well-known/mercure" 2>/dev/null) || HTTP_CODE="000"
 if [[ "$HTTP_CODE" =~ ^(200|401|400)$ ]]; then
     pass
 else
@@ -414,9 +423,9 @@ SECS=$(( STARTUP_ELAPSED % 60 ))
 echo -e "  ${GREEN}${BOLD}Setup complete!${RESET} ${DIM}(${MINUTES}m ${SECS}s)${RESET}"
 echo ""
 echo -e "  ${DIM}Services:${RESET}"
-echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:8082/scribe${RESET}"
-echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:8001${RESET}"
-echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:3701${RESET}"
+echo -e "    ${ARROW} Scribe UI:     ${BOLD}http://localhost:${APP_PORT:-48082}/scribe${RESET}"
+echo -e "    ${ARROW} NeMo agent:    ${BOLD}http://localhost:${AGENT_PORT:-48101}${RESET}"
+echo -e "    ${ARROW} Mercure:       ${BOLD}http://localhost:${MERCURE_PORT:-48137}${RESET}"
 echo ""
 echo -e "  ${DIM}Next steps:${RESET}"
 echo -e "    ${ARROW} Daily startup:    ${BOLD}./scripts/start-dev.sh${RESET}"

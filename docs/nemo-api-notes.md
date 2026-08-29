@@ -3,7 +3,7 @@
 **Status:** Superseded runtime target; API notes retained for implementation context.
 **Date:** 2026-02-19
 **Hardware:** RTX 5080 Laptop GPU (16GB VRAM, Blackwell sm_120)
-**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==2.7.3`.
+**Container:** Runtime now targets `nvcr.io/nvidia/nemo:26.02` + `nemo_toolkit[asr]==3.0.0`.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Component | Version |
 |---|---|
-| NeMo Framework | 2.7.3 pinned runtime target |
+| NeMo Framework | 3.0.0 pinned runtime target |
 | PyTorch | 2.8.0a0+5228986c39.nv25.06 |
 | CUDA (container) | 13.x-class NVIDIA NeMo release |
 | CUDA (host driver) | 13.1, Driver 591.74 |
@@ -219,7 +219,7 @@ The composite pipeline outputs SegLST (Segment-wise Long-form Speech Transcripti
 ]
 ```
 
-### Recommended Approach for Milestone 2
+### Recommended Integration Approach
 
 **Option A (Preferred):** Use `SpeakerTaggedASR` composite pipeline - handles streaming, overlapping speech, speaker-kernel injection natively. Requires `MultitalkerTranscriptionConfig` from NeMo examples directory.
 
@@ -232,7 +232,7 @@ hyps = asr_model.transcribe([path], return_hypotheses=True)
 
 ### VRAM Note for Multi-Speaker
 
-The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 speakers (GP consultation), VRAM usage may increase. The 5 GB headroom should accommodate this, but needs verification during Milestone 2.
+The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 speakers (GP consultation), VRAM usage may increase. The 5 GB headroom should accommodate this, but was not verified at the time of these notes.
 
 ---
 
@@ -268,7 +268,7 @@ The multitalker Parakeet spawns one ASR instance per detected speaker. With 2 sp
 
 Real-time factor (RTF) of 0.11x means we can process audio ~9x faster than real-time.
 
-### Buffer Strategy Benchmark (Task 1.6)
+### Buffer Strategy Benchmark
 
 Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio (8.5 min source, looped to reach longer durations):
 
@@ -294,7 +294,7 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ---
 
-## 6. Edge Case Behaviour (Task 1.8)
+## 6. Edge Case Behaviour
 
 ### Pure Silence (15 seconds)
 - **Diarization:** No segments detected (clean)
@@ -320,10 +320,10 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ---
 
-## 7. Audio Format Notes (Task 1.7)
+## 7. Audio Format Notes
 
 ### Browser to Server
-- Current browser path uses `PcmStreamer` in `public/js/scribe.js` to emit 16 kHz 16-bit PCM
+- Current browser path uses `PcmStreamer` in `public/js/scribe-streaming.js` to emit 16 kHz 16-bit PCM
 - NeMo consumes PCM via `AudioBuffer` when `NEMO_STREAM_INPUT_FORMAT=pcm`
 - WebM/Opus decoding remains available only when the environment contract is explicitly changed to `webm`
 
@@ -367,7 +367,7 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ### Container Version Matrix
 
-| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 2.7.3 target |
+| Issue | NeMo 24.12-era container | Older 2025 stable container | Current 26.02 + 3.0.0 target |
 |---|---|---|---|
 | RTX 5080 (sm_120) CUDA | Fails | Works | Works |
 | Streaming Sortformer v2.1 | Fails (`spkcache_len`) | Works | Works |
@@ -376,7 +376,7 @@ Tested diarization + ASR at increasing audio lengths using OSCE chest pain audio
 
 ### Sortformer Configuration
 
-The Sortformer model reports `num_spks: 4` and `session_len_sec: 90`. Despite the 90s config, **diarization works correctly on audio up to 520s** (tested in Task 1.6 benchmark). The streaming mode internally handles longer sessions.
+The Sortformer model reports `num_spks: 4` and `session_len_sec: 90`. Despite the 90s config, **diarization works correctly on audio up to 520s** (see the buffer strategy benchmark above). The streaming mode internally handles longer sessions.
 
 ### Single-Speaker Fallback
 

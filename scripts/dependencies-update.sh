@@ -103,8 +103,11 @@ if [[ "$DO_PHP" == true ]]; then
         fail "not found"
     else
         step "composer update"
-        update_output=$(cd "$REPO_ROOT" && composer update 2>&1)
-        update_exit=$?
+        # Capture the status with `|| var=$?`. A bare `out=$(cmd)` followed by
+        # `rc=$?` aborts under set -e the moment the command fails, which made
+        # every failure branch below it unreachable and hid failed installs.
+        update_exit=0
+        update_output=$(cd "$REPO_ROOT" && composer update 2>&1) || update_exit=$?
         if [[ $update_exit -eq 0 ]]; then
             changed_lines=$(echo "$update_output" | grep -E "^\s+- (Upgrading|Installing|Removing)" || true)
             updated=$(echo "$changed_lines" | grep -c "." || true)
@@ -126,8 +129,8 @@ if [[ "$DO_PHP" == true ]]; then
 
         # Security audit
         step "Security audit"
-        audit_output=$(cd "$REPO_ROOT" && composer audit 2>&1)
-        audit_exit=$?
+        audit_exit=0
+        audit_output=$(cd "$REPO_ROOT" && composer audit 2>&1) || audit_exit=$?
         if [[ $audit_exit -eq 0 ]]; then
             pass "no vulnerabilities"
         else
@@ -137,8 +140,8 @@ if [[ "$DO_PHP" == true ]]; then
         # Quick test
         if [[ -x "$REPO_ROOT/vendor/bin/phpunit" ]]; then
             step "PHPUnit smoke test"
-            test_output=$("$REPO_ROOT/vendor/bin/phpunit" --configuration "$REPO_ROOT/phpunit.xml.dist" 2>&1)
-            test_exit=$?
+            test_exit=0
+            test_output=$("$REPO_ROOT/vendor/bin/phpunit" --configuration "$REPO_ROOT/phpunit.xml.dist" 2>&1) || test_exit=$?
             if [[ $test_exit -eq 0 ]]; then
                 test_summary=$(echo "$test_output" | grep -oE '[0-9]+ tests, [0-9]+ assertions' || echo "ok")
                 pass "$test_summary"
@@ -164,8 +167,8 @@ if [[ "$DO_PYTHON" == true ]]; then
     else
         # Upgrade pip itself
         step "pip self-update"
-        pip_self=$("$VENV_DIR/bin/pip" install --upgrade pip 2>&1)
-        pip_self_exit=$?
+        pip_self_exit=0
+        pip_self=$("$VENV_DIR/bin/pip" install --upgrade pip 2>&1) || pip_self_exit=$?
         if [[ $pip_self_exit -eq 0 ]]; then
             pip_ver=$("$VENV_DIR/bin/pip" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
             pass "v${pip_ver}"
@@ -178,8 +181,8 @@ if [[ "$DO_PYTHON" == true ]]; then
 
         # Upgrade packages
         step "pip install --upgrade -r requirements.txt"
-        pip_output=$("$VENV_DIR/bin/pip" install --upgrade -r "$PYTHON_AGENT_DIR/requirements.txt" 2>&1)
-        pip_exit=$?
+        pip_exit=0
+        pip_output=$("$VENV_DIR/bin/pip" install --upgrade -r "$PYTHON_AGENT_DIR/requirements.txt" 2>&1) || pip_exit=$?
         if [[ $pip_exit -eq 0 ]]; then
             after=$("$VENV_DIR/bin/pip" freeze 2>/dev/null | sort)
             diff_output=$(diff <(echo "$before") <(echo "$after") || true)

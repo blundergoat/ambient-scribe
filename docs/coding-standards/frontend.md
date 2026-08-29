@@ -11,7 +11,14 @@ Vanilla JavaScript served from `public/js/scribe.js` inside a single Twig templa
 | `public/js/scribe-recording.js` | Live recording lifecycle and session resets |
 | `public/js/scribe-transcript.js` | Transcript card rendering, relabeling, and visible segment snapshots |
 | `public/js/scribe-output.js` | Demo replay, correction-then-summary flow, and summary rendering |
+| `public/js/scribe-claims.js` | Claim text, evidence toggle, and the claim-level evidence disclosure |
 | `public/js/scribe-actions.js` | Post-visit actions, JSON response parsing, summary toggles, and keyboard shortcuts |
+| `public/js/scribe-stitch.js` | Merges adjacent same-speaker corrected rows into utterance blocks (display only) |
+| `public/js/scribe-flow.js` | Classifies silence gaps and talking-over for the transcript layout |
+| `public/js/scribe-summary-tabs.js` | Note/Transcript tab switch and the Transcript tab body |
+| `public/js/scribe-provenance.js` | Per-section citation popovers with an "Open in transcript" action |
+| `public/js/scribe-confidence.js` | Low-confidence review cues for transcript rows and note wording |
+| `public/js/scribe-copy.js` | Copy transcript / Copy draft note plain-text serialization |
 | `public/js/scribe-dev.js` | Dev inspector panel |
 | `public/js/scribe-fixtures.js` | Dev-only generated WAV fixture replay picker |
 | `public/js/tailwind.js` | Tailwind CSS runtime |

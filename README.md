@@ -29,9 +29,9 @@ Real-time medical transcription system that captures clinical conversations, per
 ## Prerequisites
 
 - **Docker** and **Docker Compose**
-- **NVIDIA GPU** with CUDA support
+- **NVIDIA GPU** with CUDA support and 16 GB VRAM - loading both speech models peaks at 11.3 GB, and buffered audio pushes it higher across a long consultation
 - **NVIDIA Container Toolkit** installed on the host
-- 16GB+ RAM recommended
+- 16GB+ system RAM recommended
 - AWS credentials configured for Bedrock access
 
 ## Quick Start

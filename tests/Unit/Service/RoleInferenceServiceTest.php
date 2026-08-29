@@ -55,7 +55,7 @@ final class RoleInferenceServiceTest extends TestCase
             ->method('postJson')
             ->willReturn($expected);
 
-        $result = $this->service->getCurrentMapping('session-map');
+        $result = $this->service->getRoleSnapshot('session-map');
 
         self::assertSame($expected, $result);
     }
@@ -71,7 +71,7 @@ final class RoleInferenceServiceTest extends TestCase
             ->method('postJson')
             ->willThrowException(new StrandsException('network down'));
 
-        $result = $this->service->getCurrentMapping('session-456');
+        $result = $this->service->getRoleSnapshot('session-456');
 
         self::assertInstanceOf(\stdClass::class, $result['mapping']);
         self::assertSame(0.0, $result['confidence']);

@@ -1,13 +1,15 @@
 # Backend - Ambient Scribe
 
-PHP 8.3+ with Symfony 6.4. Two PHP source files handle the HTTP layer; the real-time audio pipeline is handled by the Python agent via WebSocket.
+PHP 8.3+ with Symfony 6.4. One controller and one service handle the HTTP layer; the real-time audio pipeline is handled by the Python agent via WebSocket.
 
 ## File Layout
 
 | File | Purpose |
 |------|---------|
-| `src/Controller/ScribeController.php` | Routes: `GET /scribe`, `GET /scribe/{id}/history`, `GET /scribe/{id}/roles` |
+| `src/Controller/ScribeController.php` | The only controller. Serves `GET /` and `GET /scribe`, the dev `GET /scribe/demo-audio` fixture route, the `GET /scribe/{id}/history` and `GET /scribe/{id}/roles` reads, and same-origin proxies for `POST /scribe/{id}/roles/override`, `POST /session/{id}/summary`, `POST /session/{id}/correction`, `GET /session/{id}/corrected-transcript`, and `GET /agent/model-health` |
 | `src/Service/RoleInferenceService.php` | Fetches current role mapping from the Python agent via StrandsClient |
+| `src/Logging/JsonLineLogger.php` | The only logger the PHP side uses: one JSON line per event, level-gated by `LOG_LEVEL`, bodies never logged |
+| `src/Observability/StrandsClientTelemetry.php` | StrandsClient `RequestMiddleware` + `ResponseObserver`; injects `X-Correlation-ID` and logs `strands.client.call` |
 | `src/Kernel.php` | Symfony kernel (standard, do not edit) |
 | `config/services.yaml` | DI container: autowire + autoconfigure for `App\` namespace |
 | `config/packages/strands.yaml` | StrandsClient wiring: `strands.client.scribe` with endpoint, timeout, auth |
@@ -41,7 +43,7 @@ Wired as `strands.client.scribe` in `config/packages/strands.yaml`. Injected via
 
 Methods used:
 - `postJson(path, data, timeout)` - synchronous JSON request to the Python agent
-- `streamSse(path, data, timeout)` - SSE streaming from the Python agent (future: clinical summaries)
+- `streamSse(path, data, timeout)` - SSE streaming from the Python agent
 
 ### Error Handling
 ScribeController handles two exception types from StrandsClient:
@@ -98,8 +100,15 @@ strands:
             endpoint: '%env(AGENT_ENDPOINT)%'
             timeout: 120
             connect_timeout: 30
+            max_retries: 2
+            retry_delay_ms: 250
+            retryable_status_codes: [429, 502, 503, 504]
             auth:
                 driver: 'null'
 ```
 
-Per-request timeouts override the default: history fetch (10s), role snapshot (5s), default (120s).
+Retries exist so a transient Python proxy failure does not surface as a history or role outage in
+the browser.
+
+Per-request timeouts override the default: history fetch (10s), role snapshot (5s, the
+`ROLE_SNAPSHOT_TIMEOUT` constant), default (120s, `AGENT_WORKFLOW_TIMEOUT_SECONDS`).

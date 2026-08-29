@@ -8,16 +8,15 @@ use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
 
 /**
- * The Symfony application kernel - the heart of the Symfony framework.
+ * Boots Symfony once, before the clinician's browser ever reaches a `/scribe` route.
  *
- * This is the entry point that boots the framework, loads bundles (see config/bundles.php),
- * reads configuration (see config/packages/*.yaml), and wires up the dependency injection
- * container (see config/services.yaml).
+ * Nothing here is visible on screen, yet every visible thing depends on it. Booting assembles three groups:
  *
- * MicroKernelTrait provides a simplified setup where configuration files are auto-discovered
- * from the config/ directory - no manual registration needed.
+ * - bundles from `config/bundles.php`, which is where Twig page rendering and Mercure live streaming come from
+ * - parameters from `config/packages/*.yaml`, including the WebSocket and Mercure URLs the page hands to the browser
+ * - services from `config/services.yaml`, which registers everything under `src/` for autowiring and points every logger at the JSON logger
  *
- * You rarely need to edit this file. Most configuration happens in config/ YAML files.
+ * `MicroKernelTrait` discovers all of it under `config/` on its own, so this class stays empty and real changes belong in the YAML.
  */
 class Kernel extends BaseKernel
 {

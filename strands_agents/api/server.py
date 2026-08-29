@@ -59,6 +59,7 @@ from post_visit_correction import (
     DEFAULT_POST_VISIT_ASR_MODEL,
     PostVisitCorrectionError,
     PostVisitCorrectionResult,
+    correction_readiness,
     run_post_visit_correction,
 )
 from session import SessionStore
@@ -231,11 +232,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Periodic cleanup of orphaned session state (every 5 minutes)
     cleanup_task = asyncio.create_task(_periodic_cleanup())
 
+    # Proving the correction checkpoint costs one CPU restore of several seconds. Paying it here means
+    # the clinician's first Start click reads a remembered verdict instead of waiting out a restore the
+    # browser has already stopped listening for. Backgrounded so live transcription is servable at once,
+    # and on the default executor because nemo_executor's slots belong to streaming.
+    correction_readiness_task = asyncio.create_task(_prove_correction_readiness())
+
     yield
 
+    correction_readiness_task.cancel()
     cleanup_task.cancel()
     await app.state.http_client.aclose()
     nemo_executor.shutdown(wait=False)
+
+
+async def _prove_correction_readiness() -> None:
+    """Prove the correction model loads before anyone records, rather than on a clinician's first click.
+
+    Records the outcome so an operator reading the agent log learns about a checkpoint this runtime
+    cannot build before a consultation is finished, instead of after.
+
+    Returns:
+        None; the verdict it produces is read back through the readiness gate, not through this call.
+    """
+    loop = asyncio.get_running_loop()
+    correction_ready, correction_detail = await loop.run_in_executor(
+        None, correction_readiness
+    )
+    logger.info(
+        "server.startup.correction_readiness_proved",
+        extra={"correction_ready": correction_ready, "detail": correction_detail},
+    )
 
 
 async def _periodic_cleanup() -> None:
@@ -1037,6 +1064,7 @@ def _correction_unavailable_response(
     # Without a terminal watermark the live rows cannot be attested complete,
     # so no fallback note source may be advertised to the browser.
     if watermark is None:
+        response["status"] = "blocked"
         response["source_state"] = "blocked"
         response["reason"] = "source_not_terminal"
         return response
@@ -1060,8 +1088,11 @@ def _correction_unavailable_response(
         response["attestation_id"] = watermark.attestation_id
         return response
 
-    # Anything else (empty visit, mutated rows) is blocked, never a fallback.
+    # Anything else (empty visit, mutated rows) is blocked, never a fallback. The status carries it
+    # too, because the browser reads the blocked phase off that field and would otherwise show the
+    # generic correction-pending wording instead of this reason.
     watermark.correction_status = "blocked"
+    response["status"] = "blocked"
     response["source_state"] = "blocked"
     response["reason"] = (
         "stale_lineage" if not live_rows_match_terminal else "empty_visit"
@@ -1215,7 +1246,14 @@ async def roles_override(session_id: str, request: Request) -> dict:
         HTTPException: When the speaker or role is missing.
     """
     _validate_session_id(session_id)
-    body = await request.json()
+
+    # A missing or non-object body names no speaker and no role, so it falls through to the same
+    # 400 an empty selection gets instead of surfacing a parse failure as a server error.
+    try:
+        parsed_body = await request.json()
+    except ValueError:
+        parsed_body = None
+    body = parsed_body if isinstance(parsed_body, dict) else {}
     speaker_id = str(body.get("speaker_id", ""))
     role = str(body.get("role", "")).upper()
 
@@ -1409,7 +1447,6 @@ async def generate_summary(
         summary_context.transcript,
         summary_context.citation_segments,
         summary_context.selected_segments,
-        summary_context.citation_source_index,
     )
     duration_ms = int((time.time() - started_at) * 1000)
 
@@ -1653,15 +1690,31 @@ def _probe_summary_model() -> SummaryModelProbe:
 
 @app.get("/agent/model-health")
 async def agent_model_health() -> dict:
-    """Report whether the off-GPU role/summary model can be reached.
+    """Report whether a consultation started now could deliver everything the visit promises.
 
-    The browser calls this before starting a consultation so it does not
-    transcribe when DOCTOR/PATIENT roles and the summary would fail.
+    The browser calls this before recording. It covers both halves of that promise: the off-GPU model
+    behind DOCTOR/PATIENT roles and the note, and the correction model behind the reviewed transcript.
 
     Returns:
-        Availability flag plus a plain-language detail the header banner can
-        show when the model is unreachable.
+        Availability flag plus a plain-language detail the header banner shows. `detail` is empty only
+        when both halves are ready; otherwise it names the half that would fail, never an internal path.
     """
     loop = asyncio.get_running_loop()
-    available, detail = await loop.run_in_executor(None, _probe_summary_model)
-    return {"available": available, "detail": detail}
+    provider_available, provider_detail = await loop.run_in_executor(
+        None, _probe_summary_model
+    )
+
+    if not provider_available:
+        return {"available": False, "detail": provider_detail}
+
+    # A reachable note provider is not enough on its own: live transcription can be perfectly healthy
+    # while a stopped visit could only ever return the rough live rows, which is the case this catches.
+    correction_ready, correction_detail = await loop.run_in_executor(
+        None, correction_readiness
+    )
+
+    # The clinician would get roles and a note, but the note would be built from unreviewed wording.
+    if not correction_ready:
+        return {"available": False, "detail": correction_detail}
+
+    return {"available": True, "detail": ""}

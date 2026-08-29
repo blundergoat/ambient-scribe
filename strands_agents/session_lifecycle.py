@@ -1,9 +1,11 @@
 """
 Lifecycle coordinator for browser recording sessions.
 
-It registers live WebSocket sessions, keeps a short reconnect grace window, and
-cleans audio plus role state after the user leaves. This is what lets a browser
-refresh resume a transcript briefly instead of losing the current visit.
+Registers live WebSocket sessions, holds a short reconnect grace window, and clears audio plus role state once the
+clinician has really gone.
+
+The grace window is the whole point: a browser refresh or a dropped Wi-Fi connection mid-consultation resumes the same
+transcript instead of losing the visit. Per-session locks keep a reconnect and a cleanup from racing over one transcript.
 """
 
 from __future__ import annotations
@@ -28,9 +30,10 @@ class SessionLifecycle:
     """
     Coordinates live recording registration and teardown.
 
-    Use it whenever WebSocket, transcript, and role state must move together
-    from the user's perspective. Per-session locks prevent reconnect and cleanup
-    races from corrupting one visible transcript.
+    Use whenever WebSocket, transcript, and role state must move together from the clinician's point of view: they think
+    of one recording, so these three must never disagree about whether that recording still exists.
+
+    Per-session locks prevent a reconnect and a cleanup from corrupting one visible transcript between them.
     """
 
     def __init__(self) -> None:
@@ -41,14 +44,14 @@ class SessionLifecycle:
     async def register(self, session_id: str, session: TranscriptionSession) -> None:
         """Register a new active transcription session.
 
-        If a pending destroy is scheduled for this session_id (from a
-        previous disconnect), it is cancelled so the session survives.
+        Called when the browser opens its recording socket. A destroy already scheduled from a previous disconnect is
+        cancelled here, which is what makes a mid-visit refresh resume rather than restart.
 
         Args:
             session_id: Recording UUID used by the browser.
             session: Audio/transcript state to resume or show live.
         """
-        # Cancel any pending graceful destroy - the session is being resumed.
+        # A pending destroy means the clinician disconnected moments ago and has now come back, so the visit is resumed.
         pending = self._pending_destroys.pop(session_id, None)
         if pending is not None and not pending.done():
             pending.cancel()
@@ -63,6 +66,8 @@ class SessionLifecycle:
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
         except asyncio.TimeoutError as error:
+            # Example: the clinician's browser reconnects while a teardown for the same visit is still holding the lock.
+            # Registration is abandoned rather than forced, so the browser retries instead of racing a half-torn-down session.
             logger.warning(
                 "session_lifecycle.register_lock_timeout session_id=%s %s",
                 session_id,
@@ -86,14 +91,20 @@ class SessionLifecycle:
     ) -> None:
         """Atomically tear down all state after the user leaves a session.
 
+        Runs once the grace window expires, so the audio buffer, role state, and queue for that visit disappear together.
+
         Args:
             session_id: Recording UUID whose live state should disappear.
-            close_role_inference_fn: Optional role-queue closer; `None` means only audio state is cleared.
+            close_role_inference_fn: Optional role-queue closer; `None` skips draining the queue, and role state is still cleared.
         """
         lock = self._get_or_create_lock(session_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SESSION_LOCK_TIMEOUT)
         except asyncio.TimeoutError as error:
+            # Something else has held this visit's lock for longer than the timeout, most likely another teardown of the
+            # same visit still awaiting the role-queue closer, which holds the lock across that await.
+            #
+            # Cleanup then proceeds without the lock, because leaking a finished visit's audio buffer is the worse outcome.
             logger.error(
                 "session_lifecycle.destroy_lock_timeout session_id=%s %s",
                 session_id,
@@ -104,12 +115,16 @@ class SessionLifecycle:
                     "error_type": type(error).__name__,
                 },
             )
-            # Best-effort cleanup without the lock
             self._active.pop(session_id, None)
+            # A null closer means there is no role queue to drain, so teardown goes straight to clearing role state below.
             if close_role_inference_fn is not None:
                 try:
                     await close_role_inference_fn(session_id)
                 except Exception as close_error:
+                    # The closer already absorbs its own timeout, so anything arriving here is unexpected rather than routine.
+                    #
+                    # It is logged and swallowed regardless, because the role-state cleanup below is what stops a finished
+                    # visit from leaving labels behind, and it must run even when the queue close went wrong.
                     logger.exception(
                         (
                             "session_lifecycle.destroy_close_role_inference_failed "
@@ -129,6 +144,7 @@ class SessionLifecycle:
             return
         try:
             self._active.pop(session_id, None)
+            # A null closer means there is no role queue to drain, so teardown goes straight to clearing role state below.
             if close_role_inference_fn is not None:
                 await close_role_inference_fn(session_id)
             cleanup_role_state(session_id)
@@ -144,19 +160,17 @@ class SessionLifecycle:
     ) -> None:
         """Schedule session destruction after a grace period.
 
-        If the same session_id reconnects before the timer fires,
-        register() cancels the pending task and the session survives.
-
-        If already scheduled (e.g. duplicate disconnect), this is a no-op.
+        Called on disconnect. If the same recording reconnects before the timer fires, `register` cancels this task and
+        the clinician's transcript survives; a duplicate disconnect is a no-op rather than a second, shorter timer.
 
         Args:
             session_id: Recording UUID that may still reconnect.
-            close_role_inference_fn: Optional role cleanup callback; `None` keeps cleanup local to lifecycle state.
+            close_role_inference_fn: Optional role-queue closer passed through to `destroy`; `None` skips draining the queue.
             grace_seconds: Seconds the browser can reconnect before cleanup runs.
         """
-        # Duplicate disconnects should not shorten the user's reconnect window.
+        # Duplicate disconnects must not shorten the clinician's reconnect window, so the first timer keeps ownership.
         if session_id in self._pending_destroys:
-            return  # already scheduled
+            return
 
         async def _delayed_destroy() -> None:
             try:
@@ -171,7 +185,7 @@ class SessionLifecycle:
                 await self.destroy(session_id, close_role_inference_fn)
             finally:
                 current_task = asyncio.current_task()
-                # The delay task owns its pending marker until cleanup finishes.
+                # Only the task that owns this pending marker may clear it, so a newer timer is never cancelled by an older one.
                 if self._pending_destroys.get(session_id) is current_task:
                     self._pending_destroys.pop(session_id, None)
 
@@ -207,7 +221,7 @@ class SessionLifecycle:
             session_id: Recording UUID requested by the browser.
 
         Returns:
-            Active session, or `None` when the transcript cannot be resumed.
+            Active session, or `None` when the transcript cannot be resumed, which the caller treats as an unknown recording.
         """
         return self._active.get(session_id)
 
@@ -232,16 +246,30 @@ class SessionLifecycle:
         return len(self._active)
 
     def clear(self) -> None:
-        """Clear all state (for testing)."""
+        """Drop every tracked recording and cancel pending teardowns.
+
+        Test-only reset. In a running service, sessions leave one at a time through `destroy`, so calling this mid-visit
+        would strand a clinician's live socket with no lifecycle state behind it.
+        """
         self._active.clear()
         self._locks.clear()
-        # Cancel any pending graceful destroys
+        # Pending timers hold a reference to this coordinator, so each is cancelled rather than left to fire after the reset.
         for task in self._pending_destroys.values():
             if not task.done():
                 task.cancel()
         self._pending_destroys.clear()
 
     def _get_or_create_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the lock guarding one recording, creating it on first use.
+
+        Every visit gets its own lock, so one clinician's teardown never blocks another clinician's reconnect.
+
+        Args:
+            session_id: Recording UUID whose lock is needed.
+
+        Returns:
+            Lock for this recording; a fresh unlocked one when this is the visit's first register or destroy.
+        """
         if session_id not in self._locks:
             self._locks[session_id] = asyncio.Lock()
         return self._locks[session_id]

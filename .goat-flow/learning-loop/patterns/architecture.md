@@ -46,3 +46,18 @@ isolated test pages. Add `if (typeof module !== 'undefined' && module.exports)` 
 when node-based unit tests need to require the file (`scribe-stitch.js` + `npm run test:js`).
 Deleting superseded legacy code from the old file at the same time (no-backwards-compat rule)
 can shrink it back below the ceiling - one such split took scribe-output.js from 948 to 799 lines.
+
+**When one split is not enough (measured 2026-08-29):** the "shrink it back below the ceiling"
+outcome above does not generalise. `scribe-output.js` had grown to 1890 lines, and its largest
+cohesive seam was 456, so no single extraction could reach 750. Extracting claim and evidence
+rendering into `scribe-claims.js` left it at 1430, still 680 over. Treat a file this far past the
+ceiling as a sequence of separate milestones, each with its own before/after proof, and say so in the
+plan rather than improvising extra cuts to chase the number. The remaining seams, largest first:
+
+- correction and replay state, around `resetPostVisitCorrectionState` and `clearReplayTimer`
+- summary status and failure messaging, around `showSummaryFailure` and `setSummaryStatus`
+- v1 section rendering, around `renderSummary` and `createSummarySectionBlocks`
+
+`scribe-copy.js` is at 748 of 750, so nothing may be moved into it. Note also that the claim seam was
+clean only because the region reached outward to just two functions and no module state; verify that
+before assuming the next seam is as narrow.

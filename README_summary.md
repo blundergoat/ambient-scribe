@@ -5,7 +5,7 @@ A high-level explanation of what this project does, how a conversation becomes a
 medical note, and which AI models do the work. Written for a non-technical
 reader first, with enough precision that a developer can orient from it too.
 
-Last checked: 2026-07-20 against this repo. For the full technical inventory
+Last checked: 2026-08-29 against this repo. For the full technical inventory
 see [README_STACK.md](README_STACK.md); for the detailed walkthrough see
 [README_HOW_IT_WORKS.md](README_HOW_IT_WORKS.md).
 
@@ -160,17 +160,15 @@ corpus plus manual runs) - internal evaluation, not clinical validation:
   (internal run, July 2026).
 - The post-stop correction pass measurably improves transcript accuracy and
   speaker attribution over the live view on every fixture tested.
-- A stricter regime is replacing these ad-hoc numbers: the in-progress 0.5.0
-  work freezes a ten-consultation baseline with acceptance limits ratified
-  before any replay, three full runs per lane, and independent transcript and
-  note gates, so future quality claims are judged against rules chosen in
-  advance.
+- A stricter regime now replaces these ad-hoc numbers. Release 0.5.0 froze a
+  ten-consultation baseline with acceptance limits ratified before any replay,
+  three full runs per lane, and independent transcript and note gates, so
+  quality claims from here are judged against rules chosen in advance.
 
 ## Where it stands
 
-Working end-to-end demonstrator in active development (latest release 0.4.0,
-2026-07-17; an auditable 0.5.0 quality-baseline campaign is underway). Honest
-gaps: the local page has no login layer yet, production infrastructure exists
+Working end-to-end demonstrator in active development (latest release 0.5.1,
+2026-08-01). Honest gaps: the local page has no login layer yet, production infrastructure exists
 as Terraform scaffolding rather than a hardened deployment, and the clinical
 knowledge file is reviewed but synthetic proof-of-concept data that stays
 inactive by default. Quality is tracked continuously through a scripted

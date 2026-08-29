@@ -20,8 +20,9 @@ Option B - scribe-true. The Assessment section contains only diagnoses or differ
 clinician stated in the transcript. AI-inferred diagnoses, suggested conditions, and unstated
 rule-outs are barred by prompt rule; when the clinician stated none, the section says no
 assessment was documented (mirroring the Objective section's honest behavior). Enforced in
-`strands_agents/agents/summary_agent.py` (search: "Only diagnoses or differentials the
-clinician stated"), pinned by prompt-rule unit tests in `tests/python/test_summary.py`
+`strands_agents/agents/summary_agent.py`
+(search: "Only diagnoses or differentials the clinician stated"), pinned by prompt-rule
+unit tests in `tests/python/test_summary.py`
 (search: "restricts_assessment_to_clinician_statements").
 
 ## Alternatives considered

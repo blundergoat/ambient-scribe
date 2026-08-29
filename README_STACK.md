@@ -6,7 +6,7 @@ developer or reviewer needs to understand before running or changing the app.
 The focus is the user-visible transcription flow: record a consultation, see
 speaker-labelled transcript cards, and review a SOAP summary.
 
-Last checked: 2026-07-20 against the local repo.
+Last checked: 2026-08-29 against the local repo.
 
 ## Short Version
 
@@ -70,7 +70,8 @@ Important files:
   storage lane. Long audio is corrected in ordered ~180-second chunks with one
   transient-failure retry.
 - `docker/nemo/Dockerfile` uses `nvcr.io/nvidia/nemo:26.02` and installs
-  `nemo_toolkit[asr]==2.7.3`.
+  `nemo_toolkit[asr]==3.0.0`. The post-visit correction checkpoint needs this
+  version: 2.7.x cannot instantiate it.
 - `docker-compose.yml` reserves one NVIDIA GPU for `nemo-agent`.
 
 Important env vars:
@@ -183,6 +184,7 @@ Browser source files:
 - `public/js/scribe-actions.js` owns post-visit action visibility, summary-panel state text, safe JSON response parsing, and keyboard shortcuts.
 - `public/js/scribe-stitch.js` merges adjacent same-speaker corrected rows into utterance blocks (display only).
 - `public/js/scribe-flow.js` classifies silence gaps and talking-over for the transcript layout.
+- `public/js/scribe-claims.js` owns claim text, the evidence toggle, and the disclosure that names what was checked.
 - `public/js/scribe-summary-tabs.js` owns the Note/Transcript tab switch and the Transcript tab body.
 - `public/js/scribe-provenance.js` owns per-section citation popovers with an "Open in transcript" action.
 - `public/js/scribe-confidence.js` owns low-confidence review cues for transcript rows and note wording.
@@ -220,7 +222,7 @@ runtime `.txt` bytes. `python3 scripts/evaluate-medical-boost.py` prints the
 CPU-only before/after table and verifies the binding without loading NeMo;
 `scripts/clinical-data-audit.py` is the full governance gate.
 
-This is not NeMo decode-time phrase boosting. The NeMo 2.7.x multitalker
+This is not NeMo decode-time phrase boosting. The NeMo 3.0.x multitalker
 decode-time API still needs a GPU-container proof before this fallback should be
 replaced.
 
@@ -248,9 +250,9 @@ correction pass writes corrected rows beside (never over) the live rows, and
 | --- | --- | --- |
 | PHP | `>=8.3 <9.0` | `composer.json` |
 | Symfony | `^6.4` | `composer.json` |
-| Strands PHP client | `dev-dev` (locked at `a4e30ff`) | `composer.json` / `composer.lock` |
+| Strands PHP client | `dev-dev` (locked at `4f3b63d`) | `composer.json` / `composer.lock` |
 | NeMo base image | `nvcr.io/nvidia/nemo:26.02` | `docker/nemo/Dockerfile` |
-| NeMo toolkit | `nemo_toolkit[asr]==2.7.3` | `docker/nemo/Dockerfile` |
+| NeMo toolkit | `nemo_toolkit[asr]==3.0.0` | `docker/nemo/Dockerfile` |
 | Strands Agents Python | `strands-agents[ollama]>=1.45.0` | `strands_agents/requirements.txt` |
 | FastAPI | `>=0.139.0` | `strands_agents/requirements.txt` |
 | Uvicorn | `uvicorn[standard]>=0.49.0` | `strands_agents/requirements.txt` |

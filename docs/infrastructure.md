@@ -1,126 +1,112 @@
 # AWS Infrastructure
 
-> **Note:** This doc is inherited from the-summit-chatroom and will be rewritten as part of Milestone 0 (shared infrastructure). References to Summit resources below are from the original project.
+Terraform infrastructure that deploys Ambient Scribe to AWS ECS Fargate behind an ALB, serving
+`scribe.blundergoat.com` by default. The app, agent, and Mercure hub run as three containers in one
+Fargate task and talk to each other over `localhost`.
 
-Terraform infrastructure that deploys the Python agent to AWS Fargate behind an ALB, serving `summit.blundergoat.com`.
+Two regions are in play and they are deliberately different. The prod AWS provider uses
+`var.aws_region` (`ap-southeast-2` by default, matching the AU Bedrock model IDs), while the
+Terraform state bucket and lock table live in `us-east-1` and `scripts/terraform.sh` exports
+`AWS_DEFAULT_REGION=us-east-1` for backend access.
 
 ## Architecture
 
 ```mermaid
 graph TB
     subgraph Internet
-        User[User / strands-php-client]
+        User[Clinician browser]
     end
 
-    subgraph AWS["AWS (us-east-1)"]
+    subgraph AWS["AWS (ap-southeast-2)"]
         subgraph DNS["Route 53"]
-            R53[summit.blundergoat.com]
+            R53[scribe.blundergoat.com]
         end
 
         subgraph WAF_Layer["WAF"]
-            WAF[AWS WAF v2<br/>Rate limiting + OWASP rules]
+            WAF[AWS WAF v2<br/>Rate limiting]
         end
 
-        subgraph VPC["Shared VPC (from blundergoat-platform)"]
+        subgraph VPC["VPC (created here, or brought in)"]
             subgraph Public["Public Subnets (2 AZs)"]
                 ALB[Application Load Balancer<br/>HTTPS termination, 120s idle timeout]
             end
 
             subgraph Private["Private Subnets (2 AZs)"]
-                ECS[ECS Fargate Task<br/>Python Agent<br/>512 CPU / 1024 MB]
+                subgraph Task["ECS Fargate Task<br/>1024 CPU / 2048 MB"]
+                    App["app<br/>PHP Symfony :8080"]
+                    Agent["agent<br/>Python FastAPI :8000"]
+                    Mercure["mercure<br/>SSE hub :3701"]
+                end
             end
         end
 
         subgraph Services["AWS Services"]
-            Bedrock[Amazon Bedrock<br/>Claude Sonnet]
+            Bedrock[Amazon Bedrock<br/>Claude Haiku 4.5]
             DDB[DynamoDB<br/>Session persistence<br/>TTL auto-expiry]
-            ECR[ECR<br/>Container registry]
+            ECR[ECR<br/>agent + app registries]
             SM[Secrets Manager<br/>API key]
             CW[CloudWatch<br/>Logs + Alarms]
         end
     end
 
-    subgraph CICD["GitHub Actions"]
-        GHA[Deploy Workflow<br/>OIDC auth, no long-lived keys]
-    end
-
     User -->|HTTPS| R53
     R53 --> WAF
     WAF --> ALB
-    ALB -->|HTTP :8000| ECS
-    ECS -->|InvokeModel| Bedrock
-    ECS -->|GetItem/PutItem| DDB
-    ECS -->|GetSecretValue| SM
-    ECS -->|Logs| CW
-    GHA -->|Push image| ECR
-    GHA -->|Update service| ECS
+    ALB -->|"/* → :8080"| App
+    ALB -->|"/.well-known/mercure → :3701"| Mercure
+    App -->|"localhost:8000"| Agent
+    Agent -->|InvokeModel| Bedrock
+    Agent -->|GetItem/PutItem| DDB
+    Agent -->|GetSecretValue| SM
+    Agent -->|Logs| CW
 ```
 
-## Key Differences from blundergoat-platform
-
-| Setting | blundergoat | the-summit |
-|---------|------------|--------------|
-| Container port | 8080 | 8000 |
-| Health check | `/healthz` | `/health` |
-| CPU / Memory | 256 / 512 | 512 / 1024 |
-| ALB idle timeout | 60s | 120s (streaming) |
-| Domain | blundergoat.com | summit.blundergoat.com |
-| Database | RDS PostgreSQL | DynamoDB (sessions) |
-| IAM task perms | RDS backups | Bedrock + DynamoDB |
-| VPC | Owns VPC | Shares blundergoat's VPC |
-| Migration task | Yes | No |
+The ALB has two target groups. The default action forwards `/*` to the app container on 8080, with
+its health check on `/`. A listener rule at priority 10 forwards `/.well-known/mercure*` to the
+Mercure container on 3701, health-checked on `/healthz`. The agent container is not an ALB target at
+all - the app reaches it over `localhost:8000` inside the task.
 
 ## File Structure
 
 ```
-the-summit-chatroom/
-├── infra/terraform/
-│   ├── bootstrap/                    # Run once: S3 state bucket + DynamoDB lock
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   └── versions.tf
-│   ├── environments/prod/            # Root module orchestrating everything
-│   │   ├── main.tf                   # Module wiring and agent env vars
-│   │   ├── variables.tf              # All configurable settings
-│   │   ├── outputs.tf                # ALB DNS, ECR URL, cluster name, etc.
-│   │   ├── versions.tf               # Terraform >= 1.5.0, AWS >= 5.0.0
-│   │   ├── backend.tf                # S3 backend (partial config)
-│   │   ├── backend.hcl.example       # Backend config template
-│   │   └── terraform.tfvars.example  # Variable values template
-│   └── modules/
-│       ├── dynamodb/                 # Session persistence table (NEW)
-│       ├── ecr/                      # Container image registry
-│       ├── secrets/                  # API key in Secrets Manager
-│       ├── observability/            # CloudWatch log group
-│       ├── security/                 # ALB + ECS security groups
-│       ├── iam/                      # Execution role, task role (Bedrock + DynamoDB), GitHub OIDC
-│       ├── ecs/                      # Cluster + agent task definition
-│       ├── dns/                      # Route 53 hosted zone + ACM certificate
-│       ├── alb/                      # Load balancer, target group, listeners
-│       ├── ecs-service/              # Fargate service with circuit breaker
-│       ├── waf/                      # AWS managed rules + rate limiting
-│       └── alarms/                   # ALB 5xx, response time, ECS task count
-├── scripts/
-│   └── terraform.sh                  # Helper script for all terraform commands
+infra/terraform/
+├── bootstrap/                    # Run once: S3 state bucket + DynamoDB lock + KMS key
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── versions.tf
+├── environments/prod/            # Root module orchestrating everything
+│   ├── main.tf                   # Module wiring, agent/app/mercure env vars
+│   ├── variables.tf              # All configurable settings
+│   ├── outputs.tf                # ALB DNS, ECR URLs, cluster name, etc.
+│   ├── versions.tf               # Terraform >= 1.5.0, AWS >= 5.0.0 < 6.30.1
+│   ├── backend.tf                # S3 backend (partial config)
+│   ├── backend.hcl.example       # Backend config template
+│   └── terraform.tfvars.example  # Variable values template
+└── modules/                      # 13 modules
+    ├── network/                  # VPC + subnets, created only when vpc_id is empty
+    ├── dynamodb/                 # Session persistence table
+    ├── ecr/                      # Container image registry (instantiated twice: agent, app)
+    ├── secrets/                  # API key in Secrets Manager
+    ├── observability/            # CloudWatch log groups (agent, app, mercure)
+    ├── security/                 # ALB + ECS security groups
+    ├── iam/                      # Execution role, task role (Bedrock + DynamoDB), GitHub OIDC
+    ├── ecs/                      # Cluster + three-container task definition
+    ├── dns/                      # Route 53 records + ACM certificate
+    ├── alb/                      # Load balancer, target group, listeners
+    ├── ecs-service/              # Fargate service with circuit breaker
+    ├── waf/                      # Rate limiting
+    └── alarms/                   # ALB 5xx, response time, ECS task count
 ```
 
 ## Prerequisites
 
-1. **blundergoat-platform deployed** - this infrastructure shares its VPC and subnets
-2. **Terraform >= 1.5.0** and **AWS CLI** installed
-3. **AWS profile** `aws_devgoat` configured (`aws sso login --profile aws_devgoat`)
-4. **Domain** `blundergoat.com` Route 53 hosted zone (from blundergoat-platform)
+1. **Terraform >= 1.5.0** and **AWS CLI v2** installed
+2. **AWS profile** `aws_devgoat` configured (`aws sso login --profile aws_devgoat`)
+3. **Route 53 hosted zone** for `blundergoat.com`, or set `create_hosted_zone = true`
 
-### Required outputs from blundergoat-platform
-
-Run these in the blundergoat-platform terraform directory:
-
-```bash
-terraform output vpc_id
-terraform output -json public_subnet_ids
-terraform output -json private_subnet_ids
-```
+The VPC is created by the `network` module unless you supply `vpc_id`, `public_subnet_ids`, and
+`private_subnet_ids` in `terraform.tfvars`. There is no hard dependency on another project's state.
 
 ## Setup
 
@@ -133,6 +119,9 @@ Creates the S3 bucket and DynamoDB table for Terraform remote state.
 ./scripts/terraform.sh --bootstrap apply
 ```
 
+Defaults are `ambient-scribe-terraform-state-prod` and `ambient-scribe-terraform-locks-prod` in
+`us-east-1`.
+
 ### 2. Configure
 
 ```bash
@@ -144,7 +133,7 @@ cp backend.hcl.example backend.hcl
 
 # Variable values
 cp terraform.tfvars.example terraform.tfvars
-# Fill in: vpc_id, public_subnet_ids, private_subnet_ids, hosted_zone_id
+# Set hosted_zone_id; optionally switch to a bring-your-own VPC
 ```
 
 ### 3. Deploy
@@ -155,64 +144,45 @@ cp terraform.tfvars.example terraform.tfvars
 ./scripts/terraform.sh apply   # Create infrastructure
 ```
 
-### 4. Push the agent image
+### 4. Push images
 
-```bash
-# Get ECR URL
-ECR_URL=$(./scripts/terraform.sh output -raw ecr_repository_url)
-
-# Authenticate with ECR
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_URL"
-
-# Build and push
-docker build -f strands_agents/Dockerfile \
-  -t "$ECR_URL:v1.0.0" \
-  strands_agents/
-docker push "$ECR_URL:v1.0.0"
-
-# Update the image tag and redeploy
-# Edit terraform.tfvars: agent_image_tag = "v1.0.0"
-./scripts/terraform.sh apply
-```
+`./scripts/deploy.sh` builds both images, pushes them to ECR, and forces a new deployment. See
+`docs/deployment.md` for what it does step by step.
 
 ### 5. Verify
 
-```bash
-# Health check
-curl https://summit.blundergoat.com/health
+Symfony exposes no `/health` route. `/` is what the ALB health check probes, and `/scribe` is the
+application itself:
 
-# Invoke test
-curl -X POST https://summit.blundergoat.com/invoke \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "hello", "context": {"metadata": {"persona": "analyst"}}}'
+```bash
+curl -sSf https://scribe.blundergoat.com/ >/dev/null && echo "ALB target healthy"
+curl -sSf https://scribe.blundergoat.com/scribe >/dev/null && echo "Scribe page served"
 ```
+
+The agent's own `/health` and `/agent/model-health` endpoints are internal to the task. Reach the
+latter through the Symfony proxy at `/agent/model-health`.
 
 ## CI/CD
 
-No GitHub Actions deployment workflow is committed in this checkout. The inherited sequence below
-describes the intended pipeline rather than active automation:
+No GitHub Actions deployment workflow is committed in this checkout. The `iam` module still
+provisions a GitHub OIDC role so a pipeline can be added without long-lived credentials.
 
-1. Authenticates to AWS via OIDC (no long-lived credentials)
-2. Builds the Docker image from `strands_agents/`
-3. Pushes to ECR with a `{sha}-{run}` tag
-4. Registers a new ECS task definition
-5. Updates the ECS service (rolling deployment with circuit breaker)
-6. Verifies the correct image is running
-7. Health checks `https://summit.blundergoat.com/health`
-
-### Setup CI/CD
-
-After `terraform apply`, set these in your GitHub repo settings (Settings > Secrets and variables > Actions > Variables):
+After `terraform apply`, set these in GitHub repo settings (Settings > Secrets and variables >
+Actions > Variables):
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `AWS_REGION` | `us-east-1` | - |
+| `AWS_REGION` | `ap-southeast-2` | `var.aws_region` |
 | `AWS_ROLE_ARN` | `arn:aws:iam::...` | `./scripts/terraform.sh output github_actions_role_arn` |
 
 ## Module Dependency Order
 
 ```mermaid
 graph LR
+    subgraph Phase0["Phase 0 (conditional)"]
+        NET[network]
+    end
+
     subgraph Phase1["Phase 1 (independent)"]
         DDB[dynamodb]
         ECR2[ecr]
@@ -244,6 +214,7 @@ graph LR
         ALARMS[alarms]
     end
 
+    NET --> SECURITY
     DDB --> IAM
     SEC2 --> IAM
     ECR2 --> ECS2
@@ -258,22 +229,48 @@ graph LR
     SVC --> ALARMS
     ALB2 --> ALARMS
     ECS2 --> ALARMS
-    SVC --> IAM
 ```
 
-## Agent Environment Variables
+## Container Environment Variables
 
-These are injected into the ECS task at runtime:
+Set in `locals` in `infra/terraform/environments/prod/main.tf` and injected into the task at
+runtime.
+
+**agent container**
 
 | Variable | Value | Source |
 |----------|-------|--------|
 | `PORT` | `8000` | Hardcoded |
-| `MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514-v1:0` | `var.model_id` |
-| `MODEL_PROVIDER` | `bedrock` | Hardcoded |
-| `AWS_DEFAULT_REGION` | `us-east-1` | `var.aws_region` |
+| `ROLE_AGENT_MODEL_PROVIDER` | `bedrock` | Hardcoded |
+| `ROLE_AGENT_MODEL_ID` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | `var.model_id` |
+| `SUMMARY_AGENT_MODEL_PROVIDER` | `bedrock` | Hardcoded |
+| `SUMMARY_AGENT_MODEL_ID` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | `var.summary_model_id` |
+| `AWS_DEFAULT_REGION` | `ap-southeast-2` | `var.aws_region` |
 | `ALLOW_SYSTEM_PROMPT_OVERRIDE` | `false` | Hardcoded |
-| `DYNAMODB_TABLE` | `the-summit-prod-sessions` | `module.dynamodb.table_name` |
+| `DYNAMODB_TABLE` | table name | `module.dynamodb.table_name` |
 | `API_KEY` | (secret) | Secrets Manager via ECS secrets injection |
+
+**app container**
+
+| Variable | Value |
+|----------|-------|
+| `APP_ENV` / `APP_DEBUG` | `prod` / `0` |
+| `APP_SECRET` | generated by `random_password` |
+| `AGENT_ENDPOINT` | `http://localhost:8000` (sidecar) |
+| `MERCURE_URL` | `http://localhost:3701/.well-known/mercure` |
+| `MERCURE_PUBLIC_URL` | `https://scribe.blundergoat.com/.well-known/mercure` |
+| `MERCURE_JWT_SECRET` | generated by `random_password`, shared with the mercure container |
+
+**mercure container**
+
+| Variable | Value |
+|----------|-------|
+| `MERCURE_PUBLISHER_JWT_KEY` / `MERCURE_SUBSCRIBER_JWT_KEY` | the same generated JWT secret |
+| `SERVER_NAME` | `:3701` |
+| `MERCURE_EXTRA_DIRECTIVES` | `anonymous` + `cors_origins https://scribe.blundergoat.com` |
+
+Anonymous subscription is enabled in this configuration. Adding subscriber authentication is a
+separate decision and is not settled here.
 
 ## terraform.sh Commands
 
@@ -291,28 +288,18 @@ These are injected into the ECS task at runtime:
 ./scripts/terraform.sh --bootstrap apply  # Create state bucket
 ```
 
-## Estimated Monthly Cost
+## Outputs
 
-| Resource | Cost |
-|----------|------|
-| ALB | ~$16 |
-| ECS Fargate (512 CPU, 1024 MB, 1 task) | ~$15 |
-| DynamoDB (on-demand) | < $1 |
-| ECR | < $1 |
-| CloudWatch | ~$2 |
-| WAF | ~$15 |
-| **Total** | **~$35-50/month** |
+`./scripts/terraform.sh output` exposes `alb_dns_name`, `ecr_agent_repository_url`,
+`ecr_app_repository_url`, `api_key_secret_name`, `ecs_cluster_name`, `agent_task_definition_arn`,
+`hosted_zone_id`, `ecs_security_group_id`, `github_actions_role_arn`, `dynamodb_table_name`,
+`agent_url`, `vpc_id`, `public_subnet_ids`, and `private_subnet_ids`.
 
-No NAT Gateway cost - shared from blundergoat-platform's VPC.
+## Cost Notes
 
-## Confirming No Conflicts with blundergoat
-
-After applying, verify blundergoat is unaffected:
-
-```bash
-cd /path/to/blundergoat-platform
-./scripts/terraform.sh plan
-# Should show: No changes. Your infrastructure matches the configuration.
-```
-
-Resources are fully isolated by naming convention (`the-summit-*` vs `blundergoat-*`). The only shared resources are the VPC and its subnets, which are read-only from this project's perspective.
+This configuration has never been costed against a running deployment. The load-bearing drivers are
+the ALB, one always-on Fargate task at 1024 CPU / 2048 MB, WAF, and a NAT gateway when the `network`
+module creates the VPC - `enable_nat_gateway` and `single_nat_gateway` both default to `true`, and
+that variable's own description estimates ~$32/month for the single gateway. DynamoDB, ECR, and
+CloudWatch are small by comparison. Price these against the AWS calculator for your region before
+committing to a budget.

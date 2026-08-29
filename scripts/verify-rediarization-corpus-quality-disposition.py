@@ -228,12 +228,27 @@ ALLOWED_SOURCE_PROOF_KEYS = frozenset(
 
 
 class EvidenceError(RuntimeError):
-    """Report one deterministic build-time evidence violation."""
+    """Stop packet creation when selected evidence violates a frozen rule.
+
+    Operators see the concise message at the CLI instead of a partial packet.
+    This exception is only for deterministic build-time evidence failures.
+    """
 
 
 @dataclass
 class VerificationResult:
-    """Collect structural failures without broadening the allowed decision."""
+    """Collect the checks that explain a packet verdict to an operator.
+
+    Any failure keeps the user-facing disposition blocked and cannot authorize promotion.
+    The CLI serializes this state after every applicable packet check has run.
+
+    Attributes:
+        failures: Distinct reasons the packet remains blocked; empty means every applicable check passed.
+        checks: Sanitized evidence counts and decisions shown in the CLI result; empty means no check has reported evidence yet.
+        disposition: The safe packet verdict; ``BLOCKED_UNVERIFIED`` means the operator must not use the candidate.
+        promotion_authorized: Always false because this offline verifier cannot promote a candidate.
+        full_campaign_pass: Always false because this packet does not represent a full campaign.
+    """
 
     failures: list[str] = field(default_factory=list)
     checks: dict[str, Any] = field(default_factory=dict)
@@ -243,16 +258,25 @@ class VerificationResult:
 
     @property
     def ok(self) -> bool:
-        """Return true when the packet is structurally valid."""
+        """Return whether the packet can be shown as structurally valid.
+
+        :returns: True only when the failure list is empty; False keeps the operator disposition blocked.
+        """
         return not self.failures
 
     def fail(self, reason: str) -> None:
-        """Record each distinct fail-closed reason once."""
+        """Record each distinct fail-closed reason once.
+
+        :param reason: Operator-safe explanation. Empty text would still block the packet but would be unhelpful, so callers supply concrete reasons.
+        """
         if reason not in self.failures:
             self.failures.append(reason)
 
     def as_document(self) -> dict[str, Any]:
-        """Render stable machine-readable CLI output."""
+        """Render the stable machine-readable result used by operator tooling.
+
+        :returns: A non-empty verdict mapping; failures and checks may be empty when verification passed before recording extra evidence.
+        """
         return {
             "checks": self.checks,
             "disposition": self.disposition,
@@ -264,7 +288,12 @@ class VerificationResult:
 
 
 def file_sha256(path: Path) -> str:
-    """Hash a file in bounded pieces."""
+    """Hash one evidence file without loading it all into memory.
+
+    :param path: Evidence path to bind into the packet; a missing or unreadable file stops the build.
+    :returns: Lowercase SHA-256 text; an empty file has the standard empty-content digest rather than an empty identity.
+    :raises OSError: If the selected evidence cannot be opened or read.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -273,12 +302,22 @@ def file_sha256(path: Path) -> str:
 
 
 def text_sha256(value: object) -> str:
-    """Fingerprint decoded wording without returning or persisting it."""
+    """Fingerprint decoded wording without returning or persisting it.
+
+    :param value: In-memory value to protect; null hashes as ``None`` and empty text receives the standard empty-content digest.
+    :returns: Lowercase SHA-256 text that is never empty, so reports can compare wording without displaying it.
+    """
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
 def write_json(path: Path, document: Any) -> None:
-    """Write stable generated JSON."""
+    """Write one deterministic JSON artifact into the operator packet.
+
+    :param path: Output path selected by the packet builder; a missing parent or unwritable target stops construction.
+    :param document: JSON-compatible evidence; an empty mapping or list is written explicitly rather than omitted.
+    :raises OSError: If the artifact cannot be written.
+    :raises TypeError: If the supplied evidence cannot be represented as JSON.
+    """
     path.write_text(
         json.dumps(document, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -313,6 +352,7 @@ def _root_confined_path(
     resolved_path = (resolved_root / relative_path).resolve()
     try:
         resolved_path.relative_to(resolved_root)
+    # Example: a packet record points through ``..`` to evidence outside the checkout.
     except ValueError:
         result.fail(f"{label} path escapes the workspace root")
         return None
@@ -327,6 +367,7 @@ def _load_json(
     """Load one JSON object and convert parse errors into gate failures."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+    # Example: a copied packet document is missing or truncated.
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         result.fail(f"{label} is not readable JSON: {error}")
         return None
@@ -340,6 +381,7 @@ def _load_build_json(path: Path, label: str) -> dict[str, Any]:
     """Load a required build input without leaking its content."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+    # Example: command receipts were only partly written before packet build.
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise EvidenceError(f"{label} is not readable JSON: {error}") from error
     if not isinstance(document, dict):
@@ -416,6 +458,7 @@ def _parse_sha_manifest(
     """Validate a GNU SHA-256 manifest without including itself."""
     try:
         lines = manifest_path.read_text(encoding="utf-8").splitlines()
+    # Example: the operator cannot read the sealed manifest after moving the packet.
     except (OSError, UnicodeDecodeError) as error:
         result.fail(f"{label} is not readable: {error}")
         return {}
@@ -447,6 +490,7 @@ def _parse_sha_manifest(
         path = (manifest_root / relative_path).resolve()
         try:
             path.relative_to(manifest_root.resolve())
+        # Example: a manifest row uses ``../`` to escape its evidence root.
         except ValueError:
             result.fail(f"{label} record {line_number} escapes its root")
             continue
@@ -493,6 +537,7 @@ def _parse_inventory(
     """Validate the non-self-referential artifact inventory."""
     try:
         lines = inventory_path.read_text(encoding="utf-8").splitlines()
+    # Example: the sealed inventory was removed or is not valid UTF-8.
     except (OSError, UnicodeDecodeError) as error:
         result.fail(f"artifact inventory is not readable: {error}")
         return
@@ -517,6 +562,7 @@ def _parse_inventory(
             continue
         try:
             expected_bytes = int(raw_bytes)
+        # Example: a manually changed inventory records a word instead of an artifact byte count.
         except ValueError:
             result.fail(f"artifact inventory record {line_number} has invalid bytes")
             continue
@@ -590,6 +636,7 @@ def _verify_no_secret_patterns(
             continue
         try:
             value = path.read_text(encoding="utf-8")
+        # Example: a binary capture was accidentally copied into the text-only review packet.
         except UnicodeDecodeError:
             result.fail("packet contains a non-text artifact")
             continue
@@ -779,7 +826,14 @@ def derive_disposition(
     gates: Iterable[dict[str, Any]],
     alerts: Iterable[dict[str, Any]],
 ) -> str:
-    """Apply the frozen rejection-first corpus-quality decision rule."""
+    """Choose the operator disposition after gate and source evidence is validated.
+
+    This helper is not a completeness check; empty iterables fall through to supplemental-comparison eligibility.
+
+    :param gates: Validated legacy gate rows; empty means no gate can prove rejection or an unverified state.
+    :param alerts: Validated source-alert rows; empty means no alert can prove rejection or an unverified state.
+    :returns: The frozen rejection, blocked, or supplemental-comparison eligibility label; never an empty string.
+    """
     entries = [*gates, *alerts]
     confirmed = any(
         (
@@ -882,45 +936,64 @@ def _validate_verifier_result(
         result.fail("verifier-result.json does not match the packet decision")
 
 
-def verify_decision_packet(
+def _resolve_decision_packet(
+    result: VerificationResult,
     workspace_root: Path,
     decision_path: Path,
-    *,
-    require_read_only: bool = True,
-) -> VerificationResult:
-    """Verify one corpus-quality disposition packet without mutating it."""
-    result = VerificationResult()
+) -> tuple[Path, Path] | None:
+    """Resolve an operator-selected decision only when it stays inside the workspace.
+
+    A ``None`` result leaves the packet blocked because there is no safe decision file to inspect.
+    """
     resolved_root = workspace_root.resolve()
     resolved_decision = decision_path.resolve()
     try:
         resolved_decision.relative_to(resolved_root)
     except ValueError:
+        # Example: the operator passes a decision path from another checkout or a parent directory.
         result.fail("decision path must stay inside the workspace")
-        return result
+        return None
+
+    # A missing selection means the UI or CLI cannot display a trusted corpus-quality verdict.
     if not resolved_decision.is_file():
         result.fail("decision.json is missing")
-        return result
+        return None
+    return resolved_root, resolved_decision
 
-    packet_root = resolved_decision.parent
+
+def _verify_packet_indexes(
+    result: VerificationResult,
+    packet_root: Path,
+    *,
+    require_read_only: bool,
+) -> Path:
+    """Verify the packet indexes and secret boundary before evidence is shown to the operator."""
+    # A sealed packet should be read-only so a later UI review cannot silently inspect changed evidence.
     if require_read_only:
         _verify_read_only_tree(result, packet_root)
 
     manifest_path = packet_root / "artifact-manifest.sha256"
     inventory_path = packet_root / "artifact-inventory.txt"
+    # The manifest binds the exact packet bytes that support the displayed disposition.
     if not manifest_path.is_file():
         result.fail("artifact manifest is missing")
     else:
         _verify_packet_manifest(result, packet_root, manifest_path)
+    # The inventory proves which packet files the operator is reviewing.
     if not inventory_path.is_file():
         result.fail("artifact inventory is missing")
     else:
         _parse_inventory(result, packet_root, inventory_path)
     _verify_no_secret_patterns(result, packet_root)
+    return manifest_path
 
-    decision = _load_json(result, resolved_decision, "decision")
-    if decision is None:
-        return result
-    _verify_no_wording_keys(result, decision, "decision")
+
+def _validate_decision_contract(
+    result: VerificationResult,
+    decision: dict[str, Any],
+    expected_manifest_path: str,
+) -> None:
+    """Enforce the narrow claims an operator may rely on from this offline decision."""
     if decision.get("schema_version") != DECISION_SCHEMA_VERSION:
         result.fail("decision schema_version is invalid")
     if decision.get("claim_scope") != "sealed CPU-only corpus-quality disposition":
@@ -937,12 +1010,17 @@ def verify_decision_packet(
         result.fail("decision legacy_gate_count must be 7")
     if decision.get("source_chip_alert_count") != 29:
         result.fail("decision source_chip_alert_count must be 29")
-
-    expected_manifest_path = manifest_path.relative_to(resolved_root).as_posix()
     if decision.get("packet_manifest_path") != expected_manifest_path:
         result.fail("decision packet_manifest_path is invalid")
 
-    bound_paths: dict[str, Path] = {}
+
+def _bind_decision_evidence(
+    result: VerificationResult,
+    workspace_root: Path,
+    packet_root: Path,
+    decision: dict[str, Any],
+) -> dict[str, Path]:
+    """Bind each displayed decision claim to its expected packet file."""
     expected_files = {
         "decision_markdown": packet_root / "decision.md",
         "gate_matrix": packet_root / "gate-matrix.json",
@@ -950,52 +1028,58 @@ def verify_decision_packet(
         "source_identities": packet_root / "source-identities.json",
         "verification_receipts": packet_root / "verification-receipts.json",
     }
+    bound_paths: dict[str, Path] = {}
+    # Each record lets an operator trace a displayed verdict back to one sealed evidence file.
     for field_name, expected_path in expected_files.items():
-        path = _verify_file_record(
+        bound_path = _verify_file_record(
             result,
-            resolved_root,
+            workspace_root,
             decision.get(field_name),
             field_name.replace("_", " "),
-            expected_path=expected_path.relative_to(resolved_root).as_posix(),
+            expected_path=expected_path.relative_to(workspace_root).as_posix(),
         )
-        if path is not None:
-            bound_paths[field_name] = path
+        # An invalid or missing record stays out of later checks and leaves the overall result blocked.
+        if bound_path is not None:
+            bound_paths[field_name] = bound_path
+    return bound_paths
 
-    gate_document = (
-        _load_json(result, bound_paths["gate_matrix"], "gate matrix")
-        if "gate_matrix" in bound_paths
-        else None
-    )
-    source_document = (
-        _load_json(
-            result,
-            bound_paths["source_chip_matrix"],
-            "source-chip matrix",
-        )
-        if "source_chip_matrix" in bound_paths
-        else None
-    )
-    identities_document = (
-        _load_json(
-            result,
-            bound_paths["source_identities"],
-            "source identities",
-        )
-        if "source_identities" in bound_paths
-        else None
-    )
-    receipts_document = (
-        _load_json(
-            result,
-            bound_paths["verification_receipts"],
-            "verification receipts",
-        )
-        if "verification_receipts" in bound_paths
-        else None
-    )
 
+def _load_bound_decision_documents(
+    result: VerificationResult,
+    bound_paths: dict[str, Path],
+) -> dict[str, dict[str, Any] | None]:
+    """Load the bound JSON documents while retaining the verifier's stable check order."""
+    document_labels = {
+        "gate_matrix": "gate matrix",
+        "source_chip_matrix": "source-chip matrix",
+        "source_identities": "source identities",
+        "verification_receipts": "verification receipts",
+    }
+    documents: dict[str, dict[str, Any] | None] = {}
+    # The fixed order keeps CLI failures stable so an operator can compare repeated runs.
+    for field_name, label in document_labels.items():
+        documents[field_name] = (
+            _load_json(result, bound_paths[field_name], label)
+            if field_name in bound_paths
+            else None
+        )
+    return documents
+
+
+def _validate_bound_decision_documents(
+    result: VerificationResult,
+    workspace_root: Path,
+    documents: dict[str, dict[str, Any] | None],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate the sealed evidence that produces the operator-visible disposition."""
     gates: list[dict[str, Any]] = []
     alerts: list[dict[str, Any]] = []
+    gate_document = documents["gate_matrix"]
+    source_document = documents["source_chip_matrix"]
+    identities_document = documents["source_identities"]
+    receipts_document = documents["verification_receipts"]
+
+    # Missing JSON already records a failure; present JSON must still satisfy every safety predicate.
     if gate_document is not None:
         _verify_no_wording_keys(result, gate_document, "gate matrix")
         gates = _validate_gate_matrix(result, gate_document)
@@ -1003,62 +1087,119 @@ def verify_decision_packet(
         _verify_no_wording_keys(result, source_document, "source-chip matrix")
         alerts = _validate_source_matrix(result, source_document)
     if identities_document is not None:
-        _verify_no_wording_keys(
-            result,
-            identities_document,
-            "source identities",
-        )
-        _validate_source_identities(
-            result,
-            resolved_root,
-            identities_document,
-        )
+        _verify_no_wording_keys(result, identities_document, "source identities")
+        _validate_source_identities(result, workspace_root, identities_document)
     if receipts_document is not None:
-        _verify_no_wording_keys(
-            result,
-            receipts_document,
-            "verification receipts",
-        )
+        _verify_no_wording_keys(result, receipts_document, "verification receipts")
         _validate_receipts(result, receipts_document)
+    return gates, alerts
+
+
+def _verify_decision_markdown(
+    result: VerificationResult,
+    markdown_path: Path | None,
+    disposition: object,
+) -> None:
+    """Keep the human-readable decision aligned with the sealed machine verdict."""
+    # No bound markdown means the operator cannot trust the readable summary; the binding check already records why.
+    if markdown_path is None:
+        return
+    try:
+        markdown = markdown_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        # Example: packet permissions changed or the selected decision contains invalid UTF-8.
+        result.fail(f"decision markdown is not readable: {error}")
+        return
+
+    if f"Disposition: {disposition}" not in markdown:
+        result.fail("decision markdown disposition is inconsistent")
+    if "Promotion authorized: false." not in markdown:
+        result.fail("decision markdown must deny promotion")
+    if "Full campaign pass: false." not in markdown:
+        result.fail("decision markdown must deny full-campaign pass")
+    if "Runtime calls added: 0." not in markdown:
+        result.fail("decision markdown must record zero runtime calls")
+
+
+def _verify_preseal_result(
+    result: VerificationResult,
+    packet_root: Path,
+    expected_disposition: str,
+) -> None:
+    """Confirm the preseal result reports the same disposition shown to the operator."""
+    verifier_result_document = _load_json(
+        result,
+        packet_root / "verifier-result.json",
+        "verifier result",
+    )
+    # Unreadable JSON already leaves the packet blocked; valid JSON must match the recomputed verdict exactly.
+    if verifier_result_document is None:
+        return
+    _verify_no_wording_keys(result, verifier_result_document, "verifier result")
+    _validate_verifier_result(result, verifier_result_document, expected_disposition)
+
+
+def verify_decision_packet(
+    workspace_root: Path,
+    decision_path: Path,
+    *,
+    require_read_only: bool = True,
+) -> VerificationResult:
+    """Verify one corpus-quality packet before its disposition is shown or acted on.
+
+    Operators use the result to review sealed evidence; this function never promotes a candidate or changes packet files.
+
+    :param workspace_root: Checkout containing the selected packet; an invalid root produces a blocked result.
+    :param decision_path: Decision JSON selected by the operator; missing or out-of-workspace paths produce a blocked result.
+    :param require_read_only: Whether writable packet files must block review; false supports temporary test packets only.
+    :return: Every completed check and the safe disposition; failures or missing evidence mean ``BLOCKED_UNVERIFIED``.
+    """
+    result = VerificationResult()
+    resolved_packet = _resolve_decision_packet(result, workspace_root, decision_path)
+    # An unsafe or missing decision cannot produce an operator-visible corpus verdict.
+    if resolved_packet is None:
+        return result
+    resolved_root, resolved_decision = resolved_packet
+
+    packet_root = resolved_decision.parent
+    manifest_path = _verify_packet_indexes(
+        result,
+        packet_root,
+        require_read_only=require_read_only,
+    )
+
+    decision = _load_json(result, resolved_decision, "decision")
+    # Without readable decision JSON, the operator receives the accumulated blocking evidence only.
+    if decision is None:
+        return result
+    _verify_no_wording_keys(result, decision, "decision")
+    expected_manifest_path = manifest_path.relative_to(resolved_root).as_posix()
+    _validate_decision_contract(result, decision, expected_manifest_path)
+    bound_paths = _bind_decision_evidence(
+        result,
+        resolved_root,
+        packet_root,
+        decision,
+    )
+    documents = _load_bound_decision_documents(result, bound_paths)
+    gates, alerts = _validate_bound_decision_documents(
+        result,
+        resolved_root,
+        documents,
+    )
 
     computed_disposition = derive_disposition(gates, alerts)
     result.checks["computed_disposition"] = computed_disposition
+    # A stored verdict that differs from the evidence leaves the UI on the safe blocked state.
     if decision.get("disposition") != computed_disposition:
         result.fail("decision disposition does not match the frozen rule")
 
-    markdown_path = bound_paths.get("decision_markdown")
-    if markdown_path is not None:
-        try:
-            markdown = markdown_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as error:
-            result.fail(f"decision markdown is not readable: {error}")
-        else:
-            if f"Disposition: {decision.get('disposition')}" not in markdown:
-                result.fail("decision markdown disposition is inconsistent")
-            if "Promotion authorized: false." not in markdown:
-                result.fail("decision markdown must deny promotion")
-            if "Full campaign pass: false." not in markdown:
-                result.fail("decision markdown must deny full-campaign pass")
-            if "Runtime calls added: 0." not in markdown:
-                result.fail("decision markdown must record zero runtime calls")
-
-    verifier_result_path = packet_root / "verifier-result.json"
-    verifier_result_document = _load_json(
+    _verify_decision_markdown(
         result,
-        verifier_result_path,
-        "verifier result",
+        bound_paths.get("decision_markdown"),
+        decision.get("disposition"),
     )
-    if verifier_result_document is not None:
-        _verify_no_wording_keys(
-            result,
-            verifier_result_document,
-            "verifier result",
-        )
-        _validate_verifier_result(
-            result,
-            verifier_result_document,
-            computed_disposition,
-        )
+    _verify_preseal_result(result, packet_root, computed_disposition)
 
     result.disposition = computed_disposition if result.ok else "BLOCKED_UNVERIFIED"
     return result
@@ -1075,6 +1216,7 @@ def _evidence_record(
     resolved_path = path.resolve()
     try:
         relative_path = resolved_path.relative_to(resolved_root)
+    # Example: a source identity resolves outside the workspace selected for the report.
     except ValueError as error:
         raise EvidenceError("evidence path escapes the workspace") from error
     record: dict[str, object] = {
@@ -1524,6 +1666,7 @@ def _parse_json_log_events(path: Path) -> list[dict[str, Any]]:
             continue
         try:
             event = json.loads(line[brace_index:])
+        # Example: an interrupted replay leaves one partial event line that cannot support a finding.
         except json.JSONDecodeError:
             continue
         if isinstance(event, dict):
@@ -1722,7 +1865,18 @@ def classify_source_finding(
     segment_id: str,
     proof: dict[str, Any],
 ) -> dict[str, Any]:
-    """Classify one source alert while allowing a known-missing off lane."""
+    """Classify one source alert for the operator's candidate disposition.
+
+    A historical off lane is allowed only when proof marks it unavailable; this helper never invents missing comparison evidence.
+
+    :param finding: Validated source alert. Null, empty, unknown, or internally inconsistent classifications fail closed.
+    :param fixture: Validated fixture identity used in the disposition group; empty text must be rejected by the caller's schema checks.
+    :param segment_id: Validated source-row identity; empty text must be rejected before this classification step.
+
+    :param proof: Candidate-on and optional historical-off comparison. Empty proof cannot confirm candidate causality.
+    :returns: Text-free adjudication, causality, disposition group, and related gate IDs; the mapping is never empty.
+    :raises EvidenceError: If the source classification is unknown or its truth fields contradict the claimed class.
+    """
     input_classification = finding.get("classification")
     timing_and_text_aligned = (
         proof.get("timing_aligned") is True and proof.get("text_equal") is True
@@ -2081,13 +2235,25 @@ def build_quality_packet(
     packet_root: Path,
     receipts_path: Path,
 ) -> VerificationResult:
-    """Build, manifest, seal, and reverify one corpus-quality packet."""
+    """Build and seal the corpus-quality packet an operator can independently verify.
+
+    Use after verification receipts exist; the builder creates a new read-only packet and may leave partial files visible if an I/O step fails.
+
+    :param workspace_root: Controlling checkout boundary. A missing root cannot supply the frozen evidence inputs.
+    :param packet_root: New packet directory inside the checkout; an empty, existing, or escaping target is rejected.
+    :param receipts_path: Saved command receipts bound into the packet; a missing, empty, or malformed document fails closed.
+
+    :returns: Final verification result for the sealed packet; failures remain explicit rather than becoming an empty result.
+    :raises EvidenceError: If paths, inputs, receipts, identities, or the generated packet violate the frozen evidence contract.
+    :raises OSError: If packet files cannot be created, read, hashed, permissioned, or sealed.
+    """
     resolved_root = workspace_root.resolve()
     resolved_packet = (
         packet_root if packet_root.is_absolute() else resolved_root / packet_root
     ).resolve()
     try:
         resolved_packet.relative_to(resolved_root)
+    # Example: the requested output packet points outside the controlling checkout.
     except ValueError as error:
         raise EvidenceError("packet root must stay inside the workspace") from error
     _require(not resolved_packet.exists(), "packet root already exists")
@@ -2254,7 +2420,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Run one filesystem-only build or verification."""
+    """Run one filesystem-only build or verification for operator review.
+
+    :returns: Zero when the packet passes, or one when evidence remains blocked or invalid.
+    """
     arguments = _parser().parse_args()
     workspace_root = arguments.repo_root.resolve()
     try:
@@ -2269,6 +2438,7 @@ def main() -> int:
             if not packet.is_absolute():
                 packet = workspace_root / packet
             result = verify_decision_packet(workspace_root, packet)
+    # Example: a missing receipt becomes one structured CLI failure instead of a traceback.
     except EvidenceError as error:
         result = VerificationResult()
         result.fail(str(error))

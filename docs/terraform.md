@@ -1,8 +1,7 @@
 # Terraform Infrastructure
 
-> **Note:** This doc is inherited from the-summit-chatroom and will be rewritten as part of Milestone 0 (shared infrastructure). References to Summit resources below are from the original project.
-
-This project uses Terraform to deploy to AWS ECS Fargate behind an ALB with WAF, Route53 DNS, and Mercure streaming.
+This project uses Terraform to deploy to AWS ECS Fargate behind an ALB with WAF, Route 53 DNS, and
+Mercure streaming. For the architecture those modules produce, see `docs/infrastructure.md`.
 
 ## Prerequisites
 
@@ -30,7 +29,9 @@ scripts/terraform.sh fmt           # Format all .tf files
 scripts/terraform.sh state list    # List resources in state
 ```
 
-The script automatically sets `AWS_PROFILE=aws_devgoat` and `AWS_DEFAULT_REGION=us-east-1`.
+The script automatically sets `AWS_PROFILE=aws_devgoat` and `AWS_DEFAULT_REGION=us-east-1`. That
+region covers the state backend only: the prod AWS provider takes its region from `var.aws_region`,
+which defaults to `ap-southeast-2`.
 
 ## First-Time Setup
 
@@ -46,8 +47,8 @@ scripts/terraform.sh --bootstrap apply
 ```
 
 This creates:
-- **S3 bucket**: `the-summit-terraform-state-prod` (versioned, KMS-encrypted, public access blocked)
-- **DynamoDB table**: `the-summit-terraform-locks-prod` (prevents concurrent applies)
+- **S3 bucket**: `ambient-scribe-terraform-state-prod` (versioned, KMS-encrypted, public access blocked)
+- **DynamoDB table**: `ambient-scribe-terraform-locks-prod` (prevents concurrent applies)
 
 The bootstrap module uses **local state** (stored in `infra/terraform/bootstrap/terraform.tfstate`). Keep this file safe - it tracks the backend infrastructure itself.
 
@@ -63,10 +64,10 @@ cp infra/terraform/environments/prod/backend.hcl.example \
 The defaults already match the bootstrap outputs:
 
 ```hcl
-bucket         = "the-summit-terraform-state-prod"
+bucket         = "ambient-scribe-terraform-state-prod"
 key            = "prod/terraform.tfstate"
 region         = "us-east-1"
-dynamodb_table = "the-summit-terraform-locks-prod"
+dynamodb_table = "ambient-scribe-terraform-locks-prod"
 encrypt        = true
 ```
 
@@ -102,10 +103,11 @@ infra/terraform/
 │   ├── backend.hcl.example         # Template for backend.hcl
 │   ├── main.tf                     # Module composition and wiring
 │   ├── outputs.tf                  # ALB URL, ECR repos, ECS cluster, etc.
-│   ├── terraform.tfvars            # Environment-specific values (VPC, subnets, DNS, model)
+│   ├── terraform.tfvars            # Your values (not committed - create from .example)
+│   ├── terraform.tfvars.example    # Template for terraform.tfvars
 │   ├── variables.tf                # Variable declarations with defaults
 │   └── versions.tf                 # Provider version constraints
-└── modules/                        # Reusable infrastructure modules
+└── modules/                        # 13 reusable infrastructure modules
     ├── alarms/                     # CloudWatch alarms
     ├── alb/                        # Application Load Balancer + HTTPS listener
     ├── dns/                        # Route53 records + ACM certificate
@@ -114,6 +116,7 @@ infra/terraform/
     ├── ecs/                        # ECS cluster + task definition (3 containers)
     ├── ecs-service/                # ECS service + auto-scaling
     ├── iam/                        # Task execution role, task role, OIDC for GitHub Actions
+    ├── network/                    # VPC + subnets, created only when vpc_id is empty
     ├── observability/              # CloudWatch log groups
     ├── secrets/                    # Secrets Manager (API keys)
     ├── security/                   # Security groups (ALB, ECS, Mercure)
@@ -122,14 +125,20 @@ infra/terraform/
 
 ## Configuration
 
-Production settings live in `infra/terraform/environments/prod/terraform.tfvars`. Key values:
+Production settings live in `infra/terraform/environments/prod/terraform.tfvars`, copied from
+`terraform.tfvars.example`. Key values and their defaults:
 
-| Setting | Value | Notes |
-|---------|-------|-------|
-| `vpc_id` | `vpc-0f0662b880e75845a` | Shared VPC from blundergoat-platform |
+| Setting | Default | Notes |
+|---------|---------|-------|
+| `aws_region` | `ap-southeast-2` | Where the workload runs; matches the AU Bedrock model IDs |
+| `project_name` | `ambient-scribe` | Prefixes the cluster (`ambient-scribe-cluster`) and service (`ambient-scribe-app`) |
+| `vpc_id` | *(empty)* | Empty creates a VPC via the `network` module; set it plus the subnet ID lists to bring your own |
 | `domain_name` | `blundergoat.com` | |
-| `subdomain` | `summit` | Deploys to summit.blundergoat.com |
-| `model_id` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for agents |
+| `subdomain` | `scribe` | Deploys to scribe.blundergoat.com |
+| `hosted_zone_id` | *(empty)* | Required unless `create_hosted_zone = true` |
+| `model_id` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for role inference |
+| `summary_model_id` | `au.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for the post-visit note |
+| `alb_idle_timeout_seconds` | `120` | Long enough for streaming responses |
 | `waf_rate_limit` | `2000` | Requests per 5-minute window per IP |
 
 ## Architecture
@@ -138,11 +147,13 @@ The ECS task runs 3 containers:
 
 | Container | Port | Role |
 |-----------|------|------|
-| **app** | 8080 | PHP/Symfony web UI |
-| **agent** | 8000 | Python/FastAPI AI agent layer |
+| **app** | 8080 | PHP/Symfony web UI; the only ALB target for `/*` |
+| **agent** | 8000 | Python/FastAPI AI agent layer; internal sidecar reached at `localhost:8000` |
 | **mercure** | 3701 | SSE hub for real-time streaming |
 
-Traffic flow: Route53 -> ALB (HTTPS :443) -> ECS (app :8080, mercure :3701 via path-based routing)
+Task size is 1024 CPU / 2048 MB.
+
+Traffic flow: Route 53 -> ALB (HTTPS :443) -> ECS (app :8080, mercure :3701 via path-based routing)
 
 ## Troubleshooting
 

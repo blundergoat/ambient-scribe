@@ -1,6 +1,6 @@
 ---
 category: verification
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-29
 ---
 
 # READ / SCOPE / VERIFY Lessons
@@ -90,6 +90,34 @@ after the first behavioral green.
 
 **Follow-up (2026-07-26, 0.5.2):** The first final static gate again found three late-edited Python files needing Ruff formatting. The files were formatted, then static, focused, and full-Python gates were rerun against the final bytes.
 
+## Lesson: Planned test paths must resolve before implementation
+
+**Created:** 2026-08-29
+**Decision changed:** Confirm every named test path and its owned behavior while writing a milestone, not after the first source edit.
+**Trigger phase:** SCOPE
+**What happened:** A Python cleanup milestone named `tests/python/test_summary_generation.py`, but summary generation is covered in `test_summary.py`.
+The first mid-proof therefore collected no tests and stopped the milestone after its deletion batch.
+**Prevention:** Resolve each planned test path with `rg --files`, then search its target symbols before freezing the command.
+Treat `no tests ran` as a failed gate even when the mistake is only a stale plan path.
+
+## Lesson: Comment ceilings need an exact width check
+
+**Created:** 2026-08-29
+**Decision changed:** Run the scoped width command immediately after comment edits instead of judging long lines by eye.
+**Trigger phase:** VERIFY
+**What happened:** A shortened module description still measured 151 characters, one beyond the user's 150-character ceiling.
+**Prevention:** Check edited comments mechanically, then shorten the sentence without splitting one point into a vertical text wall.
+
+## Lesson: Documentation changes can cross source-length thresholds
+
+**Created:** 2026-08-29
+**Decision changed:** Compare Gruff identities after docstring edits and keep caller contracts concise when the analyzer counts documentation lines.
+**Trigger phase:** VERIFY
+
+**What happened:** Expanding a public contract added no executable code, but moved one function from below the 100-line limit to 107 lines and introduced a new `size.function-length` error.
+
+**Prevention:** Re-run identical-path Gruff analysis after documentation batches and inspect introduced stable identities. If only the docstring crosses a source-length limit, compact its structured fields without removing null, empty, error, or return semantics; do not suppress the finding or refactor behavior merely to offset prose.
+
 ## Lesson: Verification wrappers must preserve the producer's exit status
 
 **Created:** 2026-07-11
@@ -106,6 +134,8 @@ wrapper status.
 exit "$status"`), and use `set -o pipefail` whenever `tee` records a test/eval run. Read the
 pass/fail line even when the wrapper reports success. Poll a captured PID, or use a bracketed
 process pattern such as `[p]laywright test`, so the monitor cannot match its own command line.
+
+**Follow-up (2026-08-29):** A Gruff multiset comparison sorted identity rows before `uniq -c`; the added count prefixes made both files invalid for `comm` and mislabeled unchanged findings as introduced. Sort the counted rows again under `LC_ALL=C`, and treat any `comm` ordering diagnostic as failed evidence.
 
 ## Lesson: A compound-question repro needs the complete bounded exchange
 

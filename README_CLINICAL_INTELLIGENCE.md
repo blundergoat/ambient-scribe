@@ -9,16 +9,17 @@ the clinical hints UI lane was removed:
 Both originated in local plan files that are gitignored and may no longer exist;
 this README is the durable record.
 
-Last checked: 2026-07-20 against the local repo.
+Last checked: 2026-08-29 against the local repo.
 
 ## Short Version
 
 Ambient Scribe has two lightweight clinical assistance layers on top of the
 core transcription flow.
 
-Phrase boosting improves the words the clinician sees. It ships an opt-in post-ASR medical
+Phrase boosting improves the words the clinician sees. It ships an on-by-default post-ASR medical
 term normaliser that corrects known clinical terms after NeMo transcription and
-before the transcript reaches the UI, summary, or stored session text.
+before the transcript reaches the UI, summary, or stored session text;
+`MEDICAL_BOOST_ENABLED=0` opts back out.
 
 Summary grounding improves what the summary agent can do with the transcript. The remaining
 current code keeps a tiny CPU-only clinical knowledge helper for SOAP summary
