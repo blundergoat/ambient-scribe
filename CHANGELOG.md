@@ -2,110 +2,114 @@
 
 ## Unreleased
 
-- **Three more mis-heard medicine names are corrected in the live transcript** - The consultation view was showing "amoleans" and "amolliums" for emollients and "Lauratidine" for loratadine, every time, in all eight recorded runs of the sore-skin consultation. The loratadine miss is the sharper one: a variant for it was already registered but differed from what the recogniser actually produces by a single character, so it never fired. A fourth candidate was rejected rather than added: the recogniser writes "Puritan" for Piriton, and because matching is whole-word and case-insensitive, accepting it would rewrite the ordinary English word in any sentence that used it. This changes the live transcript only. The reviewed transcript a note is built from does not read this list, so a note can still name a medicine nobody said.
+## v0.6.0 - 2026-08-29
 
-- **The PHP quality gate reports on PHP again** - Preflight step 5 was failing on 301 findings, none of which came from a PHP file: they were committed SHA-256 digests in manifests and fixtures, flagged by a generic high-entropy heuristic. A green step could only have meant someone accepted 300 digests, so the first real PHP finding would have arrived invisible. That one heuristic is now off and nothing else changed: every file the analyzer saw before is still scanned, and the eleven specific credential detectors, covering AWS keys, private keys, JWTs and PHI patterns, still run everywhere. Narrowing the scan surface instead was measured and rejected, because it stopped a planted AWS key in a shell script from firing at all.
-- **An unusual character in the transcript no longer costs the clinician their note** - Note verification reads quantities straight out of transcribed speech, and it decided what counted as a number using a test that accepts characters Python then refuses to convert. A superscript digit reaching a phrase like "about twenty-four hours" raised inside verification and failed the whole generation. The parser now decides once, using the conversion itself, so a token it cannot read simply is not part of the quantity.
-- **A replaced data volume no longer costs you the reviewed transcript** - The correction model lives in the same volume as your stored visits rather than in the image, so emptying that volume used to leave the model silently missing until someone finished a consultation and got unreviewed wording back. Local startup now restores it before showing Ready, downloading only the exact approved revision and always finishing on the full size and hash check. A warm cache just re-verifies in about a second; only an emptied one pays the 2.5 GB download. Ordinary correction still never reaches the network mid-visit, because only startup is allowed to refill.
-- **Recording is refused up front when the finished visit could not be delivered** - The pre-flight the browser already ran before every consultation only asked whether the note provider was reachable. It never asked whether the reviewed transcript could actually be produced, so a clinician could record a whole consultation and only discover afterwards that the note would be built from unreviewed wording. That check now covers both halves, and the banner names which half failed instead of showing one generic message, because a missing note provider and an unloadable correction model need different fixes. The operator scripts ask the same question: startup withholds its Ready banner and the on-demand health check reports pre-visit readiness as its own line. Containers are deliberately left running on that failure, so live transcription keeps working while the checkpoint is restored.
-- **Readiness now proves the correction model loads, not just that its bytes are correct** - Verifying the checkpoint's size and hash says it is the approved file; it does not say this agent build can open it. Those two facts came apart once already and the byte check stayed green throughout. Readiness now restores the model on CPU once, away from the GPU that live transcription owns, and remembers the verdict against that exact file so repeat checks stay quick and a replaced checkpoint is re-checked automatically.
-- **Stopped visits produce a reviewed transcript again, so notes carry source links** - Finishing a consultation had been silently falling back to the rough live transcript, and a note built that way cites nothing, so every claim read "No transcript evidence was cited". Live transcription looked perfectly healthy throughout, which is why this did not surface as an outage. Two separate things were wrong. The approved correction checkpoint was missing from its cache and has been restored. The bigger one: the GPU container was pinned to NeMo 2.7.x, whose speech encoder cannot load that checkpoint at all, so correction failed in six seconds before a single chunk was planned. The pin now names 3.0.0, which is the released form of the branch this project ran when correction last worked; there is no 2.8.x or 2.9.x, so the earlier pin moved the container onto an older line rather than a safer one. A full consultation replay now corrects in three chunks on the first attempt and generates a note from the corrected transcript with working source links.
-- **Consultation recordings can no longer be copied into the agent image** - The GPU image was built from a context that included the session evidence directory, so full transcript and clinical-note wording for past consultations could be baked into a shared image layer. That directory is now excluded from the build.
-- **A note written from the live transcript no longer flags quotes that transcript supports** - When the corrected pass is unavailable the note is built from the live rows and cites nothing, and every quoted line in it was marked as wording the clinician had to go and verify by hand. Those quotes had already been checked against the visit rows and accepted moments earlier; the second check simply looked at the empty citation list and failed them all. Quote checking now reads whichever rows the note actually has, so a warning means the selected transcript really does not support the wording. A quote that is absent, or that belongs to the other speaker, still asks for review, a note with no rows to check against still fails closed, and no source links are invented for a note whose lane has none.
+Restores the reviewed transcript when a visit ends, refuses recording when it cannot, steadies note checks, and fixes more medicine names.
+
+- **Three more misheard medicine names fixed live** - "amoleans" and "amolliums" become emollients, "Lauratidine" loratadine; notes aren't covered.
+- **The PHP quality gate reports on PHP again** - It failed on 301 committed checksums wrongly flagged; the broad check is off, 11 precise ones stay.
+- **An odd character no longer costs you the note** - A superscript digit used to crash note checks; characters it cannot read are now skipped.
+- **Emptying the data volume no longer loses the reviewed transcript** - Startup re-downloads and verifies the 2.5 GB correction model first.
+- **Recording is refused when the finished visit can't be delivered** - The pre-visit check covers the correction model, and names which half failed.
+- **Readiness now proves the correction model opens** - It loads once on the CPU, clear of the GPU, and remembers the result for that exact file.
+- **Stopped visits produce a reviewed transcript again** - The missing correction model is restored and the GPU container now pins NeMo 3.0.0.
+- **Consultation recordings can no longer be copied into the agent image** - Past transcripts and note wording are excluded from the GPU image build.
+- **A live-transcript note stops flagging quotes it can support** - Quote checks read the rows the note actually used, so a warning means something.
 
 ## v0.5.1 - 2026-08-01
 
-- **A speaker the role agent stops recognising no longer keeps its old label** - The agent is told to leave out any speaker whose words give no clear evidence, but leaving it out changed nothing: the transcript store and the browser both only update the speakers they are handed, so the card kept saying Doctor or Patient with full confidence after the model had withdrawn that judgement. Withdrawal is now said out loud, so the transcript shows an unlabelled speaker instead of a confidently wrong one. A label the clinician confirmed by hand still wins, and a newly appearing third voice no longer blanks the other two.
-- **Architecture decision records have unambiguous numbers again** - Two decisions each shared a number with an older one, so a reference to "ADR-009" or "ADR-010" pointed at either of two documents. The newer pair is renumbered and every reference now resolves to one record.
-- **Corrected-lane phrase boosting can now be evaluated against real clinical terms** - The post-visit decoder previously accepted exactly one semantically empty control phrase, so the mechanism had never been pointed at a word a clinician actually said. It now reads a written-down inventory where every term earns its place from measured evidence: three the corrected lane still renders wrongly, three it already gets right and must not break, and four terms it must never invent - including the real antihistamine the note generator once substituted unprompted. Nothing is boosted during an ordinary consultation; the production default stays off and an unlisted term is refused by every route, including several smuggled through one string. The list is operator-approved for proof-of-concept work on synthetic consultations and explicitly records that it is **not** clinically reviewed.
-- **A finished consultation now records its own evidence** - Finalizing a visit writes the live transcript rows, correction writes the corrected rows and its receipt, and the summary writes the clinical note with its fidelity trace, each into one per-session directory alongside the runtime settings that produced them. Reviewing how a consultation actually went no longer means copying three browser panels out by hand and losing whatever the capped dev panel had already discarded. Storing full wording is the point - it is what an accuracy review reads - so the whole side channel is one switch away from off for any environment that should not keep it.
-- **Superseded NeMo exploration scripts removed** - Six early API-discovery spikes that existed to answer "what does NeMo return?" are gone, along with the stale roadmap that outlived the medical-only pivot. The questions they asked are now answered permanently by the shipped pipeline wrapper and the architecture docs, and one of them demonstrated a per-speaker targeting approach the streaming engine provably never takes. No runtime, evaluation, or QA tooling changed; the offline QA toolkit and the live debug helper are untouched.
-- **Post-visit speaker rebuild not promoted** - The default-off two-witness experiment corrected frozen target folds but failed the broader corpus gate: one consultation gained a new wrong-speaker row and another lost strict attribution while confident errors increased. The candidate was rejected, the rediarization flag remains off, and stopped visits keep existing correction behavior by default; the experimental code and QA evidence remain for analysis only.
-- **Role labels handle split voices honestly** - The role agent's instructions now state that diarization can split one person across several speaker labels: each label is judged from its own utterances, labels may share a role, and unclear labels are omitted instead of forced into a one-doctor-one-patient split. Measured on rebuilt offline transcripts: the three-slot fixture reaches its oracle ceiling in every repetition with no change on the two-slot fixture.
-- **Local health check no longer fails a healthy stack** - The roles probes now use a valid session UUID instead of the literal `test`, which the agent correctly rejects as a malformed visit; a fully healthy stack reads as healthy again and evaluation gates can trust the script's exit code.
-- **Evaluation can run exactly the selected ten-case corpus** - Both fixture evaluators accept `--development-corpus`, which validates the manifest, order, and file hashes before any audio opens and refuses mixed or implicit selections, so a quality baseline can never silently score the wrong consultation set.
-- **Named QA replays can show when two voices talked over each other** - Operator-enabled replays now record count-only pairwise co-activity evidence per speaker-slot pair (co-active and exclusive frames per browser window) beside the existing fold evidence; ordinary visits keep these diagnostics absent, no transcript wording is ever stored, and flag-off replays stay byte-identical (6/6 canonical transcript and continuity hashes across cold pre/post runs).
+Keeps speaker labels honest, saves each consultation's evidence, pins evaluation to a fixed case set, and holds unproven work off.
+
+- **A speaker the agent stops recognising loses its label** - The card shows an unlabelled speaker, not a confidently wrong one; manual labels win.
+- **Architecture decision records have unambiguous numbers again** - Two decisions shared a number with an older one; the newer pair is renumbered.
+- **Phrase boosting can be tested on real clinical terms** - Ten evidence-backed terms replace one dummy phrase; still off, not clinically reviewed.
+- **A finished consultation records its own evidence** - Live rows, corrected rows and the note are saved per session, and can be switched off.
+- **Superseded NeMo exploration scripts removed** - Six early API spikes and a stale roadmap are gone; runtime and QA tooling are untouched.
+- **Post-visit speaker rebuild not promoted** - The two-witness experiment failed the corpus gate, so the flag stays off and behaviour is unchanged.
+- **Role labels handle split voices honestly** - Each label is judged on its own words, labels may share a role, and unclear ones are left out.
+- **Local health check stops failing a healthy stack** - Role probes send a valid session UUID instead of the literal `test`, which the agent rejects.
+- **Evaluation can run exactly the ten-case corpus** - Both evaluators take `--development-corpus` and check the manifest, order and hashes first.
+- **Named QA replays can show when two voices overlapped** - Operator-enabled replays count overlapping frames per speaker pair; no wording is stored.
 
 ## v0.5.0 - 2026-07-20
 
 Establishes auditable clinical quality through safer SOAP claims, traceable evidence, deterministic evaluation, and manual ASR review.
 
-- **Unsupported completed actions now ask for review** - SOAP notes flag completed/arranged actions lacking transcript evidence; wording and workflow remain unchanged.
+- **Unsupported completed actions now ask for review** - Notes flag completed or arranged actions with no transcript evidence; wording is unchanged.
 - **Saved-note evidence stays traceable** - Offline checks reject bad sources, validate saved-row citations, and separate unsupported claims.
 - **Clinical truth kept separate** - Checks separate spoken truth, saved evidence, and valid SOAP claims without gold-transcript repair.
-- **Transcript and note gates stay independent** - Independent gates stop lower word error masking unsafe claims, attribution/source errors, or actions.
+- **Transcript and note checks stay independent** - A better word score can no longer hide unsafe claims, wrong speakers or unsupported actions.
 - **Clinical assets checked before users see them** - A CPU-only gate blocks unapproved, unsafe, ambiguous, or reused clinical assets.
-- **Unified post-visit ASR ready for manual review** - Stopped visits use exact `parakeet-unified-en-0.6b` via pinned NeMo and persistent cache, proving setup—not accuracy—without affecting live transcription.
+- **Post-visit speech model ready for review** - Stopped visits use `parakeet-unified-en-0.6b`; this proves setup, not accuracy, live is untouched.
 - **Spoken instructions remain clinical text** - A fixture proves patient instructions cannot alter evaluation or consume model/corpus resources.
-- **Anxiety-consult outcomes made executable** - Seven checks pin therapy/alcohol uncertainty, chest-pain/panic conflict, unsafe drug denial, supported suicidality, and blood-test status.
+- **Anxiety-consult outcomes made testable** - Seven checks pin therapy, alcohol, chest-pain, drug-denial, suicidality and blood-test wording.
 - **Medication/allergy scoring cases pinned** - Seven CPU-only cases test term/speaker errors, omissions, insertions, trust, and SOAP abstention.
-- **High-risk note failures pinned first** - Red specimens pin anxiety, lane/overlap handling, deterministic reports, transcript instructions, and missing fixtures.
-- **Transcript quality stays lane-specific** - Offline scoring separates lanes/overlap, checks terms/speakers, and exposes unrepaired assembly defects.
+- **High-risk note failures pinned first** - Deliberately failing examples lock in the anxiety, overlap, reporting and fixture cases before any fix.
+- **Transcript quality stays lane-specific** - Offline scoring keeps the live and corrected passes apart and checks terms, speakers and overlap.
 - **Quality acceptance limits ratified before replay** - Fixed limits cover quality, latency, GPU, review, aggregation, retries, and improvement.
 - **Baseline replay rules frozen first** - Fixed visits, browser pacing, sequential GPU, health evidence, and three runs prevent replacement.
 - **Quality reports repeat byte-for-byte** - Immutable evidence yields byte-identical reports without hiding errors or unsafe omissions.
 - **Ten-case development corpus selected** - One ordered ten-visit manifest verifies hashes and rejects missing, extra, or reordered cases.
 - **Demo picker matches evaluation exactly** - The picker mirrors the selected ten-case manifest.
-- **Provider baseline deferred safely** - the baseline stays provider-free until context is validated, default-off, and switchable; notes remain non-quantitative defect examples.
+- **Provider baseline deferred safely** - The baseline stays provider-free until the context check is validated, off by default and switchable.
 - **Anxiety truth fixture versioned** - Seven checks pin source/row identities, allowed states, and an unsafe note for deterministic scoring.
-- **Medication and allergy regression frozen** - Three runs pin Metformin, losartan, amlodipine, and penicillin failures with lane/source metadata without implying rewrites or unseen results.
-- **Cross-lane evidence registered** - Six artifacts bind the left-arm overlap; unobserved confidence, source choice, and SOAP output stay unavailable.
-- **Clinical asset safety rules frozen** - A default-off contract, pair ledger, and eight red cases block unreviewed, rewritten, injected, or unapproved assets.
+- **Medication and allergy regression frozen** - Three runs pin the Metformin, losartan, amlodipine and penicillin failures with their source.
+- **Cross-lane evidence registered** - Six artifacts pin the left-arm overlap; anything not observed is recorded as unavailable.
+- **Clinical asset safety rules frozen** - Eight failing cases and an off-by-default contract block unreviewed or unapproved clinical assets.
 - **Clinical data contracts separated** - Evidence separates prompt/live/corrected/inactive-decoder lanes; 39 variants lack exact-pair approval.
-- **Clinical-data debt made explicit** - Debt remains: three cards fail review, 39 variants lack approval, and legacy matching affects six of ten cases.
+- **Clinical-data debt made explicit** - Three cards still fail review, 39 variants lack approval, and legacy matching affects six of ten cases.
 
 ## v0.4.0 - 2026-07-17
 
 Improves transcript reliability, note safety, confidence cues, long-visit handling, and local setup.
 
-- **Incomplete-note race pinned for repair** - The case where a note was generated from an incomplete transcript and silently omitted the visit's emergency instructions is now frozen as a deterministic fixture with integrity tests, so the upcoming terminal-source gate can be built and proven against the exact failure a clinician would experience.
-- **Notes only from the finished visit** - Summaries and transcript correction now bind to a terminal source attestation captured at finalization: a browser timeout can release the waiting screen but can no longer trigger a note from a partial transcript, a correction that loses any meaningful row is rejected instead of stored, over-limit visits get an explicit note-unavailable state instead of a silently shortened note, and a late role result can no longer relabel a finished draft. When finalization arrives after the wait, it unlocks note generation and prepares transcript correction but never starts a note without a clinician click.
-- **Copies that paste what you see** - Copying the transcript no longer glues adjacent rows together, and new Copy transcript / Copy draft note buttons produce clean plain text built from the real note and rows: provenance counters, buttons, and developer text can never leak into pasted clinical text, review markers survive as readable text, and a note that cannot be honestly generated cannot be copied at all.
-- **Three status truths in every copied note** - Copied drafts state where their text came from (corrected transcript or clearly labelled live fallback), what automated checks flagged, and that they are not clinician reviewed. Claim-level cues remain visible beside affected wording without adding a separate status list above the note.
-- **Misheard medication names can no longer pose as prescriptions** - Four observed medication mishearings (Luratidine, Pyritin, Fexaphenidine, emolons) now normalize to their reviewed correct names in the live transcript, and any low-confidence misheard clinical term that reaches the note is visibly flagged for review instead of printing as a confident Plan item. Ordinary words, correct spellings, and ambiguous product mentions are never rewritten, proven against the full official consultation corpus.
-- **Five misattributed transcript rows keep their true speaker** - A patient offering more detail ("do you want to know more about it?") no longer flips to Doctor, the doctor's "I've got to say..." aside no longer reads as a patient complaint, and three doctor question fragments in the corrected transcript no longer inherit the patient's label from the answer sitting next to them. Genuine complaints, short patient continuations, and manual corrections keep their existing protections.
-- **More reliable correction checks** - Batch checks now continue after safe failures, report clear totals, and use a more reliable browser test server.
-- **Better denial checks** - Note checks now consider the clinician's full question and the patient's full answer, reducing false warnings without accepting unsupported denials.
-- **Confidence retained without transcript clutter** - Live and corrected rows keep measured confidence for downstream note checks while transcript rows remain visually plain; affected note wording is marked for review without changing its text.
-- **Cross-talk behaviour reviewed** - Testing confirmed that short patient speech can be folded into the doctor stream. Alternative policies made attribution worse, so they were not shipped.
-- **Duplicate speaker checks added** - Privacy-safe checks can identify one voice appearing under two speaker labels. A proposed guard made transcripts worse and was removed.
-- **Fewer long transcript freezes** - An optional release limit reduces long pauses and large catch-up bursts while leaving existing behaviour as the default.
-- **Broader note-quality baseline** - Full-length visits now expose unsupported claims, weak warnings, and input truncation more consistently during evaluation.
-- **Overlapping speech measured** - Testing confirmed that overlapping speech still causes wording and speaker errors, so a future model change remains necessary.
-- **Safer long-visit correction** - Long recordings are corrected in ordered chunks, one temporary GPU failure is retried, and fallback notes clearly identify their source.
-- **Uncertainty and quotes stay faithful** - Notes describe unclear audio as a recording limitation and only quote words found in the matching speaker's transcript.
-- **More precise fidelity checks** - Denial checks use nearby sentence context, ignore misleading uncertainty phrases, and keep the better draft after regeneration.
-- **Complete endings in long notes** - When a visit exceeds the input limit, the note keeps the opening and closing rows and warns when middle content was omitted.
-- **Confidence on every measured row** - Live and corrected transcript rows can carry a stored confidence score that follows them through the interface and summary flow.
-- **Notes checked before display** - Each note is checked for unsupported certainty, denials, and examination claims. Remaining concerns are visibly marked after one retry.
-- **Word confidence validated** - Both supported speech models produced useful word-level confidence without changing transcript output or destabilising the GPU.
-- **Broader full-length evaluation corpus** - The accepted quality baseline covered full-length consultations with day-based labels and matching speaker references; the local demo picker used a curated subset.
-- **Consistent model defaults** - Production uses Bedrock for roles and summaries in one configured AWS region. Local startup falls back to lightweight Ollama only when no provider is configured, while `.env.example` deliberately selects Bedrock.
-- **Late rows stay in the right card** - Delayed wording is inserted into the correct earlier speaker card without changing spoken order or later turns.
+- **Incomplete-note race pinned for repair** - The case where a note dropped a visit's emergency instructions is now a fixed, repeatable test.
+- **Notes only from the finished visit** - A browser timeout can release the waiting screen but no longer triggers a note from a partial transcript.
+- **Copies that paste what you see** - Copy transcript and Copy draft note produce clean text, with no counters, buttons or developer wording.
+- **Three status truths in every copied note** - A copied draft states where its text came from, what checks flagged, and that nobody reviewed it.
+- **Misheard medicine names can no longer pose as prescriptions** - Four observed mishearings are corrected, and low-confidence terms are flagged.
+- **Five misattributed rows keep their speaker** - Patient asides no longer flip to Doctor, and doctor questions no longer take the patient's label.
+- **More reliable correction checks** - Batch checks continue after safe failures, report clear totals, and use a steadier test server.
+- **Better denial checks** - Note checks read the whole question and answer, so fewer false warnings without accepting unsupported denials.
+- **Confidence kept without transcript clutter** - Rows carry a confidence score for later note checks while the transcript stays visually plain.
+- **Cross-talk behaviour reviewed** - Short patient speech can still fold into the doctor's stream; every alternative tested made attribution worse.
+- **Duplicate speaker checks added** - Privacy-safe checks can spot one voice under two labels; a guard that made transcripts worse was dropped.
+- **Fewer long transcript freezes** - An optional limit smooths long pauses and catch-up bursts; existing behaviour stays the default.
+- **Broader note-quality baseline** - Full-length visits expose unsupported claims, weak warnings and truncated input more consistently.
+- **Overlapping speech measured** - Testing confirmed it still causes wording and speaker errors, so a future model change is still needed.
+- **Safer long-visit correction** - Long recordings correct in ordered chunks, one GPU failure is retried, and fallback notes name their source.
+- **Uncertainty and quotes stay faithful** - Unclear audio is called a recording limit, and a quote must appear in that speaker's own words.
+- **More precise fidelity checks** - Denial checks use nearby sentences, ignore misleading hedges, and keep the better draft after a retry.
+- **Complete endings in long notes** - An over-length visit keeps its opening and closing rows and warns that middle content was left out.
+- **Confidence on every measured row** - Live and corrected rows carry a stored confidence score through the interface and into the note.
+- **Notes checked before display** - Each note is checked for overconfidence, denials and exam claims; leftover concerns are marked after one retry.
+- **Word confidence validated** - Both speech models gave useful per-word confidence without changing transcripts or destabilising the GPU.
+- **Broader full-length evaluation corpus** - The accepted quality baseline covered full-length consultations with matching speaker references.
+- **Consistent model defaults** - Production and `.env.example` both select Bedrock for roles and notes; Ollama is only the no-provider fallback.
+- **Late rows stay in the right card** - Delayed wording lands in the correct earlier speaker card without reordering the conversation.
 - **Clearer WSL2 GPU failure** - Startup now detects an empty GPU response and prints the steps needed to restart WSL2 and Docker Desktop.
 
 ## v0.3.0 - 2026-07-07
 
-Adds corrected transcripts, evidence-linked notes, stronger speaker handling, safer summaries, and
-a more focused medical workflow.
+Adds corrected transcripts, evidence-linked notes, stronger speaker handling, safer summaries, and a more focused medical workflow.
 
-- **Finished visits keep their role state** - Late role reads and corrections no longer recreate empty state or wipe the confidence badge, while manual labels still persist.
-- **Notes stay faithful to the consultation** - Patient uncertainty remains uncertain, assessments use clinician-stated diagnoses, and reported symptoms stay out of examination findings.
+- **Finished visits keep their role state** - A late role read no longer wipes the confidence badge, and manual labels still persist.
+- **Notes stay faithful to the consultation** - Patient uncertainty stays uncertain, and reported symptoms stay out of examination findings.
 - **Fewer false source warnings** - Source checks now recognise common doctor question introductions without changing live speaker decisions.
 - **Citation links open the transcript** - Source links switch to the Transcript tab, scroll to the evidence, and briefly highlight every cited block.
 - **Compact source popovers** - Each cited section has an accessible source count and popover instead of a row of always-visible citation chips.
-- **Note and Transcript tabs** - The summary panel now shows the generated note and its corrected source transcript in separate keyboard-friendly tabs.
+- **Note and Transcript tabs** - The panel shows the note and its corrected source transcript in separate keyboard-friendly tabs.
 - **Safe citation diagnostics** - Invalid or missing citations are counted in logs without recording consultation wording.
 - **Readable transcript stitching** - Adjacent rows from the same speaker are grouped for display while keeping their source IDs and timestamps.
 - **Medical term correction enabled** - Common drug and condition corrections are on by default and can still be disabled when required.
 - **No inline citation clutter** - Timestamp and row markers are removed from note prose while structured source links remain available.
 - **Safer corrected-role cleanup** - Weaker wording cues are used only when the original speaker structure is clearly unreliable.
 - **Real-time evaluation pacing** - Correction checks can run at real listening speed, making browser replays the trusted measure of live behaviour.
-- **Word echoes split correctly** - A clinician repeating a patient's content word can be separated from the patient's answer when the timing and wording are clear.
+- **Word echoes split correctly** - A clinician repeating a patient's word is separated from the patient's answer when the timing is clear.
 - **Orphan speaker rows repaired** - Early rows created under temporary speaker identities can be relabelled without overriding clinician corrections.
-- **Streaming enabled for local development** - Local sessions now use the session-long streaming engine by default, while automated checks keep the stable windowed engine.
+- **Streaming enabled for local development** - Local sessions use the session-long streaming engine; automated checks keep the windowed one.
 - **Native word timing** - Post-visit correction now prefers the speech model's word timestamps over estimated timing.
-- **Identity and echo rows separated** - Patient identity answers can be split from a clinician's repeated acknowledgement when timing evidence is strong.
+- **Identity and echo rows separated** - A patient's answer is split from the clinician's repeat when the timing evidence is strong.
 - **Narrow timing changes only** - Testing supported word timing for specific echo boundaries but rejected broad transcript realignment.
 - **Corrected-source checker** - A privacy-safe checker now reports corrected rows whose wording conflicts with their visible Doctor or Patient label.
 - **Offline diarisation evaluation** - A repeatable comparison now measures full-recording speaker models before any runtime change is considered.
@@ -118,7 +122,7 @@ a more focused medical workflow.
 - **Stop waits for final words** - Ending a recording keeps the event stream open briefly so the final transcript rows reach the browser and note.
 - **Late role changes recorded** - Speaker changes that arrive after finalisation are counted without altering existing quality records.
 - **Per-row speaker correction** - Clinicians can correct one transcript line without relabelling every row from the same speaker.
-- **Session quality records** - Completed visits record timing, transcript delivery, speaker stability, role confidence, and errors without storing clinical wording.
+- **Session quality records** - Finished visits record timing, delivery, speaker stability and errors without storing clinical wording.
 - **Repeatable demo evaluation** - Demo recordings can be streamed through the real path and compared with earlier quality results.
 - **Speaker attribution scoring** - Evaluation now measures whether each clean transcript row is assigned to the right role.
 - **Clearer role diagnostics** - Reports separate speech-model speaker mixing from role-mapping and fallback errors.
@@ -144,19 +148,19 @@ a more focused medical workflow.
 - **Mixed cards ask for review** - A transcript card with conflicting row roles shows a neutral review label instead of a confident speaker label.
 - **Clinical hints removed** - The hints panel, event feed, and summary payload were removed; medical summary grounding remains.
 - **Offline diarisation not promoted** - Full-recording speaker models did not meet the role-attribution bar, so runtime behaviour stayed unchanged.
-- **External diarisation remains gated** - The optional external model was not tested because its dependency and access requirements were not approved.
+- **External diarisation remains gated** - The optional external model was not tested; its dependency and access needs were not approved.
 - **Full-audio Sortformer rejected** - It reduced some word errors but created too many speaker identities and sharply reduced role accuracy.
 - **Broad word-timed alignment rejected** - It improved wording but moved too many rows to the wrong role, so it remains evaluation-only.
 - **Seam trimming rejected** - Removing repeated seam wording also increased overall word errors, so the change was reverted.
 - **Anchor-based correction alignment** - Corrected text now follows live-text anchors and keeps visible rows that the second pass misses.
-- **Summary requests preserve history** - Browser rows are merged into stored transcript history instead of replacing rows the browser did not receive.
+- **Summary requests preserve history** - Browser rows merge into the stored transcript instead of replacing rows the browser never got.
 - **Clear finalisation logs** - Window logs now distinguish normal chunks from the final transcript flush.
 - **Held-tail speaker anchor rejected** - Reusing earlier held rows did not improve speaker accuracy, so the experiment was removed.
-- **Less biased role inference** - Automatic mappings are no longer fed back into the role prompt, reducing the chance that an early mistake reinforces itself.
+- **Less biased role inference** - Automatic mappings no longer feed back into the prompt, so an early mistake cannot reinforce itself.
 - **Automatic row exceptions** - Clear wording cues can relabel or mark individual rows uncertain without touching clinician corrections.
 - **Stricter trend reports** - Evaluation tables lead with strict role accuracy, uncertainty, confident errors, and realistic mapping limits.
 - **Row-based summary input** - Summaries receive each corrected transcript row rather than a merged card that can hide role differences.
-- **Honest role badge** - Green confidence now requires both a confident mapping and stable speaker identities; unstable sessions ask for label review.
+- **Honest role badge** - Green now needs both a confident mapping and stable speaker identities; unstable sessions ask for label review.
 - **Stable evaluation history** - Reports wait for late role decisions before scoring the labels a clinician would actually see.
 - **Strict Doctor and Patient metrics** - Unknown rows remain in the accuracy denominator so uncertainty cannot inflate the headline score.
 - **Speaker continuity diagnostics** - Privacy-safe window records show how speaker identities were matched, merged, or remapped.
@@ -166,12 +170,12 @@ a more focused medical workflow.
 - **Reviewed PHP quality exception** - Quality tooling accepts the temporary client constraint without hiding unrelated PHP issues.
 - **Fewer transcript fragments** - Adjacent word-sized pieces from the same speaker are joined before they reach the browser.
 - **Cleaner punctuation spacing** - Missing spaces after sentence punctuation are repaired before transcript rows are displayed.
-- **Overlap benchmark guarded** - A separated-channel evaluation was kept limited after larger runs exhausted GPU memory and destabilised the speech model.
+- **Overlap benchmark guarded** - The separated-channel evaluation stays small; larger runs exhausted GPU memory and destabilised the model.
 - **Local context validation retained** - The CI wrapper was removed, while the same context check remains available for local workflow changes.
 - **Unsafe seam changes rejected** - Word timestamps destabilised live GPU transcription, and a higher release threshold risked losing short speech.
 - **PHP client updated** - The client now records body-safe response counts and retries temporary proxy failures with a short delay.
 - **Efficient windowed transcription** - Only new audio is transcribed, removing duplicate output and repeated full-session GPU work.
-- **Focused speaker-quality scope** - This release contains phantom-speaker control, clearer confidence, and role-flip damping; seamless identity tracking remains future work.
+- **Focused speaker-quality scope** - This release covers phantom speakers, clearer confidence and role-flip damping; identity tracking comes later.
 - **Two-speaker containment** - Extra temporary speaker IDs are merged back into the established Doctor and Patient identities.
 - **More balanced workspace** - Transcript, summary, hints, developer tools, and demo controls use the available screen space more effectively.
 - **Optional local model service** - The local model starts only when selected, keeping cloud-backed development stacks smaller.
@@ -204,7 +208,7 @@ a more focused medical workflow.
 - **Compact demo dropdown** - Demo selection now uses a concise consultation menu with upload support.
 - **Valid prose timestamps** - Summary instructions now require real minute-and-second ranges and keep row IDs out of bracketed prose.
 - **Row corrections keep the badge** - Correcting a row after a visit no longer clears the earned role-confidence state.
-- **Streaming review fixes** - Transcript-bearing debug output was removed, empty-start finalisation now drains correctly, and late rows stay chronological.
+- **Streaming review fixes** - Debug output carrying transcript text is gone, empty-start finalisation drains, and late rows stay in order.
 - **Smaller role-agent requests** - The model receives compact speaker evidence while full transcript rows remain on the server.
 - **Suppressed flips stay suppressed** - A rejected role change no longer falls through to a weaker fallback that applies the same change.
 - **Isolated agent sessions** - Role and summary agents no longer share conversation state, and clinician overrides win over later suggestions.

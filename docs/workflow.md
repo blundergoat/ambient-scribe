@@ -1,235 +1,219 @@
 # Claude Code Workflow Configuration
 
-This project includes a tuned [Claude Code](https://claude.ai/code) setup that catches mistakes early and enforces quality automatically across a full-stack PHP/Python codebase. This document explains what each piece does, why it exists, and how to adapt it for your own projects.
+This project ships a tuned [Claude Code](https://claude.ai/code) setup: an instruction file that
+carries the project's rules, two shell hooks that format and lint automatically, and a set of
+workflow skills that give repeatable jobs a fixed protocol. This document explains what each piece
+does, why it exists, and how to adapt the pattern for your own projects.
 
 ## File Layout
 
 ```
 .claude/
-├── settings.json                  # Hooks - run automatically on events
-├── settings.local.json            # Local permissions (gitignored)
-└── skills/
-    ├── preflight/SKILL.md         # /preflight - run all quality gates
-    ├── review/SKILL.md            # /review - deep code review
-    └── audit/SKILL.md             # /audit - multi-pass codebase audit
+├── settings.json                  # Permissions + hooks (committed)
+├── settings.local.json            # Local permission overrides (gitignored)
+├── hooks/
+│   ├── format-file.sh             # PostToolUse - format the file that was just edited
+│   └── stop-lint.sh               # Stop - lint the files changed this turn
+├── profiles/                      # Lane-scoped context bundles
+│   ├── infrastructure.json
+│   ├── php-backend.json
+│   └── python-agent.json
+└── skills/                        # Workflow skills, invoked as /<name>
+    ├── goat/                      # Dispatcher - picks the right workflow for an outcome
+    ├── goat-plan/                 # Task breakdown with milestone tracking
+    ├── goat-debug/                # Structured investigation before any fix
+    ├── goat-review/               # Diff, PR, and area review
+    ├── goat-qa/                   # Coverage gaps and test strategy
+    ├── goat-security/             # Security implications of a change
+    ├── goat-critique/             # Multi-lens critique before shipping
+    └── goat-clarity/              # Comments, docs, naming, private placement
 CLAUDE.md                          # Project context + workflow rules
+AGENTS.md                          # The same rules, for agents that read AGENTS.md
+.github/copilot-instructions.md    # The same rules, for Copilot
 ```
+
+`.goat-flow/` holds what the instruction files route to: architecture and code-map references, the
+glossary, tool playbooks, and the learning loop.
 
 ## How It All Fits Together
 
 ```mermaid
 graph TD
-    A["Claude edits a .php file"] -->|"PostToolUse hook"| B["php-cs-fixer fix<br/><small>auto-formats the file</small>"]
-    C["Claude finishes responding"] -->|"Stop hook"| D["phpstan analyse + ruff check<br/><small>catches PHP type errors and Python lint issues</small>"]
-    E["You type /preflight"] -->|"Skill"| F["Run all quality gates<br/><small>cs:fix → PHPStan → complexity → PHPMD → PHPUnit → Python</small>"]
-    G["You type /review"] -->|"Skill"| H["Verified code review<br/><small>read code → verify findings → categorize</small>"]
-    I["You type /audit"] -->|"Skill"| K["Multi-pass audit<br/><small>discover → verify → prioritize → self-check</small>"]
-    J["Claude reads CLAUDE.md"] -->|"Every session"| L["Knows commands, architecture,<br/>and workflow rules"]
+    A["Claude edits a .php or .py file"] -->|"PostToolUse hook"| B["format-file.sh<br/><small>php-cs-fixer or ruff format, per extension</small>"]
+    C["Claude finishes responding"] -->|"Stop hook"| D["stop-lint.sh<br/><small>php -l and ruff check on files changed this turn</small>"]
+    E["You type /goat-review"] -->|"Skill"| F["Verified review<br/><small>read code, verify findings, rank by severity</small>"]
+    G["You type /goat-debug"] -->|"Skill"| H["Structured investigation<br/><small>evidence first, fixes only after human review</small>"]
+    I["You type /goat"] -->|"Dispatcher"| J["Routes the outcome to the right skill"]
+    K["Claude reads CLAUDE.md"] -->|"Every session"| L["Knows commands, boundaries,<br/>and the execution loop"]
 
     style B fill:#059669,color:#fff,stroke:none
     style D fill:#059669,color:#fff,stroke:none
     style F fill:#2563eb,color:#fff,stroke:none
     style H fill:#2563eb,color:#fff,stroke:none
-    style K fill:#2563eb,color:#fff,stroke:none
+    style J fill:#2563eb,color:#fff,stroke:none
     style L fill:#7c3aed,color:#fff,stroke:none
 ```
 
 ## CLAUDE.md - Project Context
 
-Claude Code reads `CLAUDE.md` at the start of every session. It contains:
+Claude Code reads `CLAUDE.md` at the start of every session. `AGENTS.md` and
+`.github/copilot-instructions.md` carry the same rules for other agents, and the three are checked
+for parity.
 
-- **Commands** - build, test, lint, and analysis commands so Claude doesn't guess
-- **Architecture** - data flow from Twig UI → PHP → Python agent → LLM provider
-- **Code style** - PSR-12, PHPStan level 10, naming conventions
-- **Workflow rules** - behavioral instructions (see below)
+The file is organised as behavioural rules rather than prose, because everything in it competes for
+the same context budget:
 
-### Workflow Rules
+- **Truth Order** - which source wins when two disagree, from the user's instruction down to peer
+  agent files.
+- **Autonomy Tiers** - Always / Ask First / Never. Reading and focused checks are always allowed;
+  PHP-to-Python contract changes, WebSocket topics, audio format, and GPU concurrency need approval;
+  committing, pushing, and weakening tests are never allowed.
+- **Hard Rules** - severity order, "read every file you change", cite file evidence with semantic
+  anchors rather than line numbers.
+- **Execution Loop** - READ, SCOPE, ACT, VERIFY, with a read and turn budget per complexity class.
+- **Definition of Done** - what has to be true before a task is reported complete.
+- **Router Table** - where to look for architecture, the code map, playbooks, and each lane.
 
-These rules exist because of real problems observed during AI-assisted development. Each one addresses a specific failure mode.
+### Why the rules look like this
 
-#### Investigate before fixing
+Each one addresses a failure mode that showed up in real sessions.
 
-```markdown
-When debugging issues, ALWAYS read the actual code and configuration files before
-proposing a fix. Trace the real code path - do not guess based on class names, env
-vars, or conventions.
-```
+#### Read before diagnosing
 
-**Why:** Without this, Claude tends to jump to fixes based on pattern-matching class names or env vars rather than reading what the code actually does. This leads to wrong diagnoses - e.g., misidentifying a CORS issue as a CSP issue because the symptoms look similar.
+`MUST gather evidence from real files before claims or edits; never fabricate repo facts.`
 
-#### Check all layers
+Without it, an agent pattern-matches on class names and env vars instead of tracing the code path,
+which produces confident wrong diagnoses - a CORS problem read as a CSP problem because the
+symptoms rhyme.
 
-```markdown
-After implementing any feature or fix, verify completeness across affected layers:
-1. PHP service wiring (config/services.yaml, config/packages/strands.yaml)
-2. Python agent endpoint contracts (Pydantic models in api/server.py)
-3. Symfony route registration (controller attributes)
-4. Twig template updates (templates/scribe/index.html.twig)
-5. Docker Compose environment variables if new config is needed
-6. PHPUnit tests covering the new code path
-7. PHPStan passes at Level 10
-```
+#### Read both sides of a boundary
 
-**Why:** This is a full-stack project with PHP, Python, Twig, Docker, and Mercure layers that are tightly coupled. A change to the Python agent's Pydantic request model breaks the PHP StrandsClient. A new Symfony config key needs a matching Docker Compose environment variable. Without an explicit checklist, features get shipped missing critical pieces.
+`Cross-boundary work MUST read both sides first.`
 
-#### Preflight before done
+This is a full-stack project where PHP, Python, Twig, Docker, and Mercure are tightly coupled. A
+change to a Pydantic model breaks the PHP client; a new Symfony config key needs a matching Compose
+variable. Naming the boundaries explicitly is what stops half-finished features.
 
-```markdown
-Always run composer preflight BEFORE reporting that a task is complete.
-```
+#### Cite anchors, not line numbers
 
-**Why:** Without this, Claude declares "done" and the developer discovers failures manually. The preflight script takes seconds - faster to run automatically than to fix after the fact.
+`Cite file evidence with semantic anchors; do not invent line references.`
 
-#### Deep investigation
+Line numbers rot on the next edit and are easy to hallucinate. A searchable anchor - a function
+name, a unique string - still resolves months later.
 
-```markdown
-Do a DEEP first pass. Check for false positives before reporting.
-```
+#### Prove it before claiming it
 
-**Why:** Surface-level findings are often wrong. Requiring verification by reading surrounding code filters out speculative issues and false positives. If told to "look deeper", treat it as a signal the first pass was insufficient.
+`Do not claim checks passed without the literal pass/fail line from this session.`
 
-#### Code review rigor
+The instruction file lists the rationalisations that precede a false completion claim ("should work
+now", "linter passed", "sub-agent said success") so they can be named and rejected rather than
+argued.
 
-```markdown
-When evaluating external review comments (Copilot, etc.), do NOT blindly apply
-suggestions. Investigate each one against the actual codebase first.
-```
+#### No unrequested scope
 
-**Why:** External tools (Copilot PR reviews, static analysis suggestions) sometimes produce false positives. Blindly applying them has caused breaking changes in real projects.
+`No features, abstractions, dependencies, or error handling beyond the declared scope.`
+
+Scope creep is the most expensive thing an agent does unsupervised, because every extra file is one
+more thing to review.
 
 ## Hooks - Automatic Quality Gates
 
-Hooks are defined in `.claude/settings.json` and fire automatically on specific events.
+Hooks are defined in `.claude/settings.json` and fire on specific events. Both project hooks are
+shell scripts under `.claude/hooks/`, which keeps the settings file readable and makes the hooks
+testable on their own.
 
-### PostToolUse: Auto-format on every edit
+### PostToolUse: format the file that changed
 
 ```json
 {
   "matcher": "Edit|Write",
-  "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.php$'; then vendor/bin/php-cs-fixer fix --quiet \"$CLAUDE_FILE_PATH\" 2>/dev/null; echo 'formatted'; fi"
+  "hooks": [
+    {
+      "type": "command",
+      "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/format-file.sh\""
+    }
+  ]
 }
 ```
 
-**Event:** Fires after every `Edit` or `Write` tool call. If Claude edits 10 files in one turn, it fires 10 times.
+**Event:** after every `Edit` or `Write`. Ten edits in one turn means ten runs.
 
-**What it does:** Runs `php-cs-fixer fix` on the changed file. Only targets `.php` files - skips Python, Twig, YAML, etc.
+**What it does:** `format-file.sh` switches on the file extension - `vendor/bin/php-cs-fixer fix
+--quiet` for `.php`, `ruff format --quiet` for `.py` - and silently does nothing for anything else.
+Missing tools are skipped rather than treated as errors, and the script always exits 0.
 
-**Why PostToolUse:** Formatting is sub-second and should happen on every file change. This prevents style drift from accumulating - every file is always clean.
+**Why PostToolUse:** formatting is sub-second and idempotent, so running it per file keeps style
+drift from ever accumulating.
 
-**Adapting for other stacks:**
-```json
-// JavaScript/TypeScript
-{ "matcher": "Edit|Write", "command": "npx prettier --write $CLAUDE_FILE_PATH 2>/dev/null" }
+**Adapting for other stacks:** add a branch to the script's `case "$FILE_PATH" in` block. It already
+carries a commented-out `prettier` branch as the worked example.
 
-// Go
-{ "matcher": "Edit|Write", "command": "gofmt -w $CLAUDE_FILE_PATH 2>/dev/null" }
-
-// Python
-{ "matcher": "Edit|Write", "command": "ruff format $CLAUDE_FILE_PATH 2>/dev/null" }
-```
-
-### Stop: Static analysis after every response
+### Stop: lint what this turn touched
 
 ```json
 {
-  "command": "vendor/bin/phpstan analyse --no-progress --error-format=raw 2>&1 | head -10; RUFF=$(command -v ruff || echo strands_agents/.venv/bin/ruff); $RUFF check strands_agents/ 2>&1 | head -10"
+  "hooks": [
+    {
+      "type": "command",
+      "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/stop-lint.sh\""
+    }
+  ]
 }
 ```
 
-**Event:** Fires once when Claude finishes a full response, regardless of how many tool calls were made.
+**Event:** once when Claude finishes a full response, however many tool calls it made.
 
-**What it does:** Two checks in one pass:
-1. **PHPStan** (level 10) - catches type errors, undefined methods, wrong argument types
-2. **Ruff check** - catches Python lint and import issues in the agent files
+**What it does:** `stop-lint.sh` reads `git diff --name-only HEAD`, then runs `php -l` on each
+changed PHP file and `ruff check` on each changed Python file, preferring a `ruff` on `PATH` and
+falling back to `strands_agents/.venv/bin/ruff`. Findings go to stderr as information, not
+instructions.
 
-Output is truncated to 10 lines to keep feedback concise.
+Two details are load-bearing:
 
-**Why Stop (not PostToolUse):** Static analysis is slower (2-5 seconds) and needs to see the whole project, not individual files. Running it per-file would be noisy and slow. Running once at the end catches everything in one pass.
+- **It always exits 0.** A non-zero Stop hook feeds the failure back to the model, which tries to
+  fix it, which fires the hook again. Exiting 0 keeps errors visible without the loop.
+- **`STOP_HOOK_ACTIVE` guards re-entry.** The same protection, one layer down.
 
-**Adapting for other stacks:**
-```json
-// TypeScript
-{ "command": "npx tsc --noEmit 2>&1 | head -5" }
+**Why Stop rather than PostToolUse:** analysis is slower and only meaningful once the turn's edits
+are all in place. Scoping it to changed files keeps it to a couple of seconds instead of a
+whole-project pass.
 
-// Go
-{ "command": "go vet ./... 2>&1 | head -5" }
+## Skills - Repeatable Workflows
 
-// Python
-{ "command": "mypy src/ 2>&1 | head -10" }
-```
+Skills are markdown protocols in `.claude/skills/<name>/SKILL.md`, invoked by typing `/<name>`.
+Each one fixes the shape of a job that is otherwise done differently every time.
 
-## Skills - Reusable Commands
+| Skill | Use it when |
+|-------|-------------|
+| `/goat` | You can describe the outcome but not which workflow fits. It routes. |
+| `/goat-plan` | Starting non-trivial implementation that needs milestones and progress tracking. |
+| `/goat-debug` | Diagnosing a bug or unfamiliar code. Evidence first; fixes wait for human review. |
+| `/goat-review` | Reviewing a diff, PR, or codebase area for quality issues. |
+| `/goat-qa` | Assessing coverage gaps, test strategy, or testing risk. |
+| `/goat-security` | Assessing the security implications of a change or feature. |
+| `/goat-critique` | Pressure-testing a decision or analysis before shipping it. |
+| `/goat-clarity` | Improving comments, documentation, naming, or private placement. |
 
-Skills are markdown files in `.claude/skills/<name>/SKILL.md`. Invoke them by typing `/<name>` in Claude Code.
+**Why a skill instead of just asking?** Three properties are hard to get from a prompt:
 
-### /preflight
+1. **A scope freeze.** Several skills declare the files they may change before the first edit, so
+   scope creep becomes visible rather than incremental.
+2. **A verification gate.** The protocol names what proof is required, which is harder to skip than
+   an intention.
+3. **A blocking human gate.** `/goat-debug` stops between diagnosis and fix; `/goat-clarity` stops
+   before widening its own authority. Neither can be waved through by an agent working alone.
 
-Runs all quality gates in sequence and fixes failures before declaring success.
-
-```
-1. composer cs:fix              - auto-fix code style
-2. composer analyse             - PHPStan level 10
-3. composer analyse:complexity  - cyclomatic complexity (max 20)
-4. composer analyse:messdetector - PHPMD
-5. composer test                - PHPUnit
-6. Python Ruff check            - all agent files
-7. Fix and re-run on failure
-8. Only report success when everything passes
-```
-
-**When to use:** Before committing, before declaring a task done, or whenever you want to validate the full project.
-
-**Why a skill instead of just running the script?** The skill instructs Claude to **fix failures and retry**, not just report them. Running `composer preflight` manually would stop at the first failure. The skill creates a fix-and-verify loop.
-
-### /review
-
-Structured code review with mandatory verification of each finding.
-
-```
-1. Identify changed files (git diff)
-2. Read every changed file thoroughly
-3. For each finding: read 50+ lines of context, trace the code path, verify it's real
-4. Categorize as critical or non-critical
-5. Check cross-layer impact (PHP ↔ Python ↔ Docker)
-6. Investigate external suggestions (Copilot) before applying
-7. Run composer analyse and composer cs:check
-```
-
-**When to use:** Before submitting a PR, or when triaging external review comments.
-
-**Why verification matters:** Without it, Claude reports surface-level findings that turn out to be false positives - wasting time on investigation and sometimes introducing bugs when "fixes" are applied to non-issues.
-
-### /audit
-
-Multi-pass codebase audit with self-verification.
-
-```
-/audit security
-/audit performance
-/audit bugs
-/audit architecture
-```
-
-A structured 4-pass process:
-
-| Pass | Purpose |
-|------|---------|
-| **Discovery** | Search all relevant files, log potential issues with file:line refs |
-| **Verification** | Re-read context, trace code paths, confirm each issue is real |
-| **Prioritization** | Rate by severity: Critical / High / Medium / Low |
-| **Self-check** | Remove fabricated or unverified findings |
-
-**When to use:** For thorough investigations. The multi-pass approach with mandatory verification prevents the common failure mode of reporting issues that don't actually exist in the code.
+The report-only skills - `/goat-review`, `/goat-qa`, `/goat-security`, `/goat-critique` - do not
+edit files unless you separately ask them to.
 
 ## Adapting This Setup for Your Project
 
 ### Minimum viable setup
 
-For any project, start with:
-
-1. **CLAUDE.md** with your build commands and architecture overview
-2. **PostToolUse hook** for formatting
-3. **Stop hook** for static analysis
+1. **An instruction file** with your build commands, architecture sketch, and the boundaries an
+   agent must not cross unasked.
+2. **A PostToolUse hook** for formatting.
+3. **A Stop hook** for linting changed files - remembering to exit 0.
 
 ```json
 {
@@ -237,12 +221,16 @@ For any project, start with:
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "vendor/bin/php-cs-fixer fix --quiet \"$CLAUDE_FILE_PATH\" 2>/dev/null"
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/format-file.sh" }
+        ]
       }
     ],
     "Stop": [
       {
-        "command": "vendor/bin/phpstan analyse --no-progress 2>&1 | head -10"
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/stop-lint.sh" }
+        ]
       }
     ]
   }
@@ -251,40 +239,29 @@ For any project, start with:
 
 ### For other languages
 
-The pattern is the same - fast formatting on every edit, slower analysis once per response:
+The pattern holds: fast formatting per file, slower analysis once per response.
 
-| Language | PostToolUse (per-file) | Stop (per-response) |
-|----------|----------------------|---------------------|
-| PHP | `php-cs-fixer fix` | `phpstan analyse` |
+| Language | PostToolUse (per file) | Stop (per response) |
+|----------|------------------------|---------------------|
+| PHP | `php-cs-fixer fix` | `php -l`, `phpstan analyse` |
+| Python | `ruff format` | `ruff check`, `mypy` |
 | TypeScript | `prettier --write` | `tsc --noEmit` |
 | Go | `gofmt -w` | `go vet ./...` |
-| Python | `ruff format` | `mypy src/` |
 | Rust | `rustfmt` | `cargo check` |
 
-### Adding workflow rules to CLAUDE.md
+### Denying dangerous operations
 
-Start with these three - they address the most common failure modes:
+`.claude/settings.json` also carries a `permissions.deny` list. It blocks `git commit` and
+`git push` outright - commits stay a human action here - along with reads of `.env` files,
+credentials, keys, and cloud config directories, and shell patterns such as `sudo`, `mkfs`,
+`dd if=`, and `git reset --hard`.
 
-1. **Investigate before fixing** - prevents wrong-root-cause debugging
-2. **Check all layers** - prevents incomplete implementations
-3. **Preflight before done** - prevents "works on my machine" surprises
+Treat this as one layer, not the whole defence. The instruction file's Never tier is prose; the deny
+list mechanically enforces only the subset it can pattern-match.
 
-Add project-specific rules as you discover failure patterns in your own sessions. The Claude Code `/insights` command can help identify recurring issues.
+### Adding a skill
 
-### Adding skills
-
-Create a new directory under `.claude/skills/` with a `SKILL.md` file:
-
-```bash
-mkdir -p .claude/skills/my-skill
-# Write the skill instructions in SKILL.md
-```
-
-The skill name matches the directory name. Invoke with `/my-skill`.
-
-### Modifying hooks
-
-Edit `.claude/settings.json`. The two hook types:
-
-- **PostToolUse** - fires after each tool call. Use `matcher` to filter by tool name. Keep commands sub-second.
-- **Stop** - fires once when Claude finishes responding. Good for analysis that needs the full picture.
+Create a directory under `.claude/skills/` and write the protocol in its `SKILL.md`. The directory
+name is the invocation name, so `.claude/skills/my-skill/SKILL.md` becomes `/my-skill`. Give it a
+`description` in the frontmatter that says *when* to use it - that is what the model matches
+against.

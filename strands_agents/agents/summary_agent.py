@@ -1,10 +1,10 @@
 """
 Strands summary agent for the browser's final consultation summary.
 
-When the user ends a session, this agent reads the role-attributed transcript
-and drafts SOAP-style sections for review. It uses Bedrock or CPU-only Ollama,
-never the NeMo GPU, and each call gets a fresh Agent so one visit's transcript
-cannot remain in another visit's conversation history.
+When the clinician presses Summarise, this agent reads the role-attributed transcript and drafts the SOAP sections they review.
+
+It runs on Bedrock or CPU-only Ollama and never touches the NeMo GPU, so drafting a note cannot slow live transcription.
+Each call gets a fresh Agent, so one visit's transcript can never leak into the next visit's conversation history.
 """
 
 from __future__ import annotations
@@ -29,9 +29,10 @@ SUMMARY_AGENT_OLLAMA_MODEL = os.environ.get(
     "SUMMARY_AGENT_OLLAMA_MODEL",
     os.environ.get("ROLE_AGENT_OLLAMA_MODEL", "qwen3.5:9b"),
 )
-# 8192 gives the fidelity retry 2x headroom over the largest observed clean
-# draft (3,923 tokens, consult 5.3); the model's output ceiling is 64K, and
-# 4096 truncated that visit's retry in three independent runs (token-cap blocker B3).
+# 8192 gives the fidelity retry twice the headroom of the largest clean draft measured so far (3,923 tokens, consult 5.3).
+#
+# The model's own output ceiling is 64K, so this is a deliberate budget rather than a limit.
+# At 4096 that visit's retry truncated in three independent runs, which a clinician sees as a note that stops mid-section.
 SUMMARY_AGENT_MAX_TOKENS = int(os.environ.get("SUMMARY_AGENT_MAX_TOKENS", "8192"))
 
 _SHARED_SUMMARY_RULES = """
@@ -146,13 +147,13 @@ you may summarise what was discussed without converting it into a diagnosis or p
 def create_summary_agent():
     """Create the isolated agent used after the user requests a note.
 
-    Use once per visit so prior consultation text never reaches the next note.
+    Build one per visit, never reuse: a shared agent would carry the previous consultation's transcript into this clinician's note.
 
     Returns:
         Agent configured for off-GPU summary generation and isolated history.
 
     Raises:
-        RuntimeError: When the configured Bedrock or Ollama model cannot be created.
+        RuntimeError: When the configured Bedrock or Ollama model cannot be created, which the browser shows as a failed note.
     """
     try:
         from strands import Agent
@@ -168,8 +169,11 @@ def create_summary_agent():
             agent_id="ambient-scribe-summary",
             trace_attributes={"scribe.specialty": "medical"},
         )
-    # Example: the clinician clicks Summarise while the configured provider is unavailable.
     except Exception as provider_error:
+        # Example: the clinician clicks Summarise in an image where `strands.models.bedrock` cannot import boto3,
+        # so building the model fails before any note is drafted.
+        #
+        # Raising here rather than returning null gives the summary route one specific failure to show, instead of an empty note.
         raise RuntimeError(
             f"Failed to create summary agent: {provider_error}"
         ) from provider_error
@@ -178,12 +182,15 @@ def create_summary_agent():
 def _create_summary_model():
     """Select the off-GPU model that drafts the clinician-facing note.
 
-    Use while handling a summary request; NeMo remains reserved for transcription.
+    Called while handling a summary request, so NeMo stays reserved for the live transcription another clinician may be running.
 
     Returns:
         Bedrock or CPU-only Ollama model; never a GPU-backed local model.
+
+    Raises:
+        ValueError: When `SUMMARY_AGENT_MODEL_PROVIDER` names neither supported provider, so no note can be drafted at all.
     """
-    # Bedrock is the default path for clinician-ready final summaries.
+    # Bedrock is the default path for clinician-ready final summaries, and the only one exercised against real consultations.
     if SUMMARY_AGENT_MODEL_PROVIDER == "bedrock":
         from strands.models.bedrock import BedrockModel
 
@@ -193,7 +200,7 @@ def _create_summary_model():
             streaming=True,
             max_tokens=SUMMARY_AGENT_MAX_TOKENS,
         )
-    # Ollama remains CPU-only for local development because NeMo owns the GPU.
+    # Ollama stays CPU-only for local development, because NeMo owns the single GPU and a note must never stall transcription.
     elif SUMMARY_AGENT_MODEL_PROVIDER == "ollama":
         from strands.models.ollama import OllamaModel
 
@@ -202,6 +209,8 @@ def _create_summary_model():
             model_id=SUMMARY_AGENT_OLLAMA_MODEL,
             max_tokens=SUMMARY_AGENT_MAX_TOKENS,
         )
+    # Example: a typo in the deployed environment leaves the provider as "bedrok", so the clinician's first Summarise
+    # click fails outright rather than quietly drafting their note with a model nobody chose for clinical wording.
     else:
         raise ValueError(
             f"Unknown SUMMARY_AGENT_MODEL_PROVIDER: {SUMMARY_AGENT_MODEL_PROVIDER}. "

@@ -1,12 +1,15 @@
 # Local Development Guide
 
-Two ways to run Ambient Scribe locally: **Docker Compose** (everything containerised, requires NVIDIA GPU) or **bare-metal** (PHP running directly on your machine; the NeMo agent and Mercure still run in Docker).
+Both ways to run Ambient Scribe locally use the same Docker Compose services and require an NVIDIA
+GPU. The difference is how much the tooling does for you: raw `docker compose`, or the guided
+`start-dev.sh` entry point.
+
+The `app` container bind-mounts the repository at `/app`, so PHP, Twig, and JS edits take effect
+without rebuilding the image either way.
 
 ## Quick Start
 
-### Option A: Docker Compose (recommended for first run)
-
-Everything runs in containers. No local PHP/Python install needed.
+### Option A: Raw Docker Compose (fine for a first look)
 
 ```bash
 cp .env.example .env
@@ -16,31 +19,33 @@ docker compose up --build
 
 First run builds the NeMo image and warms large model layers - this can take a while.
 
-### Option B: Bare-metal (recommended for development)
+### Option B: start-dev.sh (recommended for development)
 
-Runs PHP directly on the host; `start-dev.sh` still starts the NeMo agent and
-Mercure containers. Faster PHP iteration, no app-container rebuilds.
+`start-dev.sh` brings up the same containers with `docker compose up -d`, then does the things raw
+Compose does not: selects the streaming transcription engine, activates the `ollama` profile when
+that provider is chosen, restores the pinned post-visit correction checkpoint, and runs health
+checks before printing `Ready!`.
 
 ```bash
-./scripts/setup-initial.sh    # Install all dependencies
-./scripts/start-dev.sh        # Start PHP + agent + Mercure (+ Ollama when selected)
-# Open http://localhost:48082
+./scripts/setup-initial.sh    # Install dependencies for local tooling
+./scripts/start-dev.sh        # Start the stack with health checks
+# Open http://localhost:48082/scribe
 ```
 
 ## Prerequisites
 
-### For Docker Compose
+### To run the app
 
 - Docker and Docker Compose
-- ~12GB free disk space (LLM models)
+- NVIDIA GPU with the Container Toolkit
+- ~12GB free disk space (speech models)
 
-### For bare-metal
+### To run the local tooling
 
-- PHP 8.3+
-- Composer
-- Python 3.12+
-- pip3
-- Ollama installed locally (https://ollama.com) - only when `ROLE_AGENT_MODEL_PROVIDER=ollama`
+Composer, PHPUnit, PHPStan, and pytest run on the host, so `setup-initial.sh` also needs:
+
+- PHP 8.3+ and Composer
+- Python 3.12+ and pip3
 
 `blundergoat/strands-php-client` installs through Composer like any other
 dependency (`composer.lock` pins a `dev-dev` commit); no sibling checkout is
@@ -63,7 +68,7 @@ graph LR
 Mercure is required: live transcript, role, and summary events reach the browser
 only through it, so both run modes start the Mercure container.
 
-### Docker Compose mode
+### Services
 
 3 containers with automatic dependency ordering (+ 1 optional):
 
@@ -117,22 +122,25 @@ For short interactive debugging without JSON parsing, opt back into plain lines:
 LOG_FORMAT=console docker compose up -d --force-recreate nemo-agent
 ```
 
-### Bare-metal mode
+### What start-dev.sh adds
 
-4 local services managed by `start-dev.sh`:
+`start-dev.sh` runs `docker compose up -d` - the same three services, plus `ollama` when
+`ROLE_AGENT_MODEL_PROVIDER=ollama` sets `COMPOSE_PROFILES=ollama` - and wraps it with:
 
-| Service | Port | What runs |
-|---------|------|-----------|
-| **Ollama** | 11434 | `ollama serve` (only when `ROLE_AGENT_MODEL_PROVIDER=ollama`; the compose service sits behind the `ollama` profile and Bedrock setups skip it) |
-| **NeMo agent** | 48101 | Docker Compose service exposing FastAPI on the first free port in 48101-48110 |
-| **Mercure** | 48137 | Docker Compose service exposing the SSE hub on host port 48137 |
-| **PHP app** | 48082 | PHP built-in server (demo replay streams WAV PCM to FastAPI directly, so no PHP upload path is involved) |
+| Step | What it does |
+|------|--------------|
+| Engine selection | Exports `NEMO_SESSION_ENGINE=streaming` (override with `windowed` for A/B comparisons) |
+| Provider checks | Validates AWS credentials for Bedrock, or pulls the model into the compose `ollama` service |
+| Correction checkpoint | Restores the pinned post-visit ASR checkpoint before printing `Ready!`, failing closed if it cannot load |
+| Health checks | Probes each service before reporting the stack ready |
+| Port selection | Exposes the agent on the first free port in 48101-48110 |
 
-Services talk via `localhost`, and `start-dev.sh` keeps the streaming path available by starting the agent and Mercure containers alongside the local PHP server.
+It then streams container logs. `Ctrl+C` runs the script's cleanup trap, which stops the
+containers but leaves them in place for a fast restart; `docker compose down` removes them.
 
 ## Environment Configuration
 
-All config lives in `.env`. Docker Compose and bare-metal both read from it.
+All config lives in `.env`. Both run modes read from it.
 
 ```bash
 cp .env.example .env
@@ -167,17 +175,11 @@ ROLE_AGENT_MODEL_ID=au.anthropic.claude-haiku-4-5-20251001-v1:0
 
 Ollama provides local LLM inference for medical role attribution. The GPU is reserved for NeMo transcription, so Ollama always runs on CPU.
 
-#### Option A: Install Ollama natively (recommended for bare-metal dev)
+The agent container reaches Ollama only in-network at `http://ollama:11434`, so the containerised
+stack always uses the Compose service. A host-installed Ollama is reachable only when you run
+FastAPI outside Docker.
 
-Install from https://ollama.com, then pull the recommended model:
-
-```bash
-ollama pull qwen3.5:9b
-```
-
-`start-dev.sh` auto-starts Ollama if the binary is installed but the server is not running.
-
-#### Option B: Use the Docker Compose profile
+#### Option A: Use the Docker Compose profile (what start-dev.sh does)
 
 An optional Ollama service is included in `docker-compose.yml` via the `ollama` profile:
 
@@ -192,6 +194,19 @@ On first run, pull the model into the persistent `ollama_data` volume:
 ```bash
 docker compose exec ollama ollama pull qwen3.5:9b
 ```
+
+`start-dev.sh` does this pull for you when the model is missing.
+
+#### Option B: Install Ollama natively
+
+Only useful when running FastAPI outside Docker. Install from https://ollama.com, then:
+
+```bash
+ollama pull qwen3.5:9b
+```
+
+`scripts/install-ollama.sh` is the host-side setup path: it defaults to `qwen3.5:9b`, never edits
+`.env`, and starts new servers with GPU visibility disabled so NeMo keeps the only GPU.
 
 ### Post-visit correction model
 
@@ -238,7 +253,7 @@ Smaller models are faster but produce lower quality role attribution. The 9b def
 docker compose exec ollama ollama pull mistral
 ```
 
-**For bare-metal**: the start script pulls automatically:
+**Via start-dev.sh**: the start script pulls the configured model automatically:
 
 ```bash
 # Either set in .env and restart, or override inline:
@@ -255,8 +270,8 @@ ollama pull qwen3.5:9b
 
 These are set automatically by `start-dev.sh` and `docker-compose.yml`. You typically don't need to change them:
 
-| Variable | Docker value | Bare-metal value | Purpose |
-|----------|-------------|-----------------|---------|
+| Variable | In-container value | Value when a service runs on the host | Purpose |
+|----------|--------------------|----------------------------------------|---------|
 | `AGENT_ENDPOINT` | `http://nemo-agent:8000` | `http://localhost:48101` | PHP → Python agent URL |
 | `OLLAMA_HOST` | `http://ollama:11434` (pinned in Compose) | `http://localhost:11434` | Python agent → Ollama URL |
 | `MERCURE_URL` | `http://mercure:3701/...` | `http://localhost:48137/...` | Internal Mercure publish URL |
@@ -279,7 +294,7 @@ All scripts are in the `scripts/` directory.
 
 | Script | Purpose |
 |--------|---------|
-| `start-dev.sh` | Starts Docker Compose stack (nemo-agent + app + Mercure). Press Ctrl+C to stop. |
+| `start-dev.sh` | Starts the Compose stack (nemo-agent + app + Mercure, plus ollama when selected) with engine selection, checkpoint restore, and health checks. Press Ctrl+C to stop the containers. |
 | `health-checks.sh` | Read-only diagnostics: Docker, GPU, containers, services, config, connectivity |
 
 ### Dependencies
@@ -302,8 +317,7 @@ All scripts are in the `scripts/` directory.
 All transcript delivery is streaming: the browser sends PCM audio over the
 FastAPI WebSocket, and raw segments, role updates, and summaries come back as
 Mercure SSE events on `scribe/session/{id}/{raw|roles|summary}`. There is no
-synchronous fallback mode - both Docker Compose and bare-metal runs start the
-Mercure container. Summary and correction requests are same-origin Symfony
+synchronous fallback mode - both run modes start the Mercure container. Summary and correction requests are same-origin Symfony
 POSTs (`/session/{id}/correction`, then `/session/{id}/summary`) that Symfony
 proxies to FastAPI; the summary also arrives as a Mercure event.
 
@@ -355,7 +369,7 @@ ollama list
 ollama pull qwen3.5:9b
 ```
 
-### Python agent won't start (bare-metal)
+### Python tooling won't run on the host
 
 Check the venv exists and has dependencies:
 

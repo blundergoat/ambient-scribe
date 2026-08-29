@@ -1,6 +1,6 @@
 # How Ambient Scribe Works
 
-Checked against this checkout on 2026-07-20.
+Checked against this checkout on 2026-08-29.
 
 Ambient Scribe is a Symfony + FastAPI + NeMo + Strands + Mercure medical transcription app. A clinician opens a Symfony-rendered page, the browser streams 16 kHz PCM audio directly to FastAPI over WebSocket, FastAPI runs NeMo on the single GPU, and Mercure streams transcript events back to the browser. Role labels, summaries, clinical context retrieval, and medical text cleanup are deliberately kept off the NeMo GPU.
 

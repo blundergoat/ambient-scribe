@@ -627,7 +627,7 @@ final class ScribeControllerTest extends TestCase
     {
         $roleInferenceService = $this->createMock(RoleInferenceService::class);
         $roleInferenceService->expects(self::once())
-            ->method('getCurrentMapping')
+            ->method('getRoleSnapshot')
             ->with('session-xyz')
             ->willReturn(['mapping' => ['spk_0' => 'DOCTOR'], 'confidence' => 0.85]);
 
@@ -652,7 +652,7 @@ final class ScribeControllerTest extends TestCase
     {
         $roleInferenceService = $this->createMock(RoleInferenceService::class);
         $roleInferenceService->expects(self::once())
-            ->method('getCurrentMapping')
+            ->method('getRoleSnapshot')
             ->with('session-empty')
             ->willReturn(['mapping' => [], 'confidence' => 0.0]);
 

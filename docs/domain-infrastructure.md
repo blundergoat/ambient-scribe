@@ -34,7 +34,7 @@ These variables must be consistent across services. Mismatch causes silent failu
 | Variable | nemo-agent | app | mercure | Notes |
 |---|---|---|---|---|
 | `MERCURE_JWT_SECRET` | - | Yes (signing) | Yes (verification) | Must match. ≥32 chars. |
-| `MERCURE_PUBLISHER_JWT` | Yes (pre-signed) | - | - | JWT signed with MERCURE_JWT_SECRET |
+| `MERCURE_PUBLISHER_JWT` | Yes, as `MERCURE_JWT` | - | - | Set in `.env`; Compose passes it into the agent container under the name `MERCURE_JWT`. Pre-signed with `MERCURE_JWT_SECRET`. |
 | `MERCURE_HUB_URL` | `http://mercure:3701/...` | - | - | Internal Docker network |
 | `MERCURE_URL` | - | `http://mercure:3701/...` | - | PHP server-side publish URL |
 | `MERCURE_PUBLIC_URL` | - | `http://localhost:48137/...` | - | Browser-side SSE URL |
@@ -49,8 +49,8 @@ See `.goat-flow/learning-loop/footguns/runtime.md` for JWT / Mercure publish fai
 infra/terraform/
 ├── bootstrap/              # One-time: S3 state bucket + DynamoDB lock
 ├── environments/prod/      # Root module (wires all modules together)
-└── modules/                # 15 independent modules
-    ├── network/            # VPC, subnets (self-contained or BYO from SSM)
+└── modules/                # 13 independent modules
+    ├── network/            # VPC, subnets (created here, or bring your own)
     ├── ecs/                # ECS cluster + task definition
     ├── ecs-service/        # Fargate service with circuit breaker
     ├── ecr/                # Container registries
@@ -65,7 +65,7 @@ infra/terraform/
     └── observability/      # CloudWatch log groups
 ```
 
-**Self-contained design:** The network module can create its own VPC or consume an existing one from SSM Parameter Store (`blundergoat-infra`). No hard dependency on external Terraform state.
+**Self-contained design:** The `network` module creates its own VPC unless `vpc_id` and the subnet ID lists are supplied in `terraform.tfvars`. No hard dependency on external Terraform state.
 
 ## Deployment
 

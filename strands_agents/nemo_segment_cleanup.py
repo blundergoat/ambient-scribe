@@ -1,9 +1,10 @@
 """
 Transcript segment cleanup before rows reach the browser.
 
-`TranscriptionSession` owns audio windows, while this module owns small text
-cleanup rules for already-decoded rows. The functions keep browser payloads
-unchanged: they only adjust server-side `Segment` objects before publishing.
+`TranscriptionSession` owns audio windows; this module owns the small text rules that make already-decoded rows readable.
+
+It is purely cosmetic from the transcript's point of view: it adjusts server-side `Segment` objects before publishing, so
+the clinician reads whole turns instead of one-word fragments, and the browser payload shape never changes.
 """
 
 from __future__ import annotations
@@ -20,9 +21,9 @@ _REPEATED_SPACE_PATTERN = re.compile(r"[ \t]{2,}")
 
 # Rows below this word count read like fragments in the transcript UI.
 _FRAGMENT_WORD_LIMIT = 3
-# Very short timed rows also read as fragments even when ASR attached enough words.
+# Very short timed rows also read as fragments, even when ASR attached enough words to clear the count above.
 _FRAGMENT_DURATION_SECONDS = 1.0
-# Same-speaker fragments this close together are one turn from the user's perspective.
+# Same-speaker fragments this close together were one continuous turn from the clinician's perspective.
 _FRAGMENT_MERGE_GAP_SECONDS = 0.4
 
 
@@ -31,6 +32,9 @@ def shift_segment_to_session_time(
     window_start_seconds: float,
 ) -> Segment:
     """Move one NeMo window row onto the full visit timeline.
+
+    NeMo times each row from the start of its own audio window, so this is what lets a row taken twenty minutes into a
+    consultation report where it actually sits in the visit.
 
     Args:
         segment: Window-local row from NeMo; empty text still keeps timing.
@@ -49,25 +53,27 @@ def shift_segment_to_session_time(
 def merge_adjacent_fragments_for_display(segments: list[Segment]) -> list[Segment]:
     """Clean and merge tiny same-speaker rows before the transcript UI.
 
+    Use on each batch of stable rows, so a sentence split across two decode windows arrives as one line the clinician can read.
+
     Args:
         segments: Fresh stable rows for this browser update; empty means no visible text.
 
     Returns:
-        Rows with adjacent same-speaker fragments combined into readable turns.
+        Rows with adjacent same-speaker fragments combined into readable turns; empty in, empty out.
     """
     merged_segments: list[Segment] = []
 
-    # Each stable row is considered in the order the clinician will read it.
+    # Each stable row is considered in the order the clinician will read it, so merges never reorder the conversation.
     for segment in segments:
         segment = _segment_with_readable_text(segment)
 
-        # The first row starts the visible update.
+        # The first row of an update has nothing before it to merge into, so it simply starts the visible batch.
         if not merged_segments:
             merged_segments.append(segment)
             continue
 
         previous_segment = merged_segments[-1]
-        # A same-speaker fragment pair is one readable turn for the user.
+        # A same-speaker fragment pair reads as one turn, so it is folded into the previous row rather than shown twice.
         if _should_merge_visible_fragment(previous_segment, segment):
             merged_segments[-1] = _combine_visible_segments(previous_segment, segment)
             continue
@@ -88,7 +94,7 @@ def _segment_with_readable_text(segment: Segment) -> Segment:
     """
     readable_text = _readable_transcript_text(segment.text)
 
-    # Unchanged text keeps the original row object for the normal clean-transcript path.
+    # Unchanged text keeps the original row object, which is the normal path for an already-clean transcript.
     if readable_text == segment.text:
         return segment
 
@@ -99,16 +105,16 @@ def _readable_transcript_text(text: str) -> str:
     """Add missing sentence spacing for one visible transcript row.
 
     Args:
-        text: ASR text for a browser row; empty/blank means no words should be shown.
+        text: ASR text for a browser row; empty or blank means no words should be shown.
 
     Returns:
-        Plain transcript text; empty means the UI should not show readable content.
+        Plain transcript text; empty means the UI should not show readable content for this row.
     """
-    # Blank ASR output means there is no sentence text for the clinician to read.
+    # Blank ASR output means there is no sentence text for the clinician to read, so no spacing rules apply.
     if text.strip() == "":
         return ""
 
-    # e.g. the doctor said "headache started" and NeMo returned "started.My".
+    # Example: the doctor said "headache started. My other symptom" and NeMo returned it as "started.My".
     readable_text = _SENTENCE_JOIN_PATTERN.sub(" ", text)
     readable_text = _SPACE_BEFORE_PUNCTUATION_PATTERN.sub(r"\1", readable_text)
     readable_text = _REPEATED_SPACE_PATTERN.sub(" ", readable_text)
@@ -120,7 +126,7 @@ def _should_merge_visible_fragment(
     previous_segment: Segment,
     current_segment: Segment,
 ) -> bool:
-    """Return whether two neighboring rows should become one UI turn.
+    """Return whether two neighbouring rows should become one UI turn.
 
     Args:
         previous_segment: Earlier visible row; empty text should stay separate.
@@ -129,20 +135,22 @@ def _should_merge_visible_fragment(
     Returns:
         True when merging improves readability without crossing speakers or turns.
     """
-    # Different speakers must stay separate so role labels remain truthful.
+    # Different speakers must stay separate rows, or the merged line would attribute one person's words to the other.
     if previous_segment.speaker_id != current_segment.speaker_id:
         return False
 
-    # Empty text has no readable fragment to merge into the browser transcript.
+    # Empty text has no readable fragment to merge, and merging would silently drop the empty row's timing.
     if previous_segment.text.strip() == "" or current_segment.text.strip() == "":
         return False
 
     turn_gap_seconds = _segment_gap_seconds(previous_segment, current_segment)
-    # A large pause means the user heard two turns, even from the same speaker.
+    # A long pause means the clinician heard two separate turns, even when the same person spoke both.
     if turn_gap_seconds > _FRAGMENT_MERGE_GAP_SECONDS:
         return False
 
-    return _is_visible_fragment(previous_segment) or _is_visible_fragment(current_segment)
+    return _is_visible_fragment(previous_segment) or _is_visible_fragment(
+        current_segment
+    )
 
 
 def _is_visible_fragment(segment: Segment) -> bool:
@@ -152,7 +160,7 @@ def _is_visible_fragment(segment: Segment) -> bool:
         segment: Transcript row about to be shown; empty text is a fragment.
 
     Returns:
-        True when the row reads as a short fragment in the browser.
+        True when the row reads as a short fragment in the browser rather than a turn.
     """
     word_count = len(segment.text.split())
     duration_seconds = max(0.0, segment.end - segment.start)
@@ -184,7 +192,7 @@ def _combine_visible_segments(
         end=max(previous_segment.end, current_segment.end),
         text=merged_text,
         is_interim=previous_segment.is_interim or current_segment.is_interim,
-        # The combined turn is only as clearly heard as its weakest part.
+        # The combined turn is only as clearly heard as its weakest part, so the lower confidence wins.
         confidence=transcript_row_confidence(
             [previous_segment.confidence, current_segment.confidence]
         ),
@@ -196,17 +204,18 @@ def _segment_gap_seconds(first_segment: Segment, second_segment: Segment) -> flo
 
     Args:
         first_segment: One transcript row in the browser timeline.
-        second_segment: Neighboring transcript row in the browser timeline.
+        second_segment: Neighbouring transcript row in the browser timeline.
 
     Returns:
-        Seconds between rows; zero means they overlap or touch in the visible timeline.
+        Seconds between rows; zero means they overlap or touch in the visible timeline, so no pause was heard.
     """
-    # First row ending before the second creates a forward pause for the user.
+    # The first row ending before the second is the ordinary case: the gap is a forward pause the clinician heard.
     if first_segment.end < second_segment.start:
         return second_segment.start - first_segment.end
 
-    # Second row ending before the first creates the same pause in reverse.
+    # The reversed order is measured the same way, so the caller gets a real pause length whichever row came first.
     if second_segment.end < first_segment.start:
         return first_segment.start - second_segment.end
 
+    # Overlapping or touching rows leave no audible pause, so they stay eligible to merge into one turn.
     return 0.0

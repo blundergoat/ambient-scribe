@@ -1,10 +1,10 @@
 """
 Logging setup for the Python agent service.
 
-This file gives local runs and Docker logs the same JSON-line shape that the
-Symfony side emits. Use `LOG_FORMAT=json` when you want `analyze-logs.py` to
-join FastAPI, Mercure, role, and summary events for one browser session.
-Console output remains the default so existing tests and local debugging stay readable.
+Gives local runs and Docker logs the same JSON-line shape the Symfony side emits, so one browser session can be followed end to end.
+
+Set `LOG_FORMAT=json` when `analyze-logs.py` needs to join FastAPI, Mercure, role, and summary events for a single recording.
+Console output stays the default, so existing tests and local debugging remain readable without any configuration.
 """
 
 from __future__ import annotations
@@ -50,13 +50,16 @@ class JsonLoggingFormatter(logging.Formatter):
     """
     Formats Python log records as canonical Ambient Scribe JSON lines.
 
-    It hoists `session_id` and `correlation_id` to top-level fields so the log
-    analysis script can join browser, PHP, FastAPI, role, and Mercure events.
-    Use this formatter only for structured process logs; do not pass transcript text.
+    `session_id` and `correlation_id` are hoisted to top-level fields so the log analysis script can join browser, PHP,
+    FastAPI, role, and Mercure events for one clinician's recording instead of reading five unrelated streams.
+
+    Use this formatter only for structured process logs. Transcript text must never be passed through it.
     """
 
     def format(self, record: logging.LogRecord) -> str:
         """Return one JSON object for a browser-visible process event.
+
+        Called by Python logging for every record once `LOG_FORMAT=json` is set.
 
         Args:
             record: Python log record; missing IDs mean the event is process-scoped, not session-scoped.
@@ -74,17 +77,17 @@ class JsonLoggingFormatter(logging.Formatter):
         }
 
         extra_fields = self._extra_fields(record)
-        # Correlation IDs may be absent during startup before a browser action exists.
+        # Correlation IDs are absent during startup, before any browser action exists to correlate against.
         if "correlation_id" in extra_fields:
             event["correlation_id"] = extra_fields.pop("correlation_id")
-        # Session IDs exist only after the user creates or resumes a recording.
+        # Session IDs appear only once the clinician has started or resumed a recording.
         if "session_id" in extra_fields:
             event["session_id"] = extra_fields.pop("session_id")
 
         event.update(extra_fields)
 
         if record.exc_info:
-            # JSON is the dev default, so it must carry the same traceback a plain log would show.
+            # JSON is the developer default, so it must carry the same traceback a plain console log would have shown.
             if "error_type" not in event:
                 event["error_type"] = record.exc_info[0].__name__
             event["traceback"] = "".join(traceback.format_exception(*record.exc_info))
@@ -94,6 +97,8 @@ class JsonLoggingFormatter(logging.Formatter):
     def _extra_fields(self, record: logging.LogRecord) -> dict[str, Any]:
         """Collect non-standard fields supplied through `logger.*(..., extra=...)`.
 
+        These are the fields a caller deliberately attached to explain one step of a clinician's session.
+
         Args:
             record: Python log record for the current service event.
 
@@ -101,9 +106,9 @@ class JsonLoggingFormatter(logging.Formatter):
             Extra attributes safe for JSON serialization; empty means no process context was supplied.
         """
         fields: dict[str, Any] = {}
-        # Each non-standard attribute is an explicit field the caller wanted in the process report.
+        # Each non-standard attribute is a field the caller explicitly wanted in the process report.
         for key, value in record.__dict__.items():
-            # Standard logging internals would make the JSON line noisy and hard to compare.
+            # Standard logging internals would make the JSON line noisy and hard to diff between runs.
             if key in _STANDARD_LOG_FIELDS or key.startswith("_"):
                 continue
             fields[key] = _sanitize_log_value(value)
@@ -114,11 +119,11 @@ def configure_logging() -> None:
     """Install the process logger once for FastAPI, workers, and scripts.
 
     Use `LOG_FORMAT=json` for machine-readable local logs; otherwise console output stays concise.
-    The root handler is set to `LOG_LEVEL` so INFO process events are captured in Docker logs.
+    The root handler follows `LOG_LEVEL`, so INFO process events are captured in Docker logs by default.
     """
     global _CONFIGURED
 
-    # Import-time setup must be idempotent because tests can import the API module more than once.
+    # Import-time setup must be idempotent, because tests can import the API module more than once in one process.
     if _CONFIGURED:
         return
 
@@ -156,19 +161,21 @@ def configure_logging() -> None:
 def _sanitize_log_value(value: Any) -> Any:
     """Convert logging extras into bounded JSON-compatible values.
 
+    Keeps one oversized or unserializable extra from turning a routine session log line into a wall of text.
+
     Args:
         value: Extra field value supplied by app code; `None` means the field is absent to the user.
 
     Returns:
         JSON-ready value; unsupported objects become class names instead of raw representations.
     """
-    # Plain scalar values are already safe to render into process-quality reports.
+    # Plain scalars are already safe to render into a process-quality report.
     if value is None or isinstance(value, str | int | float | bool):
         return value
     # Lists carry low-cardinality values such as roles or status buckets.
     if isinstance(value, list | tuple | set):
         return [_sanitize_log_value(item) for item in value]
-    # Dictionaries carry structured context; keys are stringified for stable JSON output.
+    # Dictionaries carry structured context; keys are stringified so the JSON output stays stable across runs.
     if isinstance(value, dict):
         return {str(key): _sanitize_log_value(item) for key, item in value.items()}
     # Exceptions are summarized so stack traces and raw messages do not dominate every line.
@@ -179,6 +186,8 @@ def _sanitize_log_value(value: Any) -> Any:
 
 def _json_default(value: Any) -> str:
     """Serialize unexpected values as type names instead of failing the log write.
+
+    A dropped log line would hide the very event an operator is trying to trace, so an unserializable value degrades to its type.
 
     Args:
         value: Value the JSON encoder cannot serialize.

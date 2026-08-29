@@ -38,11 +38,15 @@ When adding a new service: rely on autowiring first. Only add explicit wiring in
 
 ## Twig Integration
 
-Single template: `templates/scribe/index.html.twig`. Contains inline JS for:
-- `PcmStreamer` audio capture (raw PCM)
-- WebSocket streaming to FastAPI
-- Mercure SSE subscription via `StreamOrchestrator`
-- Tailwind CSS styling
+Single template: `templates/scribe/index.html.twig`. Its own inline `<script>` block does one job:
+it publishes the `CONFIG` object (session ID, WebSocket URL, Mercure URL, topics) that the browser
+modules read. Everything else is loaded as separate files:
+
+- `PcmStreamer`, `WavPcmStreamer`, and `StreamOrchestrator` live in `public/js/scribe-streaming.js`
+- recording lifecycle and WebSocket setup live in `public/js/scribe-recording.js`
+- Tailwind is loaded from `public/js/tailwind.js`
+
+See `docs/coding-standards/frontend.md` for the full module list.
 
 Template variables are set in `ScribeController::index()`. When adding new config, pass it as a Twig variable - don't hardcode URLs in JS.
 

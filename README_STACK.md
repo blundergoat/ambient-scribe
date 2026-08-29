@@ -6,7 +6,7 @@ developer or reviewer needs to understand before running or changing the app.
 The focus is the user-visible transcription flow: record a consultation, see
 speaker-labelled transcript cards, and review a SOAP summary.
 
-Last checked: 2026-07-20 against the local repo.
+Last checked: 2026-08-29 against the local repo.
 
 ## Short Version
 
@@ -250,7 +250,7 @@ correction pass writes corrected rows beside (never over) the live rows, and
 | --- | --- | --- |
 | PHP | `>=8.3 <9.0` | `composer.json` |
 | Symfony | `^6.4` | `composer.json` |
-| Strands PHP client | `dev-dev` (locked at `a4e30ff`) | `composer.json` / `composer.lock` |
+| Strands PHP client | `dev-dev` (locked at `4f3b63d`) | `composer.json` / `composer.lock` |
 | NeMo base image | `nvcr.io/nvidia/nemo:26.02` | `docker/nemo/Dockerfile` |
 | NeMo toolkit | `nemo_toolkit[asr]==3.0.0` | `docker/nemo/Dockerfile` |
 | Strands Agents Python | `strands-agents[ollama]>=1.45.0` | `strands_agents/requirements.txt` |

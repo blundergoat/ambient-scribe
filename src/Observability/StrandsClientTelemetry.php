@@ -14,24 +14,28 @@ use StrandsPhpClient\Streaming\StreamSseSummary;
 use Symfony\Component\Uid\Uuid;
 
 /**
- * Adds correlation and canonical JSON-call logs to Strands client requests.
+ * Records what happened on every call PHP makes to Python, and stamps each one so the two sides can be read together.
  *
- * The Strands Symfony bundle autoconfigures it as request middleware and a response observer.
- * Use it when the page restores history or role labels and support needs to join PHP and
- * Python logs without seeing clinical content.
+ * The Strands bundle attaches this automatically, so it runs whenever the page restores history or refreshes role labels.
+ * Support uses the result to answer "the clinician says history did not load" without ever opening the transcript itself.
+ *
+ * Each call produces exactly one `strands.client.call` line, built in two stages:
+ *
+ * - before the request, an `X-Correlation-ID` header is added so the PHP and FastAPI logs share a join key
+ * - after the response, timing, status, and counts are logged, while text, bodies, and clinical content are left out entirely
  */
 final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserver
 {
-    /** @var array<string, string> Correlation IDs keyed by URL until the SDK calls afterResponse. */
+    /** @var array<string, string> Correlation IDs held per URL between sending a request and logging its response. */
     private array $correlationIdsByUrl = [];
 
-    /** @var array<string, array<string, mixed>> Safe parsed-result summaries keyed by URL. */
+    /** @var array<string, array<string, mixed>> Counts describing each parsed response, held until the single call line is written. */
     private array $responseSummariesByUrl = [];
 
     /**
-     * Wires Strands client telemetry to the JSON process logger.
+     * Wires the telemetry hooks to the JSON logger every PHP process writes through.
      *
-     * @param LoggerInterface $logger - Canonical logger; null is not expected from Symfony DI.
+     * @param LoggerInterface $logger - Receives the finished call line; in practice this is always the app's JSON line logger.
      */
     public function __construct(
         private readonly LoggerInterface $logger,
@@ -39,18 +43,19 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Adds `X-Correlation-ID` before the Python request is sent.
+     * Stamps an outgoing Python request with the correlation ID that will later join it to the FastAPI log line.
      *
-     * @param string                $url     - FastAPI URL; empty means support cannot join the call to a browser session.
-     * @param array<string, string> $headers - Request headers; empty means no correlation exists yet.
-     * @param string                $body    - JSON body; empty means the user action sent no extra payload.
+     * This is the first half of every logged call, and it runs before Python has done any work at all.
      *
-     * @return array{headers: array<string, string>, body: string} Headers/body for the SDK request.
+     * @param string                $url     - FastAPI URL about to be called; an empty URL means the finished line cannot name a visit.
+     * @param array<string, string> $headers - Outgoing headers; no correlation header yet means this call starts a fresh join key.
+     * @param string                $body    - Outgoing JSON body; empty means the clinician's action carried no payload, as with a history read.
+     *
+     * @return array{headers: array<string, string>, body: string} - The same request with the correlation header guaranteed to be present.
      */
     public function beforeRequest(string $url, array $headers, string $body): array
     {
-        // e.g. the clinician reopened a finished session and the page fetched `/history`.
-        // No incoming correlation means this proxy call starts a new support join key.
+        // Say the clinician reopened a finished visit and the page asked for `/history`: nothing upstream set a header, so one is minted here.
         $correlationId                   = $headers['X-Correlation-ID'] ?? Uuid::v4()->toRfc4122();
         $headers['X-Correlation-ID']     = $correlationId;
         $this->correlationIdsByUrl[$url] = $correlationId;
@@ -59,14 +64,16 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Logs the completed Strands HTTP operation in the canonical schema.
+     * Writes the one line that says how a call to Python ended, including whatever the page got back.
      *
-     * @param string          $url        - FastAPI URL; empty means no session ID can be extracted.
-     * @param int             $statusCode - HTTP status; zero means the SDK had no response from Python.
-     * @param float           $durationMs - SDK duration; zero means the call ended before timing was useful.
-     * @param \Throwable|null $error      - SDK failure; null means Python returned a usable response.
+     * This is the second half of every logged call, and it runs whether Python answered, refused, or never replied.
      *
-     * @return void - No payload; the JSON logger records the browser-visible proxy outcome.
+     * @param string          $url        - FastAPI URL that was called; a URL outside `/session/{id}/` means the line carries no visit ID.
+     * @param int             $statusCode - HTTP status Python returned; zero means no response arrived at all, such as a container that is down.
+     * @param float           $durationMs - How long the call took; zero means it ended before any useful timing was collected.
+     * @param \Throwable|null $error      - Failure raised by the SDK; null means Python answered and the page received something usable.
+     *
+     * @return void - Nothing is returned; the visible outcome for the clinician was already decided by the caller.
      */
     public function afterResponse(
         string      $url,
@@ -85,13 +92,13 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
             'duration_ms'    => round($durationMs, 2),
         ];
 
-        // Successful client calls add response shape, so support sees whether the page got rows or roles.
+        // Python parsed cleanly, so the counts stashed by the matching hook are folded in and support can see whether rows or roles came back.
         if (isset($this->responseSummariesByUrl[$url])) {
             $context = array_merge($context, $this->responseSummariesByUrl[$url]);
             unset($this->responseSummariesByUrl[$url]);
         }
 
-        // Failed proxy calls need the error class, not the request body, for support triage.
+        // The call failed, so record which kind of failure it was; the request body stays out because it may hold what was said in the room.
         if ($error !== null) {
             $context['error_type'] = $error::class;
         }
@@ -100,13 +107,15 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Stores safe invoke result counts until the final client log line is emitted.
+     * Notes the shape of a completed agent invocation, ready for the call line that follows.
      *
-     * @param string        $url        - Agent URL; empty means no session or route can be joined.
-     * @param AgentResponse $response   - Parsed agent answer; empty text is not logged either way.
-     * @param float         $durationMs - SDK duration; zero is allowed because afterResponse logs the canonical value.
+     * Required by the observer interface. Every page action here reaches Python by plain JSON post, so nothing currently triggers this hook.
      *
-     * @return void - No payload; the next client log line receives these safe fields.
+     * @param string        $url        - Agent URL that was invoked; used only to match these counts to the pending call line.
+     * @param AgentResponse $response   - The agent's parsed answer; its text is deliberately ignored and only counts are taken.
+     * @param float         $durationMs - Time spent parsing the answer; zero is fine because `afterResponse` logs the authoritative duration.
+     *
+     * @return void - Nothing is returned; these counts are held in memory until the call line is written.
      */
     public function afterInvoke(string $url, AgentResponse $response, float $durationMs): void
     {
@@ -120,13 +129,15 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Stores safe typed-stream result counts until the final client log line is emitted.
+     * Notes the shape of a completed typed stream, ready for the call line that follows.
      *
-     * @param string       $url        - Agent URL; empty means no session or route can be joined.
-     * @param StreamResult $result     - Parsed stream result; empty text still logs only counts.
-     * @param float        $durationMs - SDK duration; zero is allowed because afterResponse logs the canonical value.
+     * Required by the observer interface. Every page action here reaches Python by plain JSON post, so nothing currently triggers this hook.
      *
-     * @return void - No payload; the next client log line receives these safe fields.
+     * @param string       $url        - Agent URL that was streamed; used only to match these counts to the pending call line.
+     * @param StreamResult $result     - The parsed stream; its text is ignored, and an empty stream still records its event counts.
+     * @param float        $durationMs - Time spent parsing the stream; zero is fine because `afterResponse` logs the authoritative duration.
+     *
+     * @return void - Nothing is returned; these counts are held in memory until the call line is written.
      */
     public function afterStream(string $url, StreamResult $result, float $durationMs): void
     {
@@ -142,34 +153,39 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Stores safe custom-endpoint response counts until the final client log line is emitted.
+     * Notes the shape of a plain JSON response, ready for the call line that follows.
      *
-     * @param string               $url        - FastAPI URL; empty means no session ID can be extracted.
-     * @param array<string, mixed> $response   - Parsed JSON response; empty means Python returned no fields.
-     * @param float                $durationMs - SDK duration; zero is allowed because afterResponse logs the canonical value.
+     * This is the hook behind the everyday page actions: restoring history and reading the current speaker roles.
      *
-     * @return void - No payload; the next client log line receives safe response-shape fields.
+     * @param string               $url        - FastAPI URL that answered; used only to match these counts to the pending call line.
+     * @param array<string, mixed> $response   - Python's parsed JSON; an empty array means Python answered with no fields for the page to show.
+     * @param float                $durationMs - Time spent parsing; zero is fine because `afterResponse` logs the authoritative duration.
+     *
+     * @return void - Nothing is returned; these counts are held in memory until the call line is written.
      */
     public function afterPostJson(string $url, array $response, float $durationMs): void
     {
-        $responseSummary                    = $this->summarizePostJsonResponse($response);
+        $responseSummary                         = $this->summarizePostJsonResponse($response);
         $responseSummary['response_duration_ms'] = $this->roundedResponseDurationMs($durationMs);
-        $this->responseSummariesByUrl[$url] = $responseSummary;
+        $this->responseSummariesByUrl[$url]      = $responseSummary;
     }
 
     /**
-     * Stores safe raw-SSE stream counts until the final client log line is emitted.
+     * Notes the shape of a raw server-sent event stream, ready for the call line that follows.
      *
-     * @param string           $url        - Agent URL; empty means no session or route can be joined.
-     * @param StreamSseSummary $summary    - Sanitized stream summary; zero events means no visible stream update.
-     * @param float            $durationMs - SDK duration; zero is allowed because afterResponse logs the canonical value.
+     * Required by the observer interface. Every page action here reaches Python by plain JSON post, so nothing currently triggers this hook.
      *
-     * @return void - No payload; the next client log line receives these safe fields.
+     * @param string           $url        - Agent URL that streamed; used only to match these counts to the pending call line.
+     * @param StreamSseSummary $summary    - Counts already stripped of text by the SDK; zero events means nothing ever reached the screen.
+     * @param float            $durationMs - Time spent parsing; zero is fine because `afterResponse` logs the authoritative duration.
+     *
+     * @return void - Nothing is returned; these counts are held in memory until the call line is written.
      */
     public function afterStreamSse(string $url, StreamSseSummary $summary, float $durationMs): void
     {
         $tokensTotal = 0;
-        // Raw SSE streams may finish without usage; support still sees a zero-token stream outcome.
+
+        // The SDK can report a finished stream with no usage block at all, so zero tokens is logged rather than leaving the field missing.
         if ($summary->usage !== null) {
             $tokensTotal = $summary->usage->totalTokens();
         }
@@ -187,17 +203,19 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Extracts the user session ID from `/session/{id}/...` URLs.
+     * Pulls the visit ID out of a `/session/{id}/...` URL so the line can be traced to one clinician's page.
      *
-     * @param string $url - FastAPI URL; empty means no browser session can be joined.
+     * Use this for every logged call; it is what makes a support search by visit ID return anything at all.
      *
-     * @return string|null - Session ID for log joins, or null for non-session client calls.
+     * @param string $url - FastAPI URL that was called; an empty URL simply yields no visit ID.
+     *
+     * @return string|null - The visit ID, or null for calls such as `/agent/model-health` that belong to no single visit.
      */
     private function sessionIdFromUrl(string $url): ?string
     {
         $path = (string)(parse_url($url, PHP_URL_PATH) ?: '');
 
-        // Only session-scoped Python calls can join to a visible browser transcript.
+        // Not a session-scoped route, so there is no visit to attach; the line is still logged, just without an ID to search on.
         if (preg_match('#/session/([^/]+)/#', $path, $matches) !== 1) {
             return null;
         }
@@ -206,11 +224,13 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Builds a body-safe summary for custom JSON endpoints.
+     * Describes a JSON response by counting what it contained, never by copying any of it.
      *
-     * @param array<string, mixed> $response - Parsed response; empty means Python returned no visible fields.
+     * Use this to answer "did the page get its rows back?" from the logs without exposing what was said in the room.
      *
-     * @return array<string, mixed> - Safe counts for the client log; never includes transcript or SOAP text.
+     * @param array<string, mixed> $response - Python's parsed JSON; an empty array means Python answered with no fields at all.
+     *
+     * @return array<string, mixed> - Counts and flags only; transcript rows, summary text, and SOAP notes are never included.
      */
     private function summarizePostJsonResponse(array $response): array
     {
@@ -220,17 +240,17 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
             'has_error'            => isset($response['error']) || isset($response['detail']),
         ];
 
-        // History responses include transcript rows; log only the count the user can restore.
+        // A history response carries the transcript itself, so only the number of rows the clinician could restore is recorded.
         if (isset($response['segments']) && is_array($response['segments'])) {
             $summary['segments'] = count($response['segments']);
         }
 
-        // Role snapshots include a mapping; log only how many visible speakers have roles.
+        // A role response carries the speaker mapping, so only the number of speakers that now have a label is recorded.
         if (isset($response['mapping'])) {
             $summary['roles'] = $this->countRoleMappings($response['mapping']);
         }
 
-        // Confidence is already a bounded UI percentage signal, not transcript content.
+        // Confidence is already just the percentage shown next to the role labels, so it is safe to keep verbatim.
         if (isset($response['confidence']) && is_numeric($response['confidence'])) {
             $summary['confidence'] = round((float)$response['confidence'], 3);
         }
@@ -239,11 +259,11 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Rounds the parsed-response hook duration for support logs.
+     * Rounds a parsing duration to two decimals so log lines stay readable.
      *
-     * @param float $durationMs - SDK hook duration; zero means timing was unavailable.
+     * @param float $durationMs - Duration measured by an SDK hook; zero means no usable timing was captured.
      *
-     * @return float - Milliseconds shown in logs; zero means no usable timing reached PHP.
+     * @return float - The same duration in milliseconds, rounded; zero still means timing was unavailable rather than instant.
      */
     private function roundedResponseDurationMs(float $durationMs): float
     {
@@ -251,20 +271,22 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Counts role mappings from array or object payloads.
+     * Counts how many speakers currently carry a role label, whatever shape the mapping arrived in.
      *
-     * @param mixed $mapping - Role mapping from Python; null/empty means the UI still shows unknown speakers.
+     * Use this instead of reading the mapping directly, since the answer is a number rather than who said what.
      *
-     * @return int - Number of speakers with assigned roles; zero means no visible role labels yet.
+     * @param mixed $mapping - Speaker-to-role mapping from Python; empty or unusable means the page is still showing unlabelled speakers.
+     *
+     * @return int - How many speakers have a role; zero means the clinician sees no DOCTOR or PATIENT labels yet.
      */
     private function countRoleMappings(mixed $mapping): int
     {
-        // Python may return `{}` and Symfony may represent it as an object for the browser.
+        // Defensive: Python's JSON always decodes to an array here, but the app's own role payload uses an object for an empty mapping.
         if ($mapping instanceof \stdClass) {
             return count(get_object_vars($mapping));
         }
 
-        // A normal role snapshot is an associative array keyed by speaker ID.
+        // The ordinary shape straight from Python: one entry per speaker, keyed by speaker ID.
         if (is_array($mapping)) {
             return count($mapping);
         }
@@ -273,21 +295,23 @@ final class StrandsClientTelemetry implements RequestMiddleware, ResponseObserve
     }
 
     /**
-     * Chooses a PSR level that matches the browser impact of the proxy call.
+     * Picks the log level that matches how badly the clinician's action actually went.
      *
-     * @param int             $statusCode - HTTP status from Python; zero means no response reached Symfony.
-     * @param \Throwable|null $error      - SDK error; null means the user received a normal response.
+     * Use this so a scan of error lines shows real outages, not the routine "that visit has no data yet" answers.
      *
-     * @return string - PSR level used by the JSON logger; empty is never returned.
+     * @param int             $statusCode - Status Python returned; zero means nothing came back, such as the agent container being down.
+     * @param \Throwable|null $error      - SDK failure if there was one; null means a response arrived, even an unsuccessful one.
+     *
+     * @return string - PSR level for this call: error for an outage, warning for a rejected request, info for everything that worked.
      */
     private function levelForStatus(int $statusCode, ?\Throwable $error): string
     {
-        // No response or a 5xx means the browser's history/role request failed operationally.
+        // Nothing came back, or Python broke: the page could not restore history or refresh roles, so this is an outage rather than an empty answer.
         if ($error !== null || $statusCode >= 500 || $statusCode === 0) {
             return LogLevel::ERROR;
         }
 
-        // A 4xx is usually a missing/invalid session visible to the user, not an outage.
+        // Python rejected the request, usually an expired or unknown visit ID; the clinician sees an empty panel, not a broken system.
         if ($statusCode >= 400) {
             return LogLevel::WARNING;
         }
