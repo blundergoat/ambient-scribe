@@ -1704,14 +1704,14 @@ async def agent_model_health() -> dict:
         None, _probe_summary_model
     )
 
+    if not provider_available:
+        return {"available": False, "detail": provider_detail}
+
     # A reachable note provider is not enough on its own: live transcription can be perfectly healthy
     # while a stopped visit could only ever return the rough live rows, which is the case this catches.
     correction_ready, correction_detail = await loop.run_in_executor(
         None, correction_readiness
     )
-
-    if not provider_available:
-        return {"available": False, "detail": provider_detail}
 
     # The clinician would get roles and a note, but the note would be built from unreviewed wording.
     if not correction_ready:

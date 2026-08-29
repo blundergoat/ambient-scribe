@@ -853,6 +853,88 @@ class TestCorrectionReadiness:
         assert len(restore_calls) == 2
         assert "/" not in detail
 
+    def test_cpu_allocator_runtime_failure_is_not_remembered(
+        self, monkeypatch, tmp_path
+    ):
+        """PyTorch's RuntimeError for temporary CPU pressure is retried after recovery."""
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+        restore_calls = []
+
+        def _restore_after_memory_recovers(checkpoint_path):
+            restore_calls.append(checkpoint_path)
+            if len(restore_calls) == 1:
+                raise RuntimeError(
+                    "DefaultCPUAllocator: can't allocate memory: "
+                    "you tried to allocate 1024 bytes"
+                )
+
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            _restore_after_memory_recovers,
+        )
+
+        first_verdict = correction_module.correction_readiness()
+        second_verdict = correction_module.correction_readiness()
+
+        assert first_verdict == (
+            False,
+            "the correction model could not be loaded right now (RuntimeError)",
+        )
+        assert second_verdict == (True, "")
+        assert len(restore_calls) == 2
+
+    def test_non_allocator_runtime_failure_is_remembered(
+        self, monkeypatch, tmp_path
+    ):
+        """A deterministic build failure remains cached for this checkpoint identity."""
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-an-incompatible-archive")
+        restore_calls = []
+
+        def _raise_incompatible_checkpoint(checkpoint_path):
+            restore_calls.append(checkpoint_path)
+            raise RuntimeError("checkpoint encoder configuration is incompatible")
+
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            _raise_incompatible_checkpoint,
+        )
+
+        first_verdict = correction_module.correction_readiness()
+        second_verdict = correction_module.correction_readiness()
+
+        assert first_verdict == (
+            False,
+            "the correction model cannot be loaded by this agent runtime (RuntimeError)",
+        )
+        assert second_verdict == first_verdict
+        assert len(restore_calls) == 1
+
     def test_a_probe_already_running_answers_without_waiting(self, monkeypatch, tmp_path):
         """A second Start click is told the check is still running rather than queueing behind it.
 

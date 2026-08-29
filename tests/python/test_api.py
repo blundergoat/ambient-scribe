@@ -921,18 +921,24 @@ class TestAgentModelHealthGate:
     """
 
     def test_unreachable_note_provider_blocks_recording(self, client, monkeypatch):
-        """No roles and no note means the visit would be unusable, so Start is refused."""
+        """A known provider failure returns before the slower correction proof starts."""
+        correction_readiness_calls = []
         monkeypatch.setattr(
             api_server,
             "_probe_summary_model",
             lambda: api_server.SummaryModelProbe(False, "bedrock region is not configured"),
         )
-        monkeypatch.setattr(api_server, "correction_readiness", lambda: (True, ""))
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: correction_readiness_calls.append(True) or (True, ""),
+        )
 
         payload = client.get("/agent/model-health").json()
 
         assert payload["available"] is False
         assert payload["detail"] == "bedrock region is not configured"
+        assert correction_readiness_calls == []
 
     def test_missing_correction_model_blocks_recording(self, client, monkeypatch):
         """A healthy note provider is not enough when the reviewed transcript cannot be produced.

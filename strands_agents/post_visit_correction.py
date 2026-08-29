@@ -1103,6 +1103,25 @@ _CORRECTION_READINESS_PENDING_DETAIL = (
 )
 
 
+def _is_transient_checkpoint_probe_failure(probe_error: Exception) -> bool:
+    """Tell machine pressure from a deterministic checkpoint incompatibility.
+
+    PyTorch reports CPU allocator exhaustion as ``RuntimeError`` rather than
+    ``MemoryError``. Only its CPU allocator signatures are treated as transient,
+    so other runtime failures remain safe to memoise against the checkpoint.
+    """
+    if isinstance(probe_error, (MemoryError, OSError)):
+        return True
+    if not isinstance(probe_error, RuntimeError):
+        return False
+
+    error_text = str(probe_error).casefold()
+    return "cpuallocator" in error_text and any(
+        marker in error_text
+        for marker in ("allocate memory", "out of memory", "not enough memory")
+    )
+
+
 def _restore_checkpoint_for_probe(checkpoint_path: Path) -> None:
     """Build the correction model on CPU purely to prove this runtime can read the checkpoint.
 
@@ -1211,15 +1230,16 @@ def _probe_checkpoint_loadability(
 
     try:
         _restore_checkpoint_for_probe(verified_checkpoint_path)
-    except (MemoryError, OSError) as machine_error:
-        # Example: the restore unpacks a multi-gigabyte archive and the container's disk is full. That
-        # says nothing about the checkpoint, so remembering it would keep blocking visits after a fix.
-        return (
-            False,
-            "the correction model could not be loaded right now "
-            f"({type(machine_error).__name__})",
-        )
     except Exception as model_build_error:
+        if _is_transient_checkpoint_probe_failure(model_build_error):
+            # Example: the restore fills local storage or PyTorch's CPU allocator runs out of RAM.
+            # Neither says anything about the checkpoint, so the next Start click earns a fresh proof.
+            return (
+                False,
+                "the correction model could not be loaded right now "
+                f"({type(model_build_error).__name__})",
+            )
+
         # Example: the agent image was rebuilt onto a NeMo release whose encoder cannot accept this
         # checkpoint's config, so the bytes verify perfectly and correction still fails on every visit.
         unloadable_verdict = (
