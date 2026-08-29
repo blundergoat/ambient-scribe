@@ -2207,7 +2207,7 @@ def _spoken_number_value(token: str) -> int | None:
         token: One lowercased word or digit run split out of the quoted quantity.
 
     Returns:
-        The token's numeric value, or null when it is not a number this parser can read. `str.isdigit()`
+        The token's numeric value, or None when it is not a number this parser can read. `str.isdigit()`
         is deliberately not used: it accepts forms such as a superscript that `int()` then refuses.
     """
     number_word_value = _NUMBER_WORDS.get(token)

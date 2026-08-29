@@ -84,3 +84,87 @@ deployment packaging remains an open decision elsewhere.
 an explicitly persistent mounted cache. Treat image identity, live-model health, and post-visit checkpoint
 availability as three separate gates. If writable-cache loss is found, stop before decoding and obtain exact
 approval for a pinned cache restoration; never enable floating fallback or infer availability from health.
+
+## Footgun: The readiness memo sat behind the work it was meant to skip
+
+**Status:** active | **Created:** 2026-08-29 | **Evidence:** ACTUAL_MEASURED
+**Decision changed:** before trusting a memo cache to bound a request's cost, read what runs *before* the
+lookup; a cache placed after the expensive call bounds nothing.
+**Trigger phase:** ACT
+
+**Symptoms:** the pre-visit gate refuses to start a consultation with "agent unreachable" while the agent is
+healthy and answers a direct request. Clicking Start again a moment later works. Nothing is logged as an
+error, because from the agent's side every request succeeded.
+
+**Why it happens:** `strands_agents/post_visit_correction.py` (search: `def correction_readiness`) called
+the full verifier before reading `_CHECKPOINT_LOAD_PROBE_CACHE`, and that verifier hashes the entire
+checkpoint. The memo therefore skipped only the model restore, never the digest, so every Start click paid a
+SHA-256 over 2,474,055,680 bytes. `src/Controller/ScribeController.php` (search:
+`scribe_model_health_proxy`) proxies that check with an 8-second idle timeout, and Symfony's transport
+exception is mapped to `available: false` — so a slow-but-correct answer is indistinguishable from a dead
+agent. Measured in `ambient-scribe-nemo-agent-1`: 1.40 s warm and 9.46 s on the first call in a process,
+against an 8 s ceiling. `docker-compose.yml` runs uvicorn with `--reload` over a bind-mounted source tree,
+so an ordinary source edit empties the memo and restores the cold cost.
+
+**Prevention:** split identification from verification. Resolving the file
+(search: `_resolved_checkpoint_path`) is a stat and a path lookup; proving it is a hash and a model build.
+Key the memo on the cheap identity and let the expensive proof run once behind a non-blocking single flight
+(search: `_CHECKPOINT_PROBE_LOCK`), so a second caller is told the check is still running instead of
+queueing past the point the browser stops listening. After the split the warm gate measured 0.0003 s
+in-process and 0.009 s end-to-end through the proxy. The first call in a fresh process still costs the full
+proof, so a request-path gate is the wrong place to pay it: `strands_agents/api/server.py`
+(search: `_prove_correction_readiness`) now pays it from a background task in `lifespan`, which brought
+the first call after a restart from 9.3 s to 0.15 s.
+
+**Also watch:** a verdict produced by a catch-all handler must not be memoised on a key as stable as a
+checkpoint's identity. `_probe_checkpoint_loadability` now remembers only facts about the checkpoint and the
+agent build; a `MemoryError` or `OSError` is a fact about the machine, and remembering it kept refusing
+consultations long after an operator freed the space.
+
+## Footgun: A plain refetch cannot repair a corrupt Hugging Face cache entry
+
+**Status:** active | **Created:** 2026-08-29 | **Evidence:** ACTUAL_MEASURED
+**Decision changed:** a download called to *repair* a failed integrity check must force the fetch; without
+it the repair path is a no-op that reports success while changing nothing.
+**Trigger phase:** ACT
+
+**Symptoms:** startup refuses to proceed with "could not be restored - check network and disk space" on a
+machine with working network and free disk, and it refuses identically on every retry.
+
+**Why it happens:** `strands_agents/post_visit_correction.py` (search: `ensure_pinned_checkpoint_available`)
+reaches its download specifically because the verifier rejected the cached file, but
+`hf_hub_download` short-circuits when the pin's revision is a full commit hash: it returns the existing
+pointer with no network request and no inspection of the file's contents. The corrupt bytes are handed
+straight back to the verifier, which rejects them again. Reproduced this session against the real artifact:
+flipping one byte left `ensure_pinned_checkpoint_available(allow_download=True)` blocked on two consecutive
+calls at 2.4 s and 2.1 s — too fast to have transferred anything — while a forced fetch took 30.9 s and
+repaired it.
+
+**Prevention:** ask the cache whether an entry already exists (search: `try_to_load_from_cache`) and force
+the refetch only in that case. Forcing unconditionally is the wrong fix: it destroys the partial-file resume
+that a first 2.5 GB download depends on. Note that the error message points at network and disk, which is
+exactly where an operator will not find the cause.
+
+## Footgun: The PHP proxy undoes the agent's message sanitisation
+
+**Status:** active | **Created:** 2026-08-29 | **Evidence:** OBSERVED
+**Decision changed:** when one side of the PHP <-> Python boundary promises a sanitised message, check
+what the other side appends to it before trusting that promise end to end.
+**Trigger phase:** READ
+
+**Symptoms:** the clinician's page shows an internal service name and port in a banner, on the exact path
+that was designed to say nothing about the server's internals.
+
+**Why it happens:** `strands_agents/post_visit_correction.py` (search: `def correction_readiness`)
+guarantees a detail that "never contains a filesystem path or a raw exception message", and every error
+it raises uses a fixed literal. But `src/Controller/ScribeController.php` caught the transport failure
+and appended `$agentUnreachable->getMessage()` to the browser-facing `detail`, and Symfony embeds the
+full target URL in that message. `public/js/scribe-output.js` (search: `ensureAiModelAvailable`) renders
+the field verbatim into a page-level banner. The guarantee held on the side that wrote it down and was
+lost one hop later, on the failure path most likely to fire.
+
+**Prevention:** a sanitisation promise is a property of the whole path, not of the function that states
+it. The controller now logs the transport message through its injected logger and returns a fixed
+detail; a test pins that the model-health failure names neither the host nor the port
+(search: `testModelHealthFailureNamesNoInternalAddress`). Grep the proxy layer for `getMessage()` in any
+`catch` whose value reaches a response body before assuming a Python-side guarantee survives.

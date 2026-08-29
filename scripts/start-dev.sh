@@ -429,7 +429,7 @@ fi
 # A replaced data volume starts empty, and the correction model lives there rather than in the image.
 # Refill it here so the operator is not left discovering the gap after recording a consultation.
 step "Post-visit correction checkpoint"
-if dc exec -T nemo-agent python -c "import sys; sys.path.insert(0, '/app'); import post_visit_correction as p; p.ensure_pinned_checkpoint_available(allow_download=True)" >/dev/null 2>&1; then
+if dc exec -T nemo-agent python -c "import sys; sys.path.insert(0, '/app'); import post_visit_correction as p; p.ensure_pinned_checkpoint_available(allow_download=False)" >/dev/null 2>&1; then
     pass "verified"
 else
     echo -e "${YELLOW}restoring pinned checkpoint (about 2.5 GB, first run only)...${RESET}"
@@ -448,7 +448,15 @@ fi
 # Live streaming can be perfectly healthy while a stopped visit could only ever return the rough live rows,
 # so the operator is told here rather than after someone has already recorded a consultation.
 step "Pre-visit readiness"
-MODEL_HEALTH_BODY=$(curl -fsS --max-time 120 "http://localhost:${AGENT_PORT}/agent/model-health" 2>/dev/null) || MODEL_HEALTH_BODY=""
+# The agent proves the correction checkpoint in the background as it starts, so this can legitimately be
+# told the check is still running. Wait that out rather than withholding Ready for work still in flight.
+# The phrase below is the agent's own wording (search: _CORRECTION_READINESS_PENDING_DETAIL).
+MODEL_HEALTH_BODY=""
+for _ in $(seq 1 60); do
+    MODEL_HEALTH_BODY=$(curl -fsS --max-time 120 "http://localhost:${AGENT_PORT}/agent/model-health" 2>/dev/null) || MODEL_HEALTH_BODY=""
+    [[ "$MODEL_HEALTH_BODY" == *'still being checked'* ]] || break
+    sleep 2
+done
 if [[ "$MODEL_HEALTH_BODY" == *'"available":true'* ]]; then
     pass "verified"
 else

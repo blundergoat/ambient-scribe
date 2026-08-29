@@ -44,7 +44,7 @@ class ScribeController extends AbstractController
      *
      * @param StrandsClient        $strandsClient        - Carries history reads to Python; live audio never passes through it.
      * @param RoleInferenceService $roleInferenceService - Answers the on-demand "who is doctor, who is patient" question.
-     * @param LoggerInterface      $logger               - Records the one problem this class hits alone: an unreadable demo audio manifest.
+     * @param LoggerInterface      $logger               - Records an unreadable demo audio manifest, and the agent addresses kept out of browser replies.
      * @param HttpClientInterface  $httpClient           - Proxies every browser-triggered FastAPI call this controller makes.
      * @param string               $agentEndpoint        - FastAPI base URL; empty leaves every proxy URL relative and unresolvable.
      */
@@ -295,8 +295,12 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $agentUnreachable) {
             // The agent container was restarting, or a long consultation ran past two minutes, so no reply ever arrived.
             // The panel gets a 503 and offers a retry, and the transcript the clinician is reading stays untouched.
+            $this->logger->warning('Scribe summary proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
-                                   'detail' => 'Summary service unavailable: ' . $agentUnreachable->getMessage(),
+                                   'detail' => 'Summary service unavailable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
@@ -342,8 +346,12 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $agentUnreachable) {
             // The agent was restarting, or correction ran past the two-minute ceiling on a long visit, so no corrected rows came back.
             // This is deliberately non-fatal: the page moves on and the summary is built from the live rows instead.
+            $this->logger->warning('Scribe correction proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
-                                   'detail' => 'Correction service unavailable: ' . $agentUnreachable->getMessage(),
+                                   'detail' => 'Correction service unavailable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
@@ -379,10 +387,14 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $agentUnreachable) {
             // The clinician opened the Transcript tab while the agent was down, so the corrected rows could not be fetched.
             // Empty segments come back instead, and the tab shows the live rows the page is already holding.
+            $this->logger->warning('Scribe corrected-transcript proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
                                    'session_id' => $sessionId,
                                    'segments'   => [],
-                                   'detail'     => 'Corrected transcript service unavailable: ' . $agentUnreachable->getMessage(),
+                                   'detail'     => 'Corrected transcript service unavailable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
@@ -411,9 +423,13 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $agentUnreachable) {
             // The clinician opened the page before the agent container finished booting, so the check could not run at all.
             // Reporting unavailable keeps the start button blocked, which is the safe answer while models may still be loading.
+            $this->logger->warning('Scribe model-health proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
                                    'available' => false,
-                                   'detail'    => 'agent unreachable: ' . $agentUnreachable->getMessage(),
+                                   'detail'    => 'agent unreachable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
@@ -514,10 +530,14 @@ class ScribeController extends AbstractController
         } catch (StrandsException $agentUnreachable) {
             // Python never answered at all, for example while the agent container is restarting after a deploy.
             // The page still renders, with an empty transcript and a message saying the agent is unavailable.
+            $this->logger->warning('Scribe history proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
                                    'session_id' => $sessionId,
                                    'segments'   => [],
-                                   'error'      => 'Agent unavailable: ' . $agentUnreachable->getMessage(),
+                                   'error'      => 'Agent unavailable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }
@@ -584,8 +604,12 @@ class ScribeController extends AbstractController
         } catch (TransportExceptionInterface $agentUnreachable) {
             // The clinician relabelled a speaker while the agent was unreachable, so the correction was never written down.
             // It stays correct on their screen, but a later role update from Python can undo it.
+            $this->logger->warning('Scribe role-override proxy could not reach the agent', [
+                'error' => $agentUnreachable->getMessage(),
+            ]);
+
             return $this->json([
-                                   'detail' => 'Role override service unavailable: ' . $agentUnreachable->getMessage(),
+                                   'detail' => 'Role override service unavailable',
                                ], Response::HTTP_SERVICE_UNAVAILABLE);
         }
     }

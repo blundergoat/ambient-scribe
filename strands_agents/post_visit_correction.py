@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -928,11 +929,12 @@ def _checkpoint_sha256(checkpoint_path: Path) -> str:
     return checkpoint_hash.hexdigest()
 
 
-def _verified_checkpoint_path(model_name: str) -> Path | None:
-    """Resolve and verify a known correction checkpoint from local cache.
+def _resolved_checkpoint_path(model_name: str) -> Path | None:
+    """Locate a known correction checkpoint in local cache without reading its bytes.
 
-    Use before NeMo restore; null means an explicit operator override keeps
-    the existing repository-ID loading behavior for the stopped visit.
+    Split out of verification so the pre-visit gate can name the file it already holds a verdict for
+    in microseconds instead of re-hashing gigabytes on every Start click; null means an explicit
+    operator override keeps the existing repository-ID loading behavior for the stopped visit.
     """
     pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS.get(model_name)
     # An unknown explicit override retains the pre-existing operator seam.
@@ -964,6 +966,22 @@ def _verified_checkpoint_path(model_name: str) -> Path | None:
             "Pinned post-visit ASR checkpoint is not a file.",
             reason_category="model_load_failed",
         )
+
+    return checkpoint_path
+
+
+def _verified_checkpoint_path(model_name: str) -> Path | None:
+    """Resolve and verify a known correction checkpoint from local cache.
+
+    Use before NeMo restore; null means an explicit operator override keeps
+    the existing repository-ID loading behavior for the stopped visit.
+    """
+    checkpoint_path = _resolved_checkpoint_path(model_name)
+    # An unknown explicit override retains the pre-existing operator seam.
+    if checkpoint_path is None:
+        return None
+
+    pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS[model_name]
 
     try:
         checkpoint_bytes = checkpoint_path.stat().st_size
@@ -998,13 +1016,24 @@ def _download_pinned_checkpoint(pinned_checkpoint: _PinnedPostVisitCheckpoint) -
     Kept separate from provisioning so the download identity always comes from the module's own pin, and
     so tests can prove no floating revision is ever requested.
     """
-    from huggingface_hub import hf_hub_download
+    from huggingface_hub import hf_hub_download, try_to_load_from_cache
+
+    # A cache entry that is present but failed verification holds the wrong bytes, and an ordinary
+    # fetch hands back that very same file, so only a forced refetch can replace it.
+    cached_checkpoint = try_to_load_from_cache(
+        repo_id=pinned_checkpoint.repository_id,
+        filename=pinned_checkpoint.filename,
+        cache_dir=str(POST_VISIT_MODEL_CACHE_DIR),
+        revision=pinned_checkpoint.revision,
+    )
 
     hf_hub_download(
         repo_id=pinned_checkpoint.repository_id,
         revision=pinned_checkpoint.revision,
         filename=pinned_checkpoint.filename,
         cache_dir=str(POST_VISIT_MODEL_CACHE_DIR),
+        # Nothing cached means a first fetch, which keeps resuming a part-downloaded file.
+        force_download=isinstance(cached_checkpoint, str),
     )
 
 
@@ -1053,11 +1082,25 @@ def ensure_pinned_checkpoint_available(
     return _verified_checkpoint_path(model_name)
 
 
-# One remembered loadability verdict per checkpoint identity, keyed by resolved path, size, and mtime.
-# Verifying bytes proves the file is the approved artifact; only an actual restore proves this NeMo
-# build can instantiate it. Those two facts came apart once already, and the byte check stayed green
-# for weeks while every stopped visit silently fell back to the live transcript.
-_CHECKPOINT_LOAD_PROBE_CACHE: dict[tuple[str, int, int], tuple[bool, str]] = {}
+# One remembered loadability verdict per checkpoint identity, keyed by resolved path, inode, size, and
+# both timestamps. Verifying bytes proves the file is the approved artifact; only an actual restore
+# proves this NeMo build can instantiate it. Those two facts came apart once already, and the byte
+# check stayed green for weeks while every stopped visit silently fell back to the live transcript.
+# The change timestamp is in the key because no userspace copy can preserve it, so a checkpoint swapped
+# in with its modification time kept still earns a fresh proof instead of inheriting the old verdict.
+_CHECKPOINT_LOAD_PROBE_CACHE: dict[tuple[str, int, int, int, int], tuple[bool, str]] = {}
+
+# Proving a checkpoint costs about twenty seconds and several gigabytes, and every Start click arrives
+# on its own thread. This lets exactly one caller pay it while the rest answer from the verdict, or say
+# the check is still running rather than queueing behind it until the browser stops listening.
+_CHECKPOINT_PROBE_LOCK = threading.Lock()
+
+# Said while the proof is genuinely still running, so the clinician reads what is true instead of being
+# told the agent is unreachable by a proxy that gave up waiting for a model that is in fact healthy.
+_CORRECTION_READINESS_PENDING_DETAIL = (
+    "the correction model is still being checked, which takes about twenty seconds "
+    "after the agent restarts"
+)
 
 
 def _restore_checkpoint_for_probe(checkpoint_path: Path) -> None:
@@ -1080,6 +1123,8 @@ def correction_readiness(
 
     Called before the clinician starts recording, so a visit that could only ever yield the rough live
     transcript is refused up front instead of disappointing them after the consultation is over.
+    Answers from a remembered verdict whenever this exact file has already been proven, because the
+    browser asks on every Start click and cannot wait out a hash and a model restore.
 
     Args:
         model_name: Correction model to check; an operator override outside the pinned set is treated as
@@ -1087,51 +1132,106 @@ def correction_readiness(
 
     Returns:
         (is_ready, detail). `detail` is empty when ready, and otherwise carries a short clinician-safe
-        reason that never contains a filesystem path or a raw exception message.
+        reason that never contains a filesystem path or a raw exception message. A not-ready answer
+        while the proof is still running describes this moment, not the checkpoint.
     """
     try:
-        verified_checkpoint_path = _verified_checkpoint_path(model_name)
+        checkpoint_path = _resolved_checkpoint_path(model_name)
     except PostVisitCorrectionError as checkpoint_error:
         # Example: the clinician opens the page after the model cache volume was replaced, so the
         # approved checkpoint is missing and no stopped visit could be corrected.
         return False, str(checkpoint_error)
 
     # An operator pointed the correction lane at their own model, so this gate defers to that choice.
-    if verified_checkpoint_path is None:
+    if checkpoint_path is None:
         return True, ""
 
     try:
-        checkpoint_stat = verified_checkpoint_path.stat()
+        checkpoint_stat = checkpoint_path.stat()
     except OSError:
         # Example: cache permissions changed under the running agent between two Start clicks.
         return False, "the correction model could not be read from local cache"
 
     probe_key = (
-        str(verified_checkpoint_path),
+        str(checkpoint_path),
+        checkpoint_stat.st_ino,
         checkpoint_stat.st_size,
         checkpoint_stat.st_mtime_ns,
+        checkpoint_stat.st_ctime_ns,
     )
-    remembered_verdict = _CHECKPOINT_LOAD_PROBE_CACHE.get(probe_key)
 
     # Every Start click asks for readiness, so an unchanged checkpoint reuses the verdict rather than
-    # spending another multi-second restore. Replacing the file changes the key and forces a re-probe.
+    # rehashing gigabytes and spending another restore. Replacing the file changes the key and reproves.
+    remembered_verdict = _CHECKPOINT_LOAD_PROBE_CACHE.get(probe_key)
     if remembered_verdict is not None:
         return remembered_verdict
 
+    # Someone else is already proving this checkpoint. Waiting for them would hold this request past the
+    # point the browser stops listening, which is what makes a healthy model read as an unreachable one.
+    if not _CHECKPOINT_PROBE_LOCK.acquire(blocking=False):
+        return False, _CORRECTION_READINESS_PENDING_DETAIL
+
+    try:
+        # The verdict may have been published between the miss above and this line.
+        remembered_verdict = _CHECKPOINT_LOAD_PROBE_CACHE.get(probe_key)
+        if remembered_verdict is not None:
+            return remembered_verdict
+
+        return _probe_checkpoint_loadability(model_name, probe_key)
+    finally:
+        _CHECKPOINT_PROBE_LOCK.release()
+
+
+def _probe_checkpoint_loadability(
+    model_name: str, probe_key: tuple[str, int, int, int, int]
+) -> tuple[bool, str]:
+    """Prove the bytes are the approved artifact and that this runtime can actually build them.
+
+    Call with `_CHECKPOINT_PROBE_LOCK` held. A verdict is remembered only when it is a fact about this
+    checkpoint and this agent build; a machine-level failure such as a full disk is deliberately
+    forgotten, so the clinician's next click after the operator frees space is allowed to succeed.
+
+    Args:
+        model_name: Correction model being proven, resolved again here so the verifier sees the pin.
+        probe_key: Identity of the file this verdict belongs to, so a replaced checkpoint never inherits it.
+
+    Returns:
+        (is_ready, detail), the same clinician-safe pair the readiness gate hands to the browser.
+    """
+    try:
+        verified_checkpoint_path = _verified_checkpoint_path(model_name)
+    except PostVisitCorrectionError as checkpoint_error:
+        # An integrity failure costs a hash to re-detect rather than a restore, so it is rechecked on
+        # each click instead of remembered against a file the operator may be part-way through replacing.
+        return False, str(checkpoint_error)
+
+    # An operator switched the correction lane to their own model between the two resolutions.
+    if verified_checkpoint_path is None:
+        return True, ""
+
     try:
         _restore_checkpoint_for_probe(verified_checkpoint_path)
-        probe_verdict = (True, "")
+    except (MemoryError, OSError) as machine_error:
+        # Example: the restore unpacks a multi-gigabyte archive and the container's disk is full. That
+        # says nothing about the checkpoint, so remembering it would keep blocking visits after a fix.
+        return (
+            False,
+            "the correction model could not be loaded right now "
+            f"({type(machine_error).__name__})",
+        )
     except Exception as model_build_error:
         # Example: the agent image was rebuilt onto a NeMo release whose encoder cannot accept this
         # checkpoint's config, so the bytes verify perfectly and correction still fails on every visit.
-        probe_verdict = (
+        unloadable_verdict = (
             False,
             "the correction model cannot be loaded by this agent runtime "
             f"({type(model_build_error).__name__})",
         )
+        _CHECKPOINT_LOAD_PROBE_CACHE[probe_key] = unloadable_verdict
+        return unloadable_verdict
 
-    _CHECKPOINT_LOAD_PROBE_CACHE[probe_key] = probe_verdict
-    return probe_verdict
+    _CHECKPOINT_LOAD_PROBE_CACHE[probe_key] = (True, "")
+    return True, ""
 
 
 def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:

@@ -8,11 +8,12 @@
 /**
  * Requests the browser microphone and starts a live consultation stream.
  * Reports microphone or setup errors in the status region for the clinician.
+ * Returns whether capture actually started, so a failed reconnect can retry or give up.
  */
 async function startRecording() {
     // Do not capture audio if roles and the summary would fail - warn and stop.
     if (!(await ensureAiModelAvailable())) {
-        return;
+        return false;
     }
 
     try {
@@ -21,9 +22,11 @@ async function startRecording() {
         subscribeToMercure();
         showRecordingUi();
         startRecordingTimerIfNeeded();
+        return true;
     } catch (recordingError) {
         console.error('Failed to start recording:', recordingError);
         setPlainStatus(recordingError.name === 'NotAllowedError' ? 'Microphone access denied' : `Error: ${recordingError.message}`);
+        return false;
     }
 }
 
@@ -568,7 +571,7 @@ function subscribeToMercure() {
 function handleUnexpectedDisconnect(closeCode) {
     // Retry first so the clinician can keep speaking without manual action.
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        autoReconnect();
+        autoReconnect(closeCode);
         return;
     }
 
@@ -590,19 +593,23 @@ function handleUnexpectedDisconnect(closeCode) {
  * Schedules the next automatic reconnect attempt.
  * Use when the socket drops but the clinician did not stop recording.
  */
-function autoReconnect() {
+function autoReconnect(closeCode) {
     reconnectAttempts++;
     const backoffMs = 1000 * Math.pow(2, reconnectAttempts - 1);
     const seconds = Math.round(backoffMs / 1000);
     setPlainStatus(`Reconnecting in ${seconds}s...`);
     announce(`Connection lost. Reconnecting in ${seconds} seconds.`);
 
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = setTimeout(async () => {
         setPlainStatus(`Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
         // If the mic stream ended, ask the browser to start a fresh live session.
         if (!mediaStream || mediaStream.getTracks().every((track) => track.readyState === 'ended')) {
-            startRecording();
+            // A refused restart opens no socket, so no close event would ever arrive to retry or to
+            // release the microphone. Hand back to the handler that owns both endings.
+            if (!(await startRecording())) {
+                handleUnexpectedDisconnect(closeCode);
+            }
             return;
         }
 

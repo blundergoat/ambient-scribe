@@ -683,6 +683,11 @@ class TestCorrectionReadiness:
 
         monkeypatch.setattr(
             correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
             "_verified_checkpoint_path",
             lambda model_name: checkpoint,
         )
@@ -698,6 +703,11 @@ class TestCorrectionReadiness:
         checkpoint = tmp_path / "checkpoint.nemo"
         checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
 
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
         monkeypatch.setattr(
             correction_module,
             "_verified_checkpoint_path",
@@ -724,6 +734,11 @@ class TestCorrectionReadiness:
 
         monkeypatch.setattr(
             correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
             "_verified_checkpoint_path",
             lambda model_name: checkpoint,
         )
@@ -747,6 +762,11 @@ class TestCorrectionReadiness:
 
         monkeypatch.setattr(
             correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
             "_verified_checkpoint_path",
             lambda model_name: checkpoint,
         )
@@ -761,6 +781,110 @@ class TestCorrectionReadiness:
         correction_module.correction_readiness()
 
         assert len(restore_calls) == 2
+
+    def test_repeated_readiness_verifies_the_checkpoint_once(self, monkeypatch, tmp_path):
+        """A proven checkpoint is not re-hashed per click, so the gate answers inside the proxy budget.
+
+        Hashing gigabytes on every Start click kept the pre-flight slower than the browser proxy waits,
+        which reported a healthy correction model as an unreachable agent.
+        """
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+        verify_calls = []
+
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: verify_calls.append(model_name) or checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            lambda checkpoint_path: None,
+        )
+
+        correction_module.correction_readiness()
+        correction_module.correction_readiness()
+
+        assert len(verify_calls) == 1
+
+    def test_a_machine_failure_during_the_probe_is_not_remembered(
+        self, monkeypatch, tmp_path
+    ):
+        """A full disk says nothing about the checkpoint, so the next click is allowed to succeed.
+
+        Remembering it would keep refusing consultations long after the operator freed the space.
+        """
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+        restore_calls = []
+
+        def _raise_machine_failure(checkpoint_path):
+            restore_calls.append(checkpoint_path)
+            raise OSError(28, "No space left on device", str(checkpoint_path))
+
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            _raise_machine_failure,
+        )
+
+        correction_module.correction_readiness()
+        is_ready, detail = correction_module.correction_readiness()
+
+        assert is_ready is False
+        assert len(restore_calls) == 2
+        assert "/" not in detail
+
+    def test_a_probe_already_running_answers_without_waiting(self, monkeypatch, tmp_path):
+        """A second Start click is told the check is still running rather than queueing behind it.
+
+        Waiting for the first proof would hold the request past the point the browser stops listening,
+        which is what made a healthy model read as an unreachable agent.
+        """
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+        restore_calls = []
+
+        monkeypatch.setattr(
+            correction_module,
+            "_resolved_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            lambda checkpoint_path: restore_calls.append(checkpoint_path),
+        )
+
+        correction_module._CHECKPOINT_PROBE_LOCK.acquire()
+        try:
+            is_ready, detail = correction_module.correction_readiness()
+        finally:
+            correction_module._CHECKPOINT_PROBE_LOCK.release()
+
+        assert is_ready is False
+        assert detail == correction_module._CORRECTION_READINESS_PENDING_DETAIL
+        assert restore_calls == []
+        assert "/" not in detail
 
 
 class TestEnsurePinnedCheckpointAvailable:
@@ -855,6 +979,55 @@ class TestEnsurePinnedCheckpointAvailable:
             correction_module.DEFAULT_POST_VISIT_ASR_MODEL
         ]
         assert downloads[0] == expected
+
+    def test_corrupt_cache_entry_is_replaced_rather_than_reread(self, monkeypatch):
+        """A cached file that failed verification is refetched, so a bad copy cannot block startup.
+
+        An ordinary fetch hands back the very bytes that just failed, which left the correction lane
+        refusing every visit until someone deleted the cache entry by hand.
+        """
+        import huggingface_hub
+
+        requested = {}
+        monkeypatch.setattr(
+            huggingface_hub,
+            "try_to_load_from_cache",
+            lambda **kwargs: "/cache/blobs/an-already-present-file",
+        )
+        monkeypatch.setattr(
+            huggingface_hub,
+            "hf_hub_download",
+            lambda **kwargs: requested.update(kwargs) or "/cache/blobs/refetched",
+        )
+
+        pinned_checkpoint = correction_module._PINNED_POST_VISIT_CHECKPOINTS[
+            correction_module.DEFAULT_POST_VISIT_ASR_MODEL
+        ]
+        correction_module._download_pinned_checkpoint(pinned_checkpoint)
+
+        assert requested["force_download"] is True
+        assert requested["revision"] == pinned_checkpoint.revision
+
+    def test_absent_cache_entry_keeps_its_resumable_download(self, monkeypatch):
+        """A first fetch is never forced, so an interrupted 2.5 GB restore resumes instead of restarting."""
+        import huggingface_hub
+
+        requested = {}
+        monkeypatch.setattr(
+            huggingface_hub, "try_to_load_from_cache", lambda **kwargs: None
+        )
+        monkeypatch.setattr(
+            huggingface_hub,
+            "hf_hub_download",
+            lambda **kwargs: requested.update(kwargs) or "/cache/blobs/fetched",
+        )
+
+        pinned_checkpoint = correction_module._PINNED_POST_VISIT_CHECKPOINTS[
+            correction_module.DEFAULT_POST_VISIT_ASR_MODEL
+        ]
+        correction_module._download_pinned_checkpoint(pinned_checkpoint)
+
+        assert requested["force_download"] is False
 
     def test_missing_checkpoint_without_permission_refuses_to_download(
         self, monkeypatch, tmp_path

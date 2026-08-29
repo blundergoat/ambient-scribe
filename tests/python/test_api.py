@@ -380,6 +380,25 @@ class TestSessionHistory:
         )
         assert response.status_code == 400
 
+    def test_role_override_rejects_a_body_it_cannot_read(self, client):
+        """An unusable body is a validation failure, not a server error.
+
+        The browser proxy forwards whatever the page sent, so a dropped or malformed body must come
+        back as the same 400 an empty selection gets rather than as an unhandled exception.
+        """
+        # Nothing sent at all: the request names no speaker and no role.
+        response = client.post(f"/session/{TEST_SESSION_ID}/roles/override", content=b"")
+        assert response.status_code == 400
+
+        # Valid JSON, but not an object, so it carries no fields to read.
+        for unusable_body in ('"DOCTOR"', "5", "[]", "null"):
+            response = client.post(
+                f"/session/{TEST_SESSION_ID}/roles/override",
+                content=unusable_body,
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status_code == 400, unusable_body
+
 
 class TestTranscriptionEndpoints:
     """Tests for batch and streaming transcription routes."""
@@ -950,6 +969,23 @@ class TestAgentModelHealthGate:
         payload = client.get("/agent/model-health").json()
 
         assert payload == {"available": True, "detail": ""}
+
+    def test_startup_proves_correction_readiness_off_the_request_path(self, monkeypatch):
+        """The agent pays the correction proof at boot, not on a clinician's first Start click.
+
+        The proof costs a full model restore, which is longer than the browser proxy waits, so leaving
+        it on the request path reported a healthy correction model as an unreachable agent.
+        """
+        readiness_calls = []
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: readiness_calls.append(True) or (True, ""),
+        )
+
+        asyncio.run(api_server._prove_correction_readiness())
+
+        assert readiness_calls == [True]
 
     def test_core_health_ignores_correction_readiness(self, client, monkeypatch):
         """Container health stays about live NeMo, so a dead correction lane never restarts the agent."""

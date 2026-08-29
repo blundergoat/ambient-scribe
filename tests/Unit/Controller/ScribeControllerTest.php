@@ -494,6 +494,28 @@ final class ScribeControllerTest extends TestCase
     }
 
     /**
+     * Keeps the agent's own address out of the banner a clinician reads.
+     *
+     * @return void No payload; failure means the internal host and port reach the consultation screen.
+     * @throws TransportException When the mock client simulates an unreachable agent.
+     */
+    public function testModelHealthFailureNamesNoInternalAddress(): void
+    {
+        $httpClient = new MockHttpClient(
+            static fn (): never => throw new TransportException('Idle timeout reached for "http://nemo-agent:8000/agent/model-health".'),
+            'http://nemo-agent:8000',
+        );
+        $controller = $this->createController(httpClient: $httpClient, agentEndpoint: 'http://nemo-agent:8000');
+
+        $payload = $this->decodeJsonResponse($controller->modelHealth());
+
+        self::assertFalse($payload['available']);
+        self::assertSame('agent unreachable', $payload['detail']);
+        self::assertStringNotContainsString('nemo-agent', $payload['detail']);
+        self::assertStringNotContainsString('8000', $payload['detail']);
+    }
+
+    /**
      * Converts correction transport failures into JSON so the summary can still fall back.
      *
      * @return void No payload; failure means agent outages could stop the summary flow.
@@ -603,7 +625,7 @@ final class ScribeControllerTest extends TestCase
         $client = $this->createMock(StrandsClient::class);
         $client->expects(self::once())
             ->method('postJson')
-            ->willThrowException(new StrandsException('Connection refused'));
+            ->willThrowException(new StrandsException('Expected JSON object from http://nemo-agent:8000/session/abc-123/history, got string'));
 
         $controller = $this->createController(client: $client);
 
@@ -611,10 +633,11 @@ final class ScribeControllerTest extends TestCase
 
         self::assertInstanceOf(JsonResponse::class, $response);
         self::assertSame(503, $response->getStatusCode());
+        // The client's own message names the agent URL, which must not travel back to the browser.
         self::assertSame([
             'session_id' => 'abc-123',
             'segments' => [],
-            'error' => 'Agent unavailable: Connection refused',
+            'error' => 'Agent unavailable',
         ], $this->decodeJsonResponse($response));
     }
 
