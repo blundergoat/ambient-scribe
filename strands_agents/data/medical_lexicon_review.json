@@ -4,7 +4,7 @@
   "asset_version": "0.5.0-2026-07-19",
   "runtime_lexicon": {
     "schema_version": "ambient-scribe-medical-lexicon/v1",
-    "sha256": "b9d2719c38e2aa23d85d5eec93de949e761a1305bc8e7b3c5480ba982be5b959"
+    "sha256": "054bb5398a00fd627c260b6fc96a506e07ab79f03413dde608de1d2e40a74aef"
   },
   "entries": [
     {
@@ -2320,6 +2320,74 @@
       "safety_rationale": "Common clinical abbreviation with word boundaries; no unrelated-word replacement."
     },
     {
+      "id": "emollients-amoleans",
+      "canonical": "emollients",
+      "variant": "amoleans",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_text": "amoleans",
+      "expected_visible_text": "emollients",
+      "hard_negatives": [
+        "The amount of cream matters more than the brand."
+      ],
+      "evidence_class": "observed_development_asr_error",
+      "locale": "en-AU",
+      "intended_consumer": "live_post_asr_normalizer",
+      "source_artifact": {
+        "artifact_id": "primock57-day1-consultation02-i-have-sore-red-skin",
+        "sha256": "4a33e030a4670936754821469855e63cb3263b1575da098cacd1158b48684277",
+        "span": "live lane row seg-0261 (confidence 0.7104), reproduced in all eight consult-1.2 manual rounds; doctor TextGrid ground truth",
+        "corpus_class": "development"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-08-29"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ],
+      "safety_rationale": "Single-word phonetic misspelling of one topical moisturiser class; not a real English word and no other medicine shares it."
+    },
+    {
+      "id": "emollients-amolliums",
+      "canonical": "emollients",
+      "variant": "amolliums",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_text": "amolliums",
+      "expected_visible_text": "emollients",
+      "hard_negatives": [
+        "All the aluminium trays were replaced last week."
+      ],
+      "evidence_class": "observed_development_asr_error",
+      "locale": "en-AU",
+      "intended_consumer": "live_post_asr_normalizer",
+      "source_artifact": {
+        "artifact_id": "primock57-day1-consultation02-i-have-sore-red-skin",
+        "sha256": "4a33e030a4670936754821469855e63cb3263b1575da098cacd1158b48684277",
+        "span": "live lane row seg-0299 (confidence 0.6893), reproduced in all eight consult-1.2 manual rounds; doctor TextGrid ground truth",
+        "corpus_class": "development"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-08-29"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ],
+      "safety_rationale": "Single-word phonetic misspelling of one topical moisturiser class; not a real English word and no other medicine shares it."
+    },
+    {
       "id": "emollients-emolons",
       "canonical": "emollients",
       "variant": "emolons",
@@ -3644,6 +3712,40 @@
         "sealed_holdout_content"
       ],
       "safety_rationale": "This phrase can be ordinary speech involving a person named April, so it is inactive."
+    },
+    {
+      "id": "loratadine-lauratidine",
+      "canonical": "loratadine",
+      "variant": "Lauratidine",
+      "status": "active",
+      "category": "asr_variant",
+      "raw_text": "Lauratidine",
+      "expected_visible_text": "loratadine",
+      "hard_negatives": [
+        "Laura tidied the consulting room before the clinic."
+      ],
+      "evidence_class": "observed_development_asr_error",
+      "locale": "en-AU",
+      "intended_consumer": "live_post_asr_normalizer",
+      "source_artifact": {
+        "artifact_id": "primock57-day1-consultation02-i-have-sore-red-skin",
+        "sha256": "4a33e030a4670936754821469855e63cb3263b1575da098cacd1158b48684277",
+        "span": "live lane row seg-0270 (confidence 0.6944), reproduced in all eight consult-1.2 manual rounds; doctor TextGrid ground truth. Differs from the registered Luratidine variant by one character, which is why that row never fired.",
+        "corpus_class": "development"
+      },
+      "review": {
+        "status": "approved",
+        "reviewer_id": "developer-self-review",
+        "reviewer_role": "developer",
+        "reviewed_at": "2026-08-29"
+      },
+      "privacy_exclusions": [
+        "contact_details",
+        "credentials_or_secrets",
+        "patient_identity",
+        "sealed_holdout_content"
+      ],
+      "safety_rationale": "Single-word phonetic misspelling of one antihistamine; not a real word in the retained corpus sweep and no other medicine shares it."
     },
     {
       "id": "loratadine-luratidine",
