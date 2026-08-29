@@ -2491,3 +2491,53 @@ test.describe("Pause and continue", () => {
     await expect(page.locator("#pauseBtn")).toBeHidden();
   });
 });
+
+test.describe("Pre-visit readiness gate", () => {
+  test("blocks recording when correction checkpoint is unavailable", async ({ page }) => {
+    // The clinician opens the page after the correction model stopped loading. Live streaming is fine,
+    // so nothing else on screen would warn them before they recorded an entire consultation.
+    await page.route("**/agent/model-health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          available: false,
+          detail: "the correction model cannot be loaded by this agent runtime (TypeError)",
+        }),
+      });
+    });
+
+    let websocketOpened = false;
+    page.on("websocket", () => {
+      websocketOpened = true;
+    });
+
+    await loadScribePage(page);
+    await page.click("#startBtn");
+    await page.waitForTimeout(500);
+
+    const status = await page.textContent("#status");
+    expect(status).toContain("Consultation not started");
+    // The banner names the failing half, because a missing note provider needs a different fix.
+    expect(status).toContain("correction model");
+    // Nothing was recorded and no audio stream was opened, so no consultation exists to lose.
+    expect(websocketOpened).toBe(false);
+  });
+
+  test("allows recording when both halves are ready", async ({ page }) => {
+    await page.route("**/agent/model-health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ available: true, detail: "" }),
+      });
+    });
+
+    await loadScribePage(page);
+    await page.click("#startBtn");
+    await page.waitForTimeout(500);
+
+    const status = await page.textContent("#status");
+    expect(status).not.toContain("Consultation not started");
+  });
+});

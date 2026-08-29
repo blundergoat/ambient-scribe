@@ -193,6 +193,24 @@ On first run, pull the model into the persistent `ollama_data` volume:
 docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
+### Post-visit correction model
+
+`./scripts/start-dev.sh` restores the pinned correction checkpoint before it prints `Ready!`, so a
+replaced data volume does not silently cost you the reviewed transcript. The first run after the
+volume is emptied downloads about 2.5 GB; later runs only re-verify it, which takes a second or two.
+
+The checkpoint lives in the `session_data` volume at `/data/post_visit_model_cache`, not in the
+image. That volume also holds `sessions.db`, so `docker compose down -v` removes your stored visits
+and the correction model together. Removing just the model is safe:
+
+```bash
+docker compose exec nemo-agent rm -rf -- /data/post_visit_model_cache/models--nvidia--parakeet-unified-en-0.6b
+```
+
+Startup fails closed if the checkpoint cannot be restored or cannot be loaded by the installed NeMo.
+It leaves the containers running, because live transcription still works and you need the stack up
+to fix it. Deployment packaging for this checkpoint is a separate decision and is not settled here.
+
 #### Expected CPU inference latency
 
 | Model | RAM needed | Notes |

@@ -2,6 +2,11 @@
 # Preflight check: Run all quality gates before committing
 # Usage: ./scripts/preflight-checks.sh [--coverage-min=80]
 
+# No -e here: every gate below reports its own pass or fail and the run must
+# still reach the summary when one of them fails. -u catches a mistyped
+# variable name, which would otherwise silently read as an empty result.
+set -uo pipefail
+
 source "$(dirname "${BASH_SOURCE[0]}")/env-detect.sh"
 cd "$REPO_ROOT" || exit
 
@@ -148,8 +153,10 @@ else
     done
 fi
 
-# 3. Dangerous policy (repo diff)
-step "Danger policy (repo diff)"
+# 3. Dangerous policy: the force-add guard, then the enforced policy's own corpus
+# This arm only fires when an ignored path such as vendor/ or the env file has
+# been force-added to the index, so on a clean worktree it is silent by design.
+step "Danger policy (force-add guard)"
 t=$(date +%s%N)
 danger_script="$REPO_ROOT/scripts/deny-dangerous.sh"
 if [[ -x "$danger_script" ]]; then
@@ -158,13 +165,35 @@ if [[ -x "$danger_script" ]]; then
     if [[ $danger_exit -eq 0 ]]; then
         pass "$(elapsed_since "$t")"
     else
-        fail "Danger policy"
+        fail "Danger policy (force-add guard)"
         echo "$danger_output" | head -10 | while read -r line; do
             echo -e "    ${DIM}${line}${RESET}"
         done
     fi
 else
     skip "scripts/deny-dangerous.sh not found"
+fi
+
+# A silent guard proves nothing about the policy itself. This runs the
+# regression corpus of the hook that actually blocks commands at runtime, so a
+# broken or half-installed policy fails here rather than going unnoticed until
+# an agent runs something destructive.
+step "Danger policy (enforced hook)"
+t=$(date +%s%N)
+enforced_hook="$REPO_ROOT/.goat-flow/hooks/deny-dangerous.sh"
+if [[ -x "$enforced_hook" ]]; then
+    hook_output=$("$enforced_hook" --self-test 2>&1)
+    hook_exit=$?
+    if [[ $hook_exit -eq 0 ]]; then
+        pass "$(echo "$hook_output" | grep -oE 'executed=[0-9]+' | head -1) $(elapsed_since "$t")"
+    else
+        fail "Danger policy (enforced hook)"
+        echo "$hook_output" | head -10 | while read -r line; do
+            echo -e "    ${DIM}${line}${RESET}"
+        done
+    fi
+else
+    skip ".goat-flow/hooks/deny-dangerous.sh not found"
 fi
 
 # 4. Code style (PHP-CS-Fixer)

@@ -644,3 +644,238 @@ def test_shell_runner_uses_real_container_module_root_and_failure_copy() -> None
     assert 'docker compose cp "nemo-agent:${container_history}"' in runner_source
     assert 'docker compose cp "nemo-agent:${container_metadata}"' in runner_source
     compile(host_selection_python, "eval-second-pass-host-selection", "exec")
+
+
+class TestCorrectionReadiness:
+    """Pre-visit readiness for the post-visit correction model.
+
+    The clinician is told before recording whether a stopped visit can produce the reviewed
+    transcript, so they never finish a consultation and discover the promise could not be kept.
+    """
+
+    def _clear_probe_cache(self, correction_module):
+        """Drop memoised loadability verdicts so each case probes from scratch."""
+        correction_module._CHECKPOINT_LOAD_PROBE_CACHE.clear()
+
+    def test_missing_checkpoint_reports_not_ready_without_leaking_paths(
+        self, monkeypatch, tmp_path
+    ):
+        """An absent checkpoint blocks the visit and explains itself in clinician-safe words."""
+        self._clear_probe_cache(correction_module)
+        monkeypatch.setattr(correction_module, "POST_VISIT_MODEL_CACHE_DIR", tmp_path)
+
+        is_ready, detail = correction_module.correction_readiness()
+
+        assert is_ready is False
+        assert detail
+        assert "/" not in detail
+        assert "Traceback" not in detail
+
+    def test_unloadable_checkpoint_reports_not_ready(self, monkeypatch, tmp_path):
+        """Correct bytes this runtime cannot instantiate must not read as ready.
+
+        This is the regression that mattered: byte verification passed for weeks while the
+        container's NeMo could not build the model, so every stopped visit fell back silently.
+        """
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"not-a-real-nemo-archive")
+
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+
+        is_ready, detail = correction_module.correction_readiness()
+
+        assert is_ready is False
+        assert "/" not in detail
+
+    def test_loadable_checkpoint_reports_ready(self, monkeypatch, tmp_path):
+        """A checkpoint this runtime can restore lets the clinician start recording."""
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            lambda checkpoint_path: None,
+        )
+
+        is_ready, detail = correction_module.correction_readiness()
+
+        assert (is_ready, detail) == (True, "")
+
+    def test_repeated_readiness_calls_probe_the_checkpoint_once(
+        self, monkeypatch, tmp_path
+    ):
+        """Every Start click asks for readiness, so the expensive restore runs once per checkpoint."""
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"stand-in-for-a-restorable-archive")
+        restore_calls = []
+
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            lambda checkpoint_path: restore_calls.append(checkpoint_path),
+        )
+
+        correction_module.correction_readiness()
+        correction_module.correction_readiness()
+
+        assert len(restore_calls) == 1
+
+    def test_replacing_the_checkpoint_reprobes(self, monkeypatch, tmp_path):
+        """Restoring a working checkpoint clears the block without restarting the agent."""
+        self._clear_probe_cache(correction_module)
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"first-archive")
+        restore_calls = []
+
+        monkeypatch.setattr(
+            correction_module,
+            "_verified_checkpoint_path",
+            lambda model_name: checkpoint,
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_restore_checkpoint_for_probe",
+            lambda checkpoint_path: restore_calls.append(checkpoint_path),
+        )
+
+        correction_module.correction_readiness()
+        checkpoint.write_bytes(b"a-different-archive-entirely")
+        correction_module.correction_readiness()
+
+        assert len(restore_calls) == 2
+
+
+class TestEnsurePinnedCheckpointAvailable:
+    """Start-time provisioning of the correction checkpoint into the local cache.
+
+    An operator whose data volume was replaced can restart local work without discovering the missing
+    correction model only after a consultation has already been recorded.
+    """
+
+    def test_present_checkpoint_is_reused_without_downloading(
+        self, monkeypatch, tmp_path
+    ):
+        """A warm cache costs a verification, never a multi-gigabyte re-download."""
+        checkpoint = tmp_path / "checkpoint.nemo"
+        checkpoint.write_bytes(b"already-here")
+        downloads = []
+
+        monkeypatch.setattr(
+            correction_module, "_verified_checkpoint_path", lambda model_name: checkpoint
+        )
+        monkeypatch.setattr(
+            correction_module,
+            "_download_pinned_checkpoint",
+            lambda pin: downloads.append(pin),
+        )
+
+        resolved = correction_module.ensure_pinned_checkpoint_available(
+            allow_download=True
+        )
+
+        assert resolved == checkpoint
+        assert downloads == []
+
+    def test_absent_checkpoint_downloads_then_verifies_exactly(
+        self, monkeypatch, tmp_path
+    ):
+        """An emptied cache is refilled from the module's own pin and re-checked before use."""
+        checkpoint = tmp_path / "checkpoint.nemo"
+        downloads = []
+        verifications = []
+
+        def _verify(model_name):
+            verifications.append(model_name)
+            # The first look finds nothing; the look after the download must still verify exactly.
+            if len(verifications) == 1:
+                raise correction_module.PostVisitCorrectionError(
+                    "Pinned post-visit ASR checkpoint is unavailable from local cache.",
+                    reason_category="model_load_failed",
+                )
+            return checkpoint
+
+        monkeypatch.setattr(correction_module, "_verified_checkpoint_path", _verify)
+        monkeypatch.setattr(
+            correction_module,
+            "_download_pinned_checkpoint",
+            lambda pin: downloads.append(pin),
+        )
+
+        resolved = correction_module.ensure_pinned_checkpoint_available(
+            allow_download=True
+        )
+
+        assert resolved == checkpoint
+        assert len(downloads) == 1
+        assert downloads[0].revision
+        assert len(verifications) == 2
+
+    def test_download_uses_the_module_pin_never_a_floating_revision(
+        self, monkeypatch, tmp_path
+    ):
+        """The refill must land the evaluated artifact, not whatever the repository serves today."""
+        downloads = []
+
+        def _verify(model_name):
+            if not downloads:
+                raise correction_module.PostVisitCorrectionError(
+                    "Pinned post-visit ASR checkpoint is unavailable from local cache.",
+                    reason_category="model_load_failed",
+                )
+            return tmp_path / "checkpoint.nemo"
+
+        monkeypatch.setattr(correction_module, "_verified_checkpoint_path", _verify)
+        monkeypatch.setattr(
+            correction_module,
+            "_download_pinned_checkpoint",
+            lambda pin: downloads.append(pin),
+        )
+
+        correction_module.ensure_pinned_checkpoint_available(allow_download=True)
+
+        expected = correction_module._PINNED_POST_VISIT_CHECKPOINTS[
+            correction_module.DEFAULT_POST_VISIT_ASR_MODEL
+        ]
+        assert downloads[0] == expected
+
+    def test_missing_checkpoint_without_permission_refuses_to_download(
+        self, monkeypatch, tmp_path
+    ):
+        """Ordinary correction never reaches the network; only start-time provisioning may refill."""
+        downloads = []
+
+        def _verify(model_name):
+            raise correction_module.PostVisitCorrectionError(
+                "Pinned post-visit ASR checkpoint is unavailable from local cache.",
+                reason_category="model_load_failed",
+            )
+
+        monkeypatch.setattr(correction_module, "_verified_checkpoint_path", _verify)
+        monkeypatch.setattr(
+            correction_module,
+            "_download_pinned_checkpoint",
+            lambda pin: downloads.append(pin),
+        )
+
+        with pytest.raises(correction_module.PostVisitCorrectionError):
+            correction_module.ensure_pinned_checkpoint_available(allow_download=False)
+
+        assert downloads == []

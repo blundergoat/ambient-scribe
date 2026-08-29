@@ -891,3 +891,75 @@ class TestSummaryModelPreflight:
 
         monkeypatch.setenv("ROLE_AGENT_OLLAMA_MODEL", "phi4")
         assert api_server._probe_summary_model() == (True, "ollama:phi4")
+
+
+class TestAgentModelHealthGate:
+    """Pre-flight gate the browser calls before a consultation starts.
+
+    Recording is refused unless both halves of the visit's promise are ready: the off-GPU model behind
+    roles and the note, and the correction model behind the reviewed transcript. Core `/health` stays a
+    separate question about live NeMo, so this gate never changes container health.
+    """
+
+    def test_unreachable_note_provider_blocks_recording(self, client, monkeypatch):
+        """No roles and no note means the visit would be unusable, so Start is refused."""
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(False, "bedrock region is not configured"),
+        )
+        monkeypatch.setattr(api_server, "correction_readiness", lambda: (True, ""))
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload["available"] is False
+        assert payload["detail"] == "bedrock region is not configured"
+
+    def test_missing_correction_model_blocks_recording(self, client, monkeypatch):
+        """A healthy note provider is not enough when the reviewed transcript cannot be produced.
+
+        This is the case live health cannot see: streaming stays perfect while every stopped visit
+        would fall back to unreviewed wording.
+        """
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(True, ""),
+        )
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: (False, "the correction model cannot be loaded by this agent runtime (TypeError)"),
+        )
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload["available"] is False
+        assert "correction model" in payload["detail"]
+        assert "/" not in payload["detail"]
+
+    def test_both_halves_ready_allows_recording(self, client, monkeypatch):
+        """With roles, note, and correction all ready, the clinician can start recording."""
+        monkeypatch.setattr(
+            api_server,
+            "_probe_summary_model",
+            lambda: api_server.SummaryModelProbe(True, ""),
+        )
+        monkeypatch.setattr(api_server, "correction_readiness", lambda: (True, ""))
+
+        payload = client.get("/agent/model-health").json()
+
+        assert payload == {"available": True, "detail": ""}
+
+    def test_core_health_ignores_correction_readiness(self, client, monkeypatch):
+        """Container health stays about live NeMo, so a dead correction lane never restarts the agent."""
+        monkeypatch.setattr(
+            api_server,
+            "correction_readiness",
+            lambda: (False, "the correction model cannot be loaded by this agent runtime (TypeError)"),
+        )
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"

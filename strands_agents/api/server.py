@@ -59,6 +59,7 @@ from post_visit_correction import (
     DEFAULT_POST_VISIT_ASR_MODEL,
     PostVisitCorrectionError,
     PostVisitCorrectionResult,
+    correction_readiness,
     run_post_visit_correction,
 )
 from session import SessionStore
@@ -1653,15 +1654,31 @@ def _probe_summary_model() -> SummaryModelProbe:
 
 @app.get("/agent/model-health")
 async def agent_model_health() -> dict:
-    """Report whether the off-GPU role/summary model can be reached.
+    """Report whether a consultation started now could deliver everything the visit promises.
 
-    The browser calls this before starting a consultation so it does not
-    transcribe when DOCTOR/PATIENT roles and the summary would fail.
+    The browser calls this before recording. It covers both halves of that promise: the off-GPU model
+    behind DOCTOR/PATIENT roles and the note, and the correction model behind the reviewed transcript.
 
     Returns:
-        Availability flag plus a plain-language detail the header banner can
-        show when the model is unreachable.
+        Availability flag plus a plain-language detail the header banner shows. `detail` is empty only
+        when both halves are ready; otherwise it names the half that would fail, never an internal path.
     """
     loop = asyncio.get_running_loop()
-    available, detail = await loop.run_in_executor(None, _probe_summary_model)
-    return {"available": available, "detail": detail}
+    provider_available, provider_detail = await loop.run_in_executor(
+        None, _probe_summary_model
+    )
+
+    # A reachable note provider is not enough on its own: live transcription can be perfectly healthy
+    # while a stopped visit could only ever return the rough live rows, which is the case this catches.
+    correction_ready, correction_detail = await loop.run_in_executor(
+        None, correction_readiness
+    )
+
+    if not provider_available:
+        return {"available": False, "detail": provider_detail}
+
+    # The clinician would get roles and a note, but the note would be built from unreviewed wording.
+    if not correction_ready:
+        return {"available": False, "detail": correction_detail}
+
+    return {"available": True, "detail": ""}

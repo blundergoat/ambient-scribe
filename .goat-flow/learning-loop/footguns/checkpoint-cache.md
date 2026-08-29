@@ -75,6 +75,11 @@ reproduced the same local-only failure after an exact old-image rollback. The pr
 was a local-only artifact; the durable anchor is the checkpoint-load path in
 `strands_agents/post_visit_correction.py` (search: `_load_post_visit_asr_model`).
 
+**Local mitigation shipped 2026-08-29:** `scripts/start-dev.sh` restores the pinned checkpoint through
+`strands_agents/post_visit_correction.py` (search: `ensure_pinned_checkpoint_available`) before its Ready
+banner, and that helper always finishes on the exact verifier. This closes the local recovery path only;
+deployment packaging remains an open decision elsewhere.
+
 **Prevention:** Before any NeMo recreate, prove every required local-only checkpoint is in an image layer or
 an explicitly persistent mounted cache. Treat image identity, live-model health, and post-visit checkpoint
 availability as three separate gates. If writable-cache loss is found, stop before decoding and obtain exact

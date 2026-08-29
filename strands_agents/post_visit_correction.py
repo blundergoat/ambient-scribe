@@ -992,6 +992,148 @@ def _verified_checkpoint_path(model_name: str) -> Path | None:
     return checkpoint_path
 
 
+def _download_pinned_checkpoint(pinned_checkpoint: _PinnedPostVisitCheckpoint) -> None:
+    """Fetch exactly the pinned checkpoint revision into the local cache.
+
+    Kept separate from provisioning so the download identity always comes from the module's own pin, and
+    so tests can prove no floating revision is ever requested.
+    """
+    from huggingface_hub import hf_hub_download
+
+    hf_hub_download(
+        repo_id=pinned_checkpoint.repository_id,
+        revision=pinned_checkpoint.revision,
+        filename=pinned_checkpoint.filename,
+        cache_dir=str(POST_VISIT_MODEL_CACHE_DIR),
+    )
+
+
+def ensure_pinned_checkpoint_available(
+    model_name: str = DEFAULT_POST_VISIT_ASR_MODEL,
+    *,
+    allow_download: bool = False,
+) -> Path | None:
+    """Make sure the approved correction checkpoint is in the local cache before anyone records a visit.
+
+    Called at local startup, so an operator whose data volume was replaced gets the model back then rather
+    than discovering it is gone after a consultation has already been recorded.
+
+    Args:
+        model_name: Correction model to provision. An operator override outside the pinned set is left
+            alone, because that seam deliberately hands model choice to whoever set it.
+        allow_download: False keeps this entirely offline and re-raises whatever the verifier found, which
+            is what ordinary correction wants; only start-time provisioning passes True.
+
+    Returns:
+        The verified checkpoint path, or null when an operator override means this module owns no pin for
+        the selected model. Never returns a path that has not just passed the exact verifier.
+
+    Raises:
+        PostVisitCorrectionError: the checkpoint is still absent, or still fails revision, size, or hash
+            checks after a refill; the caller must not treat the correction lane as usable.
+    """
+    try:
+        return _verified_checkpoint_path(model_name)
+    except PostVisitCorrectionError:
+        # Ordinary correction must never reach the network mid-visit, so only start-time provisioning
+        # is allowed to refill; every other caller gets the original failure unchanged.
+        if not allow_download:
+            raise
+
+    pinned_checkpoint = _PINNED_POST_VISIT_CHECKPOINTS.get(model_name)
+
+    # No pin means an operator chose their own model, so there is nothing this module may fetch for them.
+    if pinned_checkpoint is None:
+        return None
+
+    _download_pinned_checkpoint(pinned_checkpoint)
+
+    # Always finish on the exact verifier: a completed download still has to be the evaluated artifact
+    # before a clinician is told the reviewed transcript is available.
+    return _verified_checkpoint_path(model_name)
+
+
+# One remembered loadability verdict per checkpoint identity, keyed by resolved path, size, and mtime.
+# Verifying bytes proves the file is the approved artifact; only an actual restore proves this NeMo
+# build can instantiate it. Those two facts came apart once already, and the byte check stayed green
+# for weeks while every stopped visit silently fell back to the live transcript.
+_CHECKPOINT_LOAD_PROBE_CACHE: dict[tuple[str, int, int], tuple[bool, str]] = {}
+
+
+def _restore_checkpoint_for_probe(checkpoint_path: Path) -> None:
+    """Build the correction model on CPU purely to prove this runtime can read the checkpoint.
+
+    Kept separate so readiness never competes for the GPU that live transcription owns, and so tests
+    can stand in for the multi-second restore.
+    """
+    import nemo.collections.asr as nemo_asr
+
+    nemo_asr.models.ASRModel.restore_from(
+        restore_path=str(checkpoint_path), map_location="cpu"
+    )
+
+
+def correction_readiness(
+    model_name: str = DEFAULT_POST_VISIT_ASR_MODEL,
+) -> tuple[bool, str]:
+    """Report whether finishing a visit right now could really produce a reviewed transcript.
+
+    Called before the clinician starts recording, so a visit that could only ever yield the rough live
+    transcript is refused up front instead of disappointing them after the consultation is over.
+
+    Args:
+        model_name: Correction model to check; an operator override outside the pinned set is treated as
+            ready, because that seam deliberately hands model choice to whoever set it.
+
+    Returns:
+        (is_ready, detail). `detail` is empty when ready, and otherwise carries a short clinician-safe
+        reason that never contains a filesystem path or a raw exception message.
+    """
+    try:
+        verified_checkpoint_path = _verified_checkpoint_path(model_name)
+    except PostVisitCorrectionError as checkpoint_error:
+        # Example: the clinician opens the page after the model cache volume was replaced, so the
+        # approved checkpoint is missing and no stopped visit could be corrected.
+        return False, str(checkpoint_error)
+
+    # An operator pointed the correction lane at their own model, so this gate defers to that choice.
+    if verified_checkpoint_path is None:
+        return True, ""
+
+    try:
+        checkpoint_stat = verified_checkpoint_path.stat()
+    except OSError:
+        # Example: cache permissions changed under the running agent between two Start clicks.
+        return False, "the correction model could not be read from local cache"
+
+    probe_key = (
+        str(verified_checkpoint_path),
+        checkpoint_stat.st_size,
+        checkpoint_stat.st_mtime_ns,
+    )
+    remembered_verdict = _CHECKPOINT_LOAD_PROBE_CACHE.get(probe_key)
+
+    # Every Start click asks for readiness, so an unchanged checkpoint reuses the verdict rather than
+    # spending another multi-second restore. Replacing the file changes the key and forces a re-probe.
+    if remembered_verdict is not None:
+        return remembered_verdict
+
+    try:
+        _restore_checkpoint_for_probe(verified_checkpoint_path)
+        probe_verdict = (True, "")
+    except Exception as model_build_error:
+        # Example: the agent image was rebuilt onto a NeMo release whose encoder cannot accept this
+        # checkpoint's config, so the bytes verify perfectly and correction still fails on every visit.
+        probe_verdict = (
+            False,
+            "the correction model cannot be loaded by this agent runtime "
+            f"({type(model_build_error).__name__})",
+        )
+
+    _CHECKPOINT_LOAD_PROBE_CACHE[probe_key] = probe_verdict
+    return probe_verdict
+
+
 def _build_audio_chunks(audio_path: Path) -> list[_AudioChunk]:
     """Keep short audio whole or split a capacity-risk visit into bounded WAVs.
 

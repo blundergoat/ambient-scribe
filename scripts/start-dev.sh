@@ -426,6 +426,43 @@ if [[ "$MODEL_PROVIDER" == "ollama" ]]; then
     fi
 fi
 
+# A replaced data volume starts empty, and the correction model lives there rather than in the image.
+# Refill it here so the operator is not left discovering the gap after recording a consultation.
+step "Post-visit correction checkpoint"
+if dc exec -T nemo-agent python -c "import sys; sys.path.insert(0, '/app'); import post_visit_correction as p; p.ensure_pinned_checkpoint_available(allow_download=True)" >/dev/null 2>&1; then
+    pass "verified"
+else
+    echo -e "${YELLOW}restoring pinned checkpoint (about 2.5 GB, first run only)...${RESET}"
+    if dc exec -T nemo-agent python -c "import sys; sys.path.insert(0, '/app'); import post_visit_correction as p; p.ensure_pinned_checkpoint_available(allow_download=True)"; then
+        echo -e "  ${ARROW} Post-visit correction checkpoint  ${PASS}  ${DIM}verified${RESET}"
+    else
+        echo -e "  ${ARROW} Post-visit correction checkpoint  ${FAIL}  ${RED}could not be restored - check network and disk space${RESET}"
+        echo ""
+        echo -e "  ${RED}${BOLD}Not ready.${RESET} ${DIM}A finished visit would fall back to the unreviewed live transcript.${RESET}"
+        echo -e "  ${DIM}Containers are left running so live transcription still works.${RESET}"
+        echo ""
+        exit 1
+    fi
+fi
+
+# Live streaming can be perfectly healthy while a stopped visit could only ever return the rough live rows,
+# so the operator is told here rather than after someone has already recorded a consultation.
+step "Pre-visit readiness"
+MODEL_HEALTH_BODY=$(curl -fsS --max-time 120 "http://localhost:${AGENT_PORT}/agent/model-health" 2>/dev/null) || MODEL_HEALTH_BODY=""
+if [[ "$MODEL_HEALTH_BODY" == *'"available":true'* ]]; then
+    pass "verified"
+else
+    MODEL_HEALTH_DETAIL=$(printf '%s' "$MODEL_HEALTH_BODY" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+    [[ -z "$MODEL_HEALTH_DETAIL" ]] && MODEL_HEALTH_DETAIL="the agent pre-flight did not answer"
+    echo -e "  ${ARROW} Pre-visit readiness  ${FAIL}  ${RED}${MODEL_HEALTH_DETAIL}${RESET}"
+    echo ""
+    echo -e "  ${RED}${BOLD}Not ready.${RESET} ${DIM}A finished visit would fall back to the unreviewed live transcript.${RESET}"
+    echo -e "  ${DIM}Containers are left running so live transcription still works and the checkpoint can be restored.${RESET}"
+    echo ""
+    # Plain exit, never cleanup: withholding Ready must not stop a stack the operator needs to fix this.
+    exit 1
+fi
+
 echo ""
 
 # =============================================================================

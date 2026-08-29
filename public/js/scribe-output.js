@@ -1751,10 +1751,11 @@ async function ensureAiModelAvailable() {
         console.warn('Model health check failed:', modelHealthError);
     }
 
-    // The user cannot get roles or a note, so starting a visit would create unusable output.
+    // Something the finished visit needs is missing, so recording now would produce output the clinician cannot rely on.
+    // The banner names the failing half, because a missing note provider and a missing correction model need different fixes.
     if (!isModelAvailable) {
-        showSystemBanner('AI model unavailable - run  ./scripts/check-ai-model.sh  to start it (or set ROLE_AGENT_MODEL_PROVIDER=bedrock).');
-        setPlainStatus('AI model unavailable - consultation not started');
+        showSystemBanner(`Consultation not started - ${detail}.`);
+        setPlainStatus(`Consultation not started - ${detail}`);
         return false;
     }
 

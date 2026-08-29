@@ -17,8 +17,6 @@ paths:
   - .codex/
   - .github/
   - .goat-flow/
-  - scripts/nemo_*.py
-  # Tests keep their behavioral gate in pytest; gruff-py remains the runtime-code gate.
   - tests/e2e/**
   - tests/python/**
   - tests/fixtures/**
@@ -40,21 +38,10 @@ allowlists:
   - tx
   - ui
   - url
-  secretPreviews:
-  # Public Bedrock model IDs are identifiers, not credentials.
-  - au.anthropic.claude-haiku-4-5-20251001-v1:0
+  secretPreviews: []
   deadCode:
-    symbols:
-    # Compatibility seam for replay tests and manual task-state cleanup.
-    - _replay_segments
-    # Tested WebM conversion helper retained for legacy browser-audio coverage.
-    - TranscriptionSession._convert_webm_to_wav
-    decorators:
-    # FastAPI route decorators are public entry points, not dead exports.
-    - app.api_route
-    - app.get
-    - app.post
-    - app.websocket
+    symbols: []
+    decorators: []
     paths: []
 selection:
   tiers: []
@@ -198,13 +185,11 @@ rules:
       - check
       - dev
       - enabled
-      - filter
       - force
       - fresh
       - harness
       - json
       - ok
-      - publish_to_mercure
       - verbose
       - 'yes'
   # Confusing class name
@@ -254,10 +239,7 @@ rules:
       - constants
       - exceptions
       - helpers
-      # Conventional process logging setup module used by the FastAPI import path.
-      - logging_config
       - protocols
-      - session
       - types
   # Short variable name
   naming.short-variable:

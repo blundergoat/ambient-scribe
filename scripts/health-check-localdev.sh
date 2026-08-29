@@ -324,6 +324,18 @@ else
     fail "not reachable - is start-dev.sh running?"
 fi
 
+# The same pre-flight the browser calls before recording, so an operator diagnosing a
+# "why is my note unreviewed" report sees the correction lane separately from live health.
+step "Pre-visit readiness"
+probe "http://localhost:${AGENT_PORT}/agent/model-health"
+if [[ "$PROBE_STATUS" == "200" ]] && echo "$PROBE_BODY" | grep -q '"available":true'; then
+    pass "${PROBE_TIME_MS}ms"
+elif [[ "$PROBE_STATUS" == "200" ]]; then
+    fail "$(echo "$PROBE_BODY" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')"
+else
+    fail "not reachable - is start-dev.sh running?"
+fi
+
 step "OpenAPI docs"
 probe "http://localhost:${AGENT_PORT}/docs"
 if [[ "$PROBE_STATUS" == "200" ]]; then
