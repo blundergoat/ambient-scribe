@@ -2,6 +2,20 @@
 
 Real-time medical transcription system that captures clinical conversations, performs speaker diarization and automatic speech recognition, and infers DOCTOR/PATIENT roles -- delivering labeled transcripts to the browser in real time. After Stop, a second ASR pass corrects the transcript and an off-GPU agent drafts a citation-linked SOAP note for clinician review.
 
+## Consultation Flow
+
+### While recording
+
+1. **Transcribe and clean speech:** Multitalker Parakeet creates timestamped words, then `medical_lexicon.txt` corrects known ASR variants before they reach the live transcript.
+2. **Identify speakers:** Sortformer labels detected speakers with IDs such as `spk_0` and `spk_1`.
+3. **Assign roles:** The role agent maps each speaker ID to `DOCTOR` or `PATIENT`.
+
+### After recording stops
+
+4. **Correct the transcript:** By default, Parakeet Unified automatically re-transcribes the full recording when it is no longer than 15 minutes.
+5. **Refine role labels:** Corrected words keep their live labels, changing only when text provides a clear role cue. Full speaker diarization does not run again.
+6. **Generate the summary:** Clicking **Generate summary** uses the corrected transcript. If correction is unavailable and the live transcript remains verified, the app uses that instead.
+
 ## Architecture
 
 ```
